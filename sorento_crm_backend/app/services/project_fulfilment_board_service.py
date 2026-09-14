@@ -44,6 +44,7 @@ from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import (
+    AbstractSet,
     Any,
     Callable,
     Dict,
@@ -53,6 +54,7 @@ from typing import (
     MutableMapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -65,6 +67,7 @@ from app.models.product import Product
 from app.models.project_so import (
     ACK_REJECTED,
     DECISION_ACTIVE,
+    INQUIRY_CANCELLED,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -96,7 +99,6 @@ from app.services.scm.demand import (
     is_open_demand,
     is_plan_demand_line,
     is_undecided_demand,
-    live_inquiry_core_line_ids,
 )
 from app.services.scm.front_planning_engine import (
     BORROW,
@@ -639,13 +641,15 @@ class FulfilmentBoardService:
         as_of = as_of or date.today()
         policy_name, weights, class_weights, is_preview = self._policy(preview_policy)
 
-        rows = self._demand_rows(numbers)
-        # ONE query for both the adopted record and the pending-batch id, per order
-        # (query-count guard, `test_a_board_of_76_lines_does_not_scale_its_query_count_
-        # with_the_line_count`): `_standings` used to run these as two separate reads, and
-        # a bare `_cancelled_pending_change_rows` call below ran its own join every build
-        # whether or not anything was ever pending. Read once here instead.
-        adopted_by_so, pending_by_so = self._order_plan_status(numbers)
+        # ONE query for the adopted record, the pending-batch id per order and the core
+        # lines those pending rows name (query-count guard, `test_a_board_of_76_lines_does
+        # _not_scale_its_query_count_with_the_line_count`): `_standings` used to run these
+        # as two separate reads, and a bare `_cancelled_pending_change_rows` call below ran
+        # its own join every build whether or not anything was ever pending. Read once here
+        # instead - and BEFORE the demand rows, because the third value decides which of
+        # them an inquiry still counts as deciding.
+        adopted_by_so, pending_by_so, pending_core_lines = self._order_plan_status(numbers)
+        rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never
         # to `rows` itself, so it takes no part in bucketing, ranking or the ladder walk
@@ -677,7 +681,14 @@ class FulfilmentBoardService:
                 if row.project_line_id and row.project_line_id in self._exclude_covered_line_ids:
                     # Previewed as uncovered (see `build`'s docstring): the ladder is walked for
                     # it below like any other row, against facts that un-net its own hold.
+                    #
+                    # BOTH WAYS OF BEING COVERED, not just the decision. The caller has said
+                    # "treat this line as undecided"; leaving `inquiry_decided` standing would
+                    # honour half of that and hand back an empty composition - which is what
+                    # `build_batch` saw, because it builds this preview BEFORE its own change
+                    # row exists for `_order_plan_status` to find.
                     row.decision = None
+                    row.inquiry_decided = False
         for row in rows:
             row.bucket_key = bucket_key_for(row.required_date, as_of, granularity)
             # Per LINE, against its own date, which is the number the "N of M lines are past
@@ -1321,7 +1332,12 @@ class FulfilmentBoardService:
 
     # ------------------------------------------------------------ the demand
 
-    def _demand_rows(self, so_numbers: Sequence[str]) -> List[_Row]:
+    def _demand_rows(
+        self,
+        so_numbers: Sequence[str],
+        *,
+        reopened_by_change: Optional[AbstractSet[str]] = None,
+    ) -> List[_Row]:
         """Every UNDECIDED line of the selected project-class sales orders.
 
         NOT "still owed" (14 September 2026 ruling, from SO421404). The board asks whether
@@ -1386,16 +1402,6 @@ class FulfilmentBoardService:
         )
         # What another order borrowed OFF each of these lines. One read for the whole board.
         lent = self._lent_from([str(line.id) for line, *_r in records])
-        # Which of these lines the migrated book already decided (#875). ONE query for the
-        # board, narrowed to its own lines, and the SAME rule the Sales Orders list counts
-        # `planned_lines` by - so an order cannot read "2 of 3 planned" on the list and open
-        # a board that disagrees.
-        decided_by_inquiry = {
-            str(core_id)
-            for (core_id,) in self.db.execute(
-                live_inquiry_core_line_ids([str(line.id) for line, *_r in records])
-            ).all()
-        }
 
         rows: List[_Row] = []
         for line, order, product, warehouse, agent in records:
@@ -1464,8 +1470,17 @@ class FulfilmentBoardService:
             row.order_inquiry = inquiries.get(str(line.id))
             # Purchasing was TOLD to buy for this line and nobody has withdrawn or refused
             # that instruction, so it is decided on the buying side: read-only, naming the
-            # inquiry, never proposed for again (AC-S2-7).
-            row.inquiry_decided = str(line.id) in decided_by_inquiry
+            # inquiry, never proposed for again (AC-S2-7). Popped rather than sent: it is
+            # how that read answers this question, not a field the screen has a use for.
+            told_by_the_book = bool((row.order_inquiry or {}).pop("_decides_line", False))
+            # THE BOOK MOVING A LINE BEATS PURCHASING HAVING BEEN TOLD (owner's ruling,
+            # 14 Sep 2026). A pending planning-change row says the book has moved this line
+            # since the instruction was written, and apply CANCELS and UNLINKS that placed
+            # row - so it is stale by definition and cannot be what decides the line. Left
+            # decided, the board stopped proposing for the very line the change re-opened.
+            row.inquiry_decided = told_by_the_book and str(line.id) not in (
+                reopened_by_change or frozenset()
+            )
             row.lent_to = lent.get(str(line.id), [])
             rows.append(row)
         return rows
@@ -1649,6 +1664,15 @@ class FulfilmentBoardService:
     ) -> Dict[str, Dict[str, Any]]:
         """The instruction covering each core line, keyed by that line.
 
+        Each entry also carries `_decides_line`, popped by the caller the way
+        `with_order_inquiries` pops its own `_is_amendment`: whether a LIVE instruction no
+        board decision raised still stands on this line, which is what holds the row
+        read-only (AC-S2-7). Answered here because these are the same rows - the SQL twin
+        is `demand.live_inquiry_core_line_ids()`, which the Sales Orders list counts
+        `planned_lines` by, and a second statement per build would breach the query-count
+        bound (`test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_
+        count`). Two spellings of one rule: change one and change the other.
+
         Through the mirror, the same link `_mirror_addressing` traverses:
         `projects.order_inquiry_rows.so_line_id` -> `projects.sales_order_lines` ->
         `core_sales_order_line_id`. A partial unique index makes that at most one project
@@ -1686,6 +1710,10 @@ class FulfilmentBoardService:
                 OrderInquiryRow.rejected_at,
                 OrderInquiryRow.rejected_reason,
                 rejecter.name,
+                # Whose instruction it is. A row a confirmation raised carries its
+                # decision; the migrated sheet's rows (#875) carry none, and only those
+                # decide a line the board would otherwise propose for again.
+                OrderInquiryRow.supply_decision_id,
             )
             .select_from(OrderInquiryRow)
             .join(
@@ -1731,8 +1759,20 @@ class FulfilmentBoardService:
         # standing, because the second was skipped wholesale; the cell should show the
         # inquiry it was last told about.
         answered_refusal_at: Dict[str, Optional[datetime]] = {}
-        for core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name in rows:
+        # ANY live row on the line, not the current instruction alone: a line whose newest
+        # row was cancelled can still carry one that stands.
+        live_core_ids: Set[str] = set()
+        for (
+            core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name,
+            supply_decision_id,
+        ) in rows:
             core_key = str(core_id)
+            if (
+                supply_decision_id is None
+                and state != INQUIRY_CANCELLED
+                and ack_state != ACK_REJECTED
+            ):
+                live_core_ids.add(core_key)
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
             )
@@ -1767,7 +1807,10 @@ class FulfilmentBoardService:
         # revision covering the line, confirmed after the refusal - the cell is about that
         # decision and not about the objection that prompted it. A flag that outlived the
         # answer would read as an open refusal on a line somebody had already dealt with.
-        for core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name in rows:
+        for (
+            core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name,
+            _decision_id,
+        ) in rows:
             if ack_state != ACK_REJECTED:
                 continue
             entry = out.get(str(core_id))
@@ -1778,6 +1821,8 @@ class FulfilmentBoardService:
             entry["ack_state"] = ACK_REJECTED
             entry["rejected_reason"] = reason
             entry["rejected_by_name"] = name
+        for core_key, entry in out.items():
+            entry["_decides_line"] = core_key in live_core_ids
         return out
 
     def _frozen_decisions(
@@ -4964,9 +5009,10 @@ class FulfilmentBoardService:
 
     def _order_plan_status(
         self, so_numbers: Sequence[str]
-    ) -> Tuple[Dict[str, str], Dict[str, str]]:
-        """Per selected order (by core `sales_orders.id`): its adoption record, and its
-        newest PENDING planning-change batch - ONE query for both (query-count guard,
+    ) -> Tuple[Dict[str, str], Dict[str, str], Set[str]]:
+        """Per selected order (by core `sales_orders.id`): its adoption record, its newest
+        PENDING planning-change batch, and the CORE LINES those pending rows name - ONE
+        query for all three (query-count guard,
         `test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`),
         where `_standings` used to run two, and `_cancelled_pending_change_rows` a third
         of its own regardless of whether anything was ever pending.
@@ -4977,9 +5023,13 @@ class FulfilmentBoardService:
         be excluded from the read entirely. Absent from `adopted_by_so` means nobody has
         adopted that order; absent from `pending_by_so` means nothing is pending for it -
         neither is ever a `None` value, so a caller uses `.get(so_id)`.
+
+        The third value is the PER LINE half of the same read, and it costs nothing extra:
+        one more selected column on a query that already joins the pending rows. It is what
+        re-opens a line the migrated book had decided (see `_demand_rows`).
         """
         if not so_numbers:
-            return {}, {}
+            return {}, {}, set()
         from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
         from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
 
@@ -4987,6 +5037,7 @@ class FulfilmentBoardService:
             self.db.query(
                 SalesOrder.id, ProjectSalesOrder.id,
                 PlanningChangeBatch.id, PlanningChangeBatch.created_at,
+                PlanningChangeRow.core_line_id,
             )
             .join(ProjectSalesOrder, ProjectSalesOrder.so_id == SalesOrder.id)
             .outerjoin(
@@ -5008,8 +5059,11 @@ class FulfilmentBoardService:
         )
         adopted_by_so: Dict[str, str] = {}
         pending_by_so: Dict[str, str] = {}
-        for so_id, pso_id, batch_id, _created_at in rows:
+        pending_core_lines: Set[str] = set()
+        for so_id, pso_id, batch_id, _created_at, core_line_id in rows:
             adopted_by_so[str(so_id)] = str(pso_id)
             if batch_id:
                 pending_by_so.setdefault(str(so_id), str(batch_id))
-        return adopted_by_so, pending_by_so
+                if core_line_id:
+                    pending_core_lines.add(str(core_line_id))
+        return adopted_by_so, pending_by_so, pending_core_lines
