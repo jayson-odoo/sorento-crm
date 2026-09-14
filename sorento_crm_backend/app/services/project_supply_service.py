@@ -69,7 +69,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import func, nullslast, or_
+from sqlalchemy import case, func, null, nullslast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -215,6 +215,49 @@ PLAN_SORT_FIELDS: Tuple[str, ...] = (
 #: one, else the mirror's own. Free stock is read against the core product (`_facts_for`
 #: prefers it on a remap), so the hold must net out of that pile and not the mirror's.
 _hold_product = func.coalesce(SalesOrderLine.product_id, ProjectSalesOrderLine.product_id)
+
+
+def owed_qty_expr():
+    """`_open_of` as SQL, over the `SalesOrderLine` `_hold_query` already outer-joins.
+
+    The same three rules the Python primitive applies, in the same order: a CANCELLED line
+    owes nothing whatever its columns say (the book rarely reverses a delivered quantity
+    when it cancels one), what is owed is `ordered - delivered` floored at zero, and an
+    allocation with NO core line behind it is not a question this can answer - it returns
+    NULL there, and the caller decides what that means.
+
+    NULL rather than zero for the missing line is the whole reason for the leading branch.
+    Postgres `greatest()` IGNORES nulls, so `greatest(NULL - 0, 0)` is 0, not NULL: without
+    it, every allocation on an unreconciled mirror line would silently cap to zero and stop
+    holding stock it really is holding.
+    """
+    return case(
+        (SalesOrderLine.id.is_(None), null()),
+        (func.coalesce(SalesOrderLine.line_status, "open") == "cancelled", 0),
+        else_=func.greatest(
+            func.coalesce(SalesOrderLine.qty_ordered, 0)
+            - func.coalesce(SalesOrderLine.qty_delivered, 0),
+            0,
+        ),
+    )
+
+
+def held_qty_expr():
+    """What a confirmed allocation is ACTUALLY holding: `least(alloc.qty, still owed)`.
+
+    `so_line_allocations.qty` is frozen at confirm and delivery never shrinks it, while the
+    book has already taken the delivered units off `quantity_on_hand` - so a decided line
+    that has since shipped was subtracted twice, once by the warehouse and once by its own
+    hold, and the difference was stock the business had that no screen could see. Capping
+    here rather than at each reader is what makes the free-stock arithmetic, the Stock Debt
+    screen and the confirm-time refusal quote one figure (AC-S1-4).
+
+    An allocation with no core line keeps its raw quantity: there is nothing to cap against,
+    and guessing zero would release stock somebody is holding.
+    """
+    return func.least(
+        SOLineAllocation.qty, func.coalesce(owed_qty_expr(), SOLineAllocation.qty)
+    )
 
 
 def _pile_order(line: Dict[str, Any]) -> Tuple[Any, ...]:
@@ -4925,7 +4968,7 @@ class ProjectSupplyService:
                 SOLineAllocation.warehouse_id,
                 SalesOrder.so_number,
                 ProjectSalesOrderLine.line_no,
-                SOLineAllocation.qty,
+                held_qty_expr(),
             ),
         ).all()
         totals: Dict[Tuple[str, str], Dict[Tuple[Any, Any], Decimal]] = defaultdict(dict)
@@ -7559,7 +7602,7 @@ class ProjectSupplyService:
                 exclude_line_ids=None,
                 entities=(
                     SOLineAllocation.warehouse_id,
-                    SOLineAllocation.qty,
+                    held_qty_expr(),
                     SalesOrder.so_number,
                     SalesOrderLine.required_date,
                     SalesOrderLine.warehouse_id,
@@ -7747,7 +7790,7 @@ class ProjectSupplyService:
                         _hold_product,
                         SOLineAllocation.warehouse_id,
                         ProjectSalesOrder.project_id,
-                        SOLineAllocation.qty,
+                        held_qty_expr(),
                     )
                 )
             )
