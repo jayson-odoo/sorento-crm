@@ -176,7 +176,12 @@ async def apply_supplier_inventory(
         db,
         upload.data,
         supplier_id=supplier_id,
+        # The id stamps the snapshot row's `uploaded_by`, which is a principal reference.
         actor=current_user.get("id"),
+        # The NAME stamps any alias the ladder remembers along the way (S4, AC-4.1): that
+        # column is read straight off the Remembered table, and it printed a UUID at the
+        # buyer for as long as the id was the only thing handed down.
+        actor_label=_actor(current_user),
         loading_plan_id=str(plan.id) if plan is not None else None,
     )
     if not out.get("readable"):
