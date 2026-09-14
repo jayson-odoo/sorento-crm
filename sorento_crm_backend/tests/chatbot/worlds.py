@@ -609,7 +609,16 @@ def body_difference(
             "captured before QS-9 added `requested_attributes` to the persisted object "
             "(the shipping body array-guards it and always writes it)"
         )
-    if actual_variables.get("order_status") and "order_status" not in world.expected_variables:
+    # On this lane `order_status` is the tenth `focus` axis, not a top-level session key
+    # (R16 carried it beside the `pending` marker on main; this lane deleted that marker
+    # and folds every axis into `focus`, `dialogue/focus.py`). A capture older than R16
+    # never recorded it in either place, so the engine's own `focus.order_status` on a
+    # turn that named a status word ("delivered") is exactly the QS-9-class addition this
+    # skip covers - read from the axis's new home rather than the retired top-level key.
+    actual_order_status = (
+        (actual_variables.get("focus") or {}).get("order_status") or {}
+    ).get("value")
+    if actual_order_status and "order_status" not in world.expected_variables:
         return (
             "captured before R16 (owner round 5, 13 Sep 2026) added `order_status` to the "
             "persisted object - the same class as the QS-9 `requested_attributes` entry "
