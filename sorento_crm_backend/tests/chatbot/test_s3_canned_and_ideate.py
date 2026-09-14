@@ -50,7 +50,7 @@ def _turn_row(session_factory, turn_id: str) -> ChatbotTurn:
 def _session_vars_raw(session_factory) -> Any:
     return session_factory().execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": CONTACT_ID},
+        {"c": str(CONTACT_ID)},
     ).scalar()
 
 
@@ -61,7 +61,7 @@ def _seed_session_variables(session_factory, variables: dict[str, Any]) -> None:
             "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
             "WHERE respond_io_id = :c"
         ),
-        {"c": CONTACT_ID, "sv": json.dumps({"variables": variables})},
+        {"c": str(CONTACT_ID), "sv": json.dumps({"variables": variables})},
     )
     db.commit()
 
@@ -618,7 +618,7 @@ class TestIdeateBranchCallsMcpTool:
 
         assert len(captured) == 1
         call_kwargs = captured[0]
-        assert call_kwargs["respond_io_id"] == CONTACT_ID
+        assert call_kwargs["respond_io_id"] == str(CONTACT_ID)
         assert isinstance(call_kwargs["respond_io_id"], str)
         assert call_kwargs["message_text"] == "the photos are of the leaking basin"
         assert call_kwargs["session_vars"] == {
