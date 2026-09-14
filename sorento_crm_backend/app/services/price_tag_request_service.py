@@ -480,10 +480,15 @@ class PriceTagRequestService:
         request_id: str,
         new_status: str,
         user_id: str | None = None,
+        notify_ctx: dict | None = None,
     ) -> PriceTagRequest:
         """Validate and apply a status transition.
 
         Raises ``AppException`` (409) for invalid transitions.
+
+        ``notify_ctx`` carries whatever the message needs that the row cannot
+        say on its own - how many change requests were sent, the rejection
+        reason, the round for the assignee's bell.
         """
         request = db.query(PriceTagRequest).filter(
             PriceTagRequest.id == request_id,
@@ -557,6 +562,29 @@ class PriceTagRequestService:
                     request_id,
                     exc_info=True,
                 )
+
+        # D12/D13: EVERY transition reaches the salesperson, including the
+        # confirmations of their own actions - a message that says "you
+        # approved it" is how somebody knows the button worked. Through the
+        # MODULE, so a test can swap the function; wrapped inside the notifier
+        # itself, so a messaging outage can never undo the transition.
+        from app.services import price_tag_notify
+
+        try:
+            price_tag_notify.notify_salesperson(
+                db, request, new_status, **(notify_ctx or {})
+            )
+            price_tag_notify.ring_assignee(
+                db, request, new_status, round_no=(notify_ctx or {}).get("round", 1)
+            )
+        except Exception:
+            # The notifier guards itself too; this is the belt for a caller
+            # that replaced it. A transition that happened has happened.
+            logger.warning(
+                "Notification failed for price_tag_request %s",
+                request_id,
+                exc_info=True,
+            )
 
         return request
 

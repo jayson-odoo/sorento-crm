@@ -200,8 +200,24 @@ def transition_price_tag_request(
 ):
     """Apply a status transition with optional note."""
     result = PriceTagRequestService.transition_status(
-        db, request_id, payload.status, user_id=_user_id(user),
+        db,
+        request_id,
+        payload.status,
+        user_id=_user_id(user),
+        notify_ctx={"reason": payload.note} if payload.note else None,
     )
+    # D14: `TransitionPayload.note` has existed since r7 and this route threw it
+    # away, so a rejection reason was typed into a box that discarded it. It is
+    # a general review comment by the staffer now - the salesperson reads it
+    # beside their own pins, and the message quotes it.
+    if payload.note and payload.note.strip():
+        price_tag_review_service.create_comments(
+            db,
+            result,
+            comments=[],
+            note=payload.note,
+            author_user_id=_user_id(user),
+        )
     # Marking the proof ready is a deliberate act, so it promotes the autosaved
     # draft to a version the same way manual Save does (B1). The designer's own
     # button saves first and leaves nothing to promote, but the detail page's
