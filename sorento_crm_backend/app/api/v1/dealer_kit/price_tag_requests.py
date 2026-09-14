@@ -62,6 +62,11 @@ router = APIRouter(prefix="/price-tag-requests", tags=["price-tag-requests"])
 _VIEW = require_permission_with_api_key("dealer_kit.price_tag_requests.view")
 _PROCESS = require_permission("dealer_kit.price_tag_requests.process")
 
+#: A tag sheet nobody has drawn on yet. Written only when a version has to
+#: exist and there is no document to put in it (R6) - what that version is
+#: FOR is the pins it carries, not the empty page.
+_EMPTY_SHEET_DOC = {"kind": "tag_sheet", "sheets": []}
+
 
 def _user_id(user: dict) -> str | None:
     if not isinstance(user, dict):
@@ -360,11 +365,17 @@ def resolve_line_pin(
         raise AppException(
             status_code=404, message="Price tag request not found.", code="NOT_FOUND"
         )
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished; its tags can no longer change.",
+            code="INVALID_STATE",
+        )
     line = _line_of(db, request_id, line_id)
 
     live_rows = {
         row["line_id"]: row
-        for row in tag_data_service._resolve_lines_live(db, req, [line])
+        for row in tag_data_service.resolve_lines_live(db, req, [line])
     }
     live = live_rows.get(line.id)
     if live is None:
@@ -375,29 +386,32 @@ def resolve_line_pin(
         )
 
     if payload.action == "update":
-        if req.page_id:
-            page = db.query(Page).filter(Page.id == req.page_id).first()
-            doc = page.draft_doc if page is not None and page.draft_doc else None
-            if page is not None:
-                latest = _latest_version(db, page)
-                doc = doc or (latest.doc if latest else None)
-                if doc is not None:
-                    fields = ", ".join(
-                        change["label"]
-                        for change in (
-                            tag_data_service._diff_pin_against_live(
-                                db, req, line.pinned_tag_data or {}, live, None
-                            )
-                        )
+        # R6: a pin is never overwritten without a version to get back to, so
+        # a request that has no page yet gets one here. The version's own
+        # `pinned_line_data` is what Restore needs, and it is exactly what the
+        # next two lines are about to replace - an empty document is still a
+        # complete way back.
+        PriceTagRequestService.ensure_tag_sheet_page(db, req, _user_id(user))
+        page = db.query(Page).filter(Page.id == req.page_id).first()
+        if page is not None:
+            latest = _latest_version(db, page)
+            doc = page.draft_doc or (latest.doc if latest else None) or _EMPTY_SHEET_DOC
+            fields = ", ".join(
+                change["label"]
+                for change in (
+                    tag_data_service.diff_pin_against_live(
+                        db, req, line.pinned_tag_data or {}, live, None
                     )
-                    _snapshot_draft(
-                        db,
-                        page,
-                        doc,
-                        _user_id(user),
-                        f"Before product update: {fields}" if fields else
-                        "Before product update",
-                    )
+                )
+            )
+            _snapshot_draft(
+                db,
+                page,
+                doc,
+                _user_id(user),
+                f"Before product update: {fields}" if fields else
+                "Before product update",
+            )
         line.pinned_tag_data = tag_data_service.pin_payload(live)
         line.pinned_at = datetime.utcnow()
         line.data_change_ack_hash = None
@@ -472,7 +486,21 @@ def get_request_version(
         raise AppException(
             status_code=404, message="That version no longer exists.", code="NOT_FOUND"
         )
-    rows, media = tag_sheet_export_service.design_media(db, req, row.doc)
+    # S2: a version draws the pins it was WRITTEN with. Resolving its lines
+    # against today's pins shows last week's layout filled with this week's
+    # prices - a page that never existed, presented as history. A version from
+    # before the pins existed has none of its own and falls back to the live
+    # resolve, which is what it was drawn from anyway.
+    rows, media = tag_sheet_export_service.design_media(
+        db,
+        req,
+        row.doc,
+        rows=(
+            tag_data_service.resolve_version_line_data(db, req, row.pinned_line_data)
+            if row.pinned_line_data
+            else None
+        ),
+    )
     return TagSheetDesignResponse(
         page_id=str(page.id),
         version=row.version,
@@ -499,6 +527,12 @@ def restore_request_version(
     """
     request_id = validate_uuid_path(request_id, resource="Price tag request")
     req, page = _require_request_page(db, request_id)
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished; its design can no longer change.",
+            code="INVALID_STATE",
+        )
     row = (
         db.query(PageVersion)
         .filter(PageVersion.page_id == page.id, PageVersion.version == version)

@@ -469,28 +469,81 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
     from app.services.price_tag_request_service import PriceTagRequestService
 
     terminal = PriceTagRequestService.is_terminal(request)
+    lines = sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id))
     rows: list[dict] = []
 
-    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
+    # ONE live resolve for the whole request, and one promotion read (S11).
+    # Per line, a twenty-line sheet asked master data twenty times over - and
+    # the promotion once per line on top - for a page that draws once.
+    # A terminal request resolves only the lines with no pin at all: it can
+    # decide nothing, so diffing the pinned ones is work with no reader.
+    needed = lines if not terminal else [
+        line for line in lines if not line.pinned_tag_data
+    ]
+    live_rows: dict = (
+        {row["line_id"]: row for row in resolve_lines_live(db, request, needed)}
+        if needed
+        else {}
+    )
+    promotion_live = (
+        None
+        if terminal
+        else _promotion_is_live(db, getattr(request, "promotion_id", None))
+    )
+
+    for line in lines:
         pinned = line.pinned_tag_data
         if pinned:
             row = _row_from_pin(db, line, pinned)
             if not terminal:
-                live = _live_line_data(db, request, line)
+                live = live_rows.get(line.id)
                 if live is not None:
-                    changes = _diff_pin_against_live(
-                        db, request, pinned, live, line.data_change_ack_hash
+                    # The PIN AS READ, not as stored: the marketing override is
+                    # applied to both sides, so the office's own decision is
+                    # not read back to it as "master data moved" (S4).
+                    row["data_changes"] = diff_pin_against_live(
+                        db,
+                        request,
+                        row,
+                        live,
+                        line.data_change_ack_hash,
+                        promotion_live=promotion_live,
                     )
-                    row["data_changes"] = changes
+                else:
+                    row["data_changes"] = []
             rows.append(row)
             continue
 
-        live = _live_line_data(db, request, line)
+        live = live_rows.get(line.id)
         if live is not None:
             if not terminal:
                 live["data_changes"] = []
             rows.append(live)
 
+    return rows
+
+
+def resolve_version_line_data(db: Session, request, pinned_line_data: dict) -> list[dict]:
+    """The lines as ONE VERSION carries them (D19/S2).
+
+    A version holds two things: the document, and the product data pinned when
+    it was written. Drawing the document against today's pins shows last week's
+    layout filled with this week's prices - a page that never existed,
+    presented as history, and exactly what somebody opens History to check.
+
+    A version written before the pins existed has nothing of its own, so those
+    lines fall back to the live resolve rather than drawing blank.
+    """
+    pins = pinned_line_data or {}
+    rows: list[dict] = []
+    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
+        pinned = pins.get(line.id) or pins.get(str(line.id))
+        if pinned:
+            rows.append(_row_from_pin(db, line, pinned))
+            continue
+        live = _live_line_data(db, request, line)
+        if live is not None:
+            rows.append(live)
     return rows
 
 
@@ -516,11 +569,11 @@ def _row_from_pin(db: Session, line, pinned: dict) -> dict:
 
 def _live_line_data(db: Session, request, line) -> Optional[dict]:
     """What master data says about this line RIGHT NOW."""
-    rows = _resolve_lines_live(db, request, [line])
+    rows = resolve_lines_live(db, request, [line])
     return rows[0] if rows else None
 
 
-def _resolve_lines_live(db: Session, request, lines) -> list[dict]:
+def resolve_lines_live(db: Session, request, lines) -> list[dict]:
     """The pre-r9 resolver, unchanged, over the lines it is given."""
     viewer = staff_viewer()
     promotion_id = getattr(request, "promotion_id", None)
@@ -650,14 +703,22 @@ def _money(value) -> Optional[str]:
     return None if value is None else f"{float(value):.2f}"
 
 
-def _diff_pin_against_live(
-    db: Session, request, pinned: dict, live: dict, ack_hash: Optional[str]
+def diff_pin_against_live(
+    db: Session,
+    request,
+    pinned: dict,
+    live: dict,
+    ack_hash: Optional[str],
+    promotion_live: Optional[bool] = None,
 ) -> list[dict]:
     """What master data has moved under this tag, field by field (D17).
 
     Silent when the live data matches the pin, and silent when it matches an
     ack somebody has already looked at and chosen to keep. A change AFTER a
     keep asks again, because it is a different change.
+
+    ``promotion_live`` is the request's promotion read ONCE by a caller
+    diffing every line (S11); left out, this reads it itself.
     """
     if ack_hash and data_hash(live) == ack_hash:
         return []
@@ -688,19 +749,28 @@ def _diff_pin_against_live(
 
     pinned_offer = _money(pinned.get("sell_price"))
     live_offer = _money(live.get("sell_price"))
-    promotion_ended = bool(
-        getattr(request, "promotion_id", None)
-    ) and not _promotion_is_live(db, getattr(request, "promotion_id", None))
-    if pinned_offer != live_offer or promotion_ended:
-        # The one case with no obvious wording: the number did not change, the
-        # REASON it existed did.
+    if pinned_offer != live_offer:
+        # One row, not two: the value moving and the promotion ending are the
+        # same event, and the NOTE is what tells them apart. A line that never
+        # had an offer cannot lose one, so a promotion switched off elsewhere
+        # says nothing here.
+        if promotion_live is None:
+            promotion_live = _promotion_is_live(
+                db, getattr(request, "promotion_id", None)
+            )
+        ended = (
+            live_offer is None
+            and pinned_offer is not None
+            and bool(getattr(request, "promotion_id", None))
+            and not promotion_live
+        )
         changes.append(
             {
                 "field": "offer_price",
                 "label": "Offer price",
                 "old": pinned_offer,
                 "new": live_offer,
-                "note": "Promotion ended" if promotion_ended else None,
+                "note": "Promotion ended" if ended else None,
             }
         )
 
@@ -745,13 +815,30 @@ def _diff_pin_against_live(
 
 
 def _promotion_is_live(db: Session, promotion_id) -> bool:
-    """Whether the request's promotion is still running."""
+    """Whether the request's promotion is still running (S5).
+
+    The flag AND the window: a promotion that ran to the 30th and is still
+    flagged active is over on the 1st, and the pricing engine already knows
+    that - it filters on the dates. Reading `is_active` alone left the one
+    wording that explains a vanished offer ("Promotion ended") missing exactly
+    when it was needed.
+    """
     if not promotion_id:
         return False
+    from datetime import date as _date
+
     from app.models.marketing import Promotion
 
     promotion = db.query(Promotion).filter(Promotion.id == promotion_id).first()
-    return bool(promotion and promotion.is_active)
+    if promotion is None or not promotion.is_active:
+        return False
+    today = _date.today()
+    start, end = promotion.start_date, promotion.end_date
+    if start and today < start:
+        return False
+    if end and today > end:
+        return False
+    return True
 
 
 def pin_lines(db: Session, request, *, only_unpinned: bool = True) -> int:
@@ -771,7 +858,7 @@ def pin_lines(db: Session, request, *, only_unpinned: bool = True) -> int:
     if not lines:
         return 0
     rows = {
-        row["line_id"]: row for row in _resolve_lines_live(db, request, lines)
+        row["line_id"]: row for row in resolve_lines_live(db, request, lines)
     }
     now = datetime.utcnow()
     for line in lines:
@@ -790,6 +877,9 @@ def pin_lines(db: Session, request, *, only_unpinned: bool = True) -> int:
 __all__ = [
     "STAFF_VIEWER",
     "data_hash",
+    "diff_pin_against_live",
+    "resolve_lines_live",
+    "resolve_version_line_data",
     "pin_lines",
     "pin_payload",
     "dimensions_text",

@@ -5,7 +5,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +109,9 @@ class PriceTagRequestCreate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
-    #: Who prints (r9 D7): "office" | "self". Required at submit.
-    print_by: Optional[str] = None
+    #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
+    #: longer value 500s on the flush instead of being refused with a 422.
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestUpdate(BaseModel):
@@ -129,8 +137,9 @@ class PriceTagRequestUpdate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
-    #: Who prints (r9 D7): "office" | "self". Required at submit.
-    print_by: Optional[str] = None
+    #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
+    #: longer value 500s on the flush instead of being refused with a 422.
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestOfficeUpdate(BaseModel):
@@ -142,7 +151,7 @@ class PriceTagRequestOfficeUpdate(BaseModel):
     into each other's fields.
     """
 
-    print_by: Optional[str] = None
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -206,7 +215,13 @@ class PriceTagRequestResponse(BaseModel):
     ready_for_collection_at: Optional[datetime] = None
     collected_at: Optional[datetime] = None
     collected_auto: bool = False
+    #: WHO collected them: the staffer, the salesperson, or nobody when the
+    #: sweep closed it. A name, never an id.
     collected_by_name: Optional[str] = None
+    #: Which review round the design is on (D4). The pin overlay greys the
+    #: earlier rounds against it, so it has to travel even when no comment from
+    #: the current round exists yet.
+    review_round: int = 0
     lines: list[PriceTagRequestLineResponse] = []
 
     # Resolved, not stored. Filled by
@@ -286,7 +301,9 @@ class PriceTagRequestListItem(BaseModel):
 
 class TransitionPayload(BaseModel):
     status: str
-    note: Optional[str] = None
+    #: A rejection reason, kept as a general review comment (r9 D14) - which is
+    #: why it is bounded the same way a pin's body is.
+    note: Optional[str] = Field(None, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -896,6 +913,28 @@ class ResolvePreviewOut(BaseModel):
     product_set: Optional[ProductSetTagData] = None
 
 
+class LineDataChange(BaseModel):
+    """One field master data has moved under a pinned tag (r9 D17)."""
+
+    field: str
+    label: str
+    old: Optional[str] = None
+    new: Optional[str] = None
+    old_image_url: Optional[str] = None
+    new_image_url: Optional[str] = None
+    #: Why the value moved, when that is not obvious ("Promotion ended").
+    note: Optional[str] = None
+
+
+class LineDataChangeSet(BaseModel):
+    """One line's worth of pending decision, named by its code not its id."""
+
+    line_id: str
+    code: str
+    name: str
+    changes: list[LineDataChange] = []
+
+
 class ResolvedLineData(BaseModel):
     """Display data for one request line, for the designer and the print page."""
 
@@ -914,6 +953,23 @@ class ResolvedLineData(BaseModel):
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
+    # What master data has moved under this line since it was pinned (r9 D17).
+    # Declared here or `response_model` drops it without a word, which is how
+    # the CRM designer's own red dot went missing while the detail page's did
+    # not: they read the same resolver through two different response models.
+    #
+    # Optional, and absent rather than empty when the resolver did not compute
+    # it: `[]` means "nothing has moved", and a terminal request runs no live
+    # resolve at all, so answering `[]` there would be a claim nobody checked.
+    data_changes: Optional[list[LineDataChange]] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_absent_data_changes(self, handler):
+        """No key at all when there is no diff to report (S10)."""
+        data = handler(self)
+        if data.get("data_changes") is None:
+            data.pop("data_changes", None)
+        return data
 
 
 class PortalTagSheetDesignResponse(DesignMediaMixin):
@@ -948,18 +1004,32 @@ class AssetResponse(BaseModel):
 # Pinned change requests (r9 S2/D4-D6)
 # ---------------------------------------------------------------------------
 
+#: Long enough for anything a person types about one tag, short enough that a
+#: single request cannot post a novel into the column.
+REVIEW_COMMENT_MAX_LENGTH = 2000
+#: Pins in one round. A round is placed by hand, one click at a time.
+REVIEW_COMMENTS_MAX_PER_ROUND = 50
+
 
 class ReviewCommentPin(BaseModel):
-    """One pin as the portal sends it: an anchor on a TAG, and what to change."""
+    """One pin as the portal sends it: an anchor on a TAG, and what to change.
+
+    ``allow_inf_nan=False`` is not a nicety: ``float("nan")`` passes every
+    comparison (``0 <= nan <= 1`` is False, but ``nan < 0`` is False too), so a
+    hand-rolled range check lets it through, ``numeric(6,4)`` stores it, and
+    every later read of that request 500s on serialisation - permanently.
+    """
+
+    model_config = ConfigDict(allow_inf_nan=False)
 
     line_id: Optional[str] = None
     #: Fractions of the tag box, 0..1. Absent on a general comment.
-    x: Optional[float] = None
-    y: Optional[float] = None
+    x: Optional[float] = Field(None, ge=0, le=1)
+    y: Optional[float] = Field(None, ge=0, le=1)
     #: 0 for a point pin, > 0 for a box.
-    w: Optional[float] = None
-    h: Optional[float] = None
-    body: str
+    w: Optional[float] = Field(None, ge=0, le=1)
+    h: Optional[float] = Field(None, ge=0, le=1)
+    body: str = Field(..., max_length=REVIEW_COMMENT_MAX_LENGTH)
 
 
 class RequestChangesPayload(BaseModel):
@@ -967,10 +1037,16 @@ class RequestChangesPayload(BaseModel):
 
     ``note`` alone is the legacy body, accepted for one release and stored as a
     general comment, so a portal that has not reloaded still works.
+
+    Bounded on both axes: a round is a handful of pins somebody placed by hand,
+    so fifty is far past any real one and small enough that no single call can
+    write an unbounded number of rows.
     """
 
-    comments: list[ReviewCommentPin] = []
-    note: Optional[str] = None
+    comments: list[ReviewCommentPin] = Field(
+        default_factory=list, max_length=REVIEW_COMMENTS_MAX_PER_ROUND
+    )
+    note: Optional[str] = Field(None, max_length=REVIEW_COMMENT_MAX_LENGTH)
 
 
 class ReviewCommentResponse(BaseModel):
@@ -1008,28 +1084,6 @@ class ReviewCommentResolvePayload(BaseModel):
 # ---------------------------------------------------------------------------
 # The product data gate and the request's history (r9 S5/D18-D19)
 # ---------------------------------------------------------------------------
-
-
-class LineDataChange(BaseModel):
-    """One field master data has moved under a pinned tag (r9 D17)."""
-
-    field: str
-    label: str
-    old: Optional[str] = None
-    new: Optional[str] = None
-    old_image_url: Optional[str] = None
-    new_image_url: Optional[str] = None
-    #: Why the value moved, when that is not obvious ("Promotion ended").
-    note: Optional[str] = None
-
-
-class LineDataChangeSet(BaseModel):
-    """One line's worth of pending decision, named by its code not its id."""
-
-    line_id: str
-    code: str
-    name: str
-    changes: list[LineDataChange] = []
 
 
 class LinePinPayload(BaseModel):

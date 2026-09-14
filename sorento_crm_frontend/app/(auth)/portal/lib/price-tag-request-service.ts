@@ -426,10 +426,12 @@ export async function updateRequest(
  *
  * ```
  * POST /api/v1/public/portal/submissions/price_tag_request/{id}/collect
- *   200 { status: "collected", collected_at }
+ *   200 { status: "collected" }
  *   409 unless the request is `ready_for_collection`.
  * ```
  *
+ * The status and nothing else: the caller refetches the request, so a second
+ * copy of the timestamp here would be one more thing that can disagree.
  */
 export async function collectRequest(id: string): Promise<{ status: string }> {
   const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/collect`, {

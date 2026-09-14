@@ -12,11 +12,8 @@ so a data step is only testable by importing the revision and calling it.
 Revision ID: ptag_0008_pins_versions
 Revises: ptag_0007_print_collection
 """
-import json
-
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 revision = "ptag_0008_pins_versions"
@@ -24,71 +21,57 @@ down_revision = "ptag_0007_print_collection"
 branch_labels = None
 depends_on = None
 
-#: Statuses with nothing left to decide. A pin on one of these is dead weight:
-#: the gate never asks about a request nobody can act on.
-_TERMINAL = ("collected", "rejected", "void", "ready")
+#: Where a pin means something. A `new` request has not been claimed and
+#: nobody is drawing anything, so pinning it freezes master data against a
+#: design that does not exist; a finished one can decide nothing. The pin
+#: belongs to the statuses in between.
+_BACKFILL_STATUSES = ("designing", "changes_requested", "proof_ready", "approved")
 
 
 def backfill_pins(bind) -> int:
-    """Pin every line of every request that is still live (D16).
+    """Pin every line of every request somebody is still drawing (D16).
 
     Without this, an existing request in mid-design has no pin, so the gate has
     nothing to compare against and the first product edit walks onto the tag
     exactly as it did before. Pinning what the resolver answers TODAY means
     nothing changes visually on day one, which is the point.
 
-    Deliberately a light pin: the code, name and the two prices the resolver
-    would answer, read straight from the product row. The full resolve runs in
-    the service and needs the app's own scope machinery, which a migration does
-    not have - and the first Update replaces the pin with a full one anyway.
+    Through the REAL resolver, not a hand-rolled SELECT: every read path
+    answers the pin once one exists, so a pin holding only the code, the name
+    and the list price blanks the dimensions, the spec lines, the specs and the
+    photo on every tag mid-design at upgrade - and the diff then reports each of
+    those as a change. A set line has no `products` row at all, so a LEFT JOIN
+    pin leaves it empty and the tag goes blank. The resolver knows both.
 
     Returns how many lines were pinned.
     """
-    rows = bind.execute(
-        text(
-            """
-            SELECT l.id,
-                   p.product_code,
-                   p.product_name,
-                   p.list_price,
-                   p.barcode
-            FROM price_tag_request_lines l
-            JOIN price_tag_requests r ON r.id = l.request_id
-            LEFT JOIN products p ON p.id = l.product_id
-            WHERE l.pinned_tag_data IS NULL
-              AND r.status NOT IN :terminal
-            """
-        ).bindparams(sa.bindparam("terminal", expanding=True)),
-        {"terminal": list(_TERMINAL)},
-    ).fetchall()
+    from sqlalchemy.orm import Session
 
+    from app.models.base import set_company_scope
+    from app.models.price_tag import PriceTagRequest
+    from app.services.dealer_kit import tag_data_service
+
+    session = Session(bind=bind)
+    # A migration is not a request: it touches every company's rows, so the
+    # scope is "no predicate" rather than the fail-closed default (0 rows).
+    set_company_scope(session, None)
     pinned = 0
-    for line_id, code, name, list_price, barcode in rows:
-        payload = {
-            "line_id": str(line_id),
-            "code": code or "",
-            "name": name or "",
-            "dimensions": "",
-            "spec_lines": "",
-            "specs": [],
-            "set_members": "",
-            "images": [],
-            "list_price": float(list_price) if list_price is not None else None,
-            "sell_price": None,
-            "barcode": barcode,
-        }
-        bind.execute(
-            text(
-                """
-                UPDATE price_tag_request_lines
-                SET pinned_tag_data = CAST(:payload AS jsonb),
-                    pinned_at = now() AT TIME ZONE 'utc'
-                WHERE id = :line_id
-                """
-            ),
-            {"payload": json.dumps(payload), "line_id": str(line_id)},
+    try:
+        requests = (
+            session.query(PriceTagRequest)
+            .filter(PriceTagRequest.status.in_(_BACKFILL_STATUSES))
+            .all()
         )
-        pinned += 1
+        for request in requests:
+            pinned += tag_data_service.pin_lines(
+                session, request, only_unpinned=True
+            )
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
     return pinned
 
 

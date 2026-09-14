@@ -405,6 +405,15 @@ def portal_submit_price_tag_request(
     req.portal_draft_at = None
     req.status = STATUS_NEW
     db.flush()
+    db.commit()
+
+    # S9/D12: the copy table's first line. Submit is not a status transition -
+    # a submitted request keeps `new` until marketing claims it - so it is the
+    # one moment the transition notifier cannot cover, and the moment somebody
+    # most wants to hear that the form worked. After the commit, and before the
+    # auto-assign below can move the request on, so the salesperson reads the
+    # two messages in the order the events happened.
+    PriceTagRequestService.notify_submitted(db, req)
 
     # Fire form SLA.
     try:
@@ -506,14 +515,9 @@ def portal_request_changes(
     ``note`` alone (no pins) is the legacy body, accepted for one release and
     stored as one general comment.
     """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
-    req = PriceTagRequestService.get_request(db, request_id)
-    if not req or req.contact_id != token.contact_id:
-        raise AppException(
-            status_code=404,
-            message="Price tag request not found.",
-            code="NOT_FOUND",
-        )
+    req = _require_own_request(db, token, request_id)
     if req.status != STATUS_PROOF_READY:
         # Checked BEFORE anything is written: a design still being drawn cannot
         # be commented on, and a 409 that leaves rows behind is worse than no
@@ -534,7 +538,16 @@ def portal_request_changes(
     round_no = created[0].round if created else price_tag_review_service.current_round(
         db, req
     )
-    PriceTagRequestService.transition_status(db, request_id, STATUS_CHANGES_REQUESTED)
+    # S1: the round and the tally travel with the transition. Without them the
+    # bell dedups every later round against round 1 (so the assignee is told
+    # once, ever) and the salesperson's own confirmation cannot say how many
+    # change requests the one call carried.
+    PriceTagRequestService.transition_status(
+        db,
+        request_id,
+        STATUS_CHANGES_REQUESTED,
+        notify_ctx={"round": round_no, "count": len(created)},
+    )
     db.commit()
     return RequestChangesResponse(
         status=STATUS_CHANGES_REQUESTED,

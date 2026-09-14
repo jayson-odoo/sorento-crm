@@ -13,6 +13,7 @@ The status graph:
 ``ready`` is terminal - once exported, no further transitions.
 """
 import logging
+from typing import Optional
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import Integer, cast, func, or_
@@ -546,6 +547,14 @@ class PriceTagRequestService:
             from app.services.dealer_kit import tag_data_service
 
             tag_data_service.pin_lines(db, request, only_unpinned=True)
+        if new_status == STATUS_PROOF_READY:
+            # The review round is COUNTED here, not derived from the version
+            # history (D4/R1): the "Marked proof ready" snapshot is only
+            # written when a draft exists, and the designer's own CTA saves
+            # first, so the snapshot was usually skipped and every round came
+            # back as 1 - which deduplicated the assignee's bell away from the
+            # second round onward.
+            request.review_round = (request.review_round or 0) + 1
         # The hand-over's own timestamps (D9). `collected_by_*` is whoever did
         # it: a user here, a contact on the portal's own route, neither when the
         # sweep closes it.
@@ -580,6 +589,12 @@ class PriceTagRequestService:
                     exc_info=True,
                 )
 
+        # A message is a promise about the database, so the promise is made
+        # only once the database has kept it (S6): a notifier that fires before
+        # the commit can report a transition a later rollback throws away. The
+        # caller's own `db.commit()` afterwards is then a no-op.
+        db.commit()
+
         # D12/D13: EVERY transition reaches the salesperson, including the
         # confirmations of their own actions - a message that says "you
         # approved it" is how somebody knows the button worked. Through the
@@ -587,12 +602,23 @@ class PriceTagRequestService:
         # itself, so a messaging outage can never undo the transition.
         from app.services import price_tag_notify
 
-        try:
-            price_tag_notify.notify_salesperson(
-                db, request, new_status, **(notify_ctx or {})
+        ctx = dict(notify_ctx or {})
+        if new_status == STATUS_DESIGNING and not ctx.get("assignee"):
+            # R3: "is being designed by Aisyah", not "by the marketing team".
+            # Resolved here rather than at each caller because the two paths
+            # set the assignee at different moments - Claim writes it before
+            # the transition, the tracker's auto-assign after it - and both
+            # hand this the same user id.
+            ctx["assignee"] = PriceTagRequestService.user_display_name(
+                db, request.assigned_to_id or user_id
             )
+        try:
+            price_tag_notify.notify_salesperson(db, request, new_status, **ctx)
             price_tag_notify.ring_assignee(
-                db, request, new_status, round_no=(notify_ctx or {}).get("round", 1)
+                db,
+                request,
+                new_status,
+                round_no=ctx.get("round") or request.review_round or 1,
             )
         except Exception:
             # The notifier guards itself too; this is the belt for a caller
@@ -604,6 +630,41 @@ class PriceTagRequestService:
             )
 
         return request
+
+    @staticmethod
+    def user_display_name(db: Session, user_id: Optional[str]) -> Optional[str]:
+        """A staffer as a person reads them: their name, else their email."""
+        if not user_id:
+            return None
+        from app.models.user import User
+
+        user = db.query(User).filter(User.id == user_id).first()
+        return (user.name or user.email) if user else None
+
+    @staticmethod
+    def collected_by_name(db: Session, request: PriceTagRequest) -> Optional[str]:
+        """Who took the tags, as a person reads it (D9/S3).
+
+        The staffer who ticked it off, the salesperson who confirmed on the
+        portal, or nobody at all when the sweep closed it - which is a real
+        answer, not a missing one, and the card says so in its own words.
+        """
+        if request.collected_auto:
+            return None
+        if request.collected_by_user_id:
+            return PriceTagRequestService.user_display_name(
+                db, request.collected_by_user_id
+            )
+        if request.collected_by_contact_id:
+            from app.models.access import RespondContact
+
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.id == request.collected_by_contact_id)
+                .first()
+            )
+            return (contact.name or contact.phone_number) if contact else None
+        return None
 
     @staticmethod
     def is_terminal(request: PriceTagRequest) -> bool:
@@ -656,9 +717,26 @@ class PriceTagRequestService:
             # Nobody did this, so nobody is recorded as having done it.
             request.collected_by_user_id = None
             request.collected_by_contact_id = None
-        if stale:
-            db.flush()
-            db.commit()
+        if not stale:
+            return 0
+
+        db.flush()
+        db.commit()
+
+        # The one transition nobody is present for is the one the salesperson
+        # most needs told: their tags were closed overnight (B3). Same copy
+        # table, with the context that makes its auto line read correctly.
+        from app.services import price_tag_notify
+
+        for request in stale:
+            try:
+                price_tag_notify.notify_salesperson(
+                    db, request, STATUS_COLLECTED, auto=True, days=days
+                )
+            except Exception:
+                logger.warning(
+                    "Auto-collect notification failed for %s", request.id, exc_info=True
+                )
         return len(stale)
 
     @staticmethod
@@ -716,6 +794,26 @@ class PriceTagRequestService:
 
         # D-P2 (owner ruling): Selling with no promotion is a valid end state
         # now - the PRICE_MODE_NEEDS_PROMOTION guard is retired.
+
+    @staticmethod
+    def notify_submitted(db: Session, request: PriceTagRequest) -> None:
+        """Tell the salesperson their request landed (D12's first line, S9).
+
+        Submit is not a status transition - a submitted request keeps `new`
+        until marketing claims it - so it is the one moment the transition
+        notifier cannot cover, and the moment somebody most wants to hear that
+        the form worked.
+        """
+        from app.services import price_tag_notify
+
+        try:
+            price_tag_notify.notify_salesperson(db, request, "submitted")
+        except Exception:
+            logger.warning(
+                "Submit notification failed for price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
 
     @staticmethod
     def validate_claimable(request: PriceTagRequest) -> None:
@@ -944,6 +1042,9 @@ class PriceTagRequestService:
         from app.services.entity_attachment_service import list_attachments_for_entity
 
         response = PriceTagRequestResponse.model_validate(request)
+        response.collected_by_name = PriceTagRequestService.collected_by_name(
+            db, request
+        )
         resolved = {
             row["line_id"]: row
             for row in tag_data_service.resolve_request_line_data(db, request)

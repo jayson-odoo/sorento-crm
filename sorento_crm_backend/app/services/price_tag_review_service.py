@@ -18,6 +18,7 @@ service instead of in whichever endpoint needed them first:
 from __future__ import annotations
 
 import logging
+import math
 import uuid
 from datetime import datetime
 from typing import Iterable, Optional
@@ -36,11 +37,17 @@ PROOF_READY_COMMIT_MESSAGE = "Marked proof ready"
 
 
 def _fraction(value, field: str) -> Optional[float]:
-    """A fraction of the tag box, or a 422 naming the field."""
+    """A fraction of the tag box, or a 422 naming the field.
+
+    ``math.isfinite`` first, and not as a nicety: ``nan`` fails every
+    comparison, so ``number < 0 or number > 1`` waves it through, the
+    ``numeric(6,4)`` column stores it, and every later read of that request
+    500s on serialisation - permanently, with no way back through the UI.
+    """
     if value is None:
         return None
     number = float(value)
-    if number < 0 or number > 1:
+    if not math.isfinite(number) or number < 0 or number > 1:
         raise AppException(
             status_code=422,
             message=f"{field} must be a fraction of the tag between 0 and 1.",
@@ -52,11 +59,19 @@ def _fraction(value, field: str) -> Optional[float]:
 def current_round(db: Session, request: PriceTagRequest) -> int:
     """How many proofs this design has been through, at least one.
 
-    A request whose page carries no ``Marked proof ready`` snapshot is still on
-    its first round - the design was sent by a path that predates the snapshot
-    (or by the seed of a test), and numbering it 0 would read as "before the
-    first round" rather than "during it".
+    The counter on the request (D4/R1). It used to be derived from the
+    ``Marked proof ready`` snapshots, and that snapshot is only written when a
+    draft exists - the designer's own CTA saves first, so the send skipped it
+    and every round after the first was numbered 1.
+
+    A request whose counter is still 0 reached proof_ready before the counter
+    existed (every row at deploy) and is read the old way, which is the only
+    history those rows have. A request with neither is on its first round:
+    numbering it 0 would read as "before the first round" rather than "during
+    it".
     """
+    if request.review_round:
+        return request.review_round
     if not request.page_id:
         return 1
     proofs = (
@@ -96,6 +111,10 @@ def create_comments(
 
     round_no = current_round(db, request)
     created: list[PriceTagReviewComment] = []
+    # A pin points at a line of THIS request. A foreign id is either a typo or
+    # somebody reaching across requests; either way it is refused rather than
+    # stored (or left to blow up on the FK at commit).
+    own_lines = {line.id for line in request.lines}
 
     for pin in pins:
         body = (pin.get("body") or "").strip()
@@ -105,11 +124,18 @@ def create_comments(
                 message="A pin with no comment says nothing.",
                 code="EMPTY_CHANGE_REQUEST",
             )
+        line_id = pin.get("line_id")
+        if line_id is not None and line_id not in own_lines:
+            raise AppException(
+                status_code=422,
+                message="That pin does not point at a line of this request.",
+                code="INVALID_PIN",
+            )
         created.append(
             PriceTagReviewComment(
                 id=str(uuid.uuid4()),
                 request_id=request.id,
-                line_id=pin.get("line_id"),
+                line_id=line_id,
                 round=round_no,
                 x=_fraction(pin.get("x"), "x"),
                 y=_fraction(pin.get("y"), "y"),

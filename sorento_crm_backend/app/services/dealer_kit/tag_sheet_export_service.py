@@ -334,7 +334,12 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
         return _resolved_payload(db, inputs)
 
 
-def design_media(db: Session, request, doc: Optional[dict]) -> tuple[list[dict], dict]:
+def design_media(
+    db: Session,
+    request,
+    doc: Optional[dict],
+    rows: Optional[list[dict]] = None,
+) -> tuple[list[dict], dict]:
     """Everything a tag sheet needs to DRAW itself, resolved once (r9 S1/D1).
 
     Returns ``(rows, media)``: the resolver's own line rows, and the three maps
@@ -346,14 +351,19 @@ def design_media(db: Session, request, doc: Optional[dict]) -> tuple[list[dict],
     the two previews painted a grey box for every image layer and fell back to
     a system sans for every brand face - the same document, drawn three
     different ways. A second resolver anywhere here is how that comes back.
+
+    ``rows`` is for the one caller whose lines do not come from the request as
+    it stands now: a VERSION draws the pins it was written with (D19/S2), and
+    the media maps then have to be built from those rows rather than today's.
     """
     from app.services.dealer_kit import asset_service, tag_data_service
 
-    rows = (
-        list(tag_data_service.resolve_request_line_data(db, request))
-        if request is not None
-        else []
-    )
+    if rows is None:
+        rows = (
+            list(tag_data_service.resolve_request_line_data(db, request))
+            if request is not None
+            else []
+        )
     images: dict[str, str] = {}
     for row in rows:
         for image in row["images"]:
@@ -382,29 +392,29 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
 
     for row in rows:
         resolved_data[row["line_id"]] = {
-                "line_id": row["line_id"],
-                "code": row["code"],
-                "name": row["name"],
-                "dimensions": row["dimensions"],
-                "spec_lines": row["spec_lines"],
-                # Key by key, so a `{{spec.<key>}}` in a saved tag resolves in
-                # the PDF exactly as it did on the canvas (D58).
-                "specs": row["specs"],
-                "set_members": row["set_members"],
-                # Money leaves as a number the browser can format. The Decimal
-                # arithmetic already happened, in the pricing engine.
-                "list_price": _as_float(row["list_price"]),
-                "sell_price": _as_float(row["sell_price"]),
-                "show_promo_price": row["show_promo_price"],
-                "included_accessories": row["included_accessories"],
-                "quantity": row["quantity"],
-                # The barcode layer's binding (S7); null for a set line.
-                "barcode": row["barcode"],
-                # The photos themselves, not just their ids: a product-photo
-                # slot follows the product's PRIMARY photo when the template
-                # pinned none (D42), and only this list says which that is.
-                "images": row["images"],
-            }
+            "line_id": row["line_id"],
+            "code": row["code"],
+            "name": row["name"],
+            "dimensions": row["dimensions"],
+            "spec_lines": row["spec_lines"],
+            # Key by key, so a `{{spec.<key>}}` in a saved tag resolves in
+            # the PDF exactly as it did on the canvas (D58).
+            "specs": row["specs"],
+            "set_members": row["set_members"],
+            # Money leaves as a number the browser can format. The Decimal
+            # arithmetic already happened, in the pricing engine.
+            "list_price": _as_float(row["list_price"]),
+            "sell_price": _as_float(row["sell_price"]),
+            "show_promo_price": row["show_promo_price"],
+            "included_accessories": row["included_accessories"],
+            "quantity": row["quantity"],
+            # The barcode layer's binding (S7); null for a set line.
+            "barcode": row["barcode"],
+            # The photos themselves, not just their ids: a product-photo
+            # slot follows the product's PRIMARY photo when the template
+            # pinned none (D42), and only this list says which that is.
+            "images": row["images"],
+        }
 
     return {
         "doc": doc,

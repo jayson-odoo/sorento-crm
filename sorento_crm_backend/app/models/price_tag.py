@@ -157,6 +157,11 @@ class PriceTagRequest(Base, CompanyScopedMixin):
         Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
     )
     collected_auto = Column(Boolean, nullable=False, server_default="false")
+    # How many proofs this design has been sent for review (r9 D4). COUNTED,
+    # not derived: the "Marked proof ready" snapshot it used to be read from is
+    # skipped whenever the designer saved first, so every round came back as 1.
+    # 0 means it has never been sent - the first proof_ready makes it 1.
+    review_round = Column(Integer, nullable=False, server_default="0", default=0)
 
     lines = relationship(
         "PriceTagRequestLine",

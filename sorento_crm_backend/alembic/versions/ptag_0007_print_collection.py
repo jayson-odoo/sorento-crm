@@ -129,7 +129,14 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True),
+        sa.Column(
+            "company_id",
+            postgresql.UUID(as_uuid=False),
+            # The mixin's own column carries this FK; a table created without
+            # it takes rows the rest of the schema would refuse.
+            sa.ForeignKey("companies.id"),
+            nullable=True,
+        ),
     )
     op.create_index(
         "ix_ptag_review_comments_request_id",
@@ -182,6 +189,17 @@ def upgrade() -> None:
         ),
     )
 
+    # --- S2/D4: the review round, counted not derived -----------------------
+    # Derived from the "Marked proof ready" snapshots, the round never moved:
+    # that snapshot is only written when a draft exists, and the designer's own
+    # CTA saves first, so the send usually skipped it - every round came back
+    # as 1, the assignee's bell deduplicated every later round away and the
+    # salesperson's confirmation counted the wrong send.
+    op.add_column(
+        "price_tag_requests",
+        sa.Column("review_round", sa.Integer(), nullable=False, server_default="0"),
+    )
+
     # --- S3/D10: how long an untouched hand-over waits ----------------------
     op.add_column(
         "system_settings",
@@ -205,6 +223,7 @@ def downgrade() -> None:
     )
     op.drop_column("system_settings", "price_tag_auto_collect_days")
     for column in (
+        "review_round",
         "collected_auto",
         "collected_by_contact_id",
         "collected_by_user_id",
