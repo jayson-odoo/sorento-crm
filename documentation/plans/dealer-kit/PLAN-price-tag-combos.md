@@ -1,6 +1,6 @@
 # PLAN - Price tag combos: catalogue packages on the request, one line, many tags
 
-Status: Grilled 14 Sep 2026 (lavish, four rounds, owner GO "ok good to go"); lane cut off db9528463 (c15766169); issues S1 #896, S2 #897, S3 #898, S4 #899; Phase 1 S1 next
+Status: Grilled 14 Sep 2026 (lavish, four rounds, owner GO "ok good to go"); lane cut off db9528463 (c15766169); issues S1 #896, S2 #897, S3 #898, S4 #899; Phase 1 S1 18b2bc9c1, S2 c5fac4be1, S3 dedf1cb5d done; tester red tests next
 UAC: `documentation/plans/dealer-kit/price-tag-combos-acceptance-criteria.md`
 Predecessors: `PLAN-price-tag-r7-request-ux.md` (D3 hid alternatives), r9 `PLAN-price-tag-r9-review-loop.md` (in flight, pins keyed by line)
 Grill artifact: `.lavish/combo/product-combo-alignment.html` (session ended by owner)
@@ -72,9 +72,12 @@ All line refs are `origin/main` at ae0831776 unless a worktree is named.
   `user_management/settings.py` update model `:20`, manual GET dict from `:238` (must carry
   every new column, `:243`), write impl `:482`; FE `settings/page.tsx:330-357` payload map,
   list-valued read precedent `settings/layout.tsx:106-107`.
-- **Alembic.** Main head `515_chatbot_offer_decline`, single. Price tag chain is
-  `ptag_000N_<slug>`; r9 adds `ptag_0007_print_collection` (off `510`) and
-  `ptag_0008_pins_versions` and will re-parent at its pre-PR gate.
+- **Alembic.** Main head is `510_spec_visibility_policies` (single; it chains AFTER
+  `515_chatbot_offer_decline`, the number is a misnomer). Price tag chain is
+  `ptag_000N_<slug>`; r9 adds `ptag_0007_print_collection` (off `510_spec_visibility_policies`,
+  so already on the head) and `ptag_0008_pins_versions`. Lane pytest DB `sorento_ptagc_ci`
+  (clone of `_tg`, owner sorento_crm, upgraded to head); lane `.env` reads
+  `DATABASE_URL=${PTAGC_DB_URL:-<shared 0907>}`.
 - **r9 (worktree `.claude/worktrees/price-tag-r9`) keys by line:**
   `price_tag_review_comments.line_id` (nullable FK, index `ix_ptag_review_comments_line_id`),
   `price_tag_request_lines.pinned_tag_data` (JSONB, embeds `"line_id"`), `pinned_at`,
@@ -275,9 +278,9 @@ Migration `ptag_0009_combos_tags` (revision id 21 chars):
    migration (recorded in r9's plan Status line at that time).
 4. drop `lines.alternatives`, `lines.marketing_price_override`,
    `lines.marketing_override_reason`.
-Down-revision: main head at cut time; `scripts/alembic-reparent.sh` at the pre-PR gate.
-Expected merge order: r9 first (it is in Phase 3), so `down_revision` will land on
-`ptag_0008_pins_versions`.
+Down-revision: `510_spec_visibility_policies` at cut time; `scripts/alembic-reparent.sh` at the
+pre-PR gate. Expected merge order: r9 first (it is in Phase 3), so `down_revision` will land
+on `ptag_0008_pins_versions`.
 
 ### D4 What prints (S4)
 
