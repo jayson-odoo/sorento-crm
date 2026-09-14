@@ -74,7 +74,9 @@ order does today.
 - **AC-S2-7 [BE]** Given an open line with a live inquiry row (state not `cancelled`, ack_state
   not `rejected`) and no active decision, then the row reads `covered` true, `decision` null,
   `order_inquiry` naming the inquiry, `proposal` empty, and it is excluded from
-  `confirmLinesFor` and from the pile queue.
+  `confirmLinesFor`. Its OWN share fields are null (it stands in no queue), but the line is
+  NOT removed from other lines' competing demand: it holds no stock, so `_decided_elsewhere`
+  is untouched - see PLAN note 5 under "What changes in the planning engine".
 - **AC-S2-8 [BE]** Given a line whose only inquiry row is `cancelled`, or whose row purchasing
   rejected and CS has not answered, then it is admitted as undecided and proposed for.
 - **AC-S2-9 [BE]** Given the confirm endpoint receives components for an admitted delivered line,
@@ -109,6 +111,13 @@ order does today.
   (Found on the lane's own browser walk, 14 Sep: three `Save all suggested` PUTs 422'd on a
   Completed order whose board had proposed Buy on every line, which blocks the whole of
   AC-E2E-1 after the board renders.)
+- **AC-S2-17 [BE]** Given a saved suggestion on a line, then it reads `stale` when THE ASK
+  changed, and the ask is the plan quantity: a change to `qty_ordered` (or `qty_required`)
+  makes it stale, and a part delivery does not - the planner was looking at the plan quantity
+  and a delivery does not move it. The snapshot `project_line_draft_service._line_snapshot`
+  writes and its reader `sales_order_service._saved_is_stale` both read the plan quantity, and
+  they move together: one side alone and every existing draft reads stale on the next board
+  build. `required_date` is unchanged as the second half of the comparison.
 
 ### S3 - The board reads right [FE]
 
