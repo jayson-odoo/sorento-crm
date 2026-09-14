@@ -1284,6 +1284,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   const so = data;
   const lineCount = so.line_count ?? lines.length;
+  // How far the order has been planned, in the same chip the list carries.
+  const plannedBadge = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
 
   const handleSave = async () => {
@@ -1384,14 +1386,13 @@ export function SalesOrderDetail({ id }: { id: string }) {
                     confused with. The SAME chip the list carries, in the header rather than a
                     tab body because it is read-only metadata about the whole record - so view
                     and edit show it identically, with nothing to change about it here. */}
-                {(() => {
-                  const planned = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
-                  return (
-                    <Badge variant={planned.variant} appearance="light" size="md">
-                      {planned.label}
-                    </Badge>
-                  );
-                })()}
+                <Badge
+                  variant={plannedBadge.variant}
+                  appearance="light"
+                  size="md"
+                >
+                  {plannedBadge.label}
+                </Badge>
               </div>
               {/* Read-only metadata belongs in the header, not a tab body - the project the
                   order carries, resolved from whichever source ranked highest. Nothing when

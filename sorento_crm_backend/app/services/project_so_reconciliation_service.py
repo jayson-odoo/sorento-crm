@@ -56,7 +56,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1667,17 +1667,52 @@ class ProjectSOReconciliationService:
         ]
 
     def _authored_line_totals(self, order_ids: Sequence[str]) -> Dict[str, Tuple]:
+        """This arm's `earliest_required_date`, `outstanding_qty` and `open_line_count`.
+
+        THE SAME QUESTION ARM 1 ASKS, off the mirror instead of the core book, because these
+        records have no outstanding core order to read. Arm 1 aggregates
+        `min(required_date)`, `sum(demand_qty())` and `count(*)` over lines passing
+        `is_open_demand()`; a row here that counted a different population would print a
+        larger outstanding figure beside arm 1's on the same screen.
+
+        A mirror line RECONCILED to a core line is measured on that core line, exactly as arm
+        1 measures it, and a still-owed line is the only kind that counts. An UNRECONCILED
+        line keeps its own `qty` and delivery date: there is no book behind it, which is the
+        whole reason an authored record exists.
+
+        Unfiltered until the 14 September 2026 ruling, and correct while it was: adoption
+        only ever mirrored `is_open_demand()` lines, so every mirror line was a still-owed
+        one by construction. `adopt` now mirrors delivered undecided lines too - the board
+        has to be able to confirm them - so the filter has to be said out loud.
+        """
         ids = [str(value) for value in order_ids if value]
         if not ids:
             return {}
+        owed_date = func.coalesce(
+            SalesOrderLine.required_date, ProjectSalesOrderLine.delivery_date
+        )
+        owed_qty = func.coalesce(demand_qty(), ProjectSalesOrderLine.qty)
         rows = (
             self.db.query(
                 ProjectSalesOrderLine.project_sales_order_id,
-                func.min(ProjectSalesOrderLine.delivery_date),
-                func.sum(ProjectSalesOrderLine.qty),
+                func.min(owed_date),
+                func.sum(owed_qty),
                 func.count(ProjectSalesOrderLine.id),
             )
-            .filter(ProjectSalesOrderLine.project_sales_order_id.in_(ids))
+            .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id.in_(ids),
+                # Reconciled: it counts only while the core line is still owed. Unreconciled
+                # (`core_sales_order_line_id` null): it is this record's own line and always
+                # counts, because the mirror IS the book for it.
+                or_(
+                    ProjectSalesOrderLine.core_sales_order_line_id.is_(None),
+                    is_open_demand(),
+                ),
+            )
             .group_by(ProjectSalesOrderLine.project_sales_order_id)
             .all()
         )

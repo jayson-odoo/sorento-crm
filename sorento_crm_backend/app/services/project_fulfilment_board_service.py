@@ -1543,7 +1543,11 @@ class FulfilmentBoardService:
             .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
             .filter(
                 SalesOrder.so_number.in_(list(so_numbers)),
-                SalesOrder.status == "open",
+                # THE SAME HEADER `_demand_rows` ADMITS. A closed order's pending change was
+                # invisible here while the board shows the order itself, so the one line
+                # this read exists for - the one ordinary demand cannot see - vanished on
+                # exactly the completed orders this lane put on screen.
+                SalesOrder.status.in_(["open", "closed"]),
                 SalesOrder.demand_class == "project",
                 (SalesOrderLine.line_status != "open") | (demand_qty() <= 0),
                 PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_PENDING,
@@ -1569,7 +1573,10 @@ class FulfilmentBoardService:
             # instead, which is the fact this read exists to carry.
             standing = already_admitted.get(str(core_line.id))
             if standing is not None:
-                standing.cancelled = change_row.kind == "cancelled"
+                # The BATCH only. `cancelled` is left alone: on an admitted row it is the
+                # read-only-at-zero state this read gives a line `_demand_rows` cannot see,
+                # and stamping it on a line the ladder has just proposed for would print
+                # "Cancelled" over a live Buy.
                 standing.pending_change_batch_id = str(change_row.batch_id)
                 continue
             customer_id = str(order.customer_id) if order.customer_id else None
@@ -1759,9 +1766,11 @@ class FulfilmentBoardService:
         # standing, because the second was skipped wholesale; the cell should show the
         # inquiry it was last told about.
         answered_refusal_at: Dict[str, Optional[datetime]] = {}
-        # ANY live row on the line, not the current instruction alone: a line whose newest
-        # row was cancelled can still carry one that stands.
-        live_core_ids: Set[str] = set()
+        # The NEWEST LIVE row per line, and its own payload. A line whose newest row was
+        # cancelled can still carry one that stands, and when it does that row is both what
+        # decides the line AND what the cell must name - a number off the cancelled row
+        # beside a read-only "decided" would send CS to an instruction nobody holds.
+        live_entry: Dict[str, Dict[str, Any]] = {}
         for (
             core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name,
             supply_decision_id,
@@ -1772,7 +1781,14 @@ class FulfilmentBoardService:
                 and state != INQUIRY_CANCELLED
                 and ack_state != ACK_REJECTED
             ):
-                live_core_ids.add(core_key)
+                # Rows arrive oldest first, so the last one seen is the newest.
+                live_entry[core_key] = {
+                    "inquiry_no": inquiry_no,
+                    "state": state,
+                    "ack_state": ack_state,
+                    "rejected_reason": None,
+                    "rejected_by_name": None,
+                }
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
             )
@@ -1821,8 +1837,15 @@ class FulfilmentBoardService:
             entry["ack_state"] = ACK_REJECTED
             entry["rejected_reason"] = reason
             entry["rejected_by_name"] = name
+        # A LINE WITH A LIVE INSTRUCTION IS ABOUT THAT INSTRUCTION. It replaces whatever
+        # last-wins left standing, so the number the cell prints is the row that decides the
+        # line and not a cancelled or refused one that happened to be written after it. A
+        # refusal recorded above is dropped with it, for the same reason an answered one is:
+        # the line has a live instruction, so the objection is not what it is about.
+        for core_key, live in live_entry.items():
+            out[core_key] = {**live, "_decides_line": True}
         for core_key, entry in out.items():
-            entry["_decides_line"] = core_key in live_core_ids
+            entry.setdefault("_decides_line", False)
         return out
 
     def _frozen_decisions(
@@ -5062,8 +5085,12 @@ class FulfilmentBoardService:
         pending_core_lines: Set[str] = set()
         for so_id, pso_id, batch_id, _created_at, core_line_id in rows:
             adopted_by_so[str(so_id)] = str(pso_id)
-            if batch_id:
-                pending_by_so.setdefault(str(so_id), str(batch_id))
-                if core_line_id:
-                    pending_core_lines.add(str(core_line_id))
+            if not batch_id:
+                continue
+            pending_by_so.setdefault(str(so_id), str(batch_id))
+            # THE BATCH THAT WON, not every pending batch the order has. `pending_by_so` is
+            # the newest one and the Changed badge opens the board on it, so a line whose
+            # only pending row belongs to an OLDER batch is not a line this board is about.
+            if core_line_id and pending_by_so[str(so_id)] == str(batch_id):
+                pending_core_lines.add(str(core_line_id))
         return adopted_by_so, pending_by_so, pending_core_lines

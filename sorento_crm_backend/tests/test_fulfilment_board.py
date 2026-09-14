@@ -7772,3 +7772,46 @@ def test_selection_of_only_cancelled_or_covered_lines_is_an_empty_board():
 
         assert board["line_count"] == 0
         assert board["cells"] == []
+
+
+def test_a_delivered_line_does_not_inflate_its_groups_offer():
+    """Review round 1, S3. `_group_offer` un-nets THIS line's own quantity because the group
+    net has already subtracted it - and what the net subtracted is `demand_qty()`, which is
+    what is STILL OWED.
+
+    So the figure added back has to be the owed one. This line is 24 ordered and 24
+    delivered, so the net never counted it at all and the group reads a clean 9 (10 on hand
+    against an earlier order's 1). Un-netting the PLAN quantity would add a free 24 on top:
+    `max(9 + 24, 0)` = 33 offered where the group holds 10.
+
+    Asserted on `group_offer` itself, because that is the number the mistake changes - a
+    proposal read off it can come out the same by other constraints and hide the defect.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+
+    with blank_session() as db:
+        _group, product, own, mine = _group_world(
+            db, on_hand=10, other_qty=1, own_qty="24"
+        )
+        line = (
+            db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == mine.id)
+            .one()
+        )
+        line.qty_delivered = Decimal("24")
+        line.line_status = "closed"
+        db.flush()
+        record, mirrors = _mirror(db, mine, [line])
+        db.commit()
+
+        fact = ProjectSupplyService(db)._facts_for(record, mirrors)[str(mirrors[0].id)]
+
+        assert fact.open_qty == Decimal("24"), "it is still PLANNED at its ordered quantity"
+        assert fact.owed_qty == Decimal("0"), "and owed nothing, because it all shipped"
+        assert fact.group_net == Decimal("9"), (
+            "10 on hand against the other order's 1; this line weighs nothing"
+        )
+        assert fact.group_offer == Decimal("9"), (
+            "the group offers what it holds; un-netting the plan quantity offered 33"
+        )
+        assert str(own.warehouse_code).endswith(fact.group_code or "")

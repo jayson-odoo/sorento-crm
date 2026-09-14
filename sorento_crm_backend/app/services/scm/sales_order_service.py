@@ -1404,7 +1404,10 @@ class SalesOrderService:
                 source_system="manual",
             ))
         self.db.commit()
-        return self.serialize(self._get_or_404(so.id))
+        # The POST answers with the same shape the list and the detail do, planning counts
+        # included: the frontend puts this row straight into its cache, and a row missing
+        # the two fields renders the Planned pill as a dash until something refetches.
+        return self.with_planning_state([self.serialize(self._get_or_404(so.id))])[0]
 
     def update(self, so_id: str, data, user_id: Optional[str]) -> dict:
         so = self._get_or_404(so_id)

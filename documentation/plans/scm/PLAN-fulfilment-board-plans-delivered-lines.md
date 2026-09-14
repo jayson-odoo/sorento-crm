@@ -211,6 +211,13 @@ Two things the build found that this section did not say (coder, 14 Sep 2026):
    Removing it from other lines' competing demand would release stock still owed to this line's
    customer; AC-S2-7's "not in the pile queue" is met on the row itself, through `_apply_frozen`
    nulling its own share fields.
+6. **The group offer un-nets what is STILL OWED, not the plan quantity** (review round 1).
+   `_group_offer` adds this line's own quantity back because the group net already subtracted
+   it, and what the net subtracts is `demand_qty()` - so a line 24 ordered and 24 delivered
+   contributed nothing and un-netting its plan quantity would hand its group a free 24 it
+   does not have (offer 33 where it holds 10). `_LineFacts` carries `owed_qty` beside
+   `open_qty` for that one piece of arithmetic; every other reader wants the ask.
+
 
 ## Out of scope, named
 

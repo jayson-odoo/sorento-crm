@@ -443,7 +443,7 @@ def plan_qty_of(core: Optional[SalesOrderLine]) -> Decimal:
     """
     if core is None or (core.line_status or "open") == "cancelled":
         return _ZERO
-    required = getattr(core, "qty_required", None)
+    required = core.qty_required
     return max(_dec(core.qty_ordered if required is None else required), _ZERO)
 
 
@@ -602,6 +602,14 @@ class _LineFacts:
     item_code: Optional[str] = None
     product_id: Optional[str] = None
     open_qty: Decimal = _ZERO
+    #: What is still owed the CUSTOMER on this line, floored at zero (`_open_of`).
+    #:
+    #: `open_qty` above is what the line ASKS FOR - the plan quantity since the 14 September
+    #: 2026 ruling - and the two differ on any line with a delivery. This one exists for the
+    #: arithmetic that has to agree with the NETTING engine, which counts `demand_qty()`:
+    #: see `_group_offer`, where un-netting the plan quantity would add back more than was
+    #: ever subtracted.
+    owed_qty: Decimal = _ZERO
     required_date: Optional[date] = None
     warehouse: Optional[Warehouse] = None
     pool: Optional[Warehouse] = None
@@ -677,9 +685,10 @@ class _LineFacts:
     #: while the IB group nets -15514, because those 7000 are already owed at `BRW-IB`.
     group_net: Decimal = _ZERO
     pools_net: Decimal = _ZERO
-    #: What the group's net leaves for THIS line: `max(group_net + its own open quantity,
-    #: 0)`. See `ProjectSupplyService._group_offer` for the rule and for the consequence it
-    #: carries: while a group cannot cover its own book, no line of it takes its stock.
+    #: What the group's net leaves for THIS line: `max(group_net + its own STILL-OWED
+    #: quantity, 0)`. See `ProjectSupplyService._group_offer` for the rule, for why the
+    #: un-net is `owed_qty` and not `open_qty`, and for the consequence it carries: while a
+    #: group cannot cover its own book, no line of it takes its stock.
     group_offer: Decimal = _ZERO
     #: Ladder v7.1: the CORE sales-order line ids of the planning UNIT this fact stands
     #: for. A unit of one is its own line; `_unit_fact` stamps every member's for a unit of
@@ -1885,12 +1894,17 @@ class ProjectSupplyService:
                 first.unit_core_line_ids = member_ids
             return first
         total = sum((max(_dec(fact.open_qty), _ZERO) for _key, fact in members), _ZERO)
+        # The unit's own STILL-OWED total, summed separately: `_group_offer` un-nets this
+        # one and not the ask, for the reason its docstring gives. On a unit whose members
+        # have no delivery the two are the same number, which is nearly every unit.
+        owed_total = sum((max(_dec(fact.owed_qty), _ZERO) for _key, fact in members), _ZERO)
         unit = dataclass_replace(
             first,
             open_qty=total,
+            owed_qty=owed_total,
             unit_core_line_ids=member_ids,
             group_offer=(
-                max(first.group_net + total, _ZERO)
+                max(first.group_net + owed_total, _ZERO)
                 if first.group_code
                 else first.group_offer
             ),
@@ -3653,13 +3667,20 @@ class ProjectSupplyService:
         alone on exactly the stock it needs would read a net of zero and buy stock that is
         sitting there waiting for it. Every OTHER line's demand stays netted.
 
+        WHAT IS UN-NETTED IS `owed_qty`, NOT `open_qty`. The group net is the netting
+        engine's own figure and it counts `demand_qty()` - what is STILL OWED - so adding
+        back the plan quantity would return more than was ever subtracted: a line 3 ordered
+        and 3 delivered contributed nothing to the net and would have handed its group a
+        free 3, offering stock the group does not have. The two were the same number until
+        the 14 September 2026 ruling split them.
+
         THE CONSEQUENCE, named rather than buried: on a group whose book runs ahead of its
         stock, EVERY line of that group buys - the line at the front of the queue included.
         1,015 on hand against 9,080 owed proposes a Buy for the 80 at the front as well as
         for the 9,000 behind it. That is the rule as ruled: while the group is short, its
         stock is not promised to anybody in particular, and whoever ships first uses it.
         """
-        return max(group.net + max(_dec(fact.open_qty), _ZERO), _ZERO)
+        return max(group.net + max(_dec(fact.owed_qty), _ZERO), _ZERO)
 
     def _pool_allowances(self, fact: _LineFacts) -> Dict[str, str]:
         """`{warehouse_id: available_for_project}` for every site pool this line's own
@@ -7435,6 +7456,7 @@ class ProjectSupplyService:
                 item_code=codes.get(product_id or ""),
                 product_id=product_id,
                 open_qty=plan_qty_of(core),
+                owed_qty=_open_of(core),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,

@@ -649,7 +649,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
       },
       {
         id: 'planned',
-        accessorFn: (row) => row.planned_lines ?? 0,
         // A PLAIN TITLE, not `DataGridColumnHeader` (AC-S4-8). That primitive renders a
         // button whatever `enableSorting` says, so the header read as a control that does
         // nothing when clicked.

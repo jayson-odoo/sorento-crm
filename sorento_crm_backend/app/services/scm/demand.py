@@ -24,7 +24,7 @@ finds the other.
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 
 from app.models.order import SalesOrder, SalesOrderLine
 
@@ -210,8 +210,8 @@ def is_undecided_demand():
     The two predicates diverge on purpose and BOTH stay (AC-S2-11), the way
     `_cancelled_pending_change_rows` already diverges for pending changes. Whether an active
     decision or a live inquiry row covers the line is a separate question this does not ask -
-    that is `decided_core_line_ids_with_inquiries()`, because a decided line stays ON the
-    board, read-only, rather than being filtered out of it.
+    that is `is_decided_demand()`, because a decided line stays ON the board, read-only,
+    rather than being filtered out of it.
     """
     return (
         SalesOrderLine.line_status.is_distinct_from("cancelled")
@@ -220,7 +220,7 @@ def is_undecided_demand():
     )
 
 
-def live_inquiry_core_line_ids(core_line_ids=None):
+def live_inquiry_core_line_ids():
     """The core lines a LIVE order inquiry row already names.
 
     Live means the row still stands: its state is not `cancelled` and purchasing has not
@@ -228,20 +228,30 @@ def live_inquiry_core_line_ids(core_line_ids=None):
     went away. Reached through the mirror line, because an inquiry row is keyed to
     `projects.sales_order_lines` and every reader here is keyed to the core line.
 
+    Three narrowings, and each one is load-bearing: the row belongs to no board decision (a
+    confirmation's own row is not somebody else telling purchasing), it still stands, and no
+    PENDING planning-change row names the line - the book moving a line beats purchasing
+    having been told, and apply cancels the placed row anyway.
+
     Uncorrelated and over the TABLES, for the same two reasons `_decided_core_line_ids()` is:
     callers arrive with `sales_order_lines` aliased, and the company-scope loader must not
     rewrite a sub-select whose only job is to answer "which lines were purchasing told about".
+    The pending-change EXISTS correlates to `mirror` alone, which this select owns, so it is
+    safe against the same aliasing.
     """
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
     from app.models.project_so import (
         ACK_REJECTED,
         INQUIRY_CANCELLED,
         OrderInquiryRow,
         ProjectSalesOrderLine,
     )
-
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
 
     rows = OrderInquiryRow.__table__
     mirror = ProjectSalesOrderLine.__table__
+    change_rows = PlanningChangeRow.__table__
+    batches = PlanningChangeBatch.__table__
     query = (
         select(mirror.c.core_sales_order_line_id)
         .select_from(rows.join(mirror, mirror.c.id == rows.c.so_line_id))
@@ -259,15 +269,26 @@ def live_inquiry_core_line_ids(core_line_ids=None):
             # the board read it as decided and stopped re-planning the very line the change
             # had re-opened (eleven tests in `test_planning_change_apply_on_board.py`).
             rows.c.supply_decision_id.is_(None),
+            # AND THE BOOK HAS NOT MOVED THE LINE SINCE (owner's ruling, 14 Sep 2026). A
+            # pending planning-change row says the book moved it after the instruction was
+            # written, and apply cancels and unlinks the placed row - so it is stale by
+            # definition and decides nothing. Read here rather than only on the board so
+            # the Sales Orders list's Planned pill and the board it opens cannot disagree
+            # about one line.
+            ~select(literal(1))
+            .select_from(
+                change_rows.join(
+                    batches, batches.c.id == change_rows.c.batch_id
+                )
+            )
+            .where(
+                change_rows.c.core_line_id == mirror.c.core_sales_order_line_id,
+                change_rows.c.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                batches.c.applied_at.is_(None),
+            )
+            .exists(),
         )
     )
-    # A caller holding a known set of lines (the board, building one selection) narrows it
-    # here rather than reading every live row in the system and filtering in Python: on the
-    # 0907 copy that is 2,311 lines for a board of twelve.
-    if core_line_ids is not None:
-        query = query.where(
-            mirror.c.core_sales_order_line_id.in_(list(core_line_ids))
-        )
     return query
 
 
