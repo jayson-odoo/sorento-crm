@@ -6,16 +6,10 @@
  */
 
 import { extractApiError } from '@/lib/api-client';
-import {
-  applyCollectionOverride,
-  setCollectionOverride,
-  type PrintBy,
-} from '@/lib/dealer-kit/print-collection';
-import {
-  mockCreateReviewComments,
-  mockListReviewComments,
-  type ChangeRequestPayload,
-  type ReviewComment,
+import type { PrintBy } from '@/lib/dealer-kit/print-collection';
+import type {
+  ChangeRequestPayload,
+  ReviewComment,
 } from '@/lib/dealer-kit/review-comments';
 import {
   fetchPortalAttachmentBytes,
@@ -371,10 +365,7 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
   if (res.status === 404) return null;
   // D-P6/S8: `is_editable` is the server's own field now (AC-B6) - true for a
   // draft, or a submitted request at New / Changes requested. No FE mock left.
-  const request = await unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
-  // PHASE 1 (r9 S3): the print choice and the collection statuses are not
-  // stored yet, so whatever this tab knows is merged back over the read.
-  return applyCollectionOverride(request);
+  return unwrap<PriceTagRequestDetail>(res, 'Failed to load request');
 }
 
 /**
@@ -412,16 +403,7 @@ export async function createRequest(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  const created = await unwrapNamingFields<PriceTagRequestDetail>(
-    res,
-    'Failed to create request',
-  );
-  // PHASE 1 (r9 S3): the column does not exist, so the server drops
-  // `print_by`. Remembered here so the next read still shows the choice.
-  if (data.print_by !== undefined) {
-    setCollectionOverride(created.id, { print_by: data.print_by });
-  }
-  return created;
+  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to create request');
 }
 
 export async function updateRequest(
@@ -436,15 +418,7 @@ export async function updateRequest(
       body: JSON.stringify(data),
     },
   );
-  const updated = await unwrapNamingFields<PriceTagRequestDetail>(
-    res,
-    'Failed to update request',
-  );
-  // PHASE 1: as in `createRequest` above.
-  if (data.print_by !== undefined) {
-    setCollectionOverride(id, { print_by: data.print_by });
-  }
-  return updated;
+  return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to update request');
 }
 
 /**
@@ -456,16 +430,12 @@ export async function updateRequest(
  *   409 unless the request is `ready_for_collection`.
  * ```
  *
- * PHASE 1: the status is not in the graph yet, so this is remembered locally.
  */
 export async function collectRequest(id: string): Promise<{ status: string }> {
-  setCollectionOverride(id, {
-    status: 'collected',
-    collected_at: new Date().toISOString(),
-    collected_by_name: 'You',
-    collected_auto: false,
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/collect`, {
+    method: 'POST',
   });
-  return { status: 'collected' };
+  return unwrap<{ status: string }>(res, 'Failed to mark this collected');
 }
 
 export async function submitRequest(id: string): Promise<{ status: string }> {
@@ -509,16 +479,23 @@ export async function approveRequest(id: string): Promise<{ status: string }> {
  *
  * Contract and the row shape: `lib/dealer-kit/review-comments.ts`.
  *
- * PHASE 1: answered by the in-memory store, so a Send on a shared dev database
- * does not really transition the request. Swap the body for the `portalFetch`
- * call above in Phase 2; the caller does not change.
  */
 export async function requestChanges(
   id: string,
   payload: ChangeRequestPayload,
-): Promise<{ status: string; comments: ReviewComment[] }> {
-  const comments = mockCreateReviewComments(id, payload, 'You');
-  return { status: 'changes_requested', comments };
+): Promise<{ status: string; round: number; comments: ReviewComment[] }> {
+  const res = await portalFetch(
+    `${BASE}/${encodeURIComponent(id)}/request-changes`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    },
+  );
+  return unwrap<{ status: string; round: number; comments: ReviewComment[] }>(
+    res,
+    'Failed to send the change requests',
+  );
 }
 
 /**
@@ -529,10 +506,12 @@ export async function requestChanges(
  *   200 ReviewComment[]
  * ```
  *
- * PHASE 1: the in-memory store, same as `requestChanges`.
  */
 export async function listReviewComments(id: string): Promise<ReviewComment[]> {
-  return mockListReviewComments(id);
+  const res = await portalFetch(
+    `${BASE}/${encodeURIComponent(id)}/review-comments`,
+  );
+  return unwrap<ReviewComment[]>(res, 'Failed to load the change requests');
 }
 
 // ---------------------------------------------------------------------------

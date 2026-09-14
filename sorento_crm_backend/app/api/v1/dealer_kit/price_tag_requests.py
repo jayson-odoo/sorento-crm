@@ -24,6 +24,8 @@ from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
     ResolvedLineData,
+    ReviewCommentResolvePayload,
+    ReviewCommentResponse,
     PriceTagRequestLineUpdate,
     PriceTagRequestListItem,
     PriceTagRequestResponse,
@@ -34,6 +36,8 @@ from app.schemas.price_tag import (
     TagSheetExportOut,
     TransitionPayload,
 )
+from app.services import price_tag_review_service
+from app.services.uuid_path_param import validate_uuid_path
 from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
@@ -211,6 +215,54 @@ def transition_price_tag_request(
             )
     db.commit()
     return _with_resolved_lines(db, result)
+
+
+# ---------------------------------------------------------------------------
+# Pinned change requests (r9 S2/D6)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{request_id}/review-comments", response_model=list[ReviewCommentResponse]
+)
+def list_review_comments(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Every change request the salesperson pinned on this design (D6)."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    return price_tag_review_service.to_responses(
+        db, price_tag_review_service.list_comments(db, request_id)
+    )
+
+
+@router.patch(
+    "/{request_id}/review-comments/{comment_id}",
+    response_model=ReviewCommentResponse,
+)
+def resolve_review_comment(
+    request_id: str,
+    comment_id: str,
+    payload: ReviewCommentResolvePayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """Tick a change request Done, or put it back (D6).
+
+    Gated on the PROCESS permission, not view: the salesperson may read their
+    own comments and never close one - a change request is closed by whoever
+    did the work, and the row records which of them it was.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    row = price_tag_review_service.set_resolved(
+        db,
+        request_id,
+        comment_id,
+        resolved=payload.resolved,
+        user_id=_user_id(user),
+    )
+    return price_tag_review_service.to_responses(db, [row])[0]
 
 
 # ---------------------------------------------------------------------------

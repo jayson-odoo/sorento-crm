@@ -141,6 +141,22 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # the same way StockInquiry / PurchaseRequestHeader carry their own pair.
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
     last_revised_at = Column(DateTime(timezone=False), nullable=True)
+    # Who prints (r9 D7): 'office' | 'self'. NULL on every row created before
+    # the choice existed, and required at submit from r9 onward - the answer
+    # decides whether the request ends at `approved` or waits for a collection.
+    print_by = Column(String(8), nullable=True)
+    # The office hand-over (r9 D9). `collected_by_user_id` is the staffer who
+    # ticked it off, `collected_by_contact_id` the salesperson who confirmed on
+    # the portal; `collected_auto` is the sweep, which is neither.
+    ready_for_collection_at = Column(DateTime(timezone=False), nullable=True)
+    collected_at = Column(DateTime(timezone=False), nullable=True)
+    collected_by_user_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    collected_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    collected_auto = Column(Boolean, nullable=False, server_default="false")
 
     lines = relationship(
         "PriceTagRequestLine",
@@ -194,6 +210,14 @@ class PriceTagRequestLine(Base):
     sort_order = Column(Integer, nullable=False, server_default="0")
     marketing_price_override = Column(Numeric(15, 2), nullable=True)
     marketing_override_reason = Column(Text, nullable=True)
+    # The product data gate (r9 D16). `pinned_tag_data` is the `LineTagData`
+    # the resolver answered when designing started - what the tag is DRAWN
+    # from, so a price edited in master data afterwards cannot rewrite a proof
+    # that has already been approved. `data_change_ack_hash` is the live hash
+    # somebody looked at and chose to keep, so the same change stops asking.
+    pinned_tag_data = Column(JSONB, nullable=True)
+    pinned_at = Column(DateTime(timezone=False), nullable=True)
+    data_change_ack_hash = Column(String(64), nullable=True)
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
@@ -215,4 +239,61 @@ class PriceTagRequestLine(Base):
         UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
         Index("ix_price_tag_request_lines_request_id", "request_id"),
+    )
+
+
+class PriceTagReviewComment(Base, CompanyScopedMixin):
+    """One pinned change request on a design (r9 D4).
+
+    A salesperson does not describe a change, they point at it: the anchor is
+    stored as FRACTIONS of the TAG's own box (0..1), never page millimetres, so
+    re-arranging the sheet, paging or zooming cannot move a comment off the
+    thing it was pointing at. A general comment carries no anchor at all and
+    reads as being about the whole design.
+
+    ``round`` is the number of ``Marked proof ready`` snapshots the design had
+    when the comment was SENT, and it is stored rather than derived: a later
+    proof must not renumber a round somebody has already worked off.
+    """
+
+    __tablename__ = "price_tag_review_comments"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # NULL = a general comment about the whole design, not about one tag.
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_request_lines.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    round = Column(Integer, nullable=False, server_default="1")
+    # Fractions of the tag box. w/h are 0 for a point pin, > 0 for a box.
+    x = Column(Numeric(6, 4), nullable=True)
+    y = Column(Numeric(6, 4), nullable=True)
+    w = Column(Numeric(6, 4), nullable=True)
+    h = Column(Numeric(6, 4), nullable=True)
+    body = Column(Text, nullable=False)
+    # Exactly one of the two is set: the salesperson who sent it, or the
+    # staffer whose rejection note was persisted as a general comment (D14).
+    author_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    author_user_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_by_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_ptag_review_comments_request_id", "request_id"),
+        Index("ix_ptag_review_comments_line_id", "line_id"),
     )

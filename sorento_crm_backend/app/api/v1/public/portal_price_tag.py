@@ -30,11 +30,15 @@ from app.schemas.price_tag import (
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
     PromotionLookupItem,
+    RequestChangesPayload,
+    RequestChangesResponse,
     ResolvedLineData,
+    ReviewCommentResponse,
     TagItemLookupItem,
 )
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException
+from app.services import price_tag_review_service
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
@@ -479,18 +483,29 @@ def portal_approve_price_tag_request(
 # ---------------------------------------------------------------------------
 
 
-class RequestChangesPayload(BaseModel):
-    note: str = Field(..., min_length=1)
-
-
-@router.post("/submissions/price_tag_request/{request_id}/request-changes")
+@router.post(
+    "/submissions/price_tag_request/{request_id}/request-changes",
+    response_model=RequestChangesResponse,
+)
 def portal_request_changes(
     request_id: str,
     payload: RequestChangesPayload,
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Request changes on a proof-ready price tag request."""
+    """A whole round of pinned change requests, in one call (r9 D5).
+
+    The pins are placed locally and nothing reaches the server until Send, so
+    the salesperson can put five pins down, delete two, and the request changes
+    state exactly once.
+
+    The salesperson's own ``notes`` are no longer appended to: they are what
+    they asked for, not a log of what they later disliked. The comments are
+    rows now, each pointing at the part of the tag it is about.
+
+    ``note`` alone (no pins) is the legacy body, accepted for one release and
+    stored as one general comment.
+    """
     _assert_visible(db, token.contact_id)
     req = PriceTagRequestService.get_request(db, request_id)
     if not req or req.contact_id != token.contact_id:
@@ -499,15 +514,55 @@ def portal_request_changes(
             message="Price tag request not found.",
             code="NOT_FOUND",
         )
+    if req.status != STATUS_PROOF_READY:
+        # Checked BEFORE anything is written: a design still being drawn cannot
+        # be commented on, and a 409 that leaves rows behind is worse than no
+        # 409 at all.
+        raise AppException(
+            status_code=409,
+            message="This design is not waiting for your review.",
+            code="INVALID_TRANSITION",
+        )
 
-    result = PriceTagRequestService.transition_status(
-        db, request_id, STATUS_CHANGES_REQUESTED,
+    created = price_tag_review_service.create_comments(
+        db,
+        req,
+        comments=[pin.model_dump() for pin in payload.comments],
+        note=payload.note,
+        author_contact_id=token.contact_id,
     )
-    # Store the note on the request (could be moved to a dedicated notes table later).
-    result.notes = (result.notes or "") + f"\n[Changes requested]: {payload.note}"
-    db.flush()
+    round_no = created[0].round if created else price_tag_review_service.current_round(
+        db, req
+    )
+    PriceTagRequestService.transition_status(db, request_id, STATUS_CHANGES_REQUESTED)
     db.commit()
-    return PriceTagRequestResponse.model_validate(result)
+    return RequestChangesResponse(
+        status=STATUS_CHANGES_REQUESTED,
+        round=round_no,
+        comments=price_tag_review_service.to_responses(db, created),
+    )
+
+
+@router.get(
+    "/submissions/price_tag_request/{request_id}/review-comments",
+    response_model=list[ReviewCommentResponse],
+)
+def portal_list_review_comments(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Every change request on this design, all rounds (D6).
+
+    Read-only for the salesperson: earlier rounds render grey beside the new
+    ones, and closing one is marketing's to do.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    return price_tag_review_service.to_responses(
+        db, price_tag_review_service.list_comments(db, req.id)
+    )
 
 
 # ---------------------------------------------------------------------------

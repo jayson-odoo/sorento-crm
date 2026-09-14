@@ -9,29 +9,33 @@
  *
  * PATCH /api/v1/dealer-kit/price-tag-requests/{id}/review-comments/{commentId}
  *   { resolved: boolean }
- *   200 ReviewComment          403 for anyone but the assignee or a processor
+ *   200 ReviewComment          403 for anyone but a processor
  * ```
  *
  * The row shape and the portal half of the loop live in
  * `lib/dealer-kit/review-comments.ts`.
- *
- * PHASE 1: both functions answer from the in-memory store there, so the whole
- * review loop can be walked before the table exists. Each body becomes an
- * `apiFetch` in Phase 2 and no caller changes.
  */
 
-import {
-  mockListReviewComments,
-  mockSetResolved,
-  type ReviewComment,
-} from '@/lib/dealer-kit/review-comments';
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+import type { ReviewComment } from '@/lib/dealer-kit/review-comments';
 
 export type { ReviewComment };
+
+const BASE = '/api/v1/dealer-kit/price-tag-requests';
 
 export async function listReviewComments(
   requestId: string,
 ): Promise<ReviewComment[]> {
-  return mockListReviewComments(requestId);
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/review-comments`,
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to load the change requests'),
+    );
+  }
+  return response.json();
 }
 
 /** Tick a change request Done, or put it back. */
@@ -40,5 +44,18 @@ export async function setReviewCommentResolved(
   commentId: string,
   resolved: boolean,
 ): Promise<ReviewComment | null> {
-  return mockSetResolved(requestId, commentId, resolved, 'You');
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/review-comments/${encodeURIComponent(commentId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ resolved }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(
+      await extractApiError(response, 'Failed to update the change request'),
+    );
+  }
+  return response.json();
 }

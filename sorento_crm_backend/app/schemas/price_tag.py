@@ -919,3 +919,64 @@ class AssetResponse(BaseModel):
     tags: list[str] = []
     url: Optional[str] = None
     mime_type: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Pinned change requests (r9 S2/D4-D6)
+# ---------------------------------------------------------------------------
+
+
+class ReviewCommentPin(BaseModel):
+    """One pin as the portal sends it: an anchor on a TAG, and what to change."""
+
+    line_id: Optional[str] = None
+    #: Fractions of the tag box, 0..1. Absent on a general comment.
+    x: Optional[float] = None
+    y: Optional[float] = None
+    #: 0 for a point pin, > 0 for a box.
+    w: Optional[float] = None
+    h: Optional[float] = None
+    body: str
+
+
+class RequestChangesPayload(BaseModel):
+    """A whole round in one call (D5).
+
+    ``note`` alone is the legacy body, accepted for one release and stored as a
+    general comment, so a portal that has not reloaded still works.
+    """
+
+    comments: list[ReviewCommentPin] = []
+    note: Optional[str] = None
+
+
+class ReviewCommentResponse(BaseModel):
+    """One `price_tag_review_comments` row, as both surfaces read it."""
+
+    id: str
+    request_id: str
+    line_id: Optional[str] = None
+    round: int
+    x: Optional[float] = None
+    y: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    body: str
+    author_name: Optional[str] = None
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolved_by_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RequestChangesResponse(BaseModel):
+    """What Send answers: where the request went, and what it wrote."""
+
+    status: str
+    round: int
+    comments: list[ReviewCommentResponse] = []
+
+
+class ReviewCommentResolvePayload(BaseModel):
+    resolved: bool
