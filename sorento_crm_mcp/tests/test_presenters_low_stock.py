@@ -1,0 +1,120 @@
+"""S6 RED tests - the low stock report's render envelope (#892).
+
+`low-stock-report-acceptance-criteria.md` AC-61; `PLAN-low-stock-report.md` section S6.
+
+The route answers one of three shapes (`ready` / `pending` / `busy`, AC-43/AC-44/AC-49) and
+`present_response` turns each into the minimal envelope the chatbot lane consumes verbatim
+- `response` (the reply text), `has_result`, and for this tool `attachments`, which is what
+makes the engine emit a `send_attachments` action.
+
+Red today with a `KeyError`/shape mismatch, because `present_response` has no branch for
+this tool and falls through to the generic item/field envelope (or returns `raw`
+unchanged), which carries neither the two lines nor `attachments`.
+"""
+from __future__ import annotations
+
+import json
+import re
+
+from sorento_crm_mcp.presenters import present_response
+
+TOOL = "crm_low_stock_report"
+MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+#: The 8-4-4-4-12 shape. No UUID may ever reach a customer's screen - the standing cursor
+#: rule - and this tool's payload carries two of them (`run_id`, `download_id`).
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+
+ATTACHMENT = {
+    "url": "https://cdn.example.com/exports/low-stock/x/low-stock-10092026.xlsx",
+    "filename": "low-stock-10092026.xlsx",
+    "mimeType": MIME,
+    "attachmentType": "file",
+}
+
+READY = {
+    "status": "ready",
+    "run_id": "3f1b6f2a-0c4d-4a1e-9f20-6b0f0f1c2d3e",
+    "as_of": "2026-09-10",
+    "low_count": 12,
+    "all_count": 340,
+    "attachments": [ATTACHMENT],
+}
+
+PENDING = {
+    "status": "pending",
+    "run_id": "3f1b6f2a-0c4d-4a1e-9f20-6b0f0f1c2d3e",
+    "download_id": "9a7c5e11-2b3d-4f56-8899-aabbccddeeff",
+}
+
+BUSY = {"status": "busy"}
+
+
+def _envelope(payload):
+    return json.loads(present_response(TOOL, json.dumps(payload)))
+
+
+# --------------------------------------------------------------------- AC-61
+
+
+def test_ready_envelope_two_lines_and_attachments_passthrough():
+    """AC-61: two lines, no more. The date is rendered dd/mm/yyyy (the only date format
+    this product writes for a reader), and the count line says how many of the planned
+    products are low - the "of <m>" half is what stops "Low: 12" reading as the whole
+    catalogue.
+
+    `attachments` is handed through UNCHANGED from the route: the presenter is not the
+    place that decides what a Respond.io attachment entry looks like, and re-shaping it
+    here would be a second copy of that contract.
+    """
+    env = _envelope(READY)
+    assert env["result_type"] == "low_stock_report", env
+    assert env["has_result"] is True, env
+    assert env["response"].splitlines() == [
+        "Low stock report - as of 10/09/2026",
+        "Low: 12 of 340 planned products",
+    ], repr(env["response"])
+    assert env["attachments"] == [ATTACHMENT], env["attachments"]
+
+
+def test_pending_envelope_one_line():
+    """AC-61: the turn could not wait for the file, so the bot says so and the worker
+    pushes it (AC-44). `has_result` stays True - this IS the answer to what was asked, and
+    a False here would send the turn down the escalate path for a report that is being
+    prepared perfectly well.
+    """
+    env = _envelope(PENDING)
+    assert env["result_type"] == "low_stock_report", env
+    assert env["has_result"] is True, env
+    assert env["response"] == (
+        "Preparing the low stock report - it will be sent here when ready."
+    ), repr(env["response"])
+    assert env.get("attachments") in ([], None), (
+        f"nothing to attach yet: {env.get('attachments')!r}"
+    )
+
+
+def test_busy_envelope_one_line():
+    """AC-61 / AC-49: a plan is already running for the company, so a second one cannot
+    start. The bot says when to come back rather than surfacing a 409."""
+    env = _envelope(BUSY)
+    assert env["result_type"] == "low_stock_report", env
+    assert env["has_result"] is True, env
+    assert env["response"] == (
+        "A plan is already running - try again in a minute."
+    ), repr(env["response"])
+
+
+def test_no_uuid_in_any_line():
+    """The standing rule: no UUID in the UI, and a WhatsApp reply is UI. The ready payload
+    carries `run_id` and the pending one carries `run_id` + `download_id`, so all three
+    shapes are checked rather than only the one that obviously has ids in it."""
+    for payload in (READY, PENDING, BUSY):
+        env = _envelope(payload)
+        found = _UUID_RE.search(env["response"])
+        assert found is None, (
+            f"{payload['status']}: a UUID reached the reply text: {found.group(0)!r} in "
+            f"{env['response']!r}"
+        )
