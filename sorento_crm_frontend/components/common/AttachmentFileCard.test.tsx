@@ -80,7 +80,11 @@ describe('AttachmentFileCard (AC-8.1)', () => {
 
     await waitFor(() => expect(getAttachmentPreviewUrlMock).toHaveBeenCalledWith('att-1'));
     await waitFor(() =>
-      expect(window.open).toHaveBeenCalledWith('https://cdn.example/att-1', '_blank'),
+      expect(window.open).toHaveBeenCalledWith(
+        'https://cdn.example/att-1',
+        '_blank',
+        'noopener,noreferrer',
+      ),
     );
   });
 

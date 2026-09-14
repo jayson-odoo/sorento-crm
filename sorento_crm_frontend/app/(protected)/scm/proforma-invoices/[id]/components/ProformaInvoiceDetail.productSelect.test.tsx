@@ -76,10 +76,15 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 // (`permission_registry.py:704`, seeded by migration 375) and the one this page has always
 // gated adjusting on. The UAC names it "adjust" in prose; there is no such permission, and
 // gating on it would take the picker away from everybody.
-const { perms } = vi.hoisted(() => ({ perms: { canAdjust: true } }));
+const { perms } = vi.hoisted(() => ({ perms: { canAdjust: true, canRule: true } }));
 vi.mock('@/hooks/usePermissions', () => ({
-  useHasPermission: (slug: string) =>
-    slug === 'scm.proforma_invoice.upload' ? perms.canAdjust : true,
+  useHasPermission: (slug: string) => {
+    if (slug === 'scm.proforma_invoice.upload') return perms.canAdjust;
+    // Writing the supplier's ruling is what the alias POST/DELETE are behind, and the
+    // picker acts on both (review round 1, S4).
+    if (slug === 'scm.reorder.run') return perms.canRule;
+    return true;
+  },
 }));
 
 const push = vi.fn();
@@ -432,6 +437,7 @@ beforeEach(() => {
   pendingEntityStore.reset();
   matching.isPending = false;
   perms.canAdjust = true;
+  perms.canRule = true;
 });
 
 /** The Product select is the first combobox in a line's row, the UoM select the second -
@@ -797,6 +803,21 @@ describe('ProformaInvoiceDetail - a reader who cannot adjust (AC-7.7)', () => {
     buyer.unmount();
 
     perms.canAdjust = false;
+    currentSearchParams = new URLSearchParams('tab=lines');
+    renderDetail();
+
+    const row = readRow(SUPPLIER_CODE);
+    expect(within(row).queryAllByRole('combobox')).toHaveLength(0);
+    expect(within(row).getAllByText(OUR_CODE).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sees the code as text without the permission the RULING itself is behind', () => {
+    // The alias POST and DELETE sit behind `scm.reorder.run`, so a reader who may adjust
+    // the invoice but may not write the supplier's memory would have got a select that
+    // 403s on the pick (S4, review round 1).
+    offerCatalogue();
+    state.data = coded();
+    perms.canRule = false;
     currentSearchParams = new URLSearchParams('tab=lines');
     renderDetail();
 

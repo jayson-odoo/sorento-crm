@@ -60,6 +60,8 @@ export interface UseDeferredRowActionInput {
    * control that started it is the same control the countdown replaces.
    */
   surface?: 'inline' | 'toast';
+  /** Extra classes on the `inline` countdown, for a slot narrower than its own minimum. */
+  countdownClassName?: string;
 }
 
 export interface UseDeferredRowActionResult {
@@ -83,6 +85,7 @@ export function useDeferredRowAction(
     invalidateKeys,
     onCommitted,
     surface = 'toast',
+    countdownClassName,
   } = input;
 
   // The nonce, not the id, is what says "this click has not been parked yet": a
@@ -110,6 +113,7 @@ export function useDeferredRowAction(
     payload: target?.payload,
     invalidateKeys,
     onCommitted,
+    countdownClassName,
   });
 
   const { start } = action;

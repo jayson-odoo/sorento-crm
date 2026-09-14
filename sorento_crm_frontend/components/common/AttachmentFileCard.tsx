@@ -17,10 +17,18 @@ import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/a
  * has nothing to detach.
  */
 
-/** `1024 bytes` as the reader sees it. A file we hold no size for says so with a dash. */
-function sizeLabel(bytes: number | null | undefined): string {
-  if (bytes == null) return '-';
-  return `${(bytes / 1024).toFixed(2)} KB`;
+/** What the second line reads: the type, and the size when we hold one.
+ *
+ *  A file whose size was never recorded says the type alone rather than "Type - -": the
+ *  dash answers nothing, and a row that states a fact it does not have reads as a defect.
+ */
+function metaLabel(
+  typeLabel: string | null | undefined,
+  bytes: number | null | undefined,
+): string {
+  const type = typeLabel || 'No type';
+  if (bytes == null) return type;
+  return `${type} • ${(bytes / 1024).toFixed(2)} KB`;
 }
 
 export interface AttachmentFileCardProps {
@@ -50,7 +58,9 @@ export function AttachmentFileCard({
   const handlePreview = async () => {
     try {
       const previewUrl = await getAttachmentPreviewUrl(attachmentId);
-      if (previewUrl) window.open(previewUrl, '_blank');
+      // `noopener,noreferrer`: the URL is a signed link off a storage provider, and a tab
+      // opened without them keeps a handle on this one through `window.opener`.
+      if (previewUrl) window.open(previewUrl, '_blank', 'noopener,noreferrer');
     } catch {
       toast.error('Failed to open attachment preview');
     }
@@ -78,9 +88,7 @@ export function AttachmentFileCard({
         <p className="truncate text-sm font-medium" title={name}>
           {name}
         </p>
-        <p className="text-xs text-muted-foreground">
-          {typeLabel || 'No type'} • {sizeLabel(sizeBytes)}
-        </p>
+        <p className="text-xs text-muted-foreground">{metaLabel(typeLabel, sizeBytes)}</p>
       </div>
       <div className="flex shrink-0 gap-2">
         <Button

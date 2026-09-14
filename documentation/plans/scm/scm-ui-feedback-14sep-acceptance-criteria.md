@@ -76,8 +76,11 @@ Plan: `PLAN-scm-ui-feedback-14sep.md` (journeys J1-J6 at its top)
   clear. (J5)
 - AC-7.6 [FE] A line with a blank item code keeps today's behaviour: select only in edit
   mode, pick patches the draft (product or set), Save persists it. (J5)
-- AC-7.7 [FE] A user without `scm.proforma_invoice.adjust` sees the code as text, not a
-  select. (J5)
+- AC-7.7 [FE] The Product cell renders as a select only for a user who holds BOTH
+  `scm.proforma_invoice.upload` (the invoice's own write permission) and `scm.reorder.run`
+  (what the supplier-code alias POST and DELETE are behind). Short of either, the cell is
+  the code as read-only text: picking writes a ruling, and a select that 403s on the pick
+  is a worse answer than a plain code. (J5)
 - AC-7.8 [BE] An alias written for `srtwc8366-rl ` (case/space variant) re-points the line
   holding `SRTWC8366-RL`. (J5)
 

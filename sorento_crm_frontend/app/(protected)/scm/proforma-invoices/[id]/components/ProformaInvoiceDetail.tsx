@@ -90,6 +90,11 @@ import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 
 const CONVERT_PERMISSION = 'scm.reorder.run';
 const ADJUST_PERMISSION = 'scm.proforma_invoice.upload';
+/** Writing a supplier-code ruling is `scm.reorder.run`, the permission the alias POST and
+ *  DELETE are behind (`fulfilment.py`). The Product picker acts on THAT, so it is offered
+ *  only to somebody who holds it as well as the invoice's own adjust permission - a select
+ *  that 403s on the pick is worse than a plain read-only code. */
+const RULING_PERMISSION = CONVERT_PERMISSION;
 
 /** Keyed off the read permission plus a stable id, never the record's own path - a 30-line
  *  invoice is read with the same few columns every time and the choice has to survive. */
@@ -191,6 +196,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
   const backHref = useBackToListHref('/scm/proforma-invoices');
   const canConvert = useHasPermission(CONVERT_PERMISSION);
   const canAdjust = useHasPermission(ADJUST_PERMISSION);
+  const canRule = useHasPermission(RULING_PERMISSION);
+  /** Both, for the Product cell: it edits the line AND writes the supplier's ruling. */
+  const canPickProduct = canAdjust && canRule;
   const { data, isLoading, isError } = useProformaInvoice(id);
   // AC-B4: the master list, not free text - "unit" and "UNIT" read as one unit here and two
   // strings on the export.
@@ -227,6 +235,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
     // forget, so the countdown belongs where the control the reader just used stands,
     // not in a toast over a screen they are still reading.
     surface: 'inline',
+    // The cell is 240px, narrower than the countdown's own comfortable minimum: without
+    // this it overflowed the column and the Cancel button came out as "Canc".
+    countdownClassName: 'w-full min-w-0',
   });
   // Destructured for the Lines grid's `columns` memo below: `run` is the only thing that
   // memo calls, and it never changes reference (`useDeferredRowAction`'s own `useCallback`
@@ -621,8 +632,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
               : '';
           const label = line.productCode ?? saved?.set_code ?? null;
 
-          if (!canAdjust) {
-            // AC-7.7: a reader who cannot adjust reads the answer, and cannot change it.
+          if (!canPickProduct) {
+            // AC-7.7: picking here edits the line and writes the supplier's ruling, so it
+            // takes both permissions; short of either, the answer is read-only text.
             return label ? (
               <span className="truncate" title={label}>
                 {label}
@@ -1118,6 +1130,7 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       data?.currency,
       editing,
       canAdjust,
+      canPickProduct,
       fetchProductOrSet,
       forgetMatch,
       forgetTargetId,
