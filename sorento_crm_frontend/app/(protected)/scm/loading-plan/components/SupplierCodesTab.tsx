@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import {
@@ -26,7 +27,6 @@ import {
 } from '../../hooks/useSupplierCodeAliases';
 import type {
   SupplierCodeAlias,
-  SupplierCodeRung,
   UnmatchedSupplierCode,
 } from '../../services/supplierCodeAliasService';
 import { RefreshMatchingButton } from './RefreshMatchingButton';
@@ -57,27 +57,28 @@ import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
  *   (5s, reversible), unchanged from the old dismissed-only list.
  */
 
-const RUNG_LABEL: Partial<Record<SupplierCodeRung, string>> = {
-  manual: 'Manual',
-  separator: 'Exact after separators',
-  token_set: 'Same tokens',
-  size_drop: 'Trap size dropped',
-  set_separator: 'Exact after separators',
-  set_token_set: 'Same tokens',
-};
-
-function howLabel(alias: SupplierCodeAlias): string {
-  if (alias.source === 'dismissed') return 'Dismissed';
-  if (alias.matched_by && RUNG_LABEL[alias.matched_by]) return RUNG_LABEL[alias.matched_by]!;
-  return alias.source === 'manual' ? 'Manual' : 'Automatic match';
-}
-
+/** What a ruling points AT, as the owner reads it: the code, and nothing else (R5). The
+ *  product's own name is a second column's worth of text in a cell she scans for a code. */
 function matchedToLabel(alias: SupplierCodeAlias): string {
   if (alias.source === 'dismissed') return 'Dismissed';
-  if (alias.set_code) return [alias.set_code, alias.set_name].filter(Boolean).join(' - ');
-  if (alias.product_code)
-    return [alias.product_code, alias.product_name].filter(Boolean).join(' - ');
+  if (alias.set_code) return alias.set_code;
+  if (alias.product_code) return alias.product_code;
   return EM_DASH;
+}
+
+/** What the queue row says in words, which is what a search over it reads. */
+function saysText(row: UnmatchedSupplierCode): string {
+  return [row.product_name, row.brand, row.spec].filter(Boolean).join(' \u00b7 ');
+}
+
+/** Whitespace-split, lower-cased, empties dropped - every token has to hit something. */
+function searchTokens(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+function matchesTokens(tokens: string[], haystacks: (string | null | undefined)[]): boolean {
+  const fields = haystacks.filter(Boolean).map((h) => (h as string).toLowerCase());
+  return tokens.every((token) => fields.some((field) => field.includes(token)));
 }
 
 /** What was just decided on a "Needs a decision" row, kept only for this visit (AC-C3). */
@@ -153,6 +154,9 @@ export function SupplierCodesTab({
 
   /** Picked or dismissed THIS visit, keyed by supplier code - AC-C1/AC-C2/AC-C3. */
   const [decided, setDecided] = React.useState<Record<string, RowDecision>>({});
+  /** What is typed in the box above both tables (S1). Both lists are already in the browser,
+   *  so the filter is a plain pass over them: no debounce, no query, no round trip. */
+  const [search, setSearch] = React.useState('');
   /** The code a write is in flight for, so only ITS row goes quiet. */
   const [busy, setBusy] = React.useState<string | null>(null);
 
@@ -266,10 +270,7 @@ export function SupplierCodesTab({
         cell: ({ row }) => {
           // What the person matching it actually recognises: the code means nothing on its
           // own, and "连体马桶, SORENTO" means everything.
-          const said =
-            [row.original.product_name, row.original.brand, row.original.spec]
-              .filter(Boolean)
-              .join(' · ') || EM_DASH;
+          const said = saysText(row.original) || EM_DASH;
           return (
             <span className="block truncate text-sm text-muted-foreground" title={said}>
               {said}
@@ -389,19 +390,6 @@ export function SupplierCodesTab({
         },
       },
       {
-        id: 'how',
-        header: 'How',
-        size: 200,
-        cell: ({ row }) => {
-          const how = howLabel(row.original);
-          return (
-            <span className="block truncate text-sm text-muted-foreground" title={how}>
-              {how}
-            </span>
-          );
-        },
-      },
-      {
         id: 'when',
         header: 'When',
         size: 180,
@@ -425,7 +413,6 @@ export function SupplierCodesTab({
         header: 'By',
         size: 150,
         cell: ({ row }) => {
-          // Already a name, never a UUID - `created_by` is written from `_actor()` server-side.
           const by = row.original.created_by || EM_DASH;
           return (
             <span className="block truncate text-sm text-muted-foreground" title={by}>
@@ -460,9 +447,34 @@ export function SupplierCodesTab({
   // (AC-C5), so there is nothing left for this screen to re-sort.
   const remembered = aliases;
 
+  // What the box narrows each table to (S1). Every token has to hit something, so
+  // `CWC 250` finds the row both words describe rather than everything either of them does.
+  // `rows` and `remembered` themselves stay whole: Confirm counts decisions, not what is on
+  // screen, and a filter must not change what confirming writes.
+  const tokens = searchTokens(search);
+  const filtering = tokens.length > 0;
+  const visibleRows = React.useMemo(
+    () =>
+      tokens.length === 0
+        ? rows
+        : rows.filter((r) => matchesTokens(tokens, [r.item_code, saysText(r)])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, search],
+  );
+  const visibleRemembered = React.useMemo(
+    () =>
+      tokens.length === 0
+        ? remembered
+        : remembered.filter((a) =>
+            matchesTokens(tokens, [a.supplier_code, a.product_code, a.set_code]),
+          ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [remembered, search],
+  );
+
   const needsTable = useReactTable({
     columns: needsDecisionColumns,
-    data: rows,
+    data: visibleRows,
     getRowId: (row) => row.item_code,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
@@ -471,7 +483,7 @@ export function SupplierCodesTab({
 
   const rememberedTable = useReactTable({
     columns: rememberedColumns,
-    data: remembered,
+    data: visibleRemembered,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
     columnResizeMode: 'onChange',
@@ -480,14 +492,30 @@ export function SupplierCodesTab({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-muted-foreground" data-testid="supplier-codes-statement">
-        {statementLine(documentKind, documentLabel, statementAsOf)}
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-muted-foreground" data-testid="supplier-codes-statement">
+          {statementLine(documentKind, documentLabel, statementAsOf)}
+        </p>
+        {/* One box over both tables (S1): the queue and the memory answer the same question
+            about the same code, and two boxes would be two places to type it. */}
+        <ListSearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Search code or supplier description"
+          aria-label="Search supplier codes"
+          className="w-full md:w-72"
+          data-testid="supplier-codes-search"
+        />
+      </div>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 py-3">
           <CardHeading className="min-w-0">
-            <CardTitle className="truncate text-sm">Needs a decision ({rows.length})</CardTitle>
+            <CardTitle className="truncate text-sm">
+              {filtering
+                ? `Needs a decision (${visibleRows.length} of ${rows.length})`
+                : `Needs a decision (${rows.length})`}
+            </CardTitle>
           </CardHeading>
           <div className="flex shrink-0 items-center gap-2">
             <Button
@@ -513,10 +541,16 @@ export function SupplierCodesTab({
               <p className="text-sm font-medium">Every code on file is matched</p>
             </div>
           </CardTable>
+        ) : visibleRows.length === 0 ? (
+          <CardTable>
+            <div className="flex flex-col items-center gap-3 p-10 text-center">
+              <p className="text-sm font-medium">No code matches</p>
+            </div>
+          </CardTable>
         ) : (
           <DataGrid
             table={needsTable}
-            recordCount={rows.length}
+            recordCount={visibleRows.length}
             // Column personalisation OFF, as the old panel did: unset, the grid keys saved
             // widths on the URL, which here carries a supplier id.
             listingKey=""
@@ -532,7 +566,11 @@ export function SupplierCodesTab({
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3 py-3">
           <CardHeading className="min-w-0">
-            <CardTitle className="truncate text-sm">Remembered ({remembered.length})</CardTitle>
+            <CardTitle className="truncate text-sm">
+              {filtering
+                ? `Remembered (${visibleRemembered.length} of ${remembered.length})`
+                : `Remembered (${remembered.length})`}
+            </CardTitle>
           </CardHeading>
         </CardHeader>
         {remembered.length === 0 ? (
@@ -541,10 +579,16 @@ export function SupplierCodesTab({
               <p className="text-sm font-medium">Nothing remembered for this supplier yet</p>
             </div>
           </CardTable>
+        ) : visibleRemembered.length === 0 ? (
+          <CardTable>
+            <div className="flex flex-col items-center gap-3 p-10 text-center">
+              <p className="text-sm font-medium">No code matches</p>
+            </div>
+          </CardTable>
         ) : (
           <DataGrid
             table={rememberedTable}
-            recordCount={remembered.length}
+            recordCount={visibleRemembered.length}
             listingKey=""
             tableLayout={{ width: 'fixed', columnsResizable: true }}
             rowPending={rowPending}
