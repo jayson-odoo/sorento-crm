@@ -29,6 +29,7 @@ import TagSheetRenderer, {
 
 interface TagSheetPrintPayload {
   doc: TagSheetDoc;
+  /** Keyed by REQUEST TAG id since S3 (D3) - a line may print several tags. */
   resolvedData: Record<string, ResolvedLineData>;
   /** assetId -> signed URL, for every library asset the document names. */
   assets: Record<string, string>;

@@ -439,7 +439,17 @@ export interface TagSheet {
 export interface PlacedTag {
   id: string;
   template_id: string;
-  request_line_id: string;
+  /**
+   * The REQUEST TAG this placement prints (D3, S3).
+   *
+   * Was `request_line_id` until one line could carry several tags: a line with
+   * an open choice group is split into one tag per candidate, and each of those
+   * has its own design, geometry and price. The line is still what the
+   * salesperson asked for; the tag is what gets printed, so the document keys
+   * on the tag. A doc written before S3 is rewritten by the S3 migration, which
+   * points each `request_line_id` at that line's single tag.
+   */
+  request_tag_id: string;
   x_mm: number;
   y_mm: number;
   width_mm: number;
@@ -535,8 +545,45 @@ export interface ProductSetTagData {
  * override has to win on the tag the designer is looking at. Same shape the
  * print payload sends, so the proof and the PDF agree.
  */
+/** One choice group still undecided on a tag (D3): the salesperson left it open. */
+export interface TagOpenGroup {
+  role: string;
+  /**
+   * The group's candidates, in combo order.
+   *
+   * D3 wrote this as codes alone. It carries the id beside the code because
+   * "Pick one" has to NAME the chosen candidate to
+   * `PATCH .../tags/{tag_id}` , whose `choices` is `{role: product_id}` - a
+   * code cannot express that, and looking one up would be a second round trip
+   * for something this call already knows. Only the `code` is ever rendered
+   * (AC-X-2), and D4's printed `ROLE: CODE / CODE` text still reads it.
+   */
+  candidates: { product_id: string; code: string }[];
+}
+
+/** One part printed under the host on a tag (D3/D4). */
+export interface TagPartData {
+  code: string;
+  name: string;
+  dimensions: string;
+}
+
+/**
+ * What one TAG draws with (D3, S3).
+ *
+ * One row per tag rather than per line since S3: `line_id` still says which
+ * line asked for it, and `tag_id` is what the document, the rail and the
+ * resolved-data map key on.
+ */
 export interface LineTagData {
+  tag_id: string;
   line_id: string;
+  /** "1a", "1b" - line index plus a letter. Never an id (AC-X-2). */
+  tag_label: string;
+  /** Groups this tag has NOT resolved. Empty once marketing splits or picks. */
+  open_groups: TagOpenGroup[];
+  /** The resolved parts on this tag, in part order. Empty for a bare product. */
+  parts: TagPartData[];
   code: string;
   name: string;
   dimensions: string;
