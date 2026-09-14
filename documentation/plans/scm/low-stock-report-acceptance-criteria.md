@@ -90,7 +90,9 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   legs; the existing admission tests stay green.
 - **AC-17 [BE]** Evidence (not a test): an unscoped run on the 0907 copy before/after, recorded
   in `evidence/low-stock-report/README.md`: planned_count, recommendation count, wall time.
-  Expected order of magnitude: ~950 -> ~1,600 products, wall time stays under 15 s.
+  Measured 14 Sep 2026 (this line carried an estimate of ~1,600 products before the run):
+  950 -> **2,017** products, 950 -> 2,017 recommendations, 374 -> 1,151 buys, wall time
+  4.1 s -> **8.5 s**, inside the 15 s ceiling.
 
 ### Slice S2 - the incoming cell names the container
 

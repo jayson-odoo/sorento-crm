@@ -1529,24 +1529,21 @@ _XLSX_COLUMN_WIDTHS = {
 }
 
 
-def _render_export_xlsx(rows: list[tuple]) -> bytes:
-    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
-    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
-    a different journey (a multi-sheet monthly register) this export does not have. Every
-    cell in `rows` has already been through `_export_xlsx_rows` (numbers for quantities,
-    `_xlsx_safe_text` for strings) - this function only writes what it is given, styled
-    like the paper sheet (S14, AC-S14.6): a dark bold white header, a thin border and
-    wrapped text on every cell, frozen at A2, explicit column widths.
-    """
-    from io import BytesIO
+def write_sheet(ws, columns, rows: list[tuple], widths: dict) -> None:
+    """Write ONE styled sheet - header, rows, borders, freeze, widths - into an openpyxl
+    worksheet the caller owns.
 
-    from openpyxl import Workbook
+    Lifted out of `_render_export_xlsx` (PLAN-low-stock-report S3) so the low stock
+    workbook can call it TWICE, for its "Low stock" and "All" sheets, instead of growing a
+    second copy of the same styling. Every cell in `rows` has already been shaped by the
+    caller's own row builder (numbers for quantities, `_xlsx_safe_text` for strings) - this
+    function only writes what it is given, styled like the paper sheet (S14, AC-S14.6): a
+    dark bold white header, a thin border and wrapped text on every cell, frozen at A2, the
+    caller's explicit column widths.
+    """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Order summary"
-    ws.append(list(_EXPORT_COLUMNS))
+    ws.append(list(columns))
     for r in rows:
         ws.append(list(r))
 
@@ -1565,8 +1562,23 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
         cell.fill = header_fill
 
     ws.freeze_panes = "A2"
-    for col, width in _XLSX_COLUMN_WIDTHS.items():
+    for col, width in widths.items():
         ws.column_dimensions[col].width = width
+
+
+def _render_export_xlsx(rows: list[tuple]) -> bytes:
+    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
+    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
+    a different journey (a multi-sheet monthly register) this export does not have.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Order summary"
+    write_sheet(ws, _EXPORT_COLUMNS, rows, _XLSX_COLUMN_WIDTHS)
 
     buf = BytesIO()
     wb.save(buf)
@@ -1654,6 +1666,31 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     return {
         "run_id": str(run.id),
         "row_count": int(row["n"] or 0) - int(hidden_count),
+        "as_of": row["as_of"].isoformat() if row["as_of"] else None,
+    }
+
+
+def low_stock_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
+    """`export_guard_stats`'s twin for the low stock workbook (PLAN-low-stock-report S3,
+    AC-35) - the same lightweight `COUNT(*)`/`MAX(as_of)`, and the same resolved run id and
+    `as_of` stamp that names the file.
+
+    The ONE difference, and the reason this is a separate function rather than a flag: the
+    count is NOT reduced by the hidden-by-default rows. That workbook prints them (a
+    comfortably-covered row can still sit below its raw level - AC-32), so subtracting them
+    here would let a request through that the render then refuses, or refuse one it would
+    have answered.
+    """
+    run = _run_for(db, run_id)
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="lgs")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT COUNT(*) AS n, MAX(as_of) AS as_of
+        FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
+    """), {"rid": str(run.id), **co_params}).mappings().first()
+    return {
+        "run_id": str(run.id),
+        "row_count": int(row["n"] or 0),
         "as_of": row["as_of"].isoformat() if row["as_of"] else None,
     }
 

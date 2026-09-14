@@ -48,10 +48,16 @@ from app.schemas.scm_order_summary import (
     OrderSummarySuppliersOut,
     PoWorklistOut,
 )
+from app.services.scm import low_stock_report_service
 from app.services.scm import reorder_run_service
 from app.services.scm import summary_order_service as svc
 
 log = logging.getLogger(__name__)
+
+#: The third value `POST /order-summary/export` accepts, and the `user_downloads.kind` it
+#: creates - one string, so the format on the wire and the kind in the drawer cannot drift
+#: (PLAN-low-stock-report S3, AC-30).
+LOW_STOCK_FORMAT = "low_stock_xlsx"
 
 router = APIRouter()
 
@@ -132,8 +138,10 @@ def export_order_summary(
     uses, before the report is ever read.
     """
     fmt = (payload.format or "").strip().lower()
-    if fmt not in ("pdf", "xlsx"):
-        raise AppException(status_code=422, message="format must be pdf or xlsx.")
+    if fmt not in ("pdf", "xlsx", LOW_STOCK_FORMAT):
+        raise AppException(
+            status_code=422, message="format must be pdf, xlsx or low_stock_xlsx."
+        )
     run_id = payload.run_id
     if run_id:
         run_id = validate_uuid_path(run_id, resource="Reorder run")
@@ -143,11 +151,22 @@ def export_order_summary(
     # request thread (reviewer nit, review fix round A, A5) - the row-count guard (M1,
     # Phase 3 security review) and the sheet's own `as_of` - which names the file - come
     # off one lightweight query rather than serialising every row just to maybe refuse.
-    stats = svc.export_guard_stats(db, run_id=run_id)
-    if stats["row_count"] > svc.MAX_EXPORT_ROWS:
-        raise AppException(422, "Narrow the plan first")
+    #
+    # The low stock workbook (PLAN-low-stock-report S3, AC-35) has its OWN pair: it counts
+    # every frozen row - NOT minus the hidden ones, because unlike the order sheet it
+    # prints them - against its own `MAX_LOW_STOCK_ROWS` of 5,000. The constant is read off
+    # the service module at call time rather than imported at module load, so operations
+    # (and the cap test) can move one number in one place.
+    if fmt == LOW_STOCK_FORMAT:
+        stats = svc.low_stock_guard_stats(db, run_id=run_id)
+        if stats["row_count"] > low_stock_report_service.MAX_LOW_STOCK_ROWS:
+            raise AppException(422, "Narrow the plan first")
+    else:
+        stats = svc.export_guard_stats(db, run_id=run_id)
+        if stats["row_count"] > svc.MAX_EXPORT_ROWS:
+            raise AppException(422, "Narrow the plan first")
 
-    kind = f"order_sheet_{fmt}"
+    kind = LOW_STOCK_FORMAT if fmt == LOW_STOCK_FORMAT else f"order_sheet_{fmt}"
     # AC-16b (security S5, amended reviewer R1): one in-flight sheet per user per run PER
     # FORMAT - the EXACT kind, so a pending PDF never blocks an Excel request for the same
     # run (matches the AC-23 evidence: PDF then Excel back to back both succeed). No queue
@@ -158,6 +177,12 @@ def export_order_summary(
         user_id=str(current_user["id"]), kind=kind,
         source_entity_type="reorder_run", source_entity_id=stats["run_id"],
     ):
+        if fmt == LOW_STOCK_FORMAT:
+            raise AppException(
+                status_code=409,
+                message="A low stock report for this plan is already being prepared - "
+                        "check My Downloads.",
+            )
         fmt_label = "Excel" if fmt == "xlsx" else fmt.upper()
         raise AppException(
             status_code=409,
@@ -165,7 +190,11 @@ def export_order_summary(
                     "prepared - check My Downloads.",
         )
 
-    filename = f"order-sheet-{_ddmmyyyy_compact(stats['as_of'])}.{fmt}"
+    stamp = _ddmmyyyy_compact(stats["as_of"])
+    filename = (
+        f"low-stock-{stamp}.xlsx" if fmt == LOW_STOCK_FORMAT
+        else f"order-sheet-{stamp}.{fmt}"
+    )
     download = DownloadService(db).create(
         user_id=str(current_user["id"]),
         kind=kind,
@@ -175,17 +204,27 @@ def export_order_summary(
     )
     try:
         from app.services.queue_service import enqueue_job
-        from app.tasks.export_tasks import generate_order_sheet
+        from app.tasks.export_tasks import generate_low_stock_report, generate_order_sheet
 
-        enqueue_job(
-            generate_order_sheet,
-            str(download.id),
-            stats["run_id"],
-            fmt,
-            str(current_user["id"]),
-            queue_name="imports",
-            job_timeout=600,
-        )
+        if fmt == LOW_STOCK_FORMAT:
+            enqueue_job(
+                generate_low_stock_report,
+                str(download.id),
+                stats["run_id"],
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
+        else:
+            enqueue_job(
+                generate_order_sheet,
+                str(download.id),
+                stats["run_id"],
+                fmt,
+                str(current_user["id"]),
+                queue_name="imports",
+                job_timeout=600,
+            )
     except Exception as e:
         DownloadService(db).mark_failed(
             str(download.id), f"Could not queue order sheet generation: {e}"

@@ -96,7 +96,11 @@ JOIN (
 - Company scope: the leg's subqueries aggregate by `product_id`; `keys` is already filtered
   by the `cp*`/`cw*` predicates in `where` (L791-814), and a product id belongs to one
   company, so the join cannot leak a row across companies. Say so in the comment.
-- Evidence run (AC-17) recorded under `evidence/low-stock-report/`.
+- Evidence run (AC-17) recorded under `evidence/low-stock-report/`. MEASURED 14 Sep on the
+  0907 copy, superseding this plan's earlier "~1,600 products" estimate: an unscoped run
+  goes from 950 products / 950 recs / 4.1 s to **2,017 products / 2,017 recs / 8.5 s**
+  (1,433 products are below level and still moving, 366 of them also carry committed
+  demand; the dead guard keeps out 1,264 of the 2,697 below-level products).
 
 ### S2 - container in the incoming cell (`app/services/scm/site_pool_supply.py`, `summary_order_service.py`)
 
@@ -236,7 +240,8 @@ optional query params on body tools.
   (422) and `respond_send_failed` (502) are logged by `log_respond_send` and swallowed; the
   download row stays `ready`. Postgres row locks serialise the two conditional updates, so
   exactly one of {turn returns the file, worker pushes it} happens (AC-46).
-- Migration (one file): `scm.reorder_run.requested_via VARCHAR(10) NULL`;
+- Migration (one file), **LANDS IN S3** so AC-36's row counts can go green there; S5 only
+  uses it: `scm.reorder_run.requested_via VARCHAR(10) NULL`;
   `user_downloads.deliver_to_contact_id UUID NULL`, `delivered_at TIMESTAMP NULL`,
   `row_count_low INT NULL`, `row_count_all INT NULL`; `system_settings.low_stock_sync_wait_seconds
   INT NOT NULL DEFAULT 40`. `reorder_runs.py:417` `cols` string +
@@ -297,7 +302,7 @@ optional query params on body tools.
 | S4 FE mock (menu item, label, badge, settings wait field) | 1 | coder | - |
 | S2 container in the incoming cell | 2 | tester -> coder | - |
 | S1 admission second leg | 2 | tester -> coder | - |
-| S3 workbook + export kind | 2 | tester -> coder | S2 |
+| S3 workbook + export kind + the lane's one migration | 2 | tester -> coder | S2 |
 | S5 chat route + migration + push | 2 | tester -> coder | S3 |
 | S6 MCP tool + gate | 2 | tester -> coder | S5 |
 | S7 parser words + console case | 2 | tester -> coder | S6 |

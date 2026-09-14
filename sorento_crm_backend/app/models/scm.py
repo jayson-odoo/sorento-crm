@@ -328,6 +328,11 @@ class ReorderRun(Base, CompanyScopedMixin):
     superseded_by_run_id = Column(
         UUID(as_uuid=False), ForeignKey("scm.reorder_run.id", ondelete="SET NULL"), nullable=True
     )
+    # Who asked for this run: `chat` when the low stock report tool created it over
+    # WhatsApp (PLAN-low-stock-report S5, AC-42), NULL when a person started it in Reorder
+    # Planning or the scheduler did. Drives the "via chat" marker on the plans list, so a
+    # buyer can see why a plan nobody here launched exists.
+    requested_via = Column(String(10), nullable=True)
 
     recommendations = relationship(
         "ReorderRecommendation",
