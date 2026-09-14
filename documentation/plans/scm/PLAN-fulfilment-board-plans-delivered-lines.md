@@ -217,6 +217,10 @@ Two things the build found that this section did not say (coder, 14 Sep 2026):
    contributed nothing and un-netting its plan quantity would hand its group a free 24 it
    does not have (offer 33 where it holds 10). `_LineFacts` carries `owed_qty` beside
    `open_qty` for that one piece of arithmetic; every other reader wants the ask.
+7. **The list and the board differ on WHICH pending batch re-opens a line.** The Planned
+   pill excludes a line named by ANY pending batch, the board re-opens only the newest
+   batch's lines (the one its Changed badge opens on); 0 lines differ on the 0907 copy,
+   because no order carries two open batches. Trigger to align them: a real order that does.
 
 
 ## Out of scope, named
