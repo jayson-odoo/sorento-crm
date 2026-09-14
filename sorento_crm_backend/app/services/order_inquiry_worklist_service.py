@@ -36,7 +36,7 @@ from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import Date, String, cast, func, or_, select
+from sqlalchemy import Date, String, case, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.models.inventory import Warehouse
@@ -76,6 +76,7 @@ from app.services.project_order_inquiry_service import (
     project_customer_label,
 )
 from app.services.scm import order_link_service, priority
+from app.services.scm.demand import demand_qty
 
 logger = logging.getLogger(__name__)
 
@@ -291,12 +292,31 @@ def _linked_qty(*where) -> Any:
 #: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
+#: What the row's own SALES ORDER LINE still owes, over the core line `_base` already
+#: outer-joins (`scm/demand.py`'s own expression, so the worklist and reorder planning read
+#: one definition of outstanding). The `case` is not decoration: on a row whose mirror names
+#: no core line every column of the join is NULL, and Postgres `greatest()` IGNORES NULLs,
+#: so `demand_qty()` would answer 0 there and zero the Buy card for every such row.
+_LINE_OUTSTANDING = case(
+    (SalesOrderLine.id.is_(None), OrderInquiryRow.qty), else_=demand_qty()
+)
 #: PLAN-scm-supplied-with-companions.md ruling 7 excludes only a row's OWN `bundled_qty`
 #: from the cards - the item it rides ON (the host) still needs buying independently of
 #: whether a companion happens to ride inside its line: CKS1050 unlinked qty 1 is Buy 1
 #: whether or not CKSW015 rides on it. No cross-row subtraction here (UAC D5, corrected).
+#:
+#: CAPPED BY THE LINE'S OUTSTANDING (7.3, owner 14 Sep evening: Buy never exceeds what the
+#: line still owes). `qty - linked - bundled` never looked at delivery, so SO368872 /
+#: SRTWC286-SH - 364 ordered, 352 delivered, twelve outstanding - asked purchasing to buy
+#: 240 of something the customer had already had. Measured on the 3am prod copy, the cap
+#: moves the whole Buy total from 154,618 to 153,124 (138 rows sit on a partly delivered
+#: line), so it is a correctness fix rather than a big number. The cards (`_kinds`) and the
+#: `kind=buy` filter are the two readers, and both build on `_base`, which carries the join.
 _UNLINKED_QTY = func.greatest(
-    OrderInquiryRow.qty - _linked_qty() - OrderInquiryRow.bundled_qty, 0
+    func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
+    - _linked_qty()
+    - OrderInquiryRow.bundled_qty,
+    0,
 )
 #: The ANCHOR row's own item code, for a bundled row with no document of its own
 #: (export D8: "the bundled row's document column names its host, not a blank").
