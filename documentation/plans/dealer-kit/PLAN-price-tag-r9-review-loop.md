@@ -1,6 +1,6 @@
 # PLAN - Price Tag Round 9: data gate, review pins, notifications, collection
 
-Status: Implemented 14 Sep 2026, review round in progress
+Status: Implemented 14 Sep 2026, browser-verified, PR open (awaiting owner test on :3082 and merge go)
 UAC: `documentation/plans/dealer-kit/price-tag-r9-review-loop-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758), portal r8 (#861)
 Grill artifact: `.lavish/ptag-r9/price-tag-r9-plan.html`
