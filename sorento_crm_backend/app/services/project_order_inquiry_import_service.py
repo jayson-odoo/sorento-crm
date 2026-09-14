@@ -62,6 +62,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -696,15 +697,31 @@ def _ref_targets(
     The product is part of the key as well as the ref: a ref names one line of one order, but
     a wrong or stale ref on a document for another item must not pull that document in.
 
-    Two queries for every raisable row of the file. Order is explicit on both sides - shipping
-    order then line number, purchase order line by age - so two runs of the same sheet hand
-    the quantity out the same way.
+    A ref that names MORE THAN ONE sales order line is dropped before either query runs
+    (security review, 14 Sep). `source_ref` is not unique: 25,771 lines on the prod copy share
+    one with another line, because the August extract wrote plain ordinals - `'1'` sits on
+    3,364 lines across 3,364 different sales orders - and a purchase document carrying `'1'`
+    in `from_so_line_ref` would otherwise pair itself to every one of them. Only a ref that
+    names exactly one line is a statement about that line.
+
+    Three queries for every raisable row of the file. Order is explicit on both sides -
+    shipping order then line number, purchase order line by age - so two runs of the same
+    sheet hand the quantity out the same way.
     """
     refs = {(line.source_ref or "").strip() for line in core_lines}
     refs.discard("")
     products = {str(line.product_id or "") for line in core_lines}
     products.discard("")
     if not refs or not products:
+        return {}, {}
+    refs = {
+        str(ref)
+        for (ref,) in db.query(SalesOrderLine.source_ref)
+        .filter(SalesOrderLine.source_ref.in_(sorted(refs)))
+        .group_by(SalesOrderLine.source_ref)
+        .having(func.count(SalesOrderLine.id) == 1)
+    }
+    if not refs:
         return {}, {}
     wanted, items = sorted(refs), sorted(products)
 
@@ -749,8 +766,8 @@ def _ref_targets(
 def _chain_allocations(
     db: Session, po_numbers: set, product_ids: set
 ) -> Tuple[Dict[tuple, List[str]], Dict[tuple, List[str]]]:
-    """The SPO allocations a purchase order BECAME: per `(PO LINE ref, product)` and, for
-    whatever cannot be read that way, per `(PO number, product)` (D10).
+    """The SPO allocations a purchase order BECAME: per `(PO number, PO LINE ref, product)`
+    and, for whatever cannot be read that way, per `(PO number, product)` (D10).
 
     The shipping order feed states the purchase order it came from
     (`spo_allocations.from_po_number`), which is the second of the two ways the
@@ -766,6 +783,12 @@ def _chain_allocations(
     of the 64,034 allocations that names a source purchase order names its line too, and
     64,026 of those refs resolve to a purchase order line we hold, so the finer key is
     available wherever the coarser one is (`PLAN-scm-oi-sheet-pairing-repair.md` 2.3).
+
+    The document number stays in the finer key alongside the line ref, because
+    `purchase_order_lines.source_ref` is NOT unique either: the August extract wrote bare
+    ordinals, and `'1'`, `'2'` and `'3'` each sit on 190 to 240 purchase order lines. Keyed on
+    the ref alone, an ordinal would chain one document's line to another document's
+    containers.
     """
     if not po_numbers or not product_ids:
         return {}, {}
@@ -792,7 +815,9 @@ def _chain_allocations(
         )
         ref = (allocation.from_po_line_ref or "").strip()
         if ref:
-            by_line.setdefault((ref, product), []).append(str(allocation.id))
+            by_line.setdefault(
+                (str(allocation.from_po_number), ref, product), []
+            ).append(str(allocation.id))
     return held, by_line
 
 
@@ -956,7 +981,9 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             fact = facts.get(str(po_line_id))
             if fact is None:
                 return
-            exact = chain_by_line.get((str(fact.get("source_ref") or ""), product))
+            exact = chain_by_line.get(
+                (str(fact["document"]), str(fact.get("source_ref") or ""), product)
+            )
             for allocation_id in (exact or chain.get((str(fact["document"]), product), [])):
                 if held.need_left <= _ZERO:
                     break
