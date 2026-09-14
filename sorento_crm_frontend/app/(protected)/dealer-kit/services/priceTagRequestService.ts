@@ -7,6 +7,11 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import {
+  designPayloadFromResponse,
+  type TagSheetDesignPayload,
+  type TagSheetDesignResponse,
+} from '@/lib/dealer-kit/design-payload';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -324,6 +329,46 @@ export async function resolveRequestLines(
     throw new Error(await extractApiError(response, 'Failed to resolve line prices'));
   }
   return response.json();
+}
+
+/**
+ * The design AND everything it needs to draw itself (r9 S1/D1-D3).
+ *
+ * ## Expected API contract. Full shape: `lib/dealer-kit/design-payload.ts`.
+ *
+ * ```
+ * GET /api/v1/dealer-kit/price-tag-requests/{id}/design
+ *   200 { page_id, version, source: "draft" | "version", doc, lines[],
+ *         assets:  { [assetId]: signedUrl },
+ *         images:  { [attachmentId]: signedUrl },
+ *         fonts:   [{ name, family, url }] }
+ *   404 while the request has no page yet.
+ * ```
+ *
+ * Draft-first (B1), so the detail page shows what the designer has actually
+ * drawn rather than the last deliberate save - the office reads its own
+ * work-in-progress, the salesperson reads the version that was sent to them.
+ *
+ * Phase 1 mock boundary: the route answers doc-only today, so the lines come
+ * from `resolve-prices` (what the designer itself calls) and the media maps are
+ * normalised by `designPayloadFromResponse` - `images` rebuilt off the lines,
+ * `assets` and `fonts` empty until Phase 2 folds the print payload into this
+ * one body. Nothing above this function changes when it does.
+ */
+export async function getRequestDesignPayload(
+  requestId: string,
+): Promise<TagSheetDesignPayload | null> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/design`,
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the design'));
+  }
+  const body: TagSheetDesignResponse = await response.json();
+  const lines =
+    body.lines ?? (body.doc ? await resolveRequestLines(requestId) : []);
+  return designPayloadFromResponse({ ...body, lines });
 }
 
 // ---------------------------------------------------------------------------

@@ -78,6 +78,7 @@ import {
   exportTagSheet,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
 } from '../../services/priceTagRequestService';
+import RequestDesignSection from './RequestDesignSection';
 import {
   priceTagActions,
   type PriceTagAction,
@@ -416,6 +417,14 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </TabsList>
 
         <TabsContent value="request" className="mt-0 space-y-4 focus-visible:outline-none">
+          {/* The design first (r9 D3): the question this page is opened to
+              answer is what the tags look like, and the request's own fields
+              are the reference beneath it. */}
+          <RequestDesignSection
+            requestId={requestId}
+            docNumber={request.doc_number}
+          />
+
           <Card>
             <CardContent className="px-4 py-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">

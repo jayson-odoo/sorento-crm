@@ -74,7 +74,8 @@ import {
   requestChanges,
   downloadPriceTagPdf,
 } from '../lib/price-tag-request-service';
-import PriceTagProofViewer from './PriceTagProofViewer';
+import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import {
@@ -89,8 +90,7 @@ import {
   type PortalAttachment,
   type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
-import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
-import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import { cn } from '@/lib/utils';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
@@ -1239,6 +1239,21 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
+        {/* The design comes FIRST from `proof_ready` onward (r9 D3): it is what
+            the salesperson opened the request to look at, and their own
+            answers below it are the reference, not the headline. It shows for
+            longer than the review actions do (D11/AC-S4-4). */}
+        {showDesignPreview && (
+          <DesignSection
+            request={request}
+            download={{
+              available: Boolean(request.has_completed_export),
+              pending: downloadingPdf,
+              onDownload: () => void handleDownloadPdf(),
+            }}
+          />
+        )}
+
         {/* Same four sections as the edit form, same order, all open by
             default (AC-P11) - headers still toggle, there is just no rule
             here to reopen one a reader collapses. */}
@@ -1379,11 +1394,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </p>
           </div>
         </FormSection>
-
-        {/* Design preview appends beneath the same layout (AC-S2-2); nothing
-            below here renders for a plain read-only status. It shows for
-            longer than the review actions do (D11/AC-S4-4). */}
-        {showDesignPreview && <ProofPreviewSection request={request} />}
 
         {isProofReady && (
           <>
@@ -2138,45 +2148,38 @@ function AIMatchStatusLabel({ status }: { status: AIMatchStatus | undefined }) {
 }
 
 // ---------------------------------------------------------------------------
-// Design preview (D11)
+// Design (D11, r9 S1/D2-D3)
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches the request's real tag sheet design and renders it through
- * `PriceTagProofViewer` - the same `TagSheetRenderer` the CRM designer and the
- * PDF export use, so what the salesperson sees here is what gets printed.
+ * Fetches the request's real tag sheet design and renders it through the
+ * shared `DesignViewer` - the same `TagSheetRenderer` the CRM detail page and
+ * the PDF export draw with, now fed the artwork and brand fonts as well, so
+ * what the salesperson reviews here is what gets printed.
+ *
+ * First section on the page from `proof_ready` onward (D3): the design is what
+ * the salesperson opened the request to look at, and everything above it was
+ * scrolling past their own answers to reach it.
  */
-function ProofPreviewSection({
+function DesignSection({
   request,
+  download,
 }: {
   request: PriceTagRequestDetail;
+  download: DesignDownload;
 }) {
-  const [doc, setDoc] = useState<TagSheetDoc | null>(null);
-  const [resolvedData, setResolvedData] = useState<Record<string, ResolvedLineData>>({});
+  const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [notAvailable, setNotAvailable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setNotAvailable(false);
     getPriceTagDesign(request.id)
       .then((data) => {
-        if (cancelled) return;
-        if (!data) {
-          setNotAvailable(true);
-          setDoc(null);
-          return;
-        }
-        const nextResolved: Record<string, ResolvedLineData> = {};
-        for (const line of data.lines) {
-          nextResolved[line.line_id] = line;
-        }
-        setResolvedData(nextResolved);
-        setDoc(data.doc);
+        if (!cancelled) setPayload(data);
       })
       .catch(() => {
-        if (!cancelled) setNotAvailable(true);
+        if (!cancelled) setPayload(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -2186,34 +2189,15 @@ function ProofPreviewSection({
     };
   }, [request.id]);
 
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Design Preview</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <Skeleton className="h-64 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (notAvailable || !doc) {
-    return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Design Preview</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <p className="text-sm text-muted-foreground text-center py-6">
-            Design not available yet.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return <PriceTagProofViewer doc={doc} resolvedData={resolvedData} />;
+  return (
+    <DesignViewer
+      docNumber={request.doc_number ?? 'Design'}
+      payload={payload}
+      loading={loading}
+      emptyMessage="Design not available yet"
+      emptyHint="Marketing is still working on it."
+      download={download}
+    />
+  );
 }
 

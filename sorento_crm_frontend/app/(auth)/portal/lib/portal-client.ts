@@ -16,7 +16,11 @@ import type {
   PortalLandingKind,
   PortalSubmissionKind,
 } from '@/lib/portal-form-kinds';
-import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import {
+  designPayloadFromResponse,
+  type TagSheetDesignPayload,
+  type TagSheetDesignResponse,
+} from '@/lib/dealer-kit/design-payload';
 
 const TOKEN_KEY = 'sorento.portalToken';
 
@@ -1085,26 +1089,43 @@ export async function aiExtractFromFiles(
  * only the doc and resolves prices through a second, staff-only route; the
  * portal has no such second call, so this one carries both.
  */
-export interface PriceTagDesignResponse {
-  page_id: string;
-  version: number;
-  doc: TagSheetDoc | null;
-  source: 'draft' | 'version';
-  lines: LineTagData[];
-}
+export type PriceTagDesignResponse = TagSheetDesignResponse;
 
 /**
  * The salesperson's real design preview (D11), status-gated server-side to
  * `proof_ready | changes_requested | approved | ready` (404 otherwise, no
  * doc leak while a request is still being designed). Returns `null` on 404
- * so the caller can show "Design not available yet." rather than throw.
+ * so the caller can show the section's own empty state rather than throw.
+ *
+ * ## Expected response (r9 S1/D1 - the print payload, minus its
+ * download-scoped fields). Full contract: `lib/dealer-kit/design-payload.ts`.
+ *
+ * ```
+ * GET /api/v1/public/portal/submissions/price_tag_request/{id}/design
+ *   200 { page_id, version, source: "version", doc, lines[],
+ *         assets:  { [assetId]: signedUrl },
+ *         images:  { [attachmentId]: signedUrl },
+ *         fonts:   [{ name, family, url }] }
+ *   404 no design yet, or a status that does not expose one.
+ * ```
+ *
+ * The three media maps are what turn an image layer from a grey box into the
+ * artwork it prints as. Until the route carries them,
+ * `designPayloadFromResponse` rebuilds `images` off the lines (which already
+ * carry their photos' signed URLs) and leaves `assets` / `fonts` empty - the
+ * mock boundary for Phase 1 sits here, at the service, and nothing above it
+ * changes when the backend catches up.
  */
 export async function getPriceTagDesign(
   id: string,
-): Promise<PriceTagDesignResponse | null> {
+): Promise<TagSheetDesignPayload | null> {
   const res = await portalFetch(
     `/api/v1/public/portal/submissions/price_tag_request/${encodeURIComponent(id)}/design`,
   );
   if (res.status === 404) return null;
-  return unwrap<PriceTagDesignResponse>(res, 'Failed to load the design.');
+  const body = await unwrap<TagSheetDesignResponse>(
+    res,
+    'Failed to load the design.',
+  );
+  return designPayloadFromResponse(body);
 }
