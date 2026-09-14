@@ -22,6 +22,19 @@ or shipping order it is waiting on. So this importer:
   * opens NO claim of its own: the claim beside a link is written by the one link writer
     (`ProjectOrderInquiryService._write_link`), and nothing else here writes one.
 
+**How that pairing is read** (`PLAN-scm-oi-sheet-pairing-repair.md`, owner rulings R1 to R3,
+14 Sep 2026). The purchase side carries the exact sales order line it was raised for, in its
+own column: `purchase_order_lines.from_so_line_ref` and the `spo_allocations` twin, both
+joinable to `sales_order_lines.source_ref`. That column is read FIRST, because it is exact,
+already persisted, and is what the owner's own query reads. Claims are the fallback for the
+documents AutoCount stated only by NUMBER: a claim is one row per
+`(so_number, po_number, item_code)` and never repoints, so it cannot say "line 3 to purchase
+order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep prod copy the
+August `po_history` extract already held the claim key for 28,397 pairings the column states
+exactly, which is why `po_history` pairs nothing any more. The same column decides WHICH line
+of the order a row lands on when several fit, through the document the remark cites, and a
+cancelled August-extract ghost line ranks behind any real line that fits.
+
 Three honest limits, each counted and named rather than smoothed over.
 
 **A row can only be raised against a line that exists.** A sales order the CRM does not hold
@@ -83,12 +96,19 @@ _CAP = 200
 
 _ZERO = Decimal("0")
 
-#: The claim sources that state what the BOOK says (D9). `order_inquiry` is this feature's
-#: own echo of a link it wrote, and `crm_supply` / `planner` are the CRM's own decisions -
-#: none of the three is AutoCount's record of a pairing, so none of them pairs anything here.
+#: The claim sources that still state what the BOOK says, once the line reference has been
+#: read (D9 as repaired, `PLAN-scm-oi-sheet-pairing-repair.md` section 2.3). `order_inquiry`
+#: is this feature's own echo of a link it wrote, and `crm_supply` / `planner` are the CRM's
+#: own decisions - none of the three is AutoCount's record of a pairing, so none of them
+#: pairs anything here.
+#:
+#: `po_history` left this list with owner ruling R1 (14 Sep 2026). Those 33,235 rows are ONE
+#: August Excel extract, and since a claim is one row per `(so_number, po_number, item_code)`
+#: and never repoints, they hold the key for 28,397 pairings AutoCount states exactly on the
+#: purchase side. Trusted as the book, they moved rows onto documents the goods never came
+#: from.
 _BOOK_CLAIM_SOURCES = (
     order_link_service.SOURCE_AUTOCOUNT,
-    "po_history",
     order_link_service.SOURCE_PO_UPLOAD,
 )
 
@@ -242,13 +262,21 @@ def _is_open_demand(line: SalesOrderLine) -> bool:
 
 
 def _restates(row) -> tuple:
-    """What makes two sheet rows the SAME instruction (D7, AC-S1-38).
+    """What makes two sheet rows the SAME instruction (D7, AC-S1-38 as amended by AC-R-11).
 
     The customer keeps one book with a month tab, a roll-up tab covering that month and a
     dated working snapshot, so the same delivery is written out two and three times by
-    design. Identical on all six fields is a restatement of one instruction, not a second
-    one; anything that differs - a quantity, a date, a location, the remark - is the sheet
-    splitting the line, which AC-S1-2 says it may.
+    design. Sales order, item, quantity, delivery date and location is the whole key (owner
+    ruling R3, 14 Sep 2026: "the remark doesn't really matter, differing remark is same also
+    as long as other keys are the same"); anything that differs on those five - a quantity, a
+    date, a location - is the sheet splitting the line, which AC-S1-2 says it may.
+
+    The remark, the documents parsed out of it and the ORDER BACK flag are all OUT of the
+    key. Which tab carries the purchase order number is an accident of how the book is kept,
+    so a roll-up row that names one is the same instruction as the month row that left it
+    blank - and `_plan` lends that citation to the row it restates rather than discarding it
+    with the duplicate. An ORDER BACK row carries no delivery date at all, so the date still
+    tells it apart from a dated row.
     """
     return (
         (row.so_number or "").strip(),
@@ -256,13 +284,6 @@ def _restates(row) -> tuple:
         _dec(row.qty),
         row.delivery_date,
         (row.location or "").strip().upper(),
-        (getattr(row, "remark", "") or "").strip().upper(),
-        # The documents parsed out of the remark, and whether the date cell said ORDER BACK
-        # (review findings 2 and 3, 14 Sep). Two rows can carry the same remark TEXT and
-        # still not cite the same documents - the PO NO column feeds the same parse - and
-        # ORDER BACK is a different instruction from a dated one, not a restatement of it.
-        tuple(row.po_numbers or ()),
-        bool(getattr(row, "order_back", False)),
     )
 
 
@@ -280,18 +301,94 @@ def _cited_from(po_numbers: Sequence[str]) -> Tuple[str, ...]:
     return tuple(ordered)
 
 
-def _rank_for(row) -> Callable[[tuple], tuple]:
-    """The line this row means, when several fit (D1, AC-S1-8).
+def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
+    """Per cited document number, the `sales_order_lines.source_ref` values its purchase
+    side names (`PLAN-scm-oi-sheet-pairing-repair.md` section 2.2, owner ruling R2).
 
-    The line whose required date IS the sheet's date; then an open line before a closed one;
-    then the earliest required date (undated last); then the oldest line, so two runs of the
-    same sheet land the same way.
+    This is what tells two same-item lines of one sales order apart: the sheet's remark
+    names a document, and that document's own lines say, in AutoCount's own column, WHICH
+    line of the order they were raised for.
+
+    A cited purchase order answers with the `from_so_line_ref` of its lines. A cited
+    shipping order answers with the refs of its visible allocations, plus the refs of the
+    purchase order lines of every distinct `from_po_number` those allocations carry - the
+    SO -> PO -> SPO chain read backwards, which is how the two feeds state it
+    (`SPO-2026/01-0140 <- 202511-S0097 <- AED_SORENTO:41576559:41604391`).
+
+    Three queries for the whole file, computed once by `_plan`.
+    """
+    if not numbers:
+        return {}
+    wanted = [str(number) for number in numbers if number]
+    named: Dict[str, set] = {}
+
+    def _po_refs(po_numbers: List[str]) -> List[tuple]:
+        return (
+            db.query(PurchaseOrder.po_number, PurchaseOrderLine.from_so_line_ref)
+            .join(PurchaseOrderLine, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
+            .filter(
+                PurchaseOrder.po_number.in_(po_numbers),
+                PurchaseOrderLine.from_so_line_ref.isnot(None),
+            )
+            .all()
+            if po_numbers
+            else []
+        )
+
+    for number, ref in _po_refs(wanted):
+        named.setdefault(str(number).upper(), set()).add(str(ref))
+
+    #: The shipping orders each source purchase order feeds, so one query answers for all.
+    spo_by_po: Dict[str, set] = {}
+    for spo_number, ref, po_number in (
+        db.query(
+            SPOAllocation.spo_number,
+            SPOAllocation.from_so_line_ref,
+            SPOAllocation.from_po_number,
+        )
+        .filter(
+            SPOAllocation.spo_number.in_(wanted),
+            *spo_supply.visible_line_clauses(),
+        )
+        .all()
+    ):
+        key = str(spo_number).upper()
+        if ref:
+            named.setdefault(key, set()).add(str(ref))
+        if po_number:
+            spo_by_po.setdefault(str(po_number), set()).add(key)
+
+    for number, ref in _po_refs(list(spo_by_po)):
+        for spo_number in spo_by_po.get(str(number), ()):
+            named.setdefault(spo_number, set()).add(str(ref))
+    return named
+
+
+def _rank_for(row, named: Dict[str, set]) -> Callable[[tuple], tuple]:
+    """The line this row means, when several fit (D1, AC-S1-8, amended by R2 on 14 Sep 2026).
+
+    The line the CITED document names, first of all: the remark is the operator saying which
+    delivery this is, and the document it names states the exact line on its own purchase
+    side. Then a real line before a cancelled one - 10,499 cancelled August-extract ghosts
+    are still in the book, and a ghost is never what a live sheet row means while a real line
+    fits. Then the three terms that were already here: the line whose required date IS the
+    sheet's date, an open line before a closed one, the earliest required date (undated
+    last), and the oldest line, so two runs of the same sheet land the same way.
+
+    A cancelled line is ranked last, never excluded: when it is the only line that fits it is
+    still where the history is (D1 kept).
     """
     wanted = row.delivery_date
+    cited: set = set()
+    for number in _cited_from(row.po_numbers):
+        cited |= named.get(number, set())
 
     def key(candidate: tuple) -> tuple:
         line = candidate[0]
+        ref = (line.source_ref or "").strip()
         return (
+            0 if (ref and ref in cited) else 1,
+            0 if (line.line_status or "open") != "cancelled" else 1,
             0 if line.required_date == wanted else 1,
             0 if (line.line_status or "open") == "open" else 1,
             line.required_date is None,
@@ -307,6 +404,7 @@ def _match_row(
     candidates: List[tuple],
     taken: Dict[str, Decimal],
     already_raised: set,
+    named: Dict[str, set],
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, or the FIRST filter that refused it.
 
@@ -348,7 +446,7 @@ def _match_row(
     if not fits:
         return None, oc.QTY_EXCEEDS_ORDERED
 
-    found = sorted(fits, key=_rank_for(row))[0]
+    found = sorted(fits, key=_rank_for(row, named))[0]
     if str(found[0].id) not in already_raised:
         taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
     return found, None
@@ -405,22 +503,41 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     raised_already = _already_raised(
         db, [held[0] for group in lines.values() for held in group]
     )
+    #: Which sales order line each document the file cites names, for the whole file at
+    #: once (R2). Three queries, before the per-row loop, because the answer is needed on
+    #: every row that cites anything and re-asking it per row would be one round trip per
+    #: remark in a 15,000-row book.
+    named = _named_lines(
+        db,
+        {number for row in parsed.rows for number in _cited_from(row.po_numbers)},
+    )
     #: How much of each line this FILE has already spoken for, in file order.
     taken: Dict[str, Decimal] = {}
 
-    #: Every instruction this file has already stated, whichever tab stated it.
-    stated: set = set()
+    #: Every instruction this file has already stated, whichever tab stated it, against the
+    #: match that stated it first.
+    stated: Dict[tuple, _Match] = {}
 
     for match in plan.matches:
         row = match.row
         match.cited = _cited_from(row.po_numbers)
         key = _restates(row)
-        if key in stated:
+        first = stated.get(key)
+        if first is not None:
             # Counted, never matched: a restatement must not take the line's quantity from
             # the row it restates, or the second tab would read `qty_exceeds_ordered`.
             match.duplicate = True
+            # Its citation is NOT discarded with it (AC-R-12). Which tab carries the
+            # purchase order number is an accident of how the customer keeps the book, so a
+            # roll-up row that names one lends it to the month row that left the remark
+            # blank, in the order the operator wrote them.
+            merged = list(first.cited)
+            for number in match.cited:
+                if number not in merged:
+                    merged.append(number)
+            first.cited = tuple(merged)
             continue
-        stated.add(key)
+        stated[key] = match
         if _dec(row.qty) <= _ZERO:
             # Never matched and never charged to the ledger (security review N2, 14 Sep):
             # a negative cell would otherwise hand capacity BACK to the line and let a later
@@ -435,7 +552,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             match.code = oc.ORDER_NOT_PLANNABLE
             continue
         found, match.reason = _match_row(
-            row, lines.get(str(order.id)) or [], taken, raised_already
+            row, lines.get(str(order.id)) or [], taken, raised_already, named
         )
         if found is not None:
             match.core_line, match.line_location = found[0], found[2] or None
@@ -503,6 +620,10 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
             "product_id": str(line.product_id or ""),
             "po_line_id": str(line.id),
             "spo_allocation_id": None,
+            # This line's OWN document key, which the shipping order quotes back as
+            # `spo_allocations.from_po_line_ref` - how `_chain_allocations` walks the chain
+            # line to line rather than document to document.
+            "source_ref": (line.source_ref or "").strip(),
         }
     for allocation, supplier in (
         db.query(SPOAllocation, Supplier.supplier_name)
@@ -526,21 +647,97 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
             "product_id": str(allocation.product_id or ""),
             "po_line_id": None,
             "spo_allocation_id": str(allocation.id),
+            "source_ref": (allocation.source_ref or "").strip(),
         }
     return facts
 
 
-def _chain_allocations(db: Session, po_numbers: set, product_ids: set) -> Dict[tuple, List[str]]:
-    """The SPO allocations a purchase order BECAME, per `(PO number, product)` (D10).
+def _ref_targets(
+    db: Session, core_lines: Sequence[SalesOrderLine]
+) -> Tuple[Dict[tuple, List[str]], Dict[tuple, List[str]]]:
+    """What AutoCount itself states is for each sales order line, per `(ref, product)`.
+
+    The purchase side carries the exact line it was raised for in its own column -
+    `purchase_order_lines.from_so_line_ref` and the `spo_allocations` twin, both joinable to
+    `sales_order_lines.source_ref`. That is the owner's own query, and it is the source of
+    truth this importer reads FIRST (R1, `PLAN-scm-oi-sheet-pairing-repair.md` section 2.3).
+
+    The product is part of the key as well as the ref: a ref names one line of one order, but
+    a wrong or stale ref on a document for another item must not pull that document in.
+
+    Two queries for every raisable row of the file. Order is explicit on both sides - shipping
+    order then line number, purchase order line by age - so two runs of the same sheet hand
+    the quantity out the same way.
+    """
+    refs = {(line.source_ref or "").strip() for line in core_lines}
+    refs.discard("")
+    products = {str(line.product_id or "") for line in core_lines}
+    products.discard("")
+    if not refs or not products:
+        return {}, {}
+    wanted, items = list(refs), list(products)
+
+    allocations: Dict[tuple, List[str]] = {}
+    for allocation in (
+        db.query(SPOAllocation)
+        .filter(
+            SPOAllocation.from_so_line_ref.in_(wanted),
+            SPOAllocation.product_id.in_(items),
+            # The same visibility test every other reader here applies: a line AutoCount
+            # stopped naming, that never received anything, is not a document a link may
+            # land on.
+            *spo_supply.visible_line_clauses(),
+        )
+        .order_by(
+            SPOAllocation.spo_number.asc(),
+            SPOAllocation.spo_line_number.asc(),
+            SPOAllocation.id.asc(),
+        )
+        .all()
+    ):
+        allocations.setdefault(
+            (str(allocation.from_so_line_ref), str(allocation.product_id or "")), []
+        ).append(str(allocation.id))
+
+    po_lines: Dict[tuple, List[str]] = {}
+    for line in (
+        db.query(PurchaseOrderLine)
+        .filter(
+            PurchaseOrderLine.from_so_line_ref.in_(wanted),
+            PurchaseOrderLine.product_id.in_(items),
+        )
+        .order_by(PurchaseOrderLine.created_at.asc(), PurchaseOrderLine.id.asc())
+        .all()
+    ):
+        po_lines.setdefault(
+            (str(line.from_so_line_ref), str(line.product_id or "")), []
+        ).append(str(line.id))
+    return allocations, po_lines
+
+
+def _chain_allocations(
+    db: Session, po_numbers: set, product_ids: set
+) -> Tuple[Dict[tuple, List[str]], Dict[tuple, List[str]]]:
+    """The SPO allocations a purchase order BECAME: per `(PO LINE ref, product)` and, for
+    whatever cannot be read that way, per `(PO number, product)` (D10).
 
     The shipping order feed states the purchase order it came from
     (`spo_allocations.from_po_number`), which is the second of the two ways the
     SO -> PO -> SPO chain is known. Following it is what puts the link on the SPO, so the
     worklist shows the shipping order with its source PO beside it rather than a purchase
     order the goods have already left.
+
+    It also states the exact purchase order LINE, in `from_po_line_ref`, quoting that line's
+    own `source_ref` - and the document number alone is too coarse to stand in for it. On the
+    3am 14 Sep prod copy, SPO-2026/01-0140 carries FIVE CB2154-DIY allocations from purchase
+    order 202511-S0097 (300, 87, 1, 10 and 2), each raised for a different sales order line,
+    so a walk by number lands the owner's 87 on the 300 belonging to somebody else. Every one
+    of the 64,034 allocations that names a source purchase order names its line too, and
+    64,026 of those refs resolve to a purchase order line we hold, so the finer key is
+    available wherever the coarser one is (`PLAN-scm-oi-sheet-pairing-repair.md` 2.3).
     """
     if not po_numbers or not product_ids:
-        return {}
+        return {}, {}
     rows = (
         db.query(SPOAllocation)
         .filter(
@@ -556,10 +753,16 @@ def _chain_allocations(db: Session, po_numbers: set, product_ids: set) -> Dict[t
         .all()
     )
     held: Dict[tuple, List[str]] = {}
+    by_line: Dict[tuple, List[str]] = {}
     for allocation in rows:
-        key = (str(allocation.from_po_number), str(allocation.product_id or ""))
-        held.setdefault(key, []).append(str(allocation.id))
-    return held
+        product = str(allocation.product_id or "")
+        held.setdefault((str(allocation.from_po_number), product), []).append(
+            str(allocation.id)
+        )
+        ref = (allocation.from_po_line_ref or "").strip()
+        if ref:
+            by_line.setdefault((ref, product), []).append(str(allocation.id))
+    return held, by_line
 
 
 def _claimed_capacity(db: Session) -> Dict[str, Decimal]:
@@ -599,15 +802,23 @@ def _claim_order(facts: Dict[str, dict]) -> Callable[[dict], tuple]:
 
 
 def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
-    """What each raisable row would be linked to, in the order the two sources rank.
+    """What each raisable row would be linked to, in the order the three sources rank.
 
-    **Source 1, what AutoCount states** (D9, the owner: "we don't trust the remark column in
-    the sheet, we can refer but the source of truth is the autocount linkage"). The ingest
-    already writes that linkage as RESOLVED claims on the core sales-order line, so those are
-    read first and their targets linked, SPO before PO, and a purchase order followed through
-    to the allocations it became before the purchase-order line itself.
+    **Source 1, the line reference AutoCount itself wrote** (D9 as repaired, R1: "we don't
+    trust the remark column in the sheet ... the source of truth is the autocount linkage").
+    The purchase side names the exact sales order line in its own column, so that column is
+    read FIRST: allocations that name the line, then, for a purchase order line that names
+    it, the shipping orders that purchase order became (D10) and the purchase order line
+    itself only for what they cannot cover. Measured on the 3am 14 Sep prod copy, 32,674
+    purchase order lines name a held sales order line and only 4,277 carry a claim saying so.
 
-    **Source 2, what the sheet cites** - for the need source 1 leaves, in the order the
+    **Source 2, claims the ingest resolved** - for the need the reference leaves. Where
+    AutoCount stated only a document NUMBER there is no reference to read, and the claim is
+    all there is, so this source stays; it is merely no longer first, and `po_history` no
+    longer counts as the book (`_BOOK_CLAIM_SOURCES`). SPO before PO, a purchase order
+    followed through to the allocations it became before the purchase-order line itself.
+
+    **Source 3, what the sheet cites** - for the need the book leaves, in the order the
     operator wrote the documents. A document the book has already linked is not linked twice;
     one that resolves to nothing, or to a target with no room, is named on the result.
 
@@ -636,16 +847,29 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
         order_link_service._purchase_side(db, cited_numbers) if cited_numbers else ({}, {})
     )
 
+    ref_allocations, ref_po_lines = _ref_targets(db, [m.core_line for _, m in wanted])
+
     target_ids = {claim["target_id"] for claim in claims}
     target_ids |= {target for _side, target in by_key.values()}
+    target_ids |= {i for ids in ref_allocations.values() for i in ids}
+    target_ids |= {i for ids in ref_po_lines.values() for i in ids}
     facts = _target_facts(db, target_ids)
 
-    chain = _chain_allocations(
+    chain, chain_by_line = _chain_allocations(
         db,
+        # Every purchase order this run may land on, whichever source named it: the
+        # reference reaches the shipping order through exactly the same D10 walk a claim
+        # does, so both sets of PO numbers are gathered before the one query.
         {
             facts[claim["target_id"]]["document"]
             for claim in claims
             if facts.get(claim["target_id"], {}).get("kind") == _PO
+        }
+        | {
+            facts[line_id]["document"]
+            for ids in ref_po_lines.values()
+            for line_id in ids
+            if line_id in facts
         },
         {str(m.core_line.product_id or "") for _, m in wanted},
     )
@@ -687,6 +911,39 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             held.from_book = held.from_book or from_book
             return True
 
+        product = str(match.core_line.product_id or "")
+
+        def _through_po(po_line_id: str) -> None:
+            """A purchase order line the book named: its shipping orders first (D10), the
+            purchase order line itself only for what they cannot cover.
+
+            The shipping orders THIS LINE became, where the feed says so, and only otherwise
+            the ones the whole document became: one purchase order can carry five lines of
+            the same item for five different sales order lines, and the quantity is owed
+            against the container that holds this one.
+            """
+            fact = facts.get(str(po_line_id))
+            if fact is None:
+                return
+            exact = chain_by_line.get((str(fact.get("source_ref") or ""), product))
+            for allocation_id in (exact or chain.get((str(fact["document"]), product), [])):
+                if held.need_left <= _ZERO:
+                    break
+                take(allocation_id, from_book=True)
+            if held.need_left > _ZERO:
+                take(str(po_line_id), from_book=True)
+
+        ref = (match.core_line.source_ref or "").strip()
+        if ref:
+            for allocation_id in ref_allocations.get((ref, product), []):
+                if held.need_left <= _ZERO:
+                    break
+                take(allocation_id, from_book=True)
+            for po_line_id in ref_po_lines.get((ref, product), []):
+                if held.need_left <= _ZERO:
+                    break
+                _through_po(po_line_id)
+
         line_claims = by_line.get(str(match.core_line.id)) or []
         for claim in sorted(line_claims, key=_claim_order(facts)):
             if held.need_left <= _ZERO:
@@ -697,16 +954,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
             if fact["kind"] == _SPO:
                 take(claim["target_id"], from_book=True)
                 continue
-            # A purchase order the book paired: its shipping orders first (D10), the
-            # purchase-order line itself only for what they cannot cover.
-            for allocation_id in chain.get(
-                (str(fact["document"]), str(match.core_line.product_id or "")), []
-            ):
-                if held.need_left <= _ZERO:
-                    break
-                take(allocation_id, from_book=True)
-            if held.need_left > _ZERO:
-                take(claim["target_id"], from_book=True)
+            _through_po(claim["target_id"])
 
         for number in match.cited:
             if held.need_left <= _ZERO:
