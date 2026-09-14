@@ -65,9 +65,11 @@ LOW_STOCK_GRANT = "scm.low_stock_report"
 SUPPLIER_GRANT = "purchase_orders.supplier"
 
 DEFAULT_SYNC_WAIT_SECONDS = 40
-#: How often `_await_download` re-reads the row while it waits. Short enough that a
-#: workbook rendered at second 3 does not wait until second 4 to be answered with.
-_POLL_SECONDS = 0.25
+#: How often `_await_download` re-reads the row while it waits. Each poll opens its own
+#: connection, and the whole budget is 7 s (`_sync_wait_seconds`), so 0.25 s bought 28
+#: connections for a quarter-second of latency nobody reads on WhatsApp. Half a second is
+#: still well inside the 3 s a render takes.
+_POLL_SECONDS = 0.5
 
 #: B2 (security review): per-contact rate limit on this side-effecting route.
 #: `rate_limit.hit` fails OPEN (allows) when Redis is unreachable, so an infra blip never
@@ -79,8 +81,9 @@ _POLL_SECONDS = 0.25
 _RATE_LIMIT = 5
 _RATE_WINDOW_SECONDS = 600
 
-#: N5: a chat scope is a handful of codes, never a list. Capped so a malformed tool call
-#: cannot hand `create_run` thousands of codes to resolve.
+#: N5: a chat scope is a handful of codes, never a list. Over this the route REFUSES (422)
+#: rather than truncating: silently planning the first 100 of 500 codes answers a question
+#: nobody asked, and the caller has no way to tell it happened.
 _MAX_CODES = 100
 
 #: Console round 3, defect A: how far INSIDE the lane's MCP client timeout this route must
@@ -97,12 +100,21 @@ def _csv_list(values: Optional[list[str]]) -> Optional[list[str]]:
     The tool may send a repeated query param or one comma-separated value (the outstanding
     report's own parsing), and `create_run` reads `None` as "no scope, plan everything" -
     which is exactly what an omitted filter means here.
+
+    More than `_MAX_CODES` is a 422, not a truncation: a report built from the first 100 of
+    500 codes looks complete and is not, and the caller never learns the difference.
     """
     if not values:
         return None
     out = [part.strip() for value in values for part in str(value).split(",")]
     out = [part for part in out if part]
-    return out[:_MAX_CODES] or None
+    if len(out) > _MAX_CODES:
+        raise AppException(
+            status_code=422,
+            message=f"Narrow the scope - at most {_MAX_CODES} codes per report.",
+            code="too_many_codes",
+        )
+    return out or None
 
 
 def _sync_wait_seconds(db: Session) -> int:

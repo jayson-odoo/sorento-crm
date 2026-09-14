@@ -132,6 +132,13 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     so a caller cannot start an unbounded number of concurrent plans. Off by default (the
     UI / scheduler create back-to-back runs in their own tests); the chat route passes
     True and maps the 409 to ``{"status": "busy"}``.
+
+    It is ADVISORY, not a lock: a read followed by an insert, with no ``FOR UPDATE`` and no
+    unique constraint behind it, so two requests that arrive inside the same instant can
+    both read "nothing in flight" and both create a run. That is acceptable for what this
+    guards - a WhatsApp contact typing twice, whose real bound is the per-contact rate
+    limit on the route. Make it a real lock only if a measured burst gets past it; an
+    advisory read costs nothing and blocks nobody.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
