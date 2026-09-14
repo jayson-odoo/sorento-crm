@@ -65,7 +65,9 @@ tell them.
   layer. LINES rail shows an orange count on lines with open pins.
 - AC-S2-7 With open pins, the primary CTA reads `Mark design ready (N open)` and still works
   (D2). The next round on the portal shows earlier pins grey and allows new pins; `round`
-  increments. `pytest`: round equals the number of proof_ready snapshots at send time.
+  increments. `pytest`: round equals the request's `review_round` counter, incremented on
+  every entry into proof_ready (browser finding 14 Sep: the snapshot-count derivation skipped
+  rounds when no draft existed).
 - AC-S2-8 A request-changes call with only the legacy `note` field (no pins) still succeeds
   and creates one general comment row.
 
@@ -88,7 +90,7 @@ tell them.
   pressing it sets `ready_for_collection` and `ready_for_collection_at`. The CTA is hidden when
   Printing is not set.
 - AC-S3-6 At `ready_for_collection` the portal primary CTA is `Mark collected`; the CRM
-  card offers `Mark collected` as primary and the gear too. Either sets `collected`,
+  card offers `Mark collected` as its primary button. Either sets `collected`,
   `collected_at`, and the acting user or contact. `collected` is terminal.
 - AC-S3-7 System Settings > General shows "Auto-mark price tags collected after" days,
   default 7, accepts 0..90, saves and reloads (`vitest` mapping, `pytest` bounds).

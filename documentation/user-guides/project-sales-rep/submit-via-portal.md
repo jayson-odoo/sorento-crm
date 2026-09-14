@@ -73,7 +73,7 @@ Price Tag Request is only shown on the **Submission type** combobox if your acco
 1. **Customer** - open by default. Pick a customer; this opens **Sales Order & Lines** automatically.
 2. **Sales Order & Lines** - drop the sales order file (or **Choose file** / **Paste from clipboard**). Each attached file shows as its own thumbnail with an **Extract with AI from <filename>** action. Tap it to open the AI Extract dialog straight on that file's results table; remove any row you don't want with its own remove control before clicking **Confirm and prefill**, which appends the remaining rows as lines - if the file listed the same product more than once, those rows are merged into one line with the quantities summed. **Add line** stays available for typing a row in by hand, but the same product can't be added twice: picking a product already on the request shows *"<product code> is already on this request."* instead of adding a second line. Lines have no reorder arrows - they stay in the order you added them. The moment a first line lands, **Price** opens automatically.
 3. **Price** - choose **List price** or **Selling price**. Choosing either opens **Additional Information**. Choosing **Selling price** also reveals a **Promotion** picker inside this same section, labelled optional - leave it blank if there's no promotion to link.
-4. **Additional Information** - **Need by** and **Notes**, both optional; neither one blocks Submit.
+4. **Additional Information** - **Printing \***, then **Need by** and **Notes**. **Printing** is required and has no default: pick **Office prints** or **I print myself**. Submit stops with *"Say who prints these tags."* until you do, because the answer decides how the request ends. **Need by** and **Notes** are both optional; neither one blocks Submit. See [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md#who-prints-the-tags) for what each printing choice means afterwards.
 
 A section you collapse stays collapsed - it only reopens automatically the first time its trigger condition is met, never again after that. You can open or close any section by hand at any time by tapping its header, and a collapsed section that already holds values shows a one-line summary (for example the customer's name, or "List price").
 
@@ -81,7 +81,7 @@ Click **Save Draft** or **Submit** as usual once you're done (see above).
 
 ### Viewing a submitted price tag request
 
-Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview. **A submitted price tag request can't be edited directly** - the same rule as a stock inquiry. Draft requests are the exception: a draft stays fully editable until you submit it.
+Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview. From the moment marketing marks the design ready, a **Design** card sits above them all - reading it, asking for changes on it, approving and collecting are covered in [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md). **A submitted price tag request can't be edited directly** - the same rule as a stock inquiry. Draft requests are the exception: a draft stays fully editable until you submit it.
 
 The header (same line as the form number, muted, e.g. *"PT-202609-0007 · 3 of 3 revisions left · 1/3"*) carries a single gear holding every action for the request: **Duplicate**, **Download PDF**, and **Revise** when your company allows it.
 
@@ -108,6 +108,7 @@ All notifications come on **WhatsApp** through Respond.io to your registered num
 | **Stock Inquiry** | The project sales manager flows it to purchasing **or** rejects it; **and** when purchasing posts a response. |
 | **Purchase Request** | The project sales manager **approves** it (or rejects it). |
 | **Sponsorship Form** | The project sales manager **approves** it (or rejects it). |
+| **Price Tag Request** | **Every** status change, from "received" through to collected, plus when the PDF is ready on a request you print yourself. The full list is in [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md#how-youll-be-notified). |
 
 The WhatsApp message contains a link back to the portal so you can open the submission and read the latest details.
 
@@ -120,3 +121,4 @@ If a submission is rejected, the form is unlocked. Open it from the dashboard, f
 * [Portal overview](portal-overview.md)
 * [Project Sales Admin - Review a purchase request](../project-sales-admin/review-purchase-request.md)
 * [Project Sales Manager - Flow stock inquiry to purchasing](../project-sales-manager/flow-stock-inquiry.md)
+* [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md)
