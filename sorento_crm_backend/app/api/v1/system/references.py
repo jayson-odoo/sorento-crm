@@ -10,7 +10,7 @@ from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import String as _String
 from sqlalchemy import cast as _cast
 from sqlalchemy import func, or_
@@ -1486,6 +1486,16 @@ class ResolveReferenceRequest(BaseModel):
             "to pin)."
         ),
     )
+
+    @field_validator("contact_id", mode="before")
+    @classmethod
+    def _contact_id_to_string(cls, v: Any) -> Any:
+        """The Respond.io contact id is a NUMBER on the wire (both the chatbot
+        lane and n8n forward the webhook value as-is), so coerce it before the
+        string field rejects it."""
+        if isinstance(v, int) and not isinstance(v, bool):
+            return str(v)
+        return v
 
 
 def _result_has_zero_matches(result: dict[str, Any]) -> bool:
