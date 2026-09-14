@@ -647,12 +647,32 @@ class TestTheRoundReachesBothNotifications:
         return {"line_id": line_id, "x": 0.2, "y": 0.3, "w": 0, "h": 0, "body": body}
 
     def test_a_second_round_rings_the_bell_again(self, portal):
+        """The counter is walked through the REAL transitions, not poked in
+        with a raw status update: `review_round` is a column
+        `transition_status` increments on every entry into `proof_ready`
+        (r9 review-round leftover), so a fixture that sets `status` directly
+        leaves it at 0 and proves nothing about the counted rule.
+        """
         from app.models.price_tag import PriceTagRequest
+        from app.services.price_tag_request_service import PriceTagRequestService
 
         client, db, contact_id = portal
-        request, page, doc = self._proof_ready(db, contact_id)
-        seed.snapshot_proof_ready(db, page, doc, version=2)
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="designing",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        seed.attach_design(db, request)
         line_id = request.lines[0].id
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
 
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
@@ -660,12 +680,18 @@ class TestTheRoundReachesBothNotifications:
         )
         assert len(self._bells(db)) == 1
 
-        # Marketing re-sends the proof, the salesperson comments again.
-        seed.snapshot_proof_ready(db, page, doc, version=3)
-        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
-            {"status": "proof_ready"}
+        # Marketing marks the design ready again - the counter, not a
+        # snapshot, is what says this is a second round.
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
         )
         db.commit()
+        db.expire_all()
+        fresh = (
+            db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).first()
+        )
+        assert fresh.review_round == 2, "counter should be 2 after the second proof"
+
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
             json={"comments": [self._pin(line_id, "Round two")]},

@@ -279,34 +279,70 @@ class TestTheLegacyNoteBodyStillWorks:
 
 
 class TestRoundCountsTheProofsNotTheSends:
-    def test_round_equals_the_number_of_proof_ready_snapshots_at_send(self, portal):
+    def test_the_round_counts_the_counted_proofs_not_the_sends(self, portal):
+        """Renamed from ..._snapshots_at_send: the round is `review_round`,
+        the STORED counter `transition_status` increments on every entry into
+        `proof_ready` (r9 review-round leftover) - not a `Marked proof ready`
+        page-version snapshot count. Walked through the REAL transitions
+        (designing -> proof_ready -> changes_requested -> proof_ready) rather
+        than a raw status UPDATE, because a raw update never touches the
+        counter and proves nothing about the counted rule.
+        """
+        from app.models.notification import Notification
+        from app.services.price_tag_request_service import PriceTagRequestService
+
         client, db, contact_id = portal
-        request, page, doc = _proof_ready_request(db, contact_id)
-        seed.snapshot_proof_ready(db, page, doc, version=2)
-
-        client.post(
-            f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "First round")]},
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="designing",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
         )
+        seed.attach_design(db, request)
+        line_id = request.lines[0].id
 
-        assert [row.round for row in _review_rows(db, request.id)] == [1]
+        def bells():
+            return (
+                db.query(Notification)
+                .filter(Notification.user_id == seed.MARKETER_ID)
+                .filter(Notification.source_entity_type == "price_tag_request")
+                .filter(Notification.source_entity_id == str(request.id))
+                .all()
+            )
 
-        # Marketing revises and sends a second proof; the salesperson comments
-        # again. The earlier round keeps its number.
-        seed.snapshot_proof_ready(db, page, doc, version=3)
-        from app.models.price_tag import PriceTagRequest
-
-        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
-            {"status": "proof_ready"}
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
         )
         db.commit()
 
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Second round")]},
+            json={"comments": [_pin(line_id, "First round")]},
+        )
+
+        assert [row.round for row in _review_rows(db, request.id)] == [1]
+        assert len(bells()) == 1
+
+        # Marketing marks the design ready again; the salesperson comments
+        # again. The earlier round keeps its number.
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+
+        client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [_pin(line_id, "Second round")]},
         )
 
         assert sorted(row.round for row in _review_rows(db, request.id)) == [1, 2]
+
+        rung = bells()
+        assert len(rung) == 2, "the second round rang no bell of its own"
+        assert len({row.dedup_key for row in rung}) == 2
 
     def test_the_round_is_stored_not_recomputed_at_read(self, portal):
         """A third proof after the fact must not renumber round 1."""

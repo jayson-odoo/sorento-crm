@@ -204,7 +204,10 @@ describe('DesignViewer card (AC-S1-3)', () => {
     const withSheetsNoImposition = payload(1);
     const doc = { ...withSheetsNoImposition.doc } as Record<string, unknown>;
     delete doc.imposition;
-    const broken = { ...withSheetsNoImposition, doc } as typeof withSheetsNoImposition;
+    const broken = {
+      ...withSheetsNoImposition,
+      doc,
+    } as unknown as typeof withSheetsNoImposition;
 
     expect(() =>
       render(<DesignViewer docNumber="PT-202609-0001" payload={broken} />),
