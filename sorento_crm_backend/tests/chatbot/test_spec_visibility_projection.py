@@ -15,15 +15,30 @@ from __future__ import annotations
 
 import json
 import uuid
+from typing import Any
 
 from sqlalchemy import text
 
+from app.models.user import SystemSetting
+from app.services.chatbot import engine as engine_mod
 from app.services.chatbot import trace as trace_mod
 from app.services.chatbot.head.access import check_access
 from app.services.chatbot.lanes import business
 from app.services.chatbot.lanes.business import fetch
-from app.services.chatbot.lanes.business.services import FetchServices
+from app.services.chatbot.lanes.business.services import (
+    AnswerServices,
+    FetchServices,
+    ResolveGateServices,
+)
 from tests._pg_fixture import unique_code
+from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.test_engine import (
+    CONTACT_ID as _ENGINE_CONTACT_ID,
+    _envelope,
+    _parser_output,
+    seeded,
+    stub_parser,
+)
 
 CONTACT_ID = "ZZT-spec-visibility-1"
 SPACE_ID = "364817"
@@ -405,3 +420,208 @@ class TestTurnTraceSpecVisibility:
         assert len(events) == 1
         assert events[0]["hidden"] == ["thickness"]
         assert events[0]["dropped"] == []
+
+
+# --------------------------------------------------------------------- end to end
+
+
+def _leaked_spec_envelope() -> dict:
+    """Two products, base fields plus `spec:class` / `spec:trap_type` /
+    `spec:seat_material` - copied from the measured turn's own `looked_up` trace
+    event (console turn 8c432988-f0fc-4cad-a7a6-4a92207cd8d5, `chatbot.turns`)."""
+
+    def _item(code: str, trap_note: str) -> dict:
+        return {
+            "title": code,
+            "fields": [
+                {"label": "Product Code", "value": code},
+                {
+                    "label": "Description",
+                    "value": f"SORENTO ONE PIECE TWISTER FLUSH WC ({trap_note}). {code}",
+                },
+                {"label": "List Price", "value": "MYR 1260.00"},
+                {"label": "Dimensions", "value": "Not defined"},
+                {"key": "spec:class", "label": "Product class", "value": "Water Closet"},
+                {"key": "spec:trap_type", "label": "Trap", "value": "s_trap"},
+                {"key": "spec:seat_material", "label": "Seat cover material", "value": "pp"},
+            ],
+            "flags": {
+                "discontinued": False,
+                "expired": False,
+                "expiring_soon": False,
+                "unallocated": False,
+                "partially_allocated": False,
+            },
+        }
+
+    return {
+        "result_type": "products",
+        "intro": "Here are the matching products.",
+        "items": [_item("SRTWC286-SH", "S-TRAP 250MM"), _item("SRTWC286-SH-200", "S-TRAP 200MM")],
+        "spec_vocabulary": {
+            "class": "Product class",
+            "trap_type": "Trap",
+            "seat_material": "Seat cover material",
+        },
+        "has_result": True,
+    }
+
+
+class TestEndToEndRenderedAnswerHonoursHiddenSpecs:
+    """Measured defect (console turn 8c432988-f0fc-4cad-a7a6-4a92207cd8d5,
+    `chatbot.turns`, shared DB): `access.hidden_spec_keys` named every registry
+    key and `spec_visibility.dropped` correctly listed 10 keys the projection
+    removed, yet `response` (the text that landed in `chatbot.turns.response`)
+    printed every `*Label:* value` spec line for all 10 products anyway - the
+    projection ran on one object and the answer was rendered from another.
+
+    Drives the REAL business lane end to end - `run_until_exit` / `run_fetch` /
+    `complete_answer`, including the real `engine.complete_turn` tail - the way
+    `tests/chatbot/test_s6c_engine_paths.py` does: only the MCP call, the parser
+    and `check_access` are stubbed, so `select_tool`, `tool_filter`,
+    `output_structurer` and the whole answer/render stage run unmocked. The
+    assertion is on `result.reply["text"]` - the SAME string `chatbot.turns.
+    response` carries - not on the envelope `output_structurer` builds (already
+    proven correct in isolation by `TestProjectionDropsHiddenKeys` above)."""
+
+    _HIDDEN_SPEC_KEYS = ["class", "seat_material", "trap_type"]
+
+    @staticmethod
+    def _resolve_bundle() -> ResolveGateServices:
+        def _resolve_entity(body: dict) -> dict:
+            return {
+                "tokens": ["SRTWC8517"],
+                "resolutions": [
+                    {
+                        "raw": "SRTWC8517",
+                        "matches": [
+                            {
+                                "uuid": "22222222-2222-2222-2222-222222222222",
+                                "entity_type": "product",
+                                "canonical_code": "SRTWC8517",
+                            }
+                        ],
+                    }
+                ],
+                "unresolved_tokens": [],
+            }
+
+        return ResolveGateServices(
+            access_types=lambda **_: [{"name": "Sorento Dealer"}],
+            resolve_entity=_resolve_entity,
+            probe=lambda **_: None,
+        )
+
+    @staticmethod
+    def _answer_services() -> AnswerServices:
+        def _mcp_probe(name: str, args: dict) -> Any:
+            return {"answers": [], "has_result": False}
+
+        def _family_fetch(query: str) -> Any:
+            return {"data": []}
+
+        return AnswerServices(mcp_probe=_mcp_probe, family_fetch=_family_fetch)
+
+    def _wire(self, session_factory, monkeypatch) -> None:
+        set_chatbot_switches(session_factory, business_lane=True)
+        db = session_factory()
+        setting = db.query(SystemSetting).first()
+        setting.chatbot_completed_lanes = ["business_query"]
+        db.commit()
+
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: self._resolve_bundle(),
+        )
+
+        def _mcp_call(name: str, args: dict) -> Any:
+            assert name == "crm_master_products_list", name
+            return json.dumps(_leaked_spec_envelope())
+
+        monkeypatch.setattr(
+            engine_mod.business_services, "fetch_services", lambda db: FetchServices(mcp_call=_mcp_call)
+        )
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "answer_services_for",
+            lambda session_factory: self._answer_services(),
+        )
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, *, agent_code, contact_id, space_id: {
+                "allowed": True,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": None,
+                "all_attributes_allowed": None,
+                "hidden_spec_keys": self._HIDDEN_SPEC_KEYS,
+            },
+        )
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    # The VALUES only, not the labels: a hidden key's label legitimately still
+    # appears in the safe "<label>: not available" miss line (AC-16) - it is the
+    # customer's stored VALUE that must never reach the reply.
+    _LEAKED_STRINGS = ["Water Closet", "s_trap", "pp"]
+
+    def _assert_no_leak(self, result) -> None:
+        assert result.status == "done", result.error
+        text_out = result.reply.get("text")
+        assert isinstance(text_out, str) and text_out
+        for needle in self._LEAKED_STRINGS:
+            assert needle not in text_out, (needle, text_out)
+        items = (
+            result.item.get("result", {}).get("rows", {}).get("answers")
+            if isinstance(result.item, dict)
+            else None
+        )
+        for item in items or []:
+            for f in item.get("fields") or []:
+                key = f.get("key") if isinstance(f, dict) else None
+                assert not (isinstance(key, str) and key.startswith("spec:")), f
+
+    def test_hidden_specs_do_not_reach_the_rendered_answer_when_an_attribute_is_asked(
+        self, session_factory, seeded, stub_parser, monkeypatch
+    ) -> None:
+        """`requested_attributes: ["class"]`, not the literal `["spec"]` the brief
+        named: `class` is one of the HIDDEN keys and matches `spec_vocabulary`
+        exactly, so this actually exercises `_project_product_specs`'s asked
+        branch against a hidden key (AC-16's "not available" line). The literal
+        word "spec" matches no registry key or label at all (exact-match and
+        containment both miss), so it can only ever produce an ordinary "not
+        recorded" line with ZERO spec fields carried either way - a vacuous
+        pass regardless of whether the leak exists, verified by hand before
+        this was written."""
+        self._wire(session_factory, monkeypatch)
+        stub_parser(
+            _parser_output(
+                requested_attributes=["class"],
+                user_goal="checking specs for a product",
+            )
+        )
+
+        result = engine_mod.run_turn(
+            _envelope(), session_factory=session_factory
+        )
+
+        self._assert_no_leak(result)
+        # AC-16: the hidden key still gets its safe miss line - the label may
+        # appear, the customer's stored VALUE (checked by `_assert_no_leak`)
+        # must not.
+        assert "*Product class:* not available" in result.reply["text"]
+
+    def test_hidden_specs_do_not_reach_the_rendered_answer_with_no_attribute_asked(
+        self, session_factory, seeded, stub_parser, monkeypatch
+    ) -> None:
+        """The mirror case: no attribute asked (the "Specs:" summary line path) -
+        same assertion, same rendered string."""
+        self._wire(session_factory, monkeypatch)
+        stub_parser(_parser_output(requested_attributes=[]))
+
+        result = engine_mod.run_turn(
+            _envelope(), session_factory=session_factory
+        )
+
+        self._assert_no_leak(result)

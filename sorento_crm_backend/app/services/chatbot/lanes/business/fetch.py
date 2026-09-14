@@ -1303,9 +1303,20 @@ def _project_product_specs(
         if not asked:
             # No attribute asked: base fields untouched, plus the compact summary -
             # EVERY populated spec key, in registry order, no cap (D1).
+            # The write is UNCONDITIONAL. `base` is this item's fields minus every
+            # `spec:` field, so it is what the item must end up with whether or not a
+            # summary follows; guarding the write on `spec_fields` left `it["fields"]`
+            # as the ORIGINAL list the moment the visible set came back empty - and
+            # with every key hidden (a Contact override hiding all of them, measured
+            # 14 Sep 2026 on turn 8c432988) that original list still carried every
+            # hidden `spec:` field, which `output_structurer` then rendered one line
+            # per key. A product with no spec fields at all keeps exactly the fields
+            # it has today: `base` IS `fields` there.
+            fields_out = list(base)
             if spec_fields:
                 summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in spec_fields)
-                it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
+                fields_out.append({"key": "specs_summary", "label": "Specs", "value": summary})
+            it["fields"] = fields_out
             continue
 
         # An attribute was asked: identity fields + the base fields + the spec keys it names.
