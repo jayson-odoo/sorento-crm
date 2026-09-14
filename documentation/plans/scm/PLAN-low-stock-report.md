@@ -275,6 +275,12 @@ optional query params on body tools.
 - `presenters.py`: add to `PRESENTER_TOOLS`; branch in `present_response` beside L1556
   returning `_low_stock_envelope(data)`: `{result_type: "low_stock_report", response: <two
   lines | one line>, attachments: <passthrough>, has_result: True}` (AC-61 wording).
+- **`has_result` is True on EVERY branch, the error one included** (accepted 14 Sep,
+  refining reviewer S1/N6's "render it as a miss"): the console found that a `has_result:
+  False` here routes the turn into the inventory domain's generic miss ("Could not find
+  inventory - escalate to warehouse team?"), which is the wrong thing to say about a report
+  that failed to build, so an error is a TERMINAL answer rendered verbatim like busy and
+  pending, and the lane fragment carries `escalate` for any picker consumer.
 - Backend: `contact_field_reveal_service.FIELD_REVEAL_KEYS` + `("scm.low_stock_report", "Low
   stock report over chat")`; `mcp_tool_domains.CHATBOT_TOOL_DOMAINS["crm_low_stock_report"]
   = "inventory"`; `contracts.DOMAIN_SPEC["inventory"]`: `intents += ("low_stock_report",)`,
