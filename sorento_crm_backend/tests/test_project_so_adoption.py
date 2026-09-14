@@ -222,35 +222,11 @@ def test_adopt_writes_one_planning_record_with_one_mirror_line_per_open_core_lin
             assert mirror[0].stock_location == warehouse.warehouse_code
 
 
-def test_adopt_mirrors_only_the_lines_that_are_still_owed():
-    """`is_open_demand()` verbatim: a delivered, closed or covered line is not planning."""
-    with blank_session() as db:
-        company_id = _sorento(db)
-        with company_scope(db, frozenset({company_id})):
-            product = _product(db)
-            warehouse = _warehouse(db, company_id)
-            core = _core_order(db, company_id)
-            open_line = _core_line(db, core, product, warehouse=warehouse)
-            _core_line(db, core, product, warehouse=warehouse, line_status="closed")
-            _core_line(
-                db, core, product, warehouse=warehouse, purchasing_status="covered"
-            )
-            _core_line(
-                db,
-                core,
-                product,
-                warehouse=warehouse,
-                qty_ordered="10",
-                qty_delivered="10",
-            )
-            db.flush()
-
-            result = ProjectSOAdoptionService(db).adopt(core.id, actor_user_id=None)
-
-            mirror = _mirror_lines(db, result["project_sales_order_id"])
-            assert [str(row.core_sales_order_line_id) for row in mirror] == [
-                str(open_line.id)
-            ]
+#: `test_adopt_mirrors_only_the_lines_that_are_still_owed` stood here and is RETIRED
+#: (AC-S2-15, 14 September 2026). It asserted `is_open_demand()` verbatim - that a closed or
+#: delivered line is not planning - which is the opposite of the rule adoption now follows.
+#: Its replacement is `test_adoption_mirrors_undecided_lines_not_only_still_owed` at the foot
+#: of this file; two tests over one predicate is how they come to disagree.
 
 
 # --------------------------------------------------------------------------- #
@@ -372,10 +348,17 @@ def test_adopting_a_sales_order_of_another_company_is_a_404_and_writes_nothing()
     "kwargs,code",
     [
         ({"demand_class": "retail"}, "sales_order_not_project_class"),
-        ({"status": "closed"}, "sales_order_not_open"),
+        # CANCELLED, not `closed` (AC-S2-14). A closed order is a book that SHIPPED, and a
+        # line on it nobody sourced is exactly what this lane puts on the board - so adoption
+        # has to reach it. A cancelled order is a book saying the demand went away, and there
+        # is nothing to put back for it.
+        ({"status": "cancelled"}, "sales_order_not_open"),
     ],
 )
 def test_adoption_refuses_an_order_that_is_not_planning_work(kwargs, code):
+    """Asserted on the CODE, never the sentence: the wording of the not-open refusal now
+    speaks about a cancelled order rather than an un-open one, and a test pinning the
+    sentence would fail on a rewrite that changed nothing it is about."""
     with blank_session() as db:
         company_id = _sorento(db)
         with company_scope(db, frozenset({company_id})):
@@ -391,7 +374,17 @@ def test_adoption_refuses_an_order_that_is_not_planning_work(kwargs, code):
             assert excinfo.value.detail["code"] == code
 
 
-def test_adoption_refuses_an_order_with_nothing_still_owed():
+def test_adoption_refuses_an_order_with_nothing_to_plan():
+    """The refusal SURVIVES, with the narrower meaning the board gave it (AC-S2-14).
+
+    It used to fire on a fully delivered order, which is now the ordinary case rather than a
+    reason to stop. What is left is an order with nothing ADMITTED: every line either marked
+    `covered` by a person or cancelled by the book. That is the same predicate the empty board
+    reads (AC-S2-13) and the same one that makes the list's Planned chip a dash (AC-S4-3), so
+    adoption, the board and the list cannot disagree about which order has nothing to plan.
+
+    Asserted on the CODE, never the sentence.
+    """
     with blank_session() as db:
         company_id = _sorento(db)
         with company_scope(db, frozenset({company_id})):
@@ -399,12 +392,11 @@ def test_adoption_refuses_an_order_with_nothing_still_owed():
             warehouse = _warehouse(db, company_id)
             core = _core_order(db, company_id)
             _core_line(
-                db,
-                core,
-                product,
-                warehouse=warehouse,
-                qty_ordered="10",
-                qty_delivered="10",
+                db, core, product, warehouse=warehouse, purchasing_status="covered"
+            )
+            _core_line(
+                db, core, product, warehouse=warehouse, line_status="cancelled",
+                qty_delivered="4",
             )
             db.flush()
 
