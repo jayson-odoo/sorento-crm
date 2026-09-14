@@ -26,12 +26,20 @@ fresh list). The dialog is titled **Plan a container**:
 With a document chosen, click **Test** to read the file without writing anything, then
 **Confirm and start plan**. With **No file**, click **Start plan** directly.
 
-## The three tabs
+## The four tabs
 
-Once a plan is open, it has three tabs: **Lines** (the default), **Supplier codes**, and
-**Sent**. The header shows the supplier's name, a status badge (**Planning**, **Sent**, or
-**Cancelled**), and a line reading when the plan was started, the window it covers, and which
-document it was started from.
+Once a plan is open, it has four tabs: **General** (metadata), **Lines** (the default), **Supplier codes**, and
+**Sent**. The header shows the supplier's name and breadcrumb only.
+
+## The General tab
+
+The **General** tab (the first) holds the plan metadata as a card with five fields:
+
+* **Status** - a badge reading **Planning**, **Sent**, or **Cancelled**.
+* **Supplier** - the supplier's name (read-only).
+* **Started** - the date and time the plan was created.
+* **Plan window** - the sales-order date range the plan covers, or "every open order" when no dates are set.
+* **Stock list** - the document the plan was started from (stock list, proforma invoice, or none).
 
 ## The Lines tab
 
@@ -102,6 +110,22 @@ any quantities you had typed but not yet saved, the same as **Refresh suggestion
 
 A plan started before this window existed keeps whatever **To** date it already had, with no
 **From** date, until you set one.
+
+## The Supplier codes tab
+
+A search box sits above the two tables (**Needs a decision** and **Remembered**). Type a code fragment,
+part of a product name, or brand name to narrow both tables to matching rows. Several words narrow further
+together - for example, typing `CWC 250` shows only rows matching both words. The table headings show the
+filtered count while you are typing (e.g. "Needs a decision (12 of 61)"), and return to the plain total
+when the box is cleared.
+
+**Remembered table columns:**
+
+* **Code** - the supplier's code.
+* **Matched to** - the product or set code it has been matched to. **Dismissed** rows show "Dismissed".
+* **When** - the date and time it was matched.
+* **By** - the name (or email if no name is held) of the person who made the match.
+* **Forget** - a button that starts a 5-second countdown to delete the match; click **Cancel** to keep it.
 
 ## What's captured
 

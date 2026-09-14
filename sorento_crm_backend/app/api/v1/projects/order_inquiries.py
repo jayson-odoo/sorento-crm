@@ -119,10 +119,19 @@ def _worklist_filters(
     }
 
 
+#: The longest search string the worklist routes accept. The service caps the number of
+#: WORDS it applies; this caps the string itself, before any of them are read.
+_MAX_QUERY_LENGTH = 200
+
+
 @router.get("/order-inquiries", response_model=ListResponse[OrderInquiryWorklistRow])
 def list_order_inquiry_worklist(
     query: Optional[str] = Query(
         None,
+        # A search box is a public-facing string, and every word in it costs another OR
+        # across eleven columns of a joined query: the service applies the first ten words,
+        # and nothing longer than this reaches it at all.
+        max_length=_MAX_QUERY_LENGTH,
         description=(
             "One box. Matches the sales-order number, the item code, the product name or "
             "code, the customer, the project, and the name of the person who raised it "
@@ -225,7 +234,7 @@ def list_order_inquiry_worklist(
 
 @router.get("/order-inquiries/summary", response_model=OrderInquiryWorklistSummary)
 def order_inquiry_worklist_summary(
-    query: Optional[str] = Query(None),
+    query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
@@ -275,7 +284,7 @@ def order_inquiry_worklist_summary(
 
 @router.get("/order-inquiries/export")
 def export_order_inquiry_worklist(
-    query: Optional[str] = Query(None),
+    query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
     delivery_month: Optional[str] = Query(None),
     raised_date: Optional[str] = Query(None),
     state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
