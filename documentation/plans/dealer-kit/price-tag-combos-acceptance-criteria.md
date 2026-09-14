@@ -123,8 +123,11 @@ answers, which still answer for the cabinet alone.
 - AC-S4-2 List price on the tag = host list price + sum of resolved parts' list prices;
   selling price = the promotion engine's offer over the same products; the marketing override
   on the tag wins when set. `pytest`: three cases. `[BE]`
-- AC-S4-3 Portal read view and preview render the parts text and price; existing templates
-  need no change (the slot already exists). `[E2E]`
+- AC-S4-3 Portal read view shows the parts under each line (its lines table has never
+  carried a price column, so no price figure there); the design preview renders the parts text
+  and the package price through the existing `set_members` slot on published templates. `[E2E]`
+  Known gap, not this lane: the auto-cloned starter product block binds only `barcode` and has
+  no `set_members` layer, so an un-designed tag prints no parts text (issue filed).
 - AC-S4-4 The PDF for a split line prints one tag per candidate with the candidate's code in
   the parts text. `[E2E]` (recorded agent-browser evidence, no new Playwright spec)
 
