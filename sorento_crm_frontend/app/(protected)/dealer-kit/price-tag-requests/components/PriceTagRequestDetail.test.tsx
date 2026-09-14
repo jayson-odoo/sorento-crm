@@ -68,6 +68,37 @@ vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   },
 }));
 
+/**
+ * Void is a server-deferred pending action since r9 (D7 / Apple Alignment S6):
+ * no dialog asks first, the button becomes a countdown with a Cancel, and the
+ * server commits when the window lapses even if the tab is closed.
+ *
+ * The engine - parking the action, running the clock, committing - is
+ * `hooks/useDeferredAction.test.tsx`'s job. What belongs HERE is the wiring:
+ * the right action key and entity, that the gear item starts it rather than
+ * opening anything, and that the countdown reaches the record card. Mocking
+ * the hook also means no test in this file owns a real timer, so none can let
+ * a countdown lapse.
+ */
+const voidStart = vi.fn();
+const voidCancel = vi.fn();
+const useDeferredActionInput = vi.fn();
+let voidIsPending = false;
+let voidCountdown: React.ReactNode = null;
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: unknown) => {
+    useDeferredActionInput(input);
+    return {
+      pending: voidIsPending ? { id: 'pending-1' } : null,
+      isPending: voidIsPending,
+      isBlocked: false,
+      start: voidStart,
+      cancel: voidCancel,
+      countdown: voidCountdown,
+    };
+  },
+}));
+
 vi.mock('../../services/priceTagRequestService', () => ({
   getPriceTagRequest: vi.fn(),
   getTagSheetDoc: vi.fn(),
@@ -300,7 +331,7 @@ describe('PriceTagRequestDetail', () => {
     expect(await screen.findByText('No sales order files attached.')).toBeTruthy();
   });
 
-  it('asks before voiding rather than voiding on the click', async () => {
+  it('voids on a countdown rather than asking first', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
     renderDetail();
 
@@ -308,9 +339,47 @@ describe('PriceTagRequestDetail', () => {
     const gear = within(screen.getByTestId('gear-menu'));
     fireEvent.click(gear.getByRole('menuitem', { name: /Void/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Void this request?')).toBeTruthy();
-    });
+    expect(voidStart).toHaveBeenCalledTimes(1);
+    // The retired behaviour, named so it cannot come back: no dialog, and
+    // nothing that asks a question before the action runs.
+    expect(screen.queryByText('Void this request?')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('parks the void against the right action key and entity', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+    await screen.findByTestId('gear-menu');
+
+    expect(useDeferredActionInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionKey: 'price_tag_request.void',
+        entityType: 'price_tag_request',
+        entityId: 'req-1',
+      }),
+    );
+  });
+
+  it('shows the countdown and its Cancel on the record card while it runs', async () => {
+    voidIsPending = true;
+    voidCountdown = (
+      <button type="button" data-testid="void-countdown" onClick={voidCancel}>
+        Voiding in 10s - Cancel
+      </button>
+    );
+    try {
+      mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+      renderDetail();
+
+      const countdown = await screen.findByTestId('void-countdown');
+      expect(countdown).toHaveTextContent('Cancel');
+
+      fireEvent.click(countdown);
+      expect(voidCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      voidIsPending = false;
+      voidCountdown = null;
+    }
   });
 
   // AC-S1-6: the response's attachments carry `entity_attachment_service

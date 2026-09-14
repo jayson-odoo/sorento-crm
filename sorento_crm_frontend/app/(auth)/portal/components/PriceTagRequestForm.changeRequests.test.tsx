@@ -188,14 +188,15 @@ beforeEach(() => {
 describe('the rail turns on with the first pin (AC-S2-2)', () => {
   it('has no Send button and no "Request changes" mode before any pin', async () => {
     await renderReadView();
+    // The rail's own instruction sentence was retired in the review round; what
+    // this test is about is that neither a mode nor a Send exists until the
+    // salesperson has actually pointed at something.
+    await screen.findByTestId('pin-hit-line-1');
 
     expect(screen.queryByTestId('send-change-requests')).toBeNull();
     expect(
       screen.queryByRole('button', { name: /Request changes/i }),
     ).toBeNull();
-    expect(
-      await screen.findByText(/Click the tag where something needs to change/),
-    ).toBeInTheDocument();
   });
 
   it('says `Send 1 change request` at one pin and lists it with its line code', async () => {

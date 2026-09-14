@@ -261,6 +261,43 @@ describe('reading the pins that exist (AC-S2-2)', () => {
     expect(screen.getByText(/Done/)).toBeInTheDocument();
   });
 
+  it('an earlier round greys out once a new proof has been sent (D6)', () => {
+    // Round 1's pins stay on the design so round 2 is read against what was
+    // already asked for - grey whether or not anybody ticked them Done,
+    // because they are not what this round is waiting on.
+    renderLayer({
+      comments: [
+        comment({ id: 'old', round: 1, body: 'Asked for last time' }),
+        comment({ id: 'new', round: 2, body: 'Asking now' }),
+      ],
+      currentRound: 2,
+    });
+
+    const earlier = screen.getByLabelText('Change request 1');
+    const current = screen.getByLabelText('Change request 2');
+    expect(earlier.className).toContain('bg-muted-foreground');
+    expect(current.className).toContain('bg-primary');
+    expect(current.className).not.toContain('bg-muted-foreground');
+  });
+
+  it('the current round stays blue while it is still open', () => {
+    renderLayer({ comments: [comment({ round: 1 })], currentRound: 1 });
+
+    expect(screen.getByLabelText('Change request 1').className).toContain(
+      'bg-primary',
+    );
+  });
+
+  it('with no round given, only Done greys a pin', () => {
+    // The portal read view passes no round on a design nobody is reviewing;
+    // an undefined round must not grey the whole history.
+    renderLayer({ comments: [comment({ round: 1 })] });
+
+    expect(screen.getByLabelText('Change request 1').className).toContain(
+      'bg-primary',
+    );
+  });
+
   it('a general comment carries no marker at all', () => {
     renderLayer({
       comments: [comment({ line_id: null, x: null, y: null, w: null, h: null })],

@@ -444,3 +444,179 @@ class TestDoneBelongsToMarketing:
 
         assert listed.status_code == 200, listed.text
         assert [row["id"] for row in listed.json()] == [comment.id]
+
+
+# ---------------------------------------------------------------------------
+# The counted review round (D4/R1) - the whole loop, end to end
+# ---------------------------------------------------------------------------
+
+
+class TestTheReviewRoundIsCounted:
+    """`review_round` is a COLUMN, incremented on every entry into proof_ready.
+
+    It used to be derived from the ``Marked proof ready`` page versions, and
+    that snapshot is only written when a draft exists - the designer's own CTA
+    saves first, so the send usually skipped it and every round after the first
+    came back as 1. Three things went wrong at once and all of them silently:
+    the comments were filed under round 1 forever, the assignee's bell
+    deduplicated against round 1 and never rang again, and the salesperson's
+    confirmation named the wrong round.
+
+    This walks the real loop rather than asserting the counter on its own,
+    because the counter is only interesting where it is read.
+    """
+
+    def _bells(self, db, request_id):
+        from app.models.notification import Notification
+
+        return (
+            db.query(Notification)
+            .filter(Notification.user_id == seed.MARKETER_ID)
+            .filter(Notification.source_entity_type == "price_tag_request")
+            .filter(Notification.source_entity_id == str(request_id))
+            .all()
+        )
+
+    def test_it_counts_every_entry_into_proof_ready(self, portal):
+        from app.models.price_tag import PriceTagRequest
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        _client, db, contact_id = portal
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="designing",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        assert (request.review_round or 0) == 0
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        db.expire_all()
+        fresh = db.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        assert fresh.review_round == 1
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "changes_requested", user_id=seed.MARKETER_ID
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        db.expire_all()
+        fresh = db.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        assert fresh.review_round == 2, (
+            "a second proof is a second round; the version snapshot the old "
+            "derivation read is not written when the CTA saved first"
+        )
+
+    def test_round_two_comments_the_bell_and_the_text_all_agree(self, portal, no_respond):
+        from app.models.price_tag import PriceTagRequest
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        client, db, contact_id = portal
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="designing",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        seed.attach_design(db, request)
+        line_id = request.lines[0].id
+        url = f"{_PORTAL.format(id=request.id)}/request-changes"
+
+        # Round one.
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        first = client.post(url, json={"comments": [_pin(line_id, "Round one")]})
+        assert first.status_code == 200, first.text
+        assert [row.round for row in _review_rows(db, request.id)] == [1]
+        assert len(self._bells(db, request.id)) == 1
+
+        # Marketing revises and sends the proof back.
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+
+        # Round two, two pins this time.
+        response = client.post(
+            url,
+            json={
+                "comments": [
+                    _pin(line_id, "Bigger price"),
+                    _pin(line_id, "Move the logo"),
+                ]
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["round"] == 2
+        assert sorted(row.round for row in _review_rows(db, request.id)) == [1, 2, 2]
+
+        bells = self._bells(db, request.id)
+        assert len(bells) == 2, "round two rang no bell of its own"
+        assert len({bell.dedup_key for bell in bells}) == 2
+
+        sent = [row["text"] for row in no_respond]
+        assert any("You sent 2 change requests" in text for text in sent), sent
+
+    def test_a_row_from_before_the_counter_falls_back_to_the_snapshots(self, portal):
+        """Every request live at deploy carries `review_round = 0`, and the
+        page versions are the only history those rows have."""
+        from app.models.price_tag import PriceTagRequest
+
+        client, db, contact_id = portal
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="proof_ready",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        page, doc = seed.attach_design(db, request)
+        # Two proofs already sent, before the column existed.
+        seed.snapshot_proof_ready(db, page, doc, version=2)
+        seed.snapshot_proof_ready(db, page, doc, version=3)
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
+            {"review_round": 0}
+        )
+        db.commit()
+
+        body = client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [_pin(request.lines[0].id, "Still round two")]},
+        ).json()
+
+        assert body["round"] == 2, (
+            "a pre-deploy row has no counter, so the snapshots are what it has"
+        )
+        assert [row.round for row in _review_rows(db, request.id)] == [2]
+
+    def test_a_request_that_has_never_been_proofed_is_round_one(self, portal):
+        """Numbering it 0 would read as "before the first round"."""
+        from app.services import price_tag_review_service
+
+        _client, db, contact_id = portal
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db, contact_id, status="designing", products=[product], print_by="office"
+        )
+
+        assert price_tag_review_service.current_round(db, request) == 1

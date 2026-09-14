@@ -351,14 +351,25 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
   });
 
   it('a resolved pin still draws, greyed by its caption, so the round reads whole', async () => {
+    // An OPEN pin alongside it, because the Comments toggle is armed by an
+    // open pin and a fully worked-off round starts hidden (the test below).
+    // A mixed round is also the state this actually matters in: marketing has
+    // ticked one off and is looking at the other.
     mockComments.mockResolvedValue([
-      comment({ resolved_at: '2026-09-14T02:00:00Z', resolved_by_name: 'Mei' }),
+      comment({
+        id: 'c1',
+        resolved_at: '2026-09-14T02:00:00Z',
+        resolved_by_name: 'Mei',
+      }),
+      comment({ id: 'c2', body: 'Still open' }),
     ]);
     await renderDesigner();
 
     await waitFor(() =>
       expect(screen.getByTestId('canvas-pin-1')).toHaveTextContent(/Done/),
     );
+    expect(screen.getByTestId('canvas-pin-2')).toHaveTextContent('Still open');
+    expect(screen.getByTestId('canvas-pin-2')).not.toHaveTextContent(/Done/);
   });
 
   it('the LINES rail badges the lines that have open pins', async () => {
