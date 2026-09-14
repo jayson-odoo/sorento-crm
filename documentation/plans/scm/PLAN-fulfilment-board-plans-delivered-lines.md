@@ -125,12 +125,20 @@ Tests (`tests/test_project_supply_holds.py`, new; Postgres fixture): AC-S1-1 to 
   `decision is not None or inquiry_decided`. `_allocate`, `_suggest_live_for_covered`, the pile
   queue's `_decided_elsewhere` and `confirmLinesFor`'s server twin treat an inquiry-decided row
   like a decision-covered one with an empty composition (no `proposal`, no `decision`).
+`project_so_adoption_service.py` (gap the tester found, 14 Sep): `adopt` refuses any order not
+`open` (`_assert_plannable`) and `_open_core_lines` mirrors `is_open_demand()` lines only, so a
+Completed order could never reach confirm. Both move to the board's predicates: header
+`status in (open, closed)`, lines `is_undecided_demand()`. `adopt_for_migration` already has
+the shape. Refusal wording for a cancelled order stays. AC-S2-14, AC-S2-15.
+
+`project_fulfilment_board_service.py`, continued:
+
 - The `stock_detail` query (line 876) keeps `SalesOrder.status == "open"` and `is_open_demand()`:
   it lists what is still owed against a bin, which is a delivery question.
 - Empty-state copy source unchanged (`line_count`), meaning unchanged (0 admitted lines).
 
-Tests (`tests/test_fulfilment_board.py`): rewrite the admission test (AC-S2-12), add AC-S2-1
-to AC-S2-9, AC-S2-13; existing netting and worklist tests untouched (AC-S2-11).
+Tests (`tests/test_fulfilment_board.py`, adoption tests beside the existing adopt tests): rewrite
+the admission test (AC-S2-12), add AC-S2-1 to AC-S2-9, AC-S2-13 to AC-S2-15; existing netting and worklist tests untouched (AC-S2-11).
 
 ### S3 - Board wording [FE]
 

@@ -59,12 +59,14 @@ order does today.
   the ladder proposes for it.
 - **AC-S2-2 [BE]** Given that line's location has free stock of 0 after the delivery, then the
   proposal is Buy 3 (verb ORDER on confirm).
-- **AC-S2-3 [BE]** Given that line's location has free stock of 5, then the proposal is Use own
-  location 3, and after confirm the hold it writes counts as 0 (AC-S1-2).
-- **AC-S2-4 [BE]** Given an open line with 3 ordered, 1 delivered, no decision, location free
-  stock 1, then the proposal is Use own location 1 and Buy 2 (1 still to ship, 1 to put back);
-  after confirm the own-location hold counts as `min(1, 3 - 1) = 1`, so free stock for other
-  orders drops by 1 only.
+- **AC-S2-3 [BE]** Given that line's location group has free stock of 5, then the ladder proposes
+  a stock rung for 3 (whichever rung the ladder's own rules pick; the UAC does not prescribe the
+  composition), and after confirm the reserve it writes holds 0 (AC-S1-2).
+- **AC-S2-4 [BE]** Given an open line with 3 ordered, 1 delivered, no decision, then the line
+  asks for 3 (not 2): 1 still to ship, 1 to put back. After a confirmed reserve of 1 on it, the
+  hold counts as `min(1, 3 - 1) = 1`, so free stock for other orders drops by 1 only. The rung
+  composition is the ladder's own business (rule 7 keeps the own bin out of Reserve; the UAC
+  does not prescribe it).
 - **AC-S2-5 [BE]** Given a line with `purchasing_status = covered`, then it is not admitted (a
   person already ruled "no purchase needed").
 - **AC-S2-6 [BE]** Given a line with `line_status = cancelled`, then it is not admitted, and a
@@ -90,6 +92,13 @@ order does today.
   lines are not, the closed-by-delivery line is.
 - **AC-S2-13 [BE]** Given a board whose selection has only cancelled or covered lines, then
   `line_count` is 0 and `cells` is empty.
+- **AC-S2-14 [BE]** Given a project sales order with status `closed` whose lines are delivered
+  and undecided, when it is adopted (`ProjectSOAdoptionService.adopt`, the list's Start), then
+  adoption succeeds and mirrors those lines (a `project_line_id` exists for each), so confirm can
+  name them. A `cancelled` order is still refused.
+- **AC-S2-15 [BE]** Given an open order with one still-owed line and one delivered undecided
+  line, when adopted, then BOTH are mirrored: the mirror predicate is `is_undecided_demand()`,
+  the board's, not `is_open_demand()`. A covered line and a cancelled line are not mirrored.
 
 ### S3 - The board reads right [FE]
 
