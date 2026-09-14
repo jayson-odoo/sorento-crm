@@ -1,6 +1,6 @@
 # PLAN - Price tag combos: catalogue packages on the request, one line, many tags
 
-Status: Grilled 14 Sep 2026 (lavish, four rounds, owner GO "ok good to go"); lane cut off db9528463 (c15766169); issues S1 #896, S2 #897, S3 #898, S4 #899; Phase 1 S1 18b2bc9c1, S2 c5fac4be1, S3 dedf1cb5d done; tester red tests next
+Status: Phase 2 complete 14 Sep 2026 (S1 7c259a4ab, S2 fba363072, S3 bb8380caf, S4 ba865345e; tester red tests merged); Phase 3 review + security + browser pass in flight; PR not yet opened
 UAC: `documentation/plans/dealer-kit/price-tag-combos-acceptance-criteria.md`
 Predecessors: `PLAN-price-tag-r7-request-ux.md` (D3 hid alternatives), r9 `PLAN-price-tag-r9-review-loop.md` (in flight, pins keyed by line)
 Grill artifact: `.lavish/combo/product-combo-alignment.html` (session ended by owner)
