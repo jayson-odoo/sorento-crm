@@ -620,6 +620,13 @@ def entity_ids_transformer(
     if tool_name == "crm_low_stock_report":
         out.pop("warehouse_ids", None)
         out.pop("product_ids", None)
+        # The warehouse scope comes off `semantic_input` (the token resolution `run_fetch`
+        # already did); the product scope is read off the entities handed in. Those
+        # entities have ALREADY been pruned to the ones the CURRENT MESSAGE named, in
+        # `run_fetch`'s low-stock override (console round 3, defect B) - this function
+        # cannot tell a carried entity from a fresh one, and `replace_combine` merges the
+        # previous turn's into the gate's list, which is how a bare "low stock report"
+        # came to be scoped to two products from an earlier question and planned "0 of 0".
         warehouse_codes = jsc.get(semantic_input, "low_stock_warehouse_codes")
         if isinstance(warehouse_codes, list) and warehouse_codes:
             out["warehouse_codes"] = warehouse_codes

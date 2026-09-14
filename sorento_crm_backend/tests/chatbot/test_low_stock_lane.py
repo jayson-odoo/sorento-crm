@@ -467,3 +467,126 @@ class TestTheIdsReachTheTool:
         )
         assert args.get("space_id"), f"space_id must reach the tool: {args}"
         assert args.get("view") == "render", args
+
+
+# --------------------------------------------------------------------------- #
+# Console round 3, defects A and B. CODER-AUTHORED - both were measured on the stack and
+# neither had any coverage in the red set.
+# --------------------------------------------------------------------------- #
+
+
+class TestTransportFailureSaysThisToolsLine:
+    """Defect A. The lane's MCP client gives up at `chatbot_mcp_timeout_seconds` (10 s). A
+    full unscoped run took longer, `call_tool` raised `httpx.ReadTimeout`, and the customer
+    read the lane's generic "Sorry, I ran into a problem understanding that" about a report
+    the worker was still building. The route's wait is now capped inside the client's
+    budget so `pending` wins that race; this is the remainder - a genuine transport failure
+    must still speak in this tool's own words."""
+
+    def test_a_read_timeout_renders_the_low_stock_error_line(self, session_factory) -> None:
+        from app.services.chatbot.lanes.business import run_fetch
+
+        def _boom(_name, _args):
+            raise TimeoutError("simulated httpx.ReadTimeout from the MCP client")
+
+        result = run_fetch(
+            _payload(attributes=[GRANT_KEY], entities=[]),
+            services=FetchServices(mcp_call=_boom),
+        )
+
+        reply = (result or {}).get("response") or ""
+        assert reply == "Could not run the low stock report right now.", repr(reply)
+        assert "problem understanding" not in reply.lower(), reply
+        assert (result or {}).get("escalate"), (
+            f"the picker still rides on the fragment: {result!r}"
+        )
+
+    def test_another_tools_failure_keeps_the_generic_handling(self, session_factory) -> None:
+        """The branch is keyed on THIS tool: a stock-balance failure must still take the
+        lane's own generic error path, untouched."""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        def _boom(_name, _args):
+            raise TimeoutError("boom")
+
+        payload = _payload(attributes=[])
+        payload["ctx"]["parse"]["output"] = _parser_output(
+            domain_hint="inventory", intent_hint="check_stock", entities=[]
+        )
+        result = run_fetch(payload, services=FetchServices(mcp_call=_boom))
+
+        assert (result or {}).get("response") != (
+            "Could not run the low stock report right now."
+        ), result
+
+
+class TestCarriedEntitiesAreDropped:
+    """Defect B. `entity_op = replace_combine` merges the PREVIOUS turn's session entities
+    into the gate's list, so a bare "low stock report" asked after an unrelated product
+    question arrived scoped to two carried products and planned "0 of 0". A report ask
+    always states its own scope, so only `current_message` entities may narrow it."""
+
+    def test_bare_ask_drops_carried_products_and_warehouses(self, session_factory) -> None:
+        from app.services.chatbot.lanes.business import run_fetch
+
+        carried = [
+            {
+                "uuid": PRODUCT_UUID,
+                "entity_type": "product",
+                "canonical_code": PRODUCT_CODE,
+                "code": PRODUCT_CODE,
+            },
+            {
+                "uuid": WAREHOUSE_UUID,
+                "entity_type": "warehouse",
+                "canonical_code": WAREHOUSE_CODE,
+                "code": WAREHOUSE_CODE,
+            },
+        ]
+        payload = _payload(attributes=[GRANT_KEY], entities=carried)
+        # The parser saw NOTHING this turn - the entities above are the session's, carried
+        # in by replace_combine, and every one of them is `current_message: false`.
+        payload["ctx"]["parse"]["output"] = _qf(entities=[])
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+
+        assert captured, "the tool was never called"
+        name, args = captured[0]
+        assert name == TOOL, name
+        assert not args.get("product_codes"), (
+            f"a carried product must not scope a fresh report ask: {args}"
+        )
+        assert not args.get("warehouse_codes"), (
+            f"a carried warehouse must not scope a fresh report ask: {args}"
+        )
+        assert args.get("contact_id") and args.get("space_id"), args
+
+    def test_a_product_named_this_turn_still_scopes_the_run(self, session_factory) -> None:
+        """The other half: dropping carried entities must not drop the ones the customer
+        just typed, or "low stock for SRTWT7408" would plan the whole book."""
+        from app.services.chatbot.lanes.business import run_fetch
+
+        named = [{
+            "uuid": PRODUCT_UUID,
+            "entity_type": "product",
+            "canonical_code": PRODUCT_CODE,
+            "code": PRODUCT_CODE,
+        }]
+        payload = _payload(attributes=[GRANT_KEY], entities=named)
+        payload["ctx"]["parse"]["output"] = _qf(entities=[{
+            "raw": PRODUCT_CODE,
+            "hint": "product",
+            "canonical_code": PRODUCT_CODE,
+            "current_message": True,
+            "confident": True,
+        }])
+
+        call, captured = _capturing_mcp(READY_ENVELOPE)
+        run_fetch(payload, services=FetchServices(mcp_call=call))
+
+        assert captured, "the tool was never called"
+        _name, args = captured[0]
+        assert args.get("product_codes") == [PRODUCT_CODE], (
+            f"the product named THIS turn must scope the run: {args}"
+        )
