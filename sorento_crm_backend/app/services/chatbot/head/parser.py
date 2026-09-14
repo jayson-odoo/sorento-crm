@@ -399,6 +399,7 @@ def build_user_block(
     previous_response: Any,
     latest_user_message: Any,
     pending_kind: str | None,
+    pending_options: list[str] | None = None,
     emits_v3: bool = False,
     focus_hints: Mapping[str, Any] | None = None,
     open_question_hint: Mapping[str, Any] | None = None,
@@ -409,6 +410,12 @@ def build_user_block(
     bot is waiting for, stated as a fact rather than left for the model to infer from the
     previous reply's wording (R3, D11). It is the open question's kind now, the marker it
     used to read having gone with the five-key session.
+
+    `pending_options` is the second (D17, 13 Sep 2026, merged from main): the numbered
+    options of an open question whose answer is a POSITION, so the parser can resolve a
+    worded answer against what was actually offered. Omitted, and the block is unchanged.
+    Sent under EVERY prompt version, because it is what the outstanding report's two
+    questions are answered with and those ship on the promoted prompt.
 
     `previous_response` is a v1 / v2 input and the CALLER decides it: the engine reads the
     last `done` turn ROW, never session state, and sends None under v3 (AC-1023 bans
@@ -441,6 +448,13 @@ def build_user_block(
     ]
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
+    if pending_options:
+        # D17 (owner design ruling, 13 Sep 2026): deterministic code never reads words.
+        # A question whose answer is a POSITION against a stored roster states that
+        # roster here, so the parser can map "the DO list" or "all" onto an option the
+        # assistant actually offered - and so the head only ever has to map the number
+        # back. Absent for every other turn, which keeps their block byte-identical.
+        lines.append("Open question options: " + "; ".join(pending_options))
     if emits_v3 and focus_hints:
         lines.append("Focus: " + json.dumps(focus_hints, ensure_ascii=False, sort_keys=True))
     if emits_v3 and open_question_hint:

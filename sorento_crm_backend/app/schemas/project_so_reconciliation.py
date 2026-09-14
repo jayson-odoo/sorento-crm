@@ -77,6 +77,12 @@ class FulfilmentPlanningRow(BaseModel):
     earliest_required_date: Optional[date] = None
     review_state: str
     updated_at: Optional[datetime] = None
+    #: The newest PENDING planning-change batch on this order's core sales order, or null
+    #: (`PLAN-scm-board-picks-up-pending-change.md`, AC-B7). Same rule, same id the SCM
+    #: Sales Orders list and the fulfilment board name off
+    #: `planning_change_service.pending_batch_id_by_sales_order` - the `Changed` pill here
+    #: links to the board with the same batch already loaded.
+    planning_change_batch_id: Optional[str] = None
 
 
 class AdoptSalesOrderBody(BaseModel):

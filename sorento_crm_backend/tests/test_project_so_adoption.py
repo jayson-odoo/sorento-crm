@@ -571,3 +571,55 @@ def test_a_later_mirrored_line_takes_the_next_number_and_moves_nobody():
                 str(first.id),
                 str(later.id),
             ]
+
+
+# --------------------------------------------------------------------------- #
+# Attempt 6 root cause: adopt on an already-adopted order re-mirrors too      #
+# --------------------------------------------------------------------------- #
+
+
+def test_adopting_an_already_adopted_order_mirrors_new_unmirrored_open_lines_too():
+    """SO419851's shape, 8 Sep 2026: an AutoCount re-ingest closed the mirrored core lines
+    and inserted new ones nobody mirrored, then Start Planning was pressed again (the FE's
+    own "already adopted, adopt again" flow). `already_adopted` must still read True (the
+    record is not re-created), but the re-ingested lines must not sit unmirrored forever -
+    `adopt`'s already-adopted branch has to run `mirror_missing_lines` before it returns,
+    the same call `mirror_missing_lines` itself already proves works correctly.
+
+    Today (project_so_adoption_service.py ~96-101) the already-adopted branch returns
+    immediately, before any mirroring - red on the "every open core line has a mirror"
+    assertion.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        with company_scope(db, frozenset({company_id})):
+            product = _product(db)
+            warehouse = _warehouse(db, company_id)
+            core = _core_order(db, company_id)
+            first = _core_line(db, core, product, warehouse=warehouse, required_date=D1)
+            db.flush()
+
+            service = ProjectSOAdoptionService(db)
+            first_result = service.adopt(core.id, actor_user_id=None)
+            assert first_result["already_adopted"] is False
+
+            # The re-ingest: a second, third open core line nobody has mirrored yet.
+            second = _core_line(db, core, product, warehouse=warehouse, required_date=D2)
+            third = _core_line(db, core, product, warehouse=warehouse, required_date=D3)
+            db.flush()
+
+            second_result = service.adopt(core.id, actor_user_id=None)
+            db.flush()
+
+            assert second_result["already_adopted"] is True
+            assert (
+                second_result["project_sales_order_id"]
+                == first_result["project_sales_order_id"]
+            )
+
+            mirror = _mirror_lines(db, second_result["project_sales_order_id"])
+            mirrored_core_ids = {str(row.core_sales_order_line_id) for row in mirror}
+            assert mirrored_core_ids == {str(first.id), str(second.id), str(third.id)}, (
+                "every open core line must have a mirror after adopt, including the "
+                "re-ingested ones nobody mirrored", mirrored_core_ids,
+            )

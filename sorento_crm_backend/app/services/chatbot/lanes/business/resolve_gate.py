@@ -39,6 +39,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import EXIT_CONTRACT_FIELDS
+from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import pickers
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices
@@ -53,6 +54,15 @@ _PRODUCT_FOLD = re.compile(r"[-\s]+")
 # `tool` parameters. Not a registry: two literals, named where they are used.
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
+
+#: R20 (owner round 7, 13 Sep 2026): the `order_status` values that make a turn an
+#: OUTSTANDING ask, which is the one ask the customer picker must not offer a delivery
+#: hint on - see the `If-customer-picker` arm. The three scope words come from
+#: `fetch.ORDER_STATUS_TO_SCOPE` rather than being spelled again, and bare `outstanding`
+#: is added because that table deliberately omits it (the field-reveal gate resolves it).
+OUTSTANDING_ORDER_STATUS: frozenset[str] = frozenset(
+    {"outstanding", *fetch_mod.ORDER_STATUS_TO_SCOPE}
+)
 
 # The probe's injected default window, from `probe-customer-orders`' semantic_input
 # expression (`$now.minus({days: 90})`). `annotate-customer-picker` mirrors this rule to
@@ -248,11 +258,36 @@ _BARE_MEMBER_OFFER_TYPES = ("product", "customer")
 _BARE_REPLY_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
+def _hidden_spec_keys_from_ctx(ctx: dict[str, Any]) -> list[str]:
+    """`ctx.access.hidden_spec_keys`, the same key `check_access` sets (PLAN-
+    spec-visibility-policy.md "Spec fallback"). `[]` when access was never
+    resolved this turn - the resolve route treats an absent/empty list as
+    inert, so this is never a widening default."""
+    access = jsc.get(ctx, "access")
+    hidden = jsc.get(access, "hidden_spec_keys") if jsc.truthy(access) else None
+    return list(hidden) if jsc.is_array(hidden) else []
+
+
+def _contact_id_from_ctx(ctx: dict[str, Any]) -> str | None:
+    """`ctx.contact.id`, the SAME read `check_access`'s own caller uses
+    (`run.py`'s `contact_respond_id`) - sent alongside `hidden_spec_keys` so
+    the resolve route can resolve this contact's policy itself rather than
+    trusting only the caller-supplied list (security review B/S2).
+
+    Stringified like every sibling read of this id in this file: the Respond.io
+    contact id arrives on the wire as a JSON INTEGER, and the schema field it
+    lands in (`ResolveReferenceRequest.contact_id`) is a string."""
+    contact = jsc.get(ctx, "contact")
+    value = jsc.get(contact, "id") if jsc.truthy(contact) else None
+    return jsc.js_string(value) if jsc.truthy(value) else None
+
+
 def resolve_bare_reply_under_member_offer(
     parser: dict[str, Any],
     *,
     ctx: dict[str, Any],
     services: ResolveGateServices,
+    space_id: str | None = None,
     dry_run: bool = False,
 ) -> bool:
     """A bare reply the parser extracted NOTHING from, under an open `member_offer`,
@@ -322,6 +357,14 @@ def resolve_bare_reply_under_member_offer(
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): this contact's
+        # hidden keys ride along so the resolve route can neither rank on one nor
+        # print it in a candidate's specifications. `contact_id` + `space_id`
+        # ride along too (security review B/S2), so the route resolves the
+        # policy itself rather than trusting only this list.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
+        "contact_id": _contact_id_from_ctx(ctx),
+        "space_id": space_id,
     }
     if dry_run:
         body["dry_run"] = True
@@ -417,7 +460,9 @@ def _token_of(entity: Any) -> Any:
     return value
 
 
-def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+def resolve_entity_body(
+    ctx: dict[str, Any], *, space_id: str | None = None, dry_run: bool = False
+) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
     `entity_pins` (H38) is omitted only when NOTHING IS PINNED, which is what the n8n
@@ -465,6 +510,11 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): see the sibling
+        # body builder above for the reasoning.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
+        "contact_id": _contact_id_from_ctx(ctx),
+        "space_id": space_id,
     }
     if dry_run:
         body["dry_run"] = True
@@ -733,10 +783,12 @@ def run(
     # main resolve-entity call two lines down reads that same object to build its own
     # tokens - so a narrowed product/customer rides the ONE round trip the rest of the
     # turn makes, exactly as a customer's own explicit entity would have.
-    resolve_bare_reply_under_member_offer(parser, ctx=ctx, services=services, dry_run=dry_run)
+    resolve_bare_reply_under_member_offer(
+        parser, ctx=ctx, services=services, space_id=space_id, dry_run=dry_run
+    )
 
     # ── resolve-entity ──────────────────────────────────────────────────────
-    resolved = services.resolve_entity(resolve_entity_body(ctx, dry_run=dry_run))
+    resolved = services.resolve_entity(resolve_entity_body(ctx, space_id=space_id, dry_run=dry_run))
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
     # Placed HERE, between the resolver and the gate, because this is the first point in
@@ -811,18 +863,42 @@ def run(
     # ── If-customer-picker ──────────────────────────────────────────────────
     if if_customer_picker(picker_gate):
         entities = jsc.get(picker_gate, "customer_probe_entities")
-        probe = _run_probe(
-            services,
-            ctx=ctx,
-            tool=CUSTOMER_PROBE_TOOL,
-            entities=entities,
-            aggregate=aggregate,
-            default_start=probe_default_start,
-            space_id=space_id,
+        # R20 (owner round 7, 13 Sep 2026): an OUTSTANDING ask does not probe, and so
+        # gets no delivery hint. `CUSTOMER_PROBE_TOOL` measures orders with an
+        # `actual_delivery_date` - DELIVERED DOs, the owner's own 6 Sep ruling for
+        # delivery enquiries - which is the OPPOSITE population from the outstanding
+        # report's DO block (DOs not yet delivered). So the picker stamped "- no DO" on
+        # every line and "None of these have a matching DO.", and the report two turns
+        # later showed a DO with 5 outstanding: "it is still kinda strange for me though,
+        # to say no DO, then later when i get the summary, there is DO." The hint cannot
+        # be made true for this ask by rewording it, and there is nothing here worth
+        # measuring, so neither happens. Decided on the ask's OWN `order_status`, not on
+        # the domain: every other order-domain picker keeps today's hint.
+        outstanding_ask = (
+            jsc.js_string(jsc.get(parser, "order_status") or "").strip() in OUTSTANDING_ORDER_STATUS
+        )
+        probe = (
+            None
+            if outstanding_ask
+            else _run_probe(
+                services,
+                ctx=ctx,
+                tool=CUSTOMER_PROBE_TOOL,
+                entities=entities,
+                aggregate=aggregate,
+                default_start=probe_default_start,
+                space_id=space_id,
+            )
         )
         annotated = pickers.annotate_customer(
             _snapshot(picker_gate), probe=probe, parser=parser
         )
+        if outstanding_ask:
+            # The annotator's UNPROBED arm renders exactly what R20 wants - the bare
+            # picker, no suffixes, no closing claim - so its wording is untouched. Only
+            # its reason is, because "probe_unavailable" would tell the operator a probe
+            # failed when one was deliberately not run.
+            annotated["customer_probe_skip_reason"] = "outstanding_ask"
         # `annotate_incoming` stays NULL on this arm: the customer annotator is not the
         # incoming one, and `sub-main-processing`'s `annotate-incoming-gate` reads exactly
         # that key to decide whether its stand-in executes.

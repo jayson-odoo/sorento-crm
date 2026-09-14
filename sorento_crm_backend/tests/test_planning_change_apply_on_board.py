@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.database import engine
 
+from app.models.order import Customer
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.project_so import (
     INQUIRY_CANCELLED,
@@ -47,6 +48,7 @@ from app.models.project_so import (
     OrderInquiryLink,
     OrderInquiryRow,
 )
+from app.models.sales_agent import SalesAgent
 from app.models.stock_transfer import TRANSFER_MOVED, StockTransfer
 from app.services import planning_change_service, project_seed_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -54,6 +56,7 @@ from app.services.scm.outstanding_diff import (
     CLOSED,
     DATE_AND_QTY_CHANGED,
     DATE_MOVED,
+    PRODUCT_CHANGED,
     QTY_CHANGED,
     Change,
     Diff,
@@ -584,51 +587,116 @@ def _released_line(api, *, linked: bool):
             "core_so": core_so, "batch": batch, "row": row, "far": far}
 
 
-def test_release_of_a_wholly_bought_line_is_suggested_beyond_the_window(api):
-    fixture = _released_line(api, linked=True)
-    out = planning_change_service.get_batch(fixture["world"].db, str(fixture["batch"].id))
-    row = out["orders"][0]["rows"][0]
-    assert row["suggested"] == "release", (
-        "the dead release path: a wholly-Buy line delayed past the window releases"
-    )
+# `test_release_of_a_wholly_bought_line_is_suggested_beyond_the_window` deleted: its whole
+# premise (`suggested == "release"`, "the dead release path: a wholly-Buy line delayed
+# past the window releases") is retired again by Slice C's `compose_suggestion` - measured
+# directly, a wholly-bought line delayed past the window composes "keep" unconditionally
+# (source `po` when placed, `buy` when only raised), never "release": release is reserved
+# for an actual stock CLAIM (a reserve) being given up, and a Buy is a purchase commitment,
+# not a claim. AC-C6's "Keep, late by N days" (`test_planning_change_recompute_and_diff.py`)
+# is the shape that now covers this territory.
 
 
 def test_release_moves_a_linked_row_to_the_pool_with_its_links_and_raises_nothing(api):
+    """Slice D semantics (AC-D1-D3, issue #859), superseding the C1-era premise this
+    docstring used to carry (a linked Buy delayed past the window composed "keep" and
+    kept its links in place): the coder's own fixture now composes `reallocate po 40 to
+    pool` + `buy 40 for the new date`, measured directly on HEAD 4fc3b1c37. Confirming it,
+    the row GIVES UP its document - its own links are gone - and the freed 40 lands on a
+    fresh pool-location row linked to the SAME purchase-order line for the same 40 (D1:
+    a pool row carries the links it was created for), so the PO line reads fully claimed
+    throughout. The line's own row is reused (never duplicated) and now reads raised for
+    the fresh Buy the new, far date needs."""
     fixture = _released_line(api, linked=True)
     world = fixture["world"]
     line = fixture["line"]
     row_id = str(fixture["row"].id)
 
+    row_out = planning_change_service.get_batch(world.db, str(fixture["batch"].id))[
+        "orders"
+    ][0]["rows"][0]
+    reallocate = next(
+        c for c in row_out["suggestion"]["components"] if c["action"] == "reallocate"
+    )
+    assert reallocate["source"] == "po", reallocate
+    assert reallocate["target"] == "pool", reallocate
+    assert reallocate["qty_now"] == "40", reallocate
+    assert reallocate["document"], reallocate
+
+    planning_change_service.set_row_decision(
+        world.db, str(fixture["batch"].id), row_out["id"], "confirm",
+    )
     result = planning_change_service.apply(world.db, str(fixture["batch"].id), world.actor)
     world.db.commit()
     assert result["failed_orders"] == []
 
+    world.db.expire_all()
+    svc = ProjectOrderInquiryService(world.db)
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
     assert row.state != INQUIRY_CANCELLED
-    assert row.stock_location == world.pool_wh.warehouse_code, (
-        "the purchase is for the pool now, not for this line"
+    assert svc._links_of(row.id) == [], "the row gives its document up - no link stays on it"
+    assert row.note and "2026-08-25" in row.note, "the note names what it was"
+
+    pool_rows = (
+        world.db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id.is_(None), OrderInquiryRow.verb == IV_ORDER,
+                OrderInquiryRow.stock_location == world.pool_wh.warehouse_code)
+        .all()
     )
-    assert ProjectOrderInquiryService(world.db)._links_of(row.id), "its links are kept"
-    assert "2027-03-10" in (row.note or ""), "the note names the delay"
+    assert len(pool_rows) == 1, pool_rows
+    assert pool_rows[0].qty == Decimal("40")
+    pool_links = svc._links_of(pool_rows[0].id)
+    assert sum(Decimal(str(l.qty)) for l in pool_links) == Decimal("40"), pool_links
+
+    from app.models.procurement import PurchaseOrderLine
+
+    po_line = (
+        world.db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.product_id == world.product.id)
+        .one()
+    )
+    linked_total = sum(
+        Decimal(str(l.qty))
+        for l in world.db.query(OrderInquiryLink)
+        .filter(OrderInquiryLink.po_line_id == po_line.id)
+        .all()
+    )
+    assert po_line.qty_ordered - linked_total == Decimal("0"), (po_line.qty_ordered, linked_total)
+
     raised = [
         r for r in _rows_of(world, line)
         if r.state != INQUIRY_CANCELLED and str(r.id) != row_id
     ]
-    assert raised == [], "a release raises no new order inquiry row"
+    assert raised == [], "settled in place - no second order inquiry row"
+    assert row.qty == Decimal("40")
 
 
 def test_release_of_an_unlinked_row_hands_purchasing_a_delay_with_the_previous_date(api):
+    """Renamed in spirit, not in name (no separate DELAY row exists any more): an unlinked
+    Buy delayed past the window ALSO composes "keep" (source `buy`) and settles the SAME
+    ORDER row in place - never relabelled to verb DELAY. The previous date the title
+    promises still reaches purchasing, in that row's own note."""
     fixture = _released_line(api, linked=False)
     world = fixture["world"]
     line = fixture["line"]
+    row_id = str(fixture["row"].id)
 
+    row_out = planning_change_service.get_batch(world.db, str(fixture["batch"].id))[
+        "orders"
+    ][0]["rows"][0]
+    planning_change_service.set_row_decision(
+        world.db, str(fixture["batch"].id), row_out["id"], "confirm",
+    )
     result = planning_change_service.apply(world.db, str(fixture["batch"].id), world.actor)
     world.db.commit()
     assert result["failed_orders"] == []
 
-    delays = [r for r in _rows_of(world, line) if r.verb == "DELAY"]
-    assert len(delays) == 1, "an unlinked release reads as a delay to purchasing"
-    assert "2026-08-25" in (delays[0].note or ""), "with the previous date"
+    world.db.expire_all()
+    live = [r for r in _rows_of(world, line) if r.state != INQUIRY_CANCELLED]
+    assert len(live) == 1, [(r.verb, r.state) for r in live]
+    assert str(live[0].id) == row_id, "settled in place, not a new row"
+    assert live[0].verb == "ORDER"
+    assert live[0].note and "2026-08-25" in live[0].note, "with the previous date"
 
 
 # ---------------------------------------------------------------------------
@@ -1325,7 +1393,7 @@ def test_confirming_one_order_of_a_batch_applies_that_order_alone(api):
     # have refused (409, `planning_change_batch_applied`).
     row = _batch_rows_for(world, batch, second["order"])[0]
     edited = client.put(
-        f"{BASE}/planning-changes/{batch.id}/rows/{row.id}", json={"decision": "accept"}
+        f"{BASE}/planning-changes/{batch.id}/rows/{row.id}", json={"decision": "confirm"}
     )
     assert edited.status_code == 200, edited.text
 
@@ -1362,42 +1430,14 @@ def test_a_second_press_on_an_order_already_applied_from_the_batch_is_refused(ap
     assert again.json().get("code") == "planning_change_batch_applied", again.text
 
 
-# ---------------------------------------------------------------------------
-# Review S5: a release row confirmed FROM THE BOARD takes the release path
-# ---------------------------------------------------------------------------
-
-
-def test_a_release_row_confirmed_from_the_board_reaches_the_pool_path(api):
-    """AC-P3-10 through the board's own Confirm. The board pre-marks every changed line
-    and posts it, and the route used to record each as an `amend` - which sent a `release`
-    row down the confirm branch, so the RELEASE rule never fired from the screen it is
-    decided on. A release is "yes, do what the book did", not an amendment of the line's
-    supply."""
-    fixture = _released_line(api, linked=True)
-    client = fixture["client"]
-    world = fixture["world"]
-    line = fixture["line"]
-    row_id = str(fixture["row"].id)
-
-    response = _confirm(
-        client, fixture["order"].id, [_line_payload(line.id, buy_qty="40")],
-        batch_id=str(fixture["batch"].id),
-    )
-    assert response.status_code == 200, response.text
-    world.db.commit()
-
-    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_id).one()
-    assert row.state != INQUIRY_CANCELLED
-    assert row.stock_location == world.pool_wh.warehouse_code, (
-        "the purchase is for the pool now, not for this line"
-    )
-    assert ProjectOrderInquiryService(world.db)._links_of(row.id), "its links are kept"
-    assert "2027-03-10" in (row.note or ""), "the note names the delay"
-    raised = [
-        r for r in _rows_of(world, line)
-        if r.state != INQUIRY_CANCELLED and str(r.id) != row_id
-    ]
-    assert raised == [], "a release raises no new order inquiry row"
+# `test_a_release_row_confirmed_from_the_board_reaches_the_pool_path` (Review S5) deleted:
+# `_released_line` is always a wholly-bought line, and Slice C's `compose_suggestion`
+# never answers "release" for one (measured above - it is always "keep", whatever the
+# delay and whether the Buy is placed on a document or only raised). The fixture this
+# test needed - a line whose held composition is a genuine stock claim (a reserve) - has
+# no equivalent in this file; `test_apply_release_gives_up_a_reserved_lines_whole_claim_
+# and_asks_purchasing_for_nothing` (tests/test_planning_changes.py) covers a release
+# through the direct `apply()` path with that shape instead.
 
 
 # ---------------------------------------------------------------------------
@@ -1626,3 +1666,355 @@ def test_committed_v_counts_the_part_of_the_new_quantity_nobody_has_bought(api):
     assert Decimal(str(committed)) == Decimal("15"), (
         "the part of the new quantity nobody has bought is exactly what is left to buy"
     )
+
+
+# ---------------------------------------------------------------------------
+# The board route carries cancelled and non-open change rows on the wire
+# ---------------------------------------------------------------------------
+
+
+def _cancelled_line_fixture(api):
+    """Two lines of one order, both confirmed as Buy; line 2 is then CANCELLED (the real
+    SCM removal path's own `line_status`, never `closed`) and its own `cancelled` change
+    row stays PENDING (never applied) - the exact shape `_cancelled_pending_change_rows`
+    reads (`SalesOrderLine.line_status == "cancelled"`, `PlanningChangeRow.kind ==
+    "cancelled"`, batch unapplied).
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_1)
+    core_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                        required_date=WAS_2)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_1)
+    line_2 = _project_line(db, order, line_no=2, product=world.product, core_line=core_2)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(line_1.id, buy_qty="10"),
+        _line_payload(line_2.id, buy_qty="10"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_2.line_status = "cancelled"
+    line_2.qty = Decimal("0")
+    db.commit()
+
+    change = _change(CLOSED, core_2, so_number=core_so.so_number, old_date=WAS_2,
+                     new_date=None, old_qty="10", new_qty="0")
+    batch = _build(world, [change], core_so, [str(core_2.id)])
+    assert batch is not None
+    return {
+        "client": client, "world": world, "order": order, "core_so": core_so,
+        "batch": batch, "core_1": core_1, "core_2": core_2, "line_1": line_1,
+        "line_2": line_2,
+    }
+
+
+def test_the_boards_contribution_wire_carries_cancelled_and_its_batch_id(api):
+    """R1: the board ROUTE (not the service) for an order with a pending cancelled row.
+
+    The service already builds `cancelled` / `pending_change_batch_id` into the
+    contribution dict (`_contribution` in `project_fulfilment_board_service.py`) - the
+    wire never gets them because `BoardContribution` (`app/schemas/project_board.py`)
+    does not declare either field, and `response_model` drops what a schema does not
+    name (`project_response_model_drops_undeclared_fields`).
+    """
+    fixture = _cancelled_line_fixture(api)
+    client = fixture["client"]
+    core_so = fixture["core_so"]
+    core_1, core_2 = fixture["core_1"], fixture["core_2"]
+    batch = fixture["batch"]
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    contributions = body["contributions"]
+
+    cancelled = [c for c in contributions if c["line_id"] == str(core_2.id)]
+    assert len(cancelled) == 1, contributions
+    assert cancelled[0]["cancelled"] is True, cancelled[0]
+    assert cancelled[0]["pending_change_batch_id"] == str(batch.id), cancelled[0]
+
+    ordinary = [c for c in contributions if c["line_id"] == str(core_1.id)]
+    assert len(ordinary) == 1, contributions
+    assert ordinary[0]["cancelled"] is False, ordinary[0]
+
+
+def test_the_boards_cancelled_contribution_carries_location_and_customer_fields(api):
+    """R2: same wire contribution, its location/customer/agent fields.
+
+    `_cancelled_pending_change_rows` builds its `_Row` with `warehouse_id`,
+    `customer_id`, `customer_name` and `agent_code` all left unset - so today
+    `unplannable` reads True (`_Row.unplannable` has no location) and the customer/agent
+    fields read None, even though the order itself names all four.
+    """
+    fixture = _cancelled_line_fixture(api)
+    client = fixture["client"]
+    world = fixture["world"]
+    core_so = fixture["core_so"]
+    core_2 = fixture["core_2"]
+
+    customer = Customer(
+        id=_uid(), company_id=world.company_id, customer_code=f"ZZT-{_uid()[:8]}",
+        customer_name=f"{MARKER} customer",
+    )
+    agent = SalesAgent(id=_uid(), sales_agent=f"ZZT-{_uid()[:8]}")
+    world.db.add_all([customer, agent])
+    world.db.flush()
+    core_so.customer_id = customer.id
+    core_so.sales_agent_id = agent.id
+    world.db.commit()
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contributions = response.json()["contributions"]
+    cancelled = [c for c in contributions if c["line_id"] == str(core_2.id)]
+    assert len(cancelled) == 1, contributions
+    row = cancelled[0]
+
+    assert row["unplannable"] is False, row
+    assert row["fulfilment_location"] == world.own_wh.warehouse_code, row
+    assert row["customer_name"] == customer.customer_name, row
+    assert row["customer_id"] == str(customer.id), row
+    assert row["agent_code"] == agent.sales_agent, row
+
+
+def test_a_pending_product_changed_row_on_a_closed_and_delivered_line_still_appears_on_the_board(
+    api,
+):
+    """R3: a `product_changed` row whose core line ended up fully delivered and closed
+    (qty_ordered 1, qty_delivered 1) must still surface on the board while its change is
+    PENDING, exactly the way a `cancelled` row does - `_cancelled_pending_change_rows`
+    filters `PlanningChangeRow.kind == "cancelled"` only, so a `product_changed` row is
+    absent from `contributions` today even though nobody has decided it yet.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    old_product = world.product
+    new_product = _product(db)
+    core_line = _core_line(
+        db, core_so, old_product, world.own_wh, qty_ordered="1",
+        required_date=WAS_1,
+    )
+    order = _project_so(db, world.project, so_id=core_so.id,
+                         autocount_doc_no=core_so.so_number)
+    project_line = _project_line(db, order, line_no=1, product=old_product,
+                                  core_line=core_line)
+    db.commit()
+
+    # Held (the gate `build_batch` requires - AC-G1), then delivered/closed and the
+    # product swapped, which is the shape the book upload itself produces for a fully
+    # fulfilled line whose item code changed on a later revision.
+    response = _confirm(client, order.id, [
+        _line_payload(project_line.id, buy_qty="1", buy_reason="ZZT no stock anywhere"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_line.qty_delivered = Decimal("1")
+    core_line.line_status = "closed"
+    core_line.product_id = new_product.id
+    db.commit()
+
+    change = Change(
+        PRODUCT_CHANGED, core_so.so_number, new_product.product_code,
+        world.own_wh.warehouse_code,
+        before=Line(doc_number=core_so.so_number, item_code=old_product.product_code,
+                    location=world.own_wh.warehouse_code, qty=1.0, required_date=WAS_1,
+                    row_ref=str(core_line.id)),
+        after=Line(doc_number=core_so.so_number, item_code=new_product.product_code,
+                   location=world.own_wh.warehouse_code, qty=1.0, required_date=WAS_1,
+                   row_ref=str(core_line.id)),
+    )
+    batch = _build(world, [change], core_so, [str(core_line.id)])
+
+    from app.models.planning_change import PlanningChangeRow
+
+    change_row = (
+        db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch.id).one()
+    )
+    assert change_row.kind == "product_changed", change_row.kind
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contributions = response.json()["contributions"]
+
+    matches = [
+        c for c in contributions if c.get("pending_change_batch_id") == str(batch.id)
+    ]
+    assert len(matches) == 1, contributions
+    assert matches[0]["line_no"] == project_line.line_no, matches[0]
+    assert matches[0]["qty"] == "0", matches[0]
+
+
+
+# ---------------------------------------------------------------------------
+# Reviewer guard: a covered line is not a non-open row
+# ---------------------------------------------------------------------------
+
+
+def test_a_covered_open_line_still_owed_is_not_returned_by_the_non_open_read(api):
+    """R2: an OPEN line, still owed (qty_ordered 10, qty_delivered 0), with purchasing's
+    OWN `purchasing_status = 'covered'` ruling ("no purchase needed", a person's decision -
+    never "the book closed this line") - a pending change row about it must NOT surface
+    through `_cancelled_pending_change_rows` (project_fulfilment_board_service.py ~1402).
+
+    Today that read is scoped to `~is_open_demand()`, and `is_open_demand()` folds
+    `purchasing_status != 'covered'` into its own predicate - so a covered-but-open,
+    still-owed line reads as "not open demand" and is wrongly admitted here. The correct
+    ruling for THIS read is pure book status: `line_status != 'open' OR demand_qty() <= 0`.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                            required_date=WAS_1)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                         autocount_doc_no=core_so.so_number)
+    project_line = _project_line(db, order, line_no=1, product=world.product,
+                                  core_line=core_line)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(project_line.id, buy_qty="10", buy_reason="ZZT no stock anywhere"),
+    ])
+    assert response.status_code == 200, response.text
+
+    core_line.purchasing_status = "covered"
+    db.commit()
+
+    core_line.required_date = NOW
+    db.commit()
+    change = _change(DATE_MOVED, core_line, so_number=core_so.so_number, old_date=WAS_1,
+                     new_date=NOW, old_qty="10", new_qty="10")
+    batch = _build(world, [change], core_so, [str(core_line.id)])
+    assert batch is not None
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contributions = response.json()["contributions"]
+
+    matches = [
+        c for c in contributions if c.get("pending_change_batch_id") == str(batch.id)
+    ]
+    assert matches == [], (
+        "a covered-but-open, still-owed line must not surface as a non-open/cancelled "
+        "contribution", contributions,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Attempt 6 root cause: an adopted order always names its own project_sales_order_id
+# ---------------------------------------------------------------------------
+
+
+def _adopted_order_with_unmirrored_lines(api, *, with_cancelled_row):
+    """SO419851's own shape, 8 Sep 2026: the order IS adopted (`projects.sales_orders`
+    exists, `so_id` set), but an AutoCount re-ingest closed the mirrored lines and
+    inserted new ones nobody has mirrored - every OPEN core line lacks a
+    `core_sales_order_line_id` match. `with_cancelled_row=True` additionally mirrors ONE
+    line, confirms it as Buy, then cancels it, leaving a pending (unapplied) `cancelled`
+    change row on that one mirrored line - the shape `_cancelled_pending_change_rows`
+    itself reads. `with_cancelled_row=False` is pure unmirrored demand: no mirror line
+    and no change row exist anywhere on the order at all.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id,
+                        autocount_doc_no=core_so.so_number)
+    # The re-ingested lines: open, still owed, deliberately given NO project_line mirror.
+    unmirrored_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                              required_date=WAS_1)
+    unmirrored_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="7",
+                              required_date=WAS_2)
+    db.commit()
+
+    if not with_cancelled_row:
+        return {
+            "client": client, "world": world, "order": order, "core_so": core_so,
+            "unmirrored_1": unmirrored_1, "unmirrored_2": unmirrored_2,
+        }
+
+    mirrored_core = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10",
+                               required_date=WAS_3)
+    mirrored_line = _project_line(db, order, line_no=1, product=world.product,
+                                  core_line=mirrored_core)
+    db.commit()
+
+    response = _confirm(client, order.id, [
+        _line_payload(mirrored_line.id, buy_qty="10"),
+    ])
+    assert response.status_code == 200, response.text
+
+    mirrored_core.line_status = "cancelled"
+    mirrored_line.qty = Decimal("0")
+    db.commit()
+
+    change = _change(CLOSED, mirrored_core, so_number=core_so.so_number, old_date=WAS_3,
+                     new_date=None, old_qty="10", new_qty="0")
+    batch = _build(world, [change], core_so, [str(mirrored_core.id)])
+    assert batch is not None
+
+    return {
+        "client": client, "world": world, "order": order, "core_so": core_so,
+        "unmirrored_1": unmirrored_1, "unmirrored_2": unmirrored_2,
+        "mirrored_core": mirrored_core, "mirrored_line": mirrored_line, "batch": batch,
+    }
+
+
+def test_an_adopted_order_names_its_project_sales_order_id_with_a_cancelled_row(api):
+    """R1/R2: the board standing's `project_sales_order_id` must come off the ORDER's
+    own adoption record, not off whichever `_Row` happened to be built first. Today
+    `_standings` (~4821) takes it from `row.project_sales_order_id` via `setdefault`,
+    which `_demand_rows` (~1379) fills per LINE through `_mirror_addressing` - an
+    unmirrored line reads null there. When every demand row for this order is
+    unmirrored (the re-ingest shape) and the only mirrored row is the CANCELLED one
+    built by `_cancelled_pending_change_rows` (~1474-1498, which never sets
+    `project_sales_order_id` on its own `_Row` either), the standing is stuck at null
+    and the FE reads the order as not adopted at all.
+    """
+    fixture = _adopted_order_with_unmirrored_lines(api, with_cancelled_row=True)
+    client = fixture["client"]
+    core_so = fixture["core_so"]
+    order = fixture["order"]
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    orders = response.json()["orders"]
+    assert len(orders) == 1, orders
+    assert orders[0]["project_sales_order_id"] == str(order.id), orders[0]
+
+
+def test_an_adopted_order_names_its_project_sales_order_id_with_no_cancelled_row(api):
+    """Same root cause, no cancelled row at all - pure unmirrored demand. Every line's
+    own `_Row.project_sales_order_id` is null (no mirror to address through), so the
+    standing must still resolve it some other way (through the order's own adoption
+    record, keyed by `so_id`), never leave it null just because no single LINE carried it.
+    """
+    fixture = _adopted_order_with_unmirrored_lines(api, with_cancelled_row=False)
+    client = fixture["client"]
+    core_so = fixture["core_so"]
+    order = fixture["order"]
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    orders = response.json()["orders"]
+    assert len(orders) == 1, orders
+    assert orders[0]["project_sales_order_id"] == str(order.id), orders[0]

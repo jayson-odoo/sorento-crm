@@ -114,11 +114,11 @@ def seeded_contact_with_a_prior_turn(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
     )
     envelope = _envelope()
     row = ChatbotTurn(
-        contact_respond_id=CONTACT_ID,
+        contact_respond_id=str(CONTACT_ID),
         message_id="ZZT-seed-msg",
         ingress="webhook",
         envelope=json.loads(envelope.model_dump_json()),
@@ -163,19 +163,19 @@ class TestConsoleTurnZeroWrites:
 
         before_session_vars = session_factory().execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         before_turns = (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .count()
         )
 
         resp = client.post(
             CONSOLE_TURN_URL,
             json={
-                "contact_respond_id": CONTACT_ID,
+                "contact_respond_id": str(CONTACT_ID),
                 "text": "can I submit a goods receive here",
                 "run_id": _run_id(),
             },
@@ -189,12 +189,12 @@ class TestConsoleTurnZeroWrites:
 
         after_session_vars = session_factory().execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         after_turns = (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .count()
         )
         assert after_session_vars == before_session_vars, "a console turn must not touch respond_contacts"
@@ -241,7 +241,7 @@ class TestConsoleTurnCarriesSessionAcrossTurns:
         run_id = _run_id()
         first = client.post(
             CONSOLE_TURN_URL,
-            json={"contact_respond_id": CONTACT_ID, "text": "goods receive?", "run_id": run_id},
+            json={"contact_respond_id": str(CONTACT_ID), "text": "goods receive?", "run_id": run_id},
         )
         assert first.status_code == 200, first.text
         turn_one_session_vars = first.json()["session_vars"]
@@ -250,7 +250,7 @@ class TestConsoleTurnCarriesSessionAcrossTurns:
         second = client.post(
             CONSOLE_TURN_URL,
             json={
-                "contact_respond_id": CONTACT_ID,
+                "contact_respond_id": str(CONTACT_ID),
                 "text": "still no?",
                 "run_id": run_id,
                 "session_vars": turn_one_session_vars,
@@ -285,7 +285,7 @@ class TestConsoleTurnPermissionGate:
         _GRANTS.discard(VIEW)
         resp = client.post(
             CONSOLE_TURN_URL,
-            json={"contact_respond_id": CONTACT_ID, "text": "hi", "run_id": _run_id()},
+            json={"contact_respond_id": str(CONTACT_ID), "text": "hi", "run_id": _run_id()},
         )
         assert resp.status_code == 403, resp.text
 

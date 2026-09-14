@@ -205,6 +205,11 @@ _SELECTION_CONTEXT_BY_KIND: dict[str, str] = {
     "tier_pick": "tier_offer",
     "team_pick": "team_clarify",
     "company_pick": "company_clarify",
+    # Merged from main (#862): the outstanding report's two questions kept their own
+    # names as `pending` kinds and keep them here, so `_offer_carry`'s two arms and
+    # `_ask_for_turn`'s read the same word the head does.
+    "outstanding_scope": "outstanding_scope",
+    "outstanding_detail": "outstanding_detail",
 }
 
 
@@ -473,6 +478,8 @@ def _ask_for_turn(
     team_clarify_options: Any,
     roster_plan: Any,
     companies: Any,
+    outstanding_filters: Any,
+    outstanding_reprinted: bool,
     turn_no: int,
 ) -> dict[str, Any] | None:
     """The question THIS turn left open, composed by `open_question.ask` (AC-1013).
@@ -502,6 +509,25 @@ def _ask_for_turn(
     domain = jsc.get(qf, "domain_hint")
     payload = {"team": team, "domain": domain}
 
+    if context in ("outstanding_scope", "outstanding_detail"):
+        # THE OUTSTANDING REPORT'S TWO QUESTIONS (merged from main, #862, S4 points 4/5).
+        # Main recorded them on the `pending` marker with their rows on `last_result_set`
+        # and their filters on `outstanding_filters`; the three travel together here,
+        # which is the whole of the re-expression. `reprinted` is main's own marker field
+        # (R22): a question already printed back once over a reply that answered nothing
+        # closes on the next such reply instead of printing a third copy.
+        payload_out = dict(payload)
+        if jsc.truthy(outstanding_filters):
+            payload_out["filters"] = outstanding_filters
+        if outstanding_reprinted:
+            payload_out["reprinted"] = True
+        return oq.ask(
+            context,
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload_out,
+        )
     if context == "team_clarify":
         return oq.ask(
             "team_pick",
@@ -894,6 +920,12 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
 
     # ---- the business summary (the parser-facing compressed `response`) ---- #
     result_obj = get_result_obj()
+    # S4 points 4/5 (PLAN-chatbot-outstanding-report.md): `fetch.output_structurer`'s
+    # `crm_outstanding_report` branch stamps `outstanding_ask` on the SAME dict that
+    # reaches here as `outcome["central-exchange"]` (the passthrough `sub_answer.
+    # central_exchange` gives any non-LLM shape) - never None for any other tool's
+    # answer, since no other presenter writes this key.
+    outstanding_ask = jsc.get(result_obj, "outstanding_ask") if jsc.truthy(result_obj) else None
     items_list = (
         jsc.get(result_obj, "items")
         if jsc.is_array(jsc.get(result_obj, "items"))
@@ -965,6 +997,10 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         last_result_set = jsc.array(jsc.get(sug, "suggest_last_result_set"))
     elif jsc.truthy(mem):
         last_result_set = jsc.array(jsc.get(mem, "cs_last_result_set"))
+    elif jsc.truthy(outstanding_ask):
+        # AC-1130/AC-1135: the scope question's three rows, or the detail offer's
+        # one/two - whichever `run_fetch` / `output_structurer` armed this turn.
+        last_result_set = jsc.array(jsc.get(outstanding_ask, "last_result_set"))
     r_obj = get_result_obj()
     is_disambig = bool(
         jsc.truthy(r_obj)
@@ -1014,6 +1050,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         if promo is not None
         else "tier_offer"
         if tier is not None
+        else jsc.get(outstanding_ask, "kind")
+        if jsc.truthy(outstanding_ask)
         else "disambiguation"
         if is_disambig
         else None
@@ -1230,6 +1268,34 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # (D9). So `route._tier_menu` reads the open question's own options and the separate
     # key, its domain guard and its carry all go with it.
 
+    # S4 point 4 (PLAN-chatbot-outstanding-report.md, merged from main): the parsed
+    # product/dates/customer/location the outstanding question was asked over - this
+    # turn's, when a NEW ask arms (the scope question or the detail offer), and the live
+    # question's own otherwise.
+    #
+    # NOT A SESSION KEY on this lane. Main kept it beside the `pending` marker and had to
+    # write down a lifetime for it (N4 of its security review: the unconditional fallback
+    # carried a customer's resolved product/customer/location forever once an ask armed
+    # and then missed), gated on "that same marker is still open". Here the filters ride
+    # IN the question's payload, so the lifetime is the question's own and there is no
+    # second key that can outlive it. The DROP test is kept, because it is not about the
+    # lifetime: a turn the head read as a new ask (`head/output_exchange.py::
+    # _apply_outstanding_pending`) closed the question, so its filters must not be handed
+    # to whatever this turn arms next (console run 3, 13 Sep 2026).
+    prev_outstanding_filters = (
+        None
+        if jsc.truthy(jsc.get(qf, "outstanding_pending_dropped"))
+        else jsc.get(jsc.get(jsc.get(prev, "open_question"), "payload"), "filters")
+        if _prev_context(jsc.get(prev, "open_question"))
+        in ("outstanding_scope", "outstanding_detail")
+        else None
+    )
+    outstanding_filters_value = (
+        jsc.get(outstanding_ask, "filters")
+        if jsc.truthy(outstanding_ask)
+        else prev_outstanding_filters
+    )
+
     # ---- an open offer survives the answer (the picker carry) ------------- #
     _picker_carry(
         variables,
@@ -1350,18 +1416,23 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
 
     # ---- search-scope disclosure (delivery orders only) ------------------- #
-    _search_scope_header(
-        output,
-        qf=qf,
-        prev=prev,
-        gate_ran=gate_ran,
-        gate_json=gate_json,
-        resolver_json=resolver_json,
-        resolved_ran=resolved is not None,
-        is_escalate_branch=is_escalate_branch,
-        last_result_set=last_result_set,
-        raw_of_tok=raw_of_tok,
-    )
+    # AC-1139 / S4 point 10: NOT above an outstanding report. That reply carries its own
+    # Product / Customer / Location / Order date lines (and the scope question carries
+    # nothing but itself), so the generic header printed the same facts a second time,
+    # in different words - measured on the 13 Sep console check.
+    if not jsc.truthy(jsc.get(result_obj, "outstanding_report")):
+        _search_scope_header(
+            output,
+            qf=qf,
+            prev=prev,
+            gate_ran=gate_ran,
+            gate_json=gate_json,
+            resolver_json=resolver_json,
+            resolved_ran=resolved is not None,
+            is_escalate_branch=is_escalate_branch,
+            last_result_set=last_result_set,
+            raw_of_tok=raw_of_tok,
+        )
 
     # ---- MI-D: the media confirmation, merged into the answer ------------- #
     _media_confirm_prefix(output, qf=qf, ctx=ctx, resolver_json=resolver_json, resolved_ran=resolved is not None)
@@ -1390,6 +1461,14 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         team_clarify_options=turn_state.get("team_clarify_options"),
         roster_plan=variables.get("routing_roster_plan"),
         companies=variables.get("routing_companies"),
+        # What the outstanding question is asked OVER, and whether it has already been
+        # printed back once (main's `pending.derive` wrote the same two facts, one onto a
+        # session key and one onto the marker).
+        outstanding_filters=outstanding_filters_value,
+        outstanding_reprinted=bool(
+            jsc.truthy(jsc.get(qf, "outstanding_detail_reask"))
+            or jsc.truthy(jsc.get(qf, "outstanding_reask_filters"))
+        ),
         turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
     )
 
@@ -2341,7 +2420,20 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
             for e in jsc.array(jsc.get(qf, "entities"))
         )
 
-    offer_born_this_turn = bool(jsc.truthy(mem) or promo is not None or tier is not None)
+    offer_born_this_turn = bool(
+        jsc.truthy(mem)
+        or promo is not None
+        or tier is not None
+        # R16 (owner round 5, 13 Sep 2026, merged from main): the outstanding SCOPE
+        # QUESTION or DETAIL OFFER armed this turn is a numbered list on the customer's
+        # screen, so H29's rule above applies to it word for word. Without it, a pick that
+        # RESUMED an outstanding ask ("1" against a customer picker, then "Outstanding for
+        # which document?") had its own question's `selection_context` overwritten by the
+        # carried picker two lines down - the customer read the scope question while the
+        # session was armed against the picker roster, and the "3" that answered it
+        # resolved against the wrong list.
+        or selection_context in ("outstanding_scope", "outstanding_detail")
+    )
     # THE ROSTER STILL ON SCREEN is the open question's own options (L1-S3d step 4).
     # `picker_last_result_set` was a third copy of rows that were already in
     # `last_result_set` and already on the question; only a `product_pick` /
@@ -2470,6 +2562,22 @@ def _offer_carry(
     prev_ctx = _prev_context(prev_question)
     prev_set = jsc.get(prev_question, "options")
     if prev_ctx is None or not jsc.is_array(prev_set) or len(prev_set) == 0:
+        return None
+    if prev_ctx == "outstanding_scope":
+        # S4 point 4 (PLAN-chatbot-outstanding-report.md): ONE-TURN LIFE, same exclusion
+        # as `team_clarify` right below and for the same reason - a QUESTION, answered on
+        # the very next turn or not at all (`head/output_exchange.py::
+        # _apply_outstanding_pending` already resolved it, or dropped it because this turn
+        # brought its own question).
+        return None
+    if prev_ctx == "outstanding_detail" and jsc.truthy(jsc.get(qf, "outstanding_pending_dropped")):
+        # AC-1143 (owner ruling, 13 Sep 2026): the detail offer is a ROSTER the customer
+        # can still see, so it carries like `suggest_offer` and the tier menu - but
+        # `topic.changed` cannot bound it on its own, because a bare "SRTWC999" carries
+        # the SAME domain_hint ("order") as the ask it answers. The head already decides
+        # that case and records it: `_apply_outstanding_pending` stamps
+        # `outstanding_pending_dropped` on a turn that brought its own product or domain.
+        # A new ask therefore closes the offer here too, and nothing else does.
         return None
     if prev_ctx == "team_clarify":
         # THE ONE LABEL THAT IS NEVER CARRIED (review of #713, blocker B1). Every other

@@ -51,7 +51,7 @@ def seeded(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps(PRIOR_SESSION)},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps(PRIOR_SESSION)},
     )
     db.commit()
     return db
@@ -103,11 +103,11 @@ def _fragments(**over: Any) -> dict[str, Any]:
     return body
 
 
-def _session_of(session_factory, contact_id: str = CONTACT_ID) -> dict:
+def _session_of(session_factory, contact_id: str | int = CONTACT_ID) -> dict:
     db = session_factory()
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
-        {"cid": contact_id},
+        {"cid": str(contact_id)},
     ).first()
     raw = row.session_vars if row is not None else {}
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -496,7 +496,7 @@ class TestTheEndpoint:
                 "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
                 "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
             ),
-            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+            {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
         )
         db.commit()
 

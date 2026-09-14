@@ -41,7 +41,7 @@ def seeded(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
     )
     db.commit()
     return db
@@ -78,7 +78,7 @@ def _session_of(session_factory) -> dict:
     db = session_factory()
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
-        {"cid": CONTACT_ID},
+        {"cid": str(CONTACT_ID)},
     ).first()
     raw = row.session_vars if row is not None else {}
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -225,7 +225,7 @@ class TestAnAbandonedMemberOfferStopsConfirming:
                 "WHERE respond_io_id = :cid"
             ),
             {
-                "cid": CONTACT_ID,
+                "cid": str(CONTACT_ID),
                 "sv": json.dumps(
                     {
                         "variables": {
@@ -394,7 +394,7 @@ class TestAPendingOrderRosterDoesNotSwallowABareProductCode:
                 "WHERE respond_io_id = :cid"
             ),
             {
-                "cid": CONTACT_ID,
+                "cid": str(CONTACT_ID),
                 "sv": json.dumps(
                     {
                         "variables": {
@@ -737,7 +737,7 @@ class TestAnOutOfRangePickKeepsTheProductInScope:
                 "WHERE respond_io_id = :cid"
             ),
             {
-                "cid": CONTACT_ID,
+                "cid": str(CONTACT_ID),
                 "sv": json.dumps(
                     {
                         "variables": {
@@ -873,7 +873,7 @@ class TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode:
         db.flush()
         contact_id = db.execute(
             text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid"),
-            {"cid": CONTACT_ID},
+            {"cid": str(CONTACT_ID)},
         ).scalar()
         db.execute(
             text("UPDATE respond_contacts SET workspace_id = :w WHERE id = :c"),
@@ -1169,13 +1169,13 @@ class TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken(
         db = session_factory()
         row = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
-            {"cid": CONTACT_ID},
+            {"cid": str(CONTACT_ID)},
         ).first()
         session_vars = json.loads(row.session_vars) if isinstance(row.session_vars, str) else dict(row.session_vars or {})
         session_vars["variables"] = {**(session_vars.get("variables") or {}), "dym_last_result_set": roster}
         db.execute(
             text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
-            {"sv": json.dumps(session_vars), "cid": CONTACT_ID},
+            {"sv": json.dumps(session_vars), "cid": str(CONTACT_ID)},
         )
         db.commit()
         return roster

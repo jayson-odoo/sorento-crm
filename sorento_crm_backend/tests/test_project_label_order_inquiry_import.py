@@ -1,15 +1,27 @@
 """L3 Order Inquiry importer applies Rule 1 (`label_from_inquiry_cell`) on every order the
-sheet names, whichever branch writes it: an order AutoCount already owns (AC-O1), a
-provisional order this feed creates (AC-O2), a customer-only cell that carries no label at
-all (AC-O3), and a corrected cell on a re-upload (AC-O4, equal rank overwrites).
+sheet names AND THE CRM HOLDS: a label that matches no customer (AC-O2), a customer-only cell
+that carries no label at all (AC-O3), and a corrected cell on a re-upload (AC-O4, equal rank
+overwrites). AC-O1 is now the only shape there is - the sheet stopped creating sales orders
+(`PLAN-scm-oi-sheet-migration.md` D4), so every order it names is one somebody else owns.
 
-Substrate: `pg_session()` against the REAL database, rolled back - the same substrate
-`test_project_order_inquiry_import_creates_demand.py` uses for this service, since the write
-under test is `_create_orders` itself rather than a schema surface `blank_session` would
-also serve. `project_label`/`project_label_source` are mapped on the ORM model but do not
-exist as columns on the real database until migration 511 is actually applied there, so a
-raw-SQL pre-seed of an existing label (AC-O3, AC-O4) fails loudly until that lands - which is
-the point of a red test.
+The SEAM moved with the code (AC-S1-37): these tests drive `apply()` with a real workbook and
+the sales order seeded, where they used to call `_create_orders` with a hand-built parse. The
+label assertions are unchanged; what went is the pair of counters that counted orders this
+feed created and orders it left alone, neither of which it answers with any more.
+
+Each case seeds a PLANNABLE order with a line the sheet's row can be raised against, because
+AC-S1-39 (security review SF1, 14 Sep) narrowed the stamps to orders this upload actually
+works on - a sheet that merely mentions 400 numbers it can do nothing with relabels none of
+them.
+
+Substrate: `pg_session()` against the REAL database, rolled back. `project_label` /
+`project_label_source` are mapped on the ORM model, and a raw-SQL pre-seed of an existing
+label (AC-O3, AC-O4) fails loudly where migration 511 has not been applied.
+
+Every chain the upload needs is seeded here, the UPLOADER included: `apply` refuses a sheet
+it cannot attribute to anybody (AC-S1-42), and a test that leaves the actor out is really
+testing whether the machine running it happens to have `EXTERNAL_API_KEY_ACT_AS_USER_ID` in
+its `.env`.
 """
 from __future__ import annotations
 
@@ -23,6 +35,7 @@ from app.models.base import set_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.user import User
 from app.services import project_order_inquiry_import_service as svc
 from tests._pg_fixture import pg_session, unique_code
 
@@ -63,41 +76,79 @@ def world(db):
         is_active=True, counts_as_available=True,
     )
     db.add(wh)
+    uploader = User(
+        id=_u(),
+        email=f"{MARKER}-{uuid.uuid4().hex[:8]}@example.test",
+        name=f"{MARKER} uploader",
+        status="ACTIVE",
+    )
+    db.add(uploader)
     db.flush()
-    return {"product": product, "warehouse": wh}
+    return {"product": product, "warehouse": wh, "actor": str(uploader.id)}
 
 
-class _Row:
-    def __init__(self, *, so_number, item_code, qty=10.0, so_date=date(2026, 7, 1),
-                 delivery_date=date(2026, 9, 1), project="", location=LOCATION,
-                 po_numbers=(), not_ordered=False):
-        self.so_number = so_number
-        self.item_code = item_code
-        self.qty = qty
-        self.so_date = so_date
-        self.delivery_date = delivery_date
-        self.project = project
-        self.location = location
-        self.supplier = ""
-        self.po_numbers = po_numbers
-        self.not_ordered = not_ordered
-        self.sheet = "Sheet1"
-        self.source_row = 2
+#: The customer's own header row, with the project cell Rule 1 reads.
+HEADERS = ("SO NO", "ITEM CODE", "QTY", "DELIVERY DATE", "STOCK LOCATION",
+           "PROJECT CUSTOMER")
 
 
-class _Parsed:
-    def __init__(self, rows):
-        self.rows = rows
-        self.ok = True
-        self.problems = []
-        self.sheets_read = ["Sheet1"]
-        self.sheets_skipped = []
-        self.with_location = sum(1 for r in rows if r.location)
-        self.po_claims = sum(len(r.po_numbers) for r in rows)
+def _sheet(rows) -> bytes:
+    """One tab of the operator's own workbook, read by the importer's own reader.
+
+    A real file rather than a hand-built parse: the seam is `apply()` now, and a fake parsed
+    object would let the reader and the importer drift apart unnoticed.
+    """
+    import openpyxl
+    from io import BytesIO
+
+    wb = openpyxl.Workbook()
+    tab = wb.active
+    tab.append(list(HEADERS))
+    for row in rows:
+        tab.append(list(row))
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
-def _create(db, rows) -> dict:
-    return svc._create_orders(db, _Parsed(rows), svc._now())
+def _row(number, item_code, project, *, qty=10.0, delivery_date=date(2026, 9, 1)):
+    return (number, item_code, qty, delivery_date, LOCATION, project)
+
+
+def _apply(db, rows, actor) -> dict:
+    """Apply the sheet the way the route does: as a person, with a real user behind it.
+
+    The actor is not decoration. Every row this importer raises is born acknowledged and
+    every link records who made it, so `apply` refuses an upload it cannot attribute to
+    anybody (AC-S1-42). Without one passed here the call fell through to
+    `EXTERNAL_API_KEY_ACT_AS_USER_ID`, which a developer machine has in its `.env` and CI
+    does not - so these tests passed locally and refused the whole upload in CI, reporting
+    it as a label that never landed.
+    """
+    return svc.apply(db, _sheet(rows), actor=actor, file_name="project label.xlsx")
+
+
+def _held_order(db, world, number, *, qty_ordered=999) -> SalesOrder:
+    """A sales order AutoCount owns, with a line the sheet's row can be raised against.
+
+    The line is what makes the row RAISABLE, and since AC-S1-39 (security review SF1,
+    14 Sep) that is what the header stamps turn on: an order the upload can do nothing else
+    with is not relabelled. So every case here seeds one, and the quantity is large enough
+    that the row never exhausts it - O1 then asserts the figure is still untouched.
+    """
+    order = SalesOrder(
+        id=_u(), so_number=number, status="open", order_type="project",
+        demand_class="project", source_system="autocount", order_date=date(2026, 1, 1),
+    )
+    db.add(order)
+    db.flush()
+    db.add(SalesOrderLine(
+        id=_u(), sales_order_id=str(order.id), product_id=str(world["product"].id),
+        qty_ordered=qty_ordered, qty_delivered=0, line_status="open",
+        required_date=date(2026, 12, 31),
+    ))
+    db.flush()
+    return order
 
 
 def _order(db, number) -> SalesOrder:
@@ -120,26 +171,14 @@ def _set_label(db, order_id, *, label, source):
 
 def test_o1_an_order_autocount_owns_gets_the_inquiry_label_and_keeps_its_figures(db, world):
     number = unique_code(f"{MARKER}-SO")
-    theirs = SalesOrder(
-        id=_u(), so_number=number, status="open", order_type="dealer",
-        source_system="scm_upload", order_date=date(2026, 1, 1),
-    )
-    db.add(theirs)
-    db.flush()
-    db.add(SalesOrderLine(
-        id=_u(), sales_order_id=str(theirs.id), product_id=str(world["product"].id),
-        qty_ordered=999, qty_delivered=0, line_status="open",
-        required_date=date(2026, 12, 31),
-    ))
-    db.flush()
+    _held_order(db, world, number)
 
     cell = "PEMBINAAN TEGUH MAJU / PASAR BESAR CHERAS - RESIDENCE / KUALA LUMPUR"
-    out = _create(db, [_Row(
-        so_number=number, item_code=world["product"].product_code,
-        project=cell, qty=1.0, delivery_date=date(2026, 9, 1),
-    )])
+    out = _apply(db, [_row(number, world["product"].product_code, cell, qty=1.0)],
+                 world["actor"])
 
-    assert out["orders_owned_elsewhere"] == 1
+    assert out["rows_raised"] == 1
+    assert out["orders_stamped"] == 1
     order = _order(db, number)
     assert order.project_label == "PASAR BESAR CHERAS - RESIDENCE / KUALA LUMPUR"
     assert order.project_label_source == "inquiry"
@@ -149,39 +188,33 @@ def test_o1_an_order_autocount_owns_gets_the_inquiry_label_and_keeps_its_figures
     assert float(line.qty_ordered) == 999, "the sheet must not touch a figure it does not own"
 
 
-def test_o2_a_provisional_order_the_sheet_creates_carries_the_inquiry_label(db, world):
+def test_o2_a_label_matching_no_customer_still_lands_on_the_order(db, world):
+    """AC-O2, at the only seam left for it.
+
+    It used to be stated as "a provisional order the sheet CREATES carries the label", and
+    the sheet creates nothing now (D4) - so what it is really about is the half of the cell
+    that names no customer we hold: the project half is still a label, and it still lands.
+    """
     number = unique_code(f"{MARKER}-SO")
+    _held_order(db, world, number)
     cell = "URC ENGINEERING / BAMBOO RESIDENCE / KUALA LUMPUR"
 
-    out = _create(
-        db, [_Row(so_number=number, item_code=world["product"].product_code, project=cell)]
-    )
+    _apply(db, [_row(number, world["product"].product_code, cell)], world["actor"])
 
-    assert out["orders_created"] == 1
     order = _order(db, number)
     assert order.project_label == "BAMBOO RESIDENCE / KUALA LUMPUR"
     assert order.project_label_source == "inquiry"
-    # Existing note behaviour is unchanged: no customer named "BAMBOO RESIDENCE / KUALA
-    # LUMPUR" exists, so the whole cell is also kept as a note.
-    assert (order.internal_note or "").startswith("Order Inquiry project:")
 
 
 def test_o3_a_customer_only_cell_writes_no_label_and_leaves_an_existing_one_untouched(db, world):
     number = unique_code(f"{MARKER}-SO")
-    theirs = SalesOrder(
-        id=_u(), so_number=number, status="open", order_type="dealer",
-        source_system="scm_upload", order_date=date(2026, 1, 1),
-    )
-    db.add(theirs)
-    db.flush()
+    theirs = _held_order(db, world, number)
     _set_label(db, theirs.id, label="PRE-EXISTING LABEL", source="note")
 
-    out = _create(db, [_Row(
-        so_number=number, item_code=world["product"].product_code,
-        project="PASAR BESAR CHERAS",  # no slash - a customer name only
-    )])
+    _apply(db, [_row(number, world["product"].product_code,
+                     "PASAR BESAR CHERAS")],  # no slash - a customer name only
+           world["actor"])
 
-    assert out["orders_owned_elsewhere"] == 1
     order = _order(db, number)
     assert order.project_label == "PRE-EXISTING LABEL"
     assert order.project_label_source == "note"
@@ -189,20 +222,12 @@ def test_o3_a_customer_only_cell_writes_no_label_and_leaves_an_existing_one_unto
 
 def test_o4_a_reupload_with_a_corrected_cell_overwrites_the_earlier_inquiry_label(db, world):
     number = unique_code(f"{MARKER}-SO")
-    theirs = SalesOrder(
-        id=_u(), so_number=number, status="open", order_type="dealer",
-        source_system="scm_upload", order_date=date(2026, 1, 1),
-    )
-    db.add(theirs)
-    db.flush()
+    theirs = _held_order(db, world, number)
     _set_label(db, theirs.id, label="OLD LABEL", source="inquiry")
 
-    out = _create(db, [_Row(
-        so_number=number, item_code=world["product"].product_code,
-        project="CUSTOMER / CORRECTED LABEL",
-    )])
+    _apply(db, [_row(number, world["product"].product_code,
+                     "CUSTOMER / CORRECTED LABEL")], world["actor"])
 
-    assert out["orders_owned_elsewhere"] == 1
     order = _order(db, number)
     assert order.project_label == "CORRECTED LABEL"
     assert order.project_label_source == "inquiry"

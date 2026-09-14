@@ -241,6 +241,22 @@ DOMAIN_SUBJECT_AXIS: dict[str, str] = {
     "portal_link": "doc",
 }
 
+
+def _axis_for_hint(hint: Any, domain: Any) -> str | None:
+    """The axis an entity of this HINT occupies, or None when no table names one.
+
+    The two tables above, read in the one order every caller needs: the domain's own
+    override first, the hint's default second. Hoisted to module scope so
+    `ce_axis_for` (the entity-operation executor's own axis reader) and
+    `_apply_outstanding_pending`'s refinement test below ask the SAME question of the
+    SAME tables - a second axis table is how two parts of one turn end up disagreeing
+    about what an entity scopes.
+    """
+    hint_key = jsc.lower_or_empty(hint)
+    domain_map = AXIS_BY_DOMAIN.get(domain) if isinstance(domain, str) else None
+    return (domain_map or {}).get(hint_key) or HINT_AXIS_DEFAULT.get(hint_key)
+
+
 # Domain -> the entity HINT naming that domain's own subject. Read by the
 # reference-positions block; hoisted so there is one copy.
 DOMAIN_SUBJECT_HINT: dict[str, str] = {
@@ -825,6 +841,24 @@ def picker_candidates(state: Any) -> list:
     return out
 
 
+#: The two OPEN QUESTION kinds the outstanding report asks (merged from main, #862).
+#: Named here because three helpers below test for exactly this pair.
+OUTSTANDING_KINDS = ("outstanding_scope", "outstanding_detail")
+
+
+def _outstanding_question(state: Any) -> Any:
+    """The open OUTSTANDING scope/detail question, or None.
+
+    The fifth reader of the session in this file, beside `open_question_of`,
+    `picker_rows`, `picker_candidates` and `picker_offer`. Main read a `pending` MARKER
+    here (`previous_conversation_state.pending`) with the rows and the filters on two
+    further session keys; this lane has one record of what the bot asked, so the kind, the
+    frozen rows and the filters all come off it together and cannot be carried apart.
+    """
+    question = open_question_of(state)
+    return question if jsc.get(question, "kind") in OUTSTANDING_KINDS else None
+
+
 def picker_offer(state: Any) -> dict | None:
     """The picker's own IDENTITY and domain, or None when no picker is open.
 
@@ -1215,6 +1249,501 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
         o["escalation"] = {**escalation, "is_escalation_confirmation": False}
     o["open_question_answered"] = outcome.handler
 
+#: The scope words, as the parser already spells them (D2): answering "sales order" is
+#: the same emission a direct "sales order outstanding" ask produces.
+_SCOPE_BY_ORDER_STATUS: dict[str, str] = {
+    "so_outstanding": "so",
+    "do_outstanding": "do",
+    "outstanding_both": "both",
+}
+
+#: The same table read the other way - which `order_status` re-runs a report for a scope
+#: that is already known (an answered scope question, or R15's refinement of a report that
+#: already ran). Derived, never spelled a second time.
+_ORDER_STATUS_BY_SCOPE: dict[str, str] = {v: k for k, v in _SCOPE_BY_ORDER_STATUS.items()}
+
+
+def _outstanding_subject_axes(filters: Any) -> set[str]:
+    """The AXES the stored outstanding subject occupies - a product subject on a
+    product's axis, a customer subject on a customer's (R13: this report takes either
+    as its subject).
+
+    Named through `_axis_for_hint` with NO domain, deliberately: under the `order`
+    domain that table collapses product and customer onto one "which order" axis,
+    which is the right answer for the order LIST and the wrong one here, where the two
+    are separate subjects a report can be about. The hint defaults keep them apart
+    (`product` -> product_scope, `customer` -> order_scope, `warehouse` -> location),
+    which is exactly the distinction R15's refinement test needs.
+    """
+    f = filters if isinstance(filters, dict) else {}
+    axes = set()
+    if jsc.truthy(f.get("product_code")):
+        axes.add(_axis_for_hint("product", None))
+    if jsc.array(f.get("customer_ids")):
+        axes.add(_axis_for_hint("customer", None))
+    return {axis for axis in axes if axis}
+
+
+def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
+    """R15 (owner ruling, 13 Sep 2026): does the PARSER's own verdict say this turn kept
+    the subject of the open question and merely narrowed it?
+
+    Two signals, both the parser's, neither a word list:
+
+    * `entity_op: "reuse"` - the parser read the turn as carrying no new value at all
+      ("i want to see this month only" is `reuse` + a date window), so whatever it
+      names is a filter on the report already on screen.
+    * `entity_op: "replace_combine"` whose entities all sit on axes OTHER than the
+      stored subject's - a warehouse or a customer named under a product report, a
+      warehouse or a product named under a customer report. There is only ever ONE
+      subject, so an entity on the subject's own axis REPLACES it, and that is a new
+      ask (`test_a_replacing_product_under_a_product_offer_is_still_a_new_ask`).
+
+    R24 (owner round 9b, 13 Sep 2026) narrows this to the shape a refinement actually
+    has: a turn the parser classifies as a BUSINESS QUESTION OF ITS OWN - `message_type:
+    "business_query"` with a NON-NULL `domain_hint` - is a new ask under an open
+    outstanding pending, whatever axes its entities sit on. The axis test alone called
+    "delivery status for hanlim" (a customer entity under a PRODUCT-subject offer, so a
+    different axis) a refinement of the old product's report, re-ran SRTWT7443 with
+    `Customer: all`, and re-offered: "I kind of can't escape this loop." A refinement is
+    the casual-shaped turn that narrows what is already on screen ("i want to see this
+    month only" is `casual` + no domain; "only BRW" is `business_query` with NO domain,
+    which is the parser saying it read a filter, not a question), and this test lives
+    HERE rather than beside the call so there is one definition of what a refinement is.
+    """
+    if jsc.js_string(o.get("entity_op") or "") not in ("reuse", "replace_combine"):
+        return False
+    if jsc.js_string(o.get("message_type") or "") == "business_query" and jsc.truthy(
+        o.get("domain_hint")
+    ):
+        return False
+    subject_axes = _outstanding_subject_axes(filters)
+    if not subject_axes:
+        # Nothing stored to keep. An entity here would be NAMING the subject, not
+        # narrowing it, so the turn stays the new ask today's code already calls it.
+        return False
+    for e in jsc.array(o.get("entities")):
+        axis = _axis_for_hint(jsc.get(e, "hint"), None)
+        if axis is None or axis in subject_axes:
+            return False
+    return True
+
+
+def _select_all_over_a_menu(o: dict, parent_input: dict) -> bool:
+    """Is this turn the word "all" answering an open NUMBERED MENU (a customer picker,
+    a suggest offer, or a quote-reply carrying the menu it answers)?
+
+    ONE predicate, read at TWO points, which is the whole of R21 (owner round 8, 13 Sep
+    2026). The expansion itself - "all" -> every offered position - happens far below,
+    after the entity-operation executor has already run; the executor therefore chose
+    its arm from the parser's RAW read of the word, which is `entity_op: "clear"`
+    ("all" is a widen to the model, and over a menu it is the opposite: a pick of
+    everything). So the CLEAR arm wiped the scope and, more to the point, the reuse
+    arm's carries - the order status, the date window, the requested attributes, the
+    active flag - never ran, while the same picker answered "1" arrives as `reuse`
+    from the start and keeps all of them. Live: `all` over a three-family customer
+    picker ran the plain order list with no dates and no status, where `1` armed the
+    outstanding scope question correctly. "why when i say all for customer picker it
+    didn't work, but when i choose 1 it worked?"
+
+    Read here so the executor can take the same arm a single pick takes; read again at
+    the expansion, so there is no second copy of the rule to drift from.
+
+    Deliberately NOT the did-you-mean arm beside it: that one threads the prior entities
+    through `apply_dym_pick` itself and does not go through the executor's arms at all, so
+    it has neither the defect nor the evidence for a change. Main told the two apart by
+    which session key held the rows (`dym_last_result_set` against `last_result_set`);
+    this lane persists neither, because a roster travels ON the question that printed it,
+    so the did-you-mean one is the picker carrying the OFFER the miss lane froze onto it
+    (`picker_offer`, stamped only by `miss_suggest._attach_question`).
+    """
+    if jsc.truthy(o.get("is_menu_label")):
+        return False
+    if jsc.is_array(o.get("reference_positions")) and len(o["reference_positions"]) > 0:
+        return False
+    prev_state = parent_input.get("previous_conversation_state") or {}
+    if jsc.truthy(jsc.get(picker_offer(prev_state), "id")):
+        return False  # the did-you-mean arm owns this turn
+    ref_set = jsc.array(parent_input.get("referenced_result_set"))
+    roster = ref_set if len(ref_set) > 0 else picker_rows(prev_state)
+    if len(roster) == 0:
+        return False
+    if not (
+        len(ref_set) > 0
+        or jsc.get(open_question_of(prev_state), "kind") in PICKER_KINDS
+    ):
+        return False
+    message = parent_input.get("latest_user_message")
+    if message is None:
+        message = parent_input.get("user_message")
+    if message is None:
+        return False
+    return bool(_ALL_EXACT_RE.match(re.sub(r"[.!\s]+$", "", _split_reply_to(message).strip().lower())))
+
+
+def _outstanding_leaves_the_offer(o: dict, prev_pending: Any) -> bool:
+    """R22 (owner round 9, 13 Sep 2026): does this turn LEAVE the open outstanding
+    question rather than answer, refine or replace it?
+
+    Two shapes, and both of them close it:
+
+    * A DECLINE - the parser's own `is_affirmative: false` on a turn that picked
+      nothing, named nothing and refined nothing. "no" and "stop" are exactly that,
+      and until now `is_affirmative` was not read on this path at all, so a decline
+      and an unreadable reply took the identical re-print.
+    * A SECOND consecutive unreadable turn. The first one still re-prints (AC-1143(c):
+      the question is on the customer's screen and a typo should not cost them the
+      answer), and the marker written by that re-print says so, so the next one does
+      not print a third copy of a list nobody asked to see again. One boolean carried
+      on the marker, never a TTL - R2 rules the offer STICKY across picks and casual
+      turns, and a countdown would close it behind the customer's back while they are
+      still reading it. This closes it only after the bot has already said the same
+      thing twice with nothing new coming back.
+    """
+    if jsc.array(o.get("reference_positions")):
+        return False
+    if [e for e in jsc.array(o.get("entities")) if jsc.truthy(e)]:
+        return False
+    if jsc.truthy(o.get("domain_hint")):
+        return False
+    if o.get("is_affirmative") is False:
+        return True
+    return jsc.truthy(jsc.get(jsc.get(prev_pending, "payload"), "reprinted"))
+
+
+def _outstanding_scope_ask_candidate(o: dict, prev_pending: Any) -> bool:
+    """S4 point 3 (AC-1130): does this turn look like a BARE outstanding ask with a
+    subject, the shape that arms the scope question instead of fetching?
+
+    A PURELY SYNTACTIC signal - no grant knowledge here, that check lives in
+    `lanes/business/__init__.py::run_fetch`, the only place `ctx.access` is already
+    read. A direct `run_fetch` call (that module's own tests) never sets this, so it
+    just fetches, which is what `TestToolPick` pins.
+
+    Read TWICE, at the two points `_apply_outstanding_pending` is applied, and for the
+    same reason (R16, owner round 5, 13 Sep 2026): on a turn that PICKED a customer off
+    a roster, neither the order status nor the entity exists yet at the first point -
+    the status arrives with the reuse carry and the entity with the positional pick,
+    both of them further down this function. The first pass therefore read an empty
+    entity list and no status, the flag was never stamped, and the turn that resumed an
+    outstanding ask fell through to the plain order list (the owner's own trace). The
+    late read only ever ADDS the flag; nothing unsets it.
+    """
+    stale_outstanding_ask_open = jsc.get(prev_pending, "kind") in (
+        "outstanding_scope",
+        "outstanding_detail",
+    ) and not jsc.truthy(o.get("outstanding_pending_dropped"))
+    return (
+        not stale_outstanding_ask_open
+        and jsc.js_string(o.get("order_status") or "").strip() == "outstanding"
+        and jsc.js_string(o.get("domain_hint") or "") == "order"
+        # R13: a SUBJECT, which is a product or a customer - the report takes either, so
+        # the question that precedes it is asked for either.
+        and any(
+            jsc.js_string(jsc.get(e, "hint") or "") in ("product", "customer")
+            for e in jsc.array(o.get("entities"))
+        )
+    )
+
+
+def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
+    """AC-1132/AC-1138: which option this turn answered an OPEN `outstanding_scope` or
+    `outstanding_detail` ask with, or None (out of range / not answered) - the SAME
+    structured read `_team_clarify_pick` makes (`reference_positions` against OUR OWN
+    persisted rows), never text matching.
+
+    The rows come off the QUESTION. Main kept them on a `last_result_set` session key
+    beside the marker; this lane freezes a roster onto the question that printed it
+    (AC-1013), which is the same list and cannot come apart from the kind that names it."""
+    options = jsc.array(jsc.get(open_question_of(prev_state), "options"))
+    for pos in jsc.array(o.get("reference_positions")):
+        for row in options:
+            if jsc.get(row, "idx") == pos:
+                return jsc.get(row, "value")
+    return None
+
+
+def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -> None:
+    """S4 points 4/5 (PLAN-chatbot-outstanding-report.md): read an OPEN
+    `outstanding_scope` or `outstanding_detail` ask against this turn - answered,
+    refined (R15) or walked away from - mutating `o` in place.
+
+    Idempotent - called twice (once early, once as the final pass right before
+    `_post_process` returns) so neither call has to out-race the ~47 other sites in this
+    function that touch `entities`/`domain_hint`. The READING is taken on the first pass
+    only and stamped on `o`; the second pass re-asserts it.
+    """
+    kind = jsc.get(prev_pending, "kind")
+    if kind not in ("outstanding_scope", "outstanding_detail"):
+        return
+
+    # Main carried these on an `outstanding_filters` session key beside the marker, with
+    # its own lifetime rule ("carry while that same marker is still open"). On this lane
+    # they ride IN the question's payload, so the lifetime is the question's own and there
+    # is no second key that can outlive it (N4 of main's security review, answered by
+    # construction).
+    filters = jsc.get(jsc.get(prev_pending, "payload"), "filters")
+    filters = filters if isinstance(filters, dict) else {}
+    product_code = filters.get("product_code")
+
+    picked = _outstanding_scope_pick(prev_state, o)
+    if kind == "outstanding_scope" and picked is None:
+        # The question may also be answered in WORDS ("sales order", "delivery order",
+        # "both"), which the parser emits as an `order_status` - the same vocabulary a
+        # direct ask uses, so there is nothing extra to teach it.
+        picked = _SCOPE_BY_ORDER_STATUS.get(jsc.js_string(o.get("order_status") or ""))
+
+    # THREE readings of a turn taken under an open outstanding question, in the order
+    # they are tested (R15, owner ruling, 13 Sep 2026):
+    #
+    # 1. it PICKED nothing, named a filter of its own, and the PARSER's own verdict says
+    #    it kept the subject (`_outstanding_keeps_subject`): a REFINEMENT. The same
+    #    report re-runs with the stored filter set overlaid by this turn's own, and the
+    #    same question is re-armed over the narrower window. "you are anticipating me to
+    #    reply for the detail list after offering me the detail list, but i just want to
+    #    shrink the search by date" (owner, on his own stack).
+    # 2. it brought its OWN business question - an entity, or its own domain - and is
+    #    not that refinement: a NEW ASK, and the pending is DROPPED rather than
+    #    mis-resolved (`_team_clarify_pick` makes the same carve-out for its numbered
+    #    ask). This is the arm that takes "stock for SRTWC8517" under an open scope
+    #    question, which used to be rewritten into the carried outstanding ask and
+    #    answered with the scope question AGAIN, so the customer could not leave the
+    #    question except by answering it. D17 point 3's defensive guard is this arm and
+    #    is UNCHANGED: a stray `reference_positions` riding along with an entity ("2" +
+    #    "delivery to hanlim") is still a new ask, because arm 1 requires that nothing
+    #    was picked at all.
+    # 3. everything left is an ANSWER: a pick (a position, or a scope word on the scope
+    #    question), or a reply that answered nothing on offer, which re-prints the
+    #    question.
+    #
+    # What arm 1 REPLACED is the old "ANY entity of its own is a new ask" rule reaching
+    # a turn that picked nothing: it read a date window as nothing at all (so the offer
+    # was re-printed unchanged, which is the defect R15 fixes) and a location word as a
+    # brand new question. The parser already separates the two cases and says so in
+    # `entity_op`; the axis test is how the head asks it which one this is, instead of
+    # guessing from the presence of an entity.
+    #
+    # Console run 4, finding 7: this function is called TWICE (see the docstring), and
+    # between the two calls the generic "reference_positions -> entities" step rewrites
+    # the turn's entities to the picked ROW LABEL ("Sales order list", hinted order),
+    # and the `reuse -> replace_combine` correction rewrites `entity_op`. The second
+    # pass therefore re-decided a turn on this function's OWN output: it dropped a
+    # pending it had just consumed and left the lane with no product at all, so "1"
+    # answered with the plain order list. The reading is made ONCE, on the first pass,
+    # and STAMPED (`outstanding_answer_applied` / `outstanding_refined`); the second
+    # pass re-asserts that same reading and never re-decides it.
+    if jsc.truthy(o.get("outstanding_pending_dropped")):
+        # Decided on the FIRST pass: this turn walked away from the question (a new ask,
+        # a decline, a second unreadable reply). The second pass must not re-read it -
+        # by then the fields it would read are this function's own output, and a decline,
+        # which names nothing at all, would fall through to the re-print arm and re-arm
+        # the very offer the customer had just closed.
+        return
+
+    already_read = jsc.truthy(o.get("outstanding_answer_applied")) or jsc.truthy(
+        o.get("outstanding_refined")
+    )
+
+    named_entities = [e for e in jsc.array(o.get("entities")) if jsc.truthy(e)]
+    names_entity = bool(named_entities)
+    names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
+    own_question = names_entity or jsc.truthy(o.get("domain_hint"))
+
+    if not already_read:
+        if (
+            picked is None
+            and (names_own_dates or names_entity)
+            and _outstanding_keeps_subject(o, filters)
+        ):
+            o["outstanding_refined"] = True
+            # The turn's OWN entities, frozen here and kept OFF `o["entities"]` (R17):
+            # this is the offer-scoped copy the location resolver in `run_fetch` reads
+            # (D5 - a location word is the one entity this report resolves itself), and
+            # keeping it here is what stops an unresolved warehouse word outliving the
+            # offer in the persisted session entities. Frozen rather than re-read
+            # because the executor between the two passes rewrites `o["entities"]`.
+            o["outstanding_refinement_entities"] = [
+                dict(e) for e in named_entities if isinstance(e, dict)
+            ]
+        elif names_entity or (own_question and (kind == "outstanding_detail" or picked is None)):
+            # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask
+            # is DROPPED here, and every later reader of `prev_pending` this turn has to
+            # see that - the scope-ask signal below and the `outstanding_filters` carry in
+            # `tail/compile_state.py` both keyed off "an outstanding pending was open last
+            # turn", so a hit's `outstanding_detail` marker silently suppressed the scope
+            # question on the NEXT bare-word ask, however many turns later.
+            o["outstanding_pending_dropped"] = True
+            return
+        elif picked is None and _outstanding_leaves_the_offer(o, prev_pending):
+            # R22 (owner round 9, 13 Sep 2026): THE WAY OUT. A customer who answers
+            # neither the question nor a refinement of it is not necessarily asking for it
+            # again - "no", "stop", or a second "hi" means they are done with it. Live,
+            # every one of `hi` / `hi` / `no` / `stop` printed the same offer back: "wud i
+            # can't reset now?" Both shapes close it through the SAME door the new ask
+            # above uses, so the filters die with it; they differ only in what the turn is
+            # owed afterwards.
+            o["outstanding_pending_dropped"] = True
+            if o.get("is_affirmative") is False:
+                # A DECLINE was aimed at this question, so it gets an answer to it: the
+                # lane composes one closing reply and arms nothing (`run_fetch`). Kept on
+                # the outstanding arm for that one line, exactly as the re-print it
+                # replaces already is.
+                o["outstanding_offer_declined"] = True
+                o["domain_hint"] = "order"
+                o["message_type"] = "business_query"
+                o["intent_hint"] = "check_order"
+            # The SECOND unreadable turn was not aimed at the question at all, so it takes
+            # its own ordinary path with the offer simply gone - a greeting for "hi",
+            # which is the right reply once nothing is open.
+            return
+
+    refining = jsc.truthy(o.get("outstanding_refined"))
+    if not refining:
+        o["outstanding_answer_applied"] = True
+    o["domain_hint"] = "order"
+    o["message_type"] = "business_query"
+    o["intent_hint"] = "check_order"
+    # Console run 4, finding 6: a turn CONSUMED as an answer carries no entities of its
+    # own. The live parser hints the answer word itself ("Both") as an order entity, and
+    # that entity then travelled into resolution and came back as
+    # `Couldn't find these: "Both" (order): not found.` appended under a report that had
+    # just answered the question correctly. The answer is a pick, not a filter - the same
+    # `o["entities"] = []` the CS member pick makes for its own numbered answer. The one
+    # entity that survives is the SUBJECT of the question being answered; a turn that
+    # named a product of its own is a NEW ask and returned above, never here.
+    #
+    # R17 (owner round 5, 13 Sep 2026) puts a REFINEMENT on the same footing, for the
+    # entities THE REFINEMENT ITSELF named: that filter belongs to the OFFER, not to the
+    # conversation. Those travel on `outstanding_refinement_entities` (offer-scoped, read
+    # by `run_fetch`'s location resolver) and never enter this list, because this list is
+    # what the session persists: R15 left an UNRESOLVED `{"raw": "BRW", "hint":
+    # "warehouse"}` behind, the next unrelated ask merged it back in on its own axis, and
+    # the resolver searched the warehouse word as a customer token - one real family
+    # became seven in the picker (live trace, contact 437264483). The offer dies, its
+    # location dies with it.
+    #
+    # What a refinement KEEPS is the conversation's own carried entities - the customer
+    # or product this question has been about all along, which the executor merged back
+    # in between the two passes. They are the subject, not this turn's filter, and R19
+    # needs the customer among them: the re-asked question has to print the name of the
+    # customer it is about (`Customer: <name>`), and on a turn that resolved nothing of
+    # its own the carried entity is the only place that name exists.
+    refinement_keys = {
+        _ce_key(e) for e in jsc.array(o.get("outstanding_refinement_entities")) if jsc.truthy(e)
+    }
+    carried_entities = (
+        [
+            e
+            for e in jsc.array(o.get("entities"))
+            if jsc.truthy(e) and _ce_key(e) not in refinement_keys
+        ]
+        if refining
+        else []
+    )
+    has_carried_product = any(
+        jsc.lower_or_empty(jsc.get(e, "hint")) == "product" for e in carried_entities
+    )
+    o["entities"] = [
+        *carried_entities,
+        *(
+            [
+                {
+                    "raw": product_code,
+                    "hint": "product",
+                    "canonical_code": product_code,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ]
+            if product_code and not has_carried_product
+            else []
+        ),
+    ]
+    # N2: the carried window is a DEFAULT, not an override. It used to be assigned
+    # unconditionally, so a pick that narrowed the window ("2, but only 2026") was
+    # answered over the previous question's dates.
+    if not names_own_dates:
+        o["date_filter_start"] = filters.get("date_filter_start")
+        o["date_filter_end"] = filters.get("date_filter_end")
+    # The carried customer_ids are ALREADY resolved UUIDs, not a raw token the
+    # resolve-entity seam could look up again - restored directly onto the fetch args
+    # in `fetch.entity_ids_transformer`, never through entity resolution. AC-1132/AC-1138:
+    # the location travels the same way, both the codes the report filters on and the
+    # token its header echoes, or the re-run silently widens to every warehouse under a
+    # header that says otherwise.
+    #
+    # Restored on every consumed answer. N2 gated this on "the turn named no entity of
+    # its own", which finding 6 then showed to be unreadable: the entity an answer turn
+    # carries is the parser's own hint on the ANSWER WORD, not a filter the customer
+    # named, so that gate silently dropped the carried customer and location whenever
+    # the model hinted "Both" as one. A turn that genuinely names a different subject
+    # names a PRODUCT, and that turn is a new ask and has already returned above.
+    # D10: the answering turn re-runs the SAME call with the STORED filter set, so the
+    # product is the one the offer was made about - never a re-resolution of the carried
+    # token, which can land on a family sibling (AC-1119) or on whatever else the resolver
+    # has in scope. A turn that typed its own product is a new ask and never reaches here.
+    if product_code:
+        o["outstanding_carried_product_code"] = product_code
+    o["outstanding_carried_customer_ids"] = filters.get("customer_ids") or []
+    o["outstanding_carried_warehouse_codes"] = filters.get("warehouse_codes") or []
+    o["outstanding_carried_location_token"] = filters.get("location_token")
+
+    if kind == "outstanding_scope":
+        if refining:
+            # AC-1158: nothing is fetched - the scope question has not been answered
+            # yet, it has only been narrowed. `order_status: "outstanding"` plus the
+            # scope-ask flag is the SHAPE OF THE FIRST ASK, so `run_fetch` re-arms the
+            # question through the same arm that armed it (`_outstanding_scope_ask`),
+            # over the filters this turn overlaid - one writer for the question's text,
+            # one place that resolves a location word. There is no second re-ask arm.
+            o["order_status"] = "outstanding"
+            o["outstanding_scope_ask_candidate"] = True
+        elif picked is not None:
+            o["order_status"] = _ORDER_STATUS_BY_SCOPE[picked]
+        else:
+            # Out of range: re-ask the SAME question rather than fetch nothing - this
+            # turn re-typed no product, so `run_fetch` reads the carried filters
+            # directly (`outstanding_reask_filters`) instead of the entities list.
+            o["order_status"] = "outstanding"
+            o["outstanding_reask_filters"] = filters
+        return
+
+    # kind == "outstanding_detail" (AC-1138; R14 added the third option)
+    if refining:
+        # AC-1157: the SAME report re-runs, for the SAME scope it was run for, with this
+        # turn's filters overlaid - and with NO `detail` argument, because the customer
+        # narrowed the report rather than asking for one of its lists. The hit arms a
+        # fresh detail offer over the new window (`fetch._outstanding_filters_from_ctx`),
+        # so a later "1" lists the narrowed set. The scope is read back off the stored
+        # filters: the offer exists only because a report ran, so its scope is known, and
+        # re-asking for it would be asking a question that has already been answered.
+        o["order_status"] = _ORDER_STATUS_BY_SCOPE.get(
+            jsc.js_string(filters.get("scope") or ""), "outstanding_both"
+        )
+    elif picked in ("so", "do", "both"):
+        o["order_status"] = _ORDER_STATUS_BY_SCOPE[picked]
+        o["outstanding_detail_pick"] = picked
+    else:
+        # AC-1143(c): the message answered nothing on offer - a number that named no
+        # option ("3" against a two-option offer), or a reply the parser could make
+        # nothing of at all. Either way the question is still open and still on the
+        # customer's screen, so it is RE-PRINTED and nothing is fetched.
+        #
+        # Re-printing beats the two things this used to do: re-running the whole report
+        # (answering a question the customer did not ask, and paying for a read on a
+        # typo), and - for the unreadable reply - leaving the turn alone, which routed it
+        # to `low_signal` and greeted the customer with "Hi! How can I help you today?"
+        # mid-conversation, over an offer they were in the middle of answering (seen on
+        # the owner's own stack, 13 Sep 2026).
+        #
+        # `run_fetch` reads these rows directly, the way the scope question's own
+        # out-of-range re-ask does, because this turn typed no product to resolve.
+        o["outstanding_detail_reask"] = {
+            "filters": filters,
+            "rows": [dict(row) for row in jsc.array(jsc.get(prev_pending, "options"))
+                     if jsc.truthy(row)],
+        }
+
 
 def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     """The body. `output` is `{output: <the LLM object>}`; returns it with `_parser_raw`.
@@ -1352,6 +1881,21 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     #     so every downstream reader sees one clean signal. `coerce_domain_hint` carries
     #     the evidence and is the SAME guard the engine puts on the carried domain.
     o["domain_hint"] = coerce_domain_hint(o["domain_hint"])
+
+    # -- S4 points 3/4/5 (PLAN-chatbot-outstanding-report.md) -------------------------- #
+    # AC-1132/AC-1138: an OPEN `outstanding_scope` or `outstanding_detail` ask is
+    # answered here, the same seam `_team_clarify_pick` uses for its own numbered
+    # question. Re-applied again at the very end of this function (see the comment
+    # there) for the same reason the axis-broaden drop is: ~47 sites between here and
+    # there assign `entities`/`domain_hint`.
+    prev_state = parent_input.get("previous_conversation_state")
+    # THE OPEN QUESTION, not a `pending` marker beside it (AC-1019). The outstanding
+    # report's two kinds are `open_question` kinds on this lane, so `kind`, the frozen
+    # `options` and the `payload` carrying its filters all arrive on one object.
+    prev_pending = _outstanding_question(prev_state)
+    _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
+    if _outstanding_scope_ask_candidate(o, prev_pending):
+        o["outstanding_scope_ask_candidate"] = True
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
     # contradicts itself. Promote to additive replace_combine so the new value survives.
@@ -1575,8 +2119,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     def ce_axis_for(e: Any, domain: Any) -> str:
         hint = jsc.lower_or_empty(jsc.get(e, "hint"))
-        domain_map = AXIS_BY_DOMAIN.get(domain) if isinstance(domain, str) else None
-        known = (domain_map or {}).get(hint) or HINT_AXIS_DEFAULT.get(hint)
+        known = _axis_for_hint(hint, domain)
         if known:
             return known
         if hint:
@@ -1626,6 +2169,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["date_widen_applied"] = True
 
     prev_state_domain = focus_domain(parent_input.get("previous_conversation_state"))
+
+    # R21: a pick over an open menu is a REUSE, whichever shape it arrives in. Stamped
+    # HERE, before the executor chooses its arm, rather than at the expansion below where
+    # it was already being stamped too late to be read - see `_select_all_over_a_menu`.
+    if _select_all_over_a_menu(o, parent_input):
+        o["entity_op"] = "reuse"
+        o["select_all_reuse_applied"] = True
 
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
     # Set by the `reuse` arm below and read by the focus rules at the `#6` position, which
@@ -1827,11 +2377,14 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     # -- "ALL / SEMUA" on a numbered menu -> expand to EVERY offered position ------------ #
     # A quote-reply delivers the replied-to menu in referenced_result_set - prefer it over
-    # the open question's own rows, and treat its presence as a pick-context.
+    # the open question's own rows. (The PICK-CONTEXT test itself moved into
+    # `_select_all_over_a_menu` with R21, so that the executor and this expansion read one
+    # predicate; this is the roster it expands over. The rows come off the QUESTION rather
+    # than a `last_result_set` session key, which this lane does not persist - they are
+    # frozen on the question at the moment the customer saw them, AC-1013.)
     ref_set = jsc.array(parent_input.get("referenced_result_set"))
     open_rows = jsc.array(jsc.get(open_question_of(prev_state), "options"))
     lrs_all = ref_set if len(ref_set) > 0 else open_rows
-    pick_ctx = len(ref_set) > 0 or jsc.get(open_question_of(prev_state), "kind") in PICKER_KINDS
     msg_all_src = parent_input.get("latest_user_message")
     if msg_all_src is None:
         msg_all_src = parent_input.get("user_message")
@@ -1853,7 +2406,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         o["scope_intent"] = None  # cancel the LLM's broaden reading
         o["message_type"] = "business_query"
         o["select_all_expanded"] = True
-    elif is_all0 and pick_ctx and len(lrs_all) > 0 and no_pos:
+    elif _select_all_over_a_menu(o, parent_input):
         o["reference_positions"] = [
             n for n in (jsc.js_number(jsc.get(r, "idx")) for r in lrs_all) if jsc.is_integer(n)
         ]
@@ -3333,6 +3886,19 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             before = len(o["entities"])
             o["entities"] = [e for e in o["entities"] if sn(jsc.get(e, "raw")) not in superseded]
             o["dym_superseded_dropped"] = before - len(o["entities"])
+
+    # S4 points 4/5 (PLAN-chatbot-outstanding-report.md), FINAL PASS: same reason the
+    # axis-broaden drop above runs immediately before the return - ~47 sites in this
+    # function assign `entities`/`domain_hint`/`order_status` between the early call
+    # above and here, and the positional-pick resolution in particular resets
+    # `entities` to this turn's OWN (empty) list when the pick was out of range.
+    # Re-applied here, where it is final by definition.
+    _apply_outstanding_pending(o, prev_state=prev_state, prev_pending=prev_pending)
+    # R16: and the scope-ask signal with it, for the same reason - see that helper's own
+    # docstring. A pick turn's status (the reuse carry) and its entity (the positional
+    # pick) both arrive between the early read and here.
+    if _outstanding_scope_ask_candidate(o, prev_pending):
+        o["outstanding_scope_ask_candidate"] = True
 
     output["_parser_raw"] = parser_raw_snapshot
     return output

@@ -236,6 +236,7 @@ def from_session(variables: Any, *, turn_no: int) -> dict[str, Any]:
     put("attributes", [a for a in jsc.array(stored.get("requested_attributes")) if jsc.truthy(a)])
     put("tier", [t for t in jsc.array(stored.get("access_levels")) if jsc.truthy(t)])
     put("brands", [b for b in jsc.array(stored.get("query_brands")) if jsc.truthy(b)])
+    put("order_status", stored.get("order_status") or None)
     return projected
 
 
@@ -276,6 +277,20 @@ def replace_same_axis(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
         named = [v for v in jsc.array(turn.o.get(key)) if jsc.truthy(v)]
         if named:
             _set(focus, name, named, turn, out, rule="replace_same_axis", source=source)
+
+    # A FOURTH, and it is SCALAR rather than a list, which is why it is not in the loop
+    # above. R16 of PLAN-chatbot-outstanding-report (merged from main, #862): the delivery
+    # status the question was asked about ("outstanding", "so_outstanding", ...) is an axis
+    # of the query exactly like the date window and the attributes. Main carried it on a
+    # `session_vars` key of its own, read back in the head's `reuse` arm; this lane deleted
+    # that arm and carries every axis here, so this is where it is set and `reuse_alive`
+    # below is where it is carried. The turn it exists for names no status word at all: an
+    # outstanding ask that stopped at the gate's ambiguous-customer picker is answered by a
+    # bare "1", and without the carry that resumed turn came back a plain order list (live
+    # trace, contact 437264483).
+    status = turn.o.get("order_status")
+    if jsc.truthy(status):
+        _set(focus, "order_status", status, turn, out, rule="replace_same_axis", source=source)
 
     current = [
         e
@@ -551,6 +566,14 @@ def reuse_alive(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
             o["access_levels"] = list(alive)
             o["_tier_carried"] = True
             _touch(focus, "tier", turn, out, rule="reuse_alive")
+
+    # order_status, on the same CONTINUATION predicate the attributes carry uses, because
+    # main carried it in the same `reuse` arm and for the same reason (R16).
+    if continuation and not jsc.truthy(o.get("order_status")):
+        alive = value_of(focus, "order_status")
+        if jsc.truthy(alive):
+            o["order_status"] = alive
+            _touch(focus, "order_status", turn, out, rule="reuse_alive")
 
     _drop_dead_carried_entities(focus, turn, out)
 

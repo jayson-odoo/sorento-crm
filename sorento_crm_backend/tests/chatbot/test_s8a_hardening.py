@@ -459,7 +459,7 @@ class TestPromptOverridesAC807:
             json={
                 "message": "price for SRTWC8517",
                 "version_id": other_key_version["id"],
-                "contact_respond_id": CONTACT_ID,
+                "contact_respond_id": str(CONTACT_ID),
             },
         )
         assert resp.status_code == 404, resp.text
@@ -509,7 +509,7 @@ class TestPromptOverridesAC807:
         contacts_before = before.execute(text("SELECT COUNT(*) FROM respond_contacts")).scalar()
         session_vars_before = before.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         turns_before = before.query(ChatbotTurn).count()
 
@@ -519,7 +519,7 @@ class TestPromptOverridesAC807:
             prompt_key="chatbot_semantic_parser",
             version_id=version["id"],
             message="price for SRTWC8517",
-            contact_respond_id=CONTACT_ID,
+            contact_respond_id=str(CONTACT_ID),
         )
         assert result["status"] in ("done", "delegated"), result
 
@@ -536,7 +536,7 @@ class TestPromptOverridesAC807:
         assert (
             after.execute(
                 text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-                {"c": CONTACT_ID},
+                {"c": str(CONTACT_ID)},
             ).scalar()
             == session_vars_before
         )

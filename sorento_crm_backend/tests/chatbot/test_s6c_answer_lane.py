@@ -73,7 +73,7 @@ from typing import Any
 import pytest
 
 from tests.chatbot import _corpus, divergences
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name (S6a precedent)
     _envelope,
     seeded,
@@ -768,7 +768,7 @@ class TestChatbotCompletedLanesEngineWiring:
             return None
 
         return ResolveGateServices(
-            access_types=_access_types, resolve_entity=_resolve_entity, probe=_probe
+            access_types=_access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=_probe
         )
 
     def test_default_completed_lanes_still_delegates_with_payload(
@@ -1596,7 +1596,9 @@ class TestR1DemandQuantityAnswer:
 
         services = ResolveGateServices(
             access_types=lambda **_: [],
-            resolve_entity=lambda body: {"tokens": [], "resolutions": [], "unresolved_tokens": []},
+            resolve_entity=validating_resolve_entity(
+                lambda body: {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+            ),
             probe=lambda **_: None,
         )
         return run_until_exit(

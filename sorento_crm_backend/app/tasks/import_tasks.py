@@ -3741,32 +3741,33 @@ def process_outstanding_import(db_job_id: str, file_data: bytes, filename: str,
 
 def process_order_inquiry_import(db_job_id: str, file_data: bytes, filename: str,
                                  user_id: str):
-    """Import the Order Inquiry sheet: project demand, stock locations, and PO claims.
+    """Import the Order Inquiry sheet: raise its rows and pair them to PO/SPO documents.
 
     The importer is owned by Project Sales (ADR 0010), so it is read from
     `app/services/project_order_inquiry_import_service.py` rather than from `app.services.scm`.
     The job type, the queue and the route that enqueues it are unchanged.
+
+    No `order_link_service.resolve()` pass afterwards any more
+    (`PLAN-scm-oi-sheet-migration.md` AC-S1-21): this importer opens no claim of its own, so
+    there is nothing of its making left to resolve, and resolving the whole table is a
+    side effect on rows this upload never touched.
+
+    `filename` travels as `file_name` so every raised row carries the migration stamp that
+    names the sheet it came from (AC-S1-28).
     """
     from app.services import project_order_inquiry_import_service as order_inquiry_service
-    from app.services.scm import order_link_service
-
-    def _apply(db, outcome, on_total):
-        result = order_inquiry_service.apply(db, file_data, actor=user_id, outcome=outcome,
-                                             on_total_rows=on_total)
-        if result.get("ok"):
-            result["links"] = order_link_service.resolve(db)
-        return result
 
     _run_scm_upload_job(
         db_job_id, filename, user_id,
         job_label="Order inquiry import",
         entity_type="sales_order",
-        apply_fn=_apply,
+        apply_fn=lambda db, outcome, on_total: order_inquiry_service.apply(
+            db, file_data, actor=user_id, outcome=outcome, on_total_rows=on_total,
+            file_name=filename,
+        ),
         unreadable_message=_problems_message,
-        written_rows=lambda r: int(r.get("lines_created", 0))
-        + int(r.get("lines_refreshed", 0)),
-        # The sheet's rows PLUS the instalments it withdrew: a withdrawal is reached by the
-        # sheet's silence, so it carries an outcome and no row, and `rows` alone would put
-        # processed past the total. `rows` is still on the result as the file's own count.
-        total_rows_of=lambda r: r.get("total_rows", r.get("rows", 0)),
+        written_rows=lambda r: int(r.get("rows_raised", 0)),
+        # The sheet's own rows, and nothing else: every outcome this channel records is
+        # about a row of the file, so processed and total are the same count.
+        total_rows_of=lambda r: r.get("rows", 0),
     )

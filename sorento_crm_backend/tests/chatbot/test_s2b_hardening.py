@@ -441,7 +441,7 @@ class TestSEC3RequestBodySize:
 
         rows = (
             db.query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .all()
         )
         assert rows == [], "an oversize body must be rejected before any turn row is written"
@@ -512,7 +512,7 @@ class TestSEC2ParserUsageLogging:
         db = session_factory()
         internal_id = (
             db.query(RespondContact.id)
-            .filter(RespondContact.respond_io_id == CONTACT_ID)
+            .filter(RespondContact.respond_io_id == str(CONTACT_ID))
             .scalar()
         )
         return (

@@ -91,6 +91,14 @@ KIND_SPEC: dict[str, dict[str, Any]] = {
     "company_pick": {"expects": "pick"},
     "tier_pick": {"expects": "pick"},
     "member_offer": {"expects": "yes_no"},
+    # The outstanding report's two numbered questions (merged from main, #862). They are
+    # picks like the rest, and they are the two kinds this module ARMS but does not
+    # RESOLVE: `head/output_exchange._apply_outstanding_pending` reads them, because a turn
+    # taken under one of them has three readings - answered, refined, walked away from -
+    # that a pick handler has no vocabulary for. `resolve` therefore has no handler for
+    # either and returns an empty outcome, which is what leaves the head's reading standing.
+    "outstanding_scope": {"expects": "pick"},
+    "outstanding_detail": {"expects": "pick"},
 }
 
 # The kinds that are a NUMBERED LIST the customer can still see, and therefore the kinds

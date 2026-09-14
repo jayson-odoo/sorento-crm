@@ -339,7 +339,18 @@ CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     # the six former `STALE_FIXTURES` names. Nothing else in the corpus is masked by this
     # entry today; the trigger to revisit is a new capture appearing in the "port only"
     # column that is NOT one of those six.
-    "compile-current-state": ("tier_menu",),
+    # `compile-current-state` / `order_status` (R16, owner round 5, 13 Sep 2026). The
+    # shipping body persists the turn's own delivery-status axis beside the date window
+    # and `requested_attributes` it already kept, so the head's `reuse` carry can put an
+    # interrupted outstanding ask back together after a customer picker. CONDITIONAL, the
+    # same class as `tier_menu` beside it, and measured the same way over all 261
+    # captures for this node: 0 carry `order_status` on BOTH sides, 0 on the expected side
+    # alone, 258 on NEITHER (the strip is a no-op there), and 3 where the port emits it
+    # and the capture cannot - `sub-output-live/out-14878589` (delivered),
+    # `out-15108493` (delivered) and `out-15125770` (outstanding), all three turns that
+    # named a status word. Nothing else is masked by this entry today; the trigger to
+    # revisit is a new capture in the "port only" column that is not one of those three.
+    "compile-current-state": ("tier_menu", "order_status"),
     # These carry the gate's / tier-gate's item onwards, so an old capture of them is
     # missing the same keys one or more levels down.
     "build-ctx-resolved": ("specific_options", "display_name"),

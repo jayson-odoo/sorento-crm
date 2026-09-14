@@ -1,0 +1,121 @@
+==== turn 1  contact=437264483  branch_kind=business_query ====
+> Srtwt7443 sales order outstanding for IB
+
+Product: SRTWT7443
+Customer: all
+Location: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)
+Order date: all
+
+*Sales order outstanding*
+Ordered: 3,545
+Transferred to DO: 15
+Outstanding: 3,530
+Sales orders: 17
+Order date range: 20/08/2024 to 03/08/2026
+*_By location_*
+BRW-IB: 3,545 (O/S: 3,530)
+*_By customer_*
+PEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)
+CHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)
+EMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)
+KENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)
+APEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)
+CMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)
+IDEAL BATH SDN BHD: 497 (O/S: 482)
+
+Reply with a number for detail:
+1. Sales order list
+
+==== turn 2  contact=437264483  branch_kind=business_query ====
+> SRTWT7445 outstanding in 2026
+
+Product: SRTWT7445-LV-GM
+Customer: all
+Location: all
+Order date: 01/01/2026 to 31/12/2026
+
+*Sales order outstanding*
+No open sales order.
+
+*Delivery order pending*
+DO qty: 74
+Delivered: 60
+Pending: 14
+Delivery orders: 25
+DO date range: 20/04/2026 to 07/09/2026
+*_By location_*
+BRW: 72 (O/S: 13)
+MKT-D: 2 (O/S: 1)
+*_By customer_*
+J & Y WORLD HARDWARE SDN BHD [A/C I]: 7 (O/S: 0)
+MURO WALL SDN BHD (PROJECT): 6 (O/S: 0)
+PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ [A/C I]: 1 (O/S: 0)
+HENG SENG HARDWARE SDN BHD [A/C I]: 1 (O/S: 0)
+BEST LIGHT CITY SDN BHD [A/C I]: 1 (O/S: 0)
+WH ELECTRICAL MARKETING (M) SDN BHD [A/C I]: 1 (O/S: 0)
+FULLSHUN SANITARYWARE SDN BHD [A/C I]: 18 (O/S: 0)
+GRAND WATERHOUSE SDN BHD [A/C I]: 1 (O/S: 1)
+1 LIVING DEPOT SDN BHD [A/C I]: 3 (O/S: 0)
+DELUXE HOME CENTRE SDN BHD [A/C I]: 1 (O/S: 0)
+PSM HOME CENTRE SDN BHD [A/C I]: 3 (O/S: 0)
+MIRAGE HARDWARE TRADING (PROJECT-CASH): 1 (O/S: 0)
+KBO LOGISTICS & SUPPLY SDN BHD [A/C I]: 4 (O/S: 0)
+ITOLI CERAMIC SDN BHD [A/C I]: 1 (O/S: 0)
+KIM SENG JAYA SDN BHD [A/C I]: 14 (O/S: 7)
+PERNIAGAAN MOZEK CHIN TAK SDN BHD [A/C I]: 6 (O/S: 6)
+DE BATHLABZ SDN BHD [A/C I]: 1 (O/S: 0)
+TOTAL HOME DIY SDN BHD [A/C I]: 4 (O/S: 0)
+
+Reply with a number for detail:
+1. Delivery order list
+
+==== turn 3  contact=437264483  branch_kind=business_query ====
+> 3
+
+That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.
+
+==== turn 4  contact=437264483  branch_kind=low_signal ====
+> 1
+
+Hi! How can I help you today?
+
+==== turn 5  contact=437264483  branch_kind=business_query ====
+> FULLSHUN sales order outstanding SRTWT7445
+
+Which customer do you mean? Please choose:
+1. FULLSHUN SANITARYWARE SDN BHD (SRT) - no DO
+2. FULLSHUN BATH CONCEPT SDN BHD (PROJECT) (SRT) - no DO
+
+None of these have a recent DO.
+
+==== turn 6  contact=437264483  branch_kind=business_query ====
+> SRTWT02 outstanding both
+
+Product: SRTWT02-A
+Customer: all
+Location: all
+Order date: all
+
+*Sales order outstanding*
+No open sales order.
+
+*Delivery order pending*
+No pending delivery order.
+
+Would you like me to escalate to *Sorento* customer service team?
+
+Please choose who to route to (reply with the number):
+1. Maryam Ariffin
+2. Cyndi
+3. Aisyah
+4. Balqis
+5. Niki
+6. Nurain
+
+If you have no preference, just reply 'yes' and we'll assign automatically.
+
+==== turn 7  contact=438930735  branch_kind=None ====
+> SRTWT7445 outstanding
+
+(no reply - see error)
+

@@ -173,6 +173,12 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
             # The customer master is claimed HERE and not by `master_products`: a
             # customer is only ever looked up to narrow an order question.
             "crm_master_customers_list",
+            # S4 point 2 (PLAN-chatbot-outstanding-report.md): NEVER `tools[0]` - the
+            # override lives in `lanes/business/__init__.py::run_fetch`, which swaps
+            # the pick to this tool for domain "order" + a resolved product + an
+            # outstanding order_status. Listed here only so `CHATBOT_READ_ONLY_TOOLS`
+            # (derived from `DOMAIN_CLAIMED_TOOLS`, this tuple's own union) allows it.
+            "crm_outstanding_report",
         ),
         escalation_team="customer_service",
     ),
@@ -630,6 +636,15 @@ FOCUS_SLOTS = (
     "attributes",
     "tier",
     "brands",
+    # R16 of PLAN-chatbot-outstanding-report (merged from main, #862): the DELIVERY
+    # STATUS the question was asked about ("outstanding", "so_outstanding", ...). Main
+    # carried it as a `session_vars` key of its own and read it back in the head's `reuse`
+    # arm; this lane has no such key and no such arm, and the axis is the same kind of
+    # thing `date_window` and `attributes` already are - a constraint on the question, not
+    # a subject of it - so it is carried where those two are, by `dialogue/focus.py`. The
+    # turn it exists for names no status word at all: an outstanding ask that stopped at
+    # the gate's ambiguous-customer picker is answered by a bare "1".
+    "order_status",
 )
 FocusSlotName = Literal[FOCUS_SLOTS]  # type: ignore[valid-type]
 
@@ -658,6 +673,24 @@ OPEN_QUESTION_KINDS = (
     "company_pick",
     "tier_pick",
     "member_offer",
+    # PLAN-chatbot-outstanding-report.md, S4 points 4/5, merged from main (#862). Main
+    # recorded these two as `pending` kinds with their filters on an `outstanding_filters`
+    # session key beside the marker; this lane has neither a marker nor that key, so they
+    # are what every other question the bot leaves open already is - a kind, its frozen
+    # rows, and a payload. `payload.filters` is main's `outstanding_filters` (the parsed
+    # product, dates, customer and location the report was run for) and
+    # `payload.reprinted` is main's `Pending.reprinted` (R22: the question has already
+    # been printed back once over a reply that answered nothing, so the next such reply
+    # closes it instead of printing a third copy).
+    #
+    # `dialogue/open_question.resolve` has no handler for either, deliberately: they are
+    # read and answered in the head (`output_exchange._apply_outstanding_pending`), which
+    # is where main wrote their three readings of a turn - answered, refined, walked away
+    # from - and none of that is a thing a pick handler can say. `ask` is still the ONE
+    # constructor, so their rows are numbered from 1 by the same code as every other
+    # roster.
+    "outstanding_scope",
+    "outstanding_detail",
 )
 OpenQuestionKind = Literal[OPEN_QUESTION_KINDS]  # type: ignore[valid-type]
 
@@ -726,6 +759,7 @@ class Focus(BaseModel):
     attributes: FocusSlot | None = None
     tier: FocusSlot | None = None
     brands: FocusSlot | None = None
+    order_status: FocusSlot | None = None
 
 
 class OpenQuestion(BaseModel):

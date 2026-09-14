@@ -609,6 +609,14 @@ def body_difference(
             "captured before QS-9 added `requested_attributes` to the persisted object "
             "(the shipping body array-guards it and always writes it)"
         )
+    if actual_variables.get("order_status") and "order_status" not in world.expected_variables:
+        return (
+            "captured before R16 (owner round 5, 13 Sep 2026) added `order_status` to the "
+            "persisted object - the same class as the QS-9 `requested_attributes` entry "
+            "above, and written the same way (only when the turn named a status word). "
+            "The node-level half is registered in tests/chatbot/_corpus.py's "
+            "CAPTURE_BODY_ADDITIONS with the measurement over all 261 captures"
+        )
     if actual_variables.get("tier_menu") and "tier_menu" not in world.expected_variables:
         return (
             "captured before the RS-9 Fix 6 tier-menu block, which is a `>`-only hunk in "

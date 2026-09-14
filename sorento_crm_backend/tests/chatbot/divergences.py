@@ -81,6 +81,18 @@ _ADDED_DIAGNOSTIC_KEYS: tuple[tuple[str, ...], ...] = (
     # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under an open
     # member_offer resolved against the RESOLVER and replaced a half of the carried pair.
     ("output", "bare_member_offer_entity_resolved"),
+    # S4 points 3/4/5 (PLAN-chatbot-outstanding-report.md, merged from main): the same
+    # class again. `_apply_outstanding_pending` stamps these when it resolves (or fails to
+    # resolve) an OPEN `outstanding_scope` / `outstanding_detail` ask -
+    # `outstanding_scope_ask_candidate` (a bare "outstanding" + product, before any grant
+    # check), `outstanding_reask_filters` (an out-of-range scope answer),
+    # `outstanding_carried_customer_ids` and `outstanding_detail_pick` (the scope/detail
+    # answer's restored filters and pick). n8n has none of this mechanism, so no capture
+    # predating that plan can carry any of them.
+    ("output", "outstanding_scope_ask_candidate"),
+    ("output", "outstanding_reask_filters"),
+    ("output", "outstanding_carried_customer_ids"),
+    ("output", "outstanding_detail_pick"),
 )
 
 
@@ -690,19 +702,75 @@ DIVERGENCES: list[Divergence] = [
     # annotator's message onward, so these two exit-arm captures move on exactly the
     # one field and nothing else (measured - `gate_clarification` is byte-equal,
     # because the whole-sub replay is fed the CAPTURED gate rather than re-running
-    # `run_gate`).
+    # `run_gate`). PLAN-chatbot-outstanding-report.md, S4 point 7, ADDS a second,
+    # unrelated field to the same two captures: `ALLOWED["order"]` gained "warehouse",
+    # so this whole-sub body's four `allowed_lookup` echoes (measured: `gate_debug`,
+    # `gate.gate_debug`, `ctx_resolved.gate_debug`, `ctx_resolved.ctx.gate.gate_debug`)
+    # each list one more type than a capture taken before that change - the same class
+    # AC-1 already registers for the plain node replays, but THIS entry (being
+    # fixture-specific) is the one `find()` returns first for these two names, so it
+    # needs the same four paths added here rather than relying on AC-1's blanket entry
+    # ever being reached.
     *(
         Divergence(
             node="sub-resolve-and-gate",
             fixture=name,
-            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            hazard="owner ruling A (console pass 3, 6 Sep 2026) + AC-1 (allowed_lookup)",
             reason=(
                 "the exit arm carries the customer picker's own '- has DO' / '- no DO' "
-                "message. Field-scoped to `escalate_message`."
+                "message (field-scoped to `escalate_message`), and separately "
+                "`ALLOWED['order']` gaining 'warehouse' (S4 point 7) adds one more type "
+                "to every `allowed_lookup` echo in this whole-sub body."
             ),
-            strip_paths=(("escalate_message",),),
+            strip_paths=(
+                ("escalate_message",),
+                ("gate_debug", "allowed_lookup"),
+                ("gate", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+            ),
         )
-        for name in ("rg-15114061", "rg-15125764")
+        for name in ("rg-15114061",)
+    ),
+    # R20 (owner round 7, 13 Sep 2026): `rg-15125764` is the SAME two fields as the entry
+    # above (its `escalate_message` carries the picker's own hint wording, and its
+    # `allowed_lookup` echoes predate S4 point 7) plus the two diagnostics that record
+    # WHY the hint is now absent from it - and it needs its own entry because `find()`
+    # returns the first match per fixture. Split from its sibling rather than widening
+    # that entry, because `rg-15114061` (`order_status: null`) is NOT an outstanding ask,
+    # still probes, and must keep grading both diagnostics.
+    #
+    # This capture IS the defect: `order_status: "outstanding"`, and the live picker
+    # stamped "- no recent delivery" on all five candidates and closed with "None of
+    # these have a recent delivery." The probe behind that claim measures orders with an
+    # `actual_delivery_date` - DELIVERED DOs - which is the opposite population from the
+    # outstanding report's own DO block, so the claim was about something the customer had
+    # not asked about ("it is still kinda strange for me though, to say no DO, then later
+    # when i get the summary, there is DO"). The port does not probe on an outstanding ask
+    # at all, so `customer_probe_hits` is null (not measured) rather than 0 (measured
+    # none), and `customer_probe_skip_reason` says which rule skipped it. Pinned by
+    # tests/chatbot/test_outstanding_lane.py::TestOutstandingAskPickerHasNoDeliveryHint.
+    Divergence(
+        node="sub-resolve-and-gate",
+        fixture="rg-15125764",
+        hazard="R20 (owner round 7, 13 Sep 2026) + owner ruling A + AC-1 (allowed_lookup)",
+        reason=(
+            "an OUTSTANDING ask's customer picker no longer probes for a delivery order "
+            "and prints no hint, so this capture's picker message, its "
+            "`customer_probe_hits` (null = not measured, was 0) and its new "
+            "`customer_probe_skip_reason` all move; `escalate_message` and the four "
+            "`allowed_lookup` echoes move for the two reasons the sibling entry above "
+            "records."
+        ),
+        strip_paths=(
+            ("escalate_message",),
+            ("customer_probe_hits",),
+            ("customer_probe_skip_reason",),
+            ("gate_debug", "allowed_lookup"),
+            ("gate", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+        ),
     ),
     # OWNER CONSOLE PASS 4, item F (6 Sep 2026): a container-hinted token that the
     # resolver answers with PRODUCTS and no shipment is retyped `product` before the

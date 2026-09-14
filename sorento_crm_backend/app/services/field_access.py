@@ -184,7 +184,11 @@ _REASONS = {
 
 
 def resolve_contact_id(
-    db: Session, contact_id: str, space_id: Optional[str] = None
+    db: Session,
+    contact_id: str,
+    space_id: Optional[str] = None,
+    *,
+    raise_through: bool = False,
 ) -> Optional[str]:
     """Accept either id space and return the internal `respond_contacts.id`.
 
@@ -197,6 +201,15 @@ def resolve_contact_id(
     exist in two workspaces, and resolving to the wrong one would answer with a
     stranger's grants. Without it, an ambiguous id resolves to nothing rather than
     to a coin flip.
+
+    `raise_through` (default False - byte-for-byte the historic behaviour): a
+    lookup FAILURE is swallowed and fail-closed to `None`, the right read for
+    a permission/grant check, where "resolution broke" and "resolution found
+    nobody" must deny identically. Pass `True` for a caller with its OWN
+    generic contract that a broken session surface as the raw exception - a
+    record-action handler's `test_every_handler_resolves_its_service_import`
+    proves its lazy imports are correctly named this way, and the swallow
+    would hide a renamed import exactly as it would hide a real DB failure.
     """
     try:
         from app.models.access import RespondContact
@@ -223,9 +236,64 @@ def resolve_contact_id(
                 )
             return None
         return rows[0][0]
-    except Exception:  # noqa: BLE001 - fail closed
+    except Exception:  # noqa: BLE001 - fail closed by default
+        if raise_through:
+            raise
         logger.warning("Contact resolution failed for %s", contact_id, exc_info=True)
         return None
+
+
+def resolve_contact_with_null_workspace_fallback(
+    db: Session, *, contact_id: str, space_id: Optional[str] = None
+) -> Optional[str]:
+    """`resolve_contact_id`, then a fallback for the NULL-workspace gap.
+
+    Measured (review, 7 Sep 2026): 16 contacts have `workspace_id` NULL and 6 sit
+    in a non-default workspace. `resolve_contact_id`'s own JOIN against the given
+    `space_id` returns zero rows for a NULL-workspace contact - `RespondContact.
+    workspace_id` has nothing to join to - so a field reveal granted in the admin
+    UI silently read as OFF to the chatbot. Recovered here, not inside
+    `resolve_contact_id` itself: that function is also called by
+    `field_access.decide()` (agent field-gating), `stock_visibility.py` (policy
+    resolution) and `contact_attachment_access.py` / `contact_access_type_service.
+    py`, each of which currently reads an unresolved contact as CONTACT_NOT_FOUND /
+    default-deny - widening resolution for all of them is a live change to
+    already-shipped access boundaries this review did not ask for and a
+    security-relevant surface a field-reveal fix should not touch as a side
+    effect. The non-default-workspace 6 are left unresolved here too, on purpose:
+    that is a genuinely different workspace context, not this bug, and the review's
+    fix names the NULL-workspace case only.
+
+    Shared here (not left inside `chatbot.head.access`, its original home) so a
+    non-chatbot caller - the spec-fallback resolve route (SF-1, security
+    re-verify) - can reach the SAME resolution `check_access` uses without
+    importing a chatbot-lane module into a route, a layering smell.
+    """
+    resolved = resolve_contact_id(db, contact_id, space_id)
+    if resolved is not None:
+        return resolved
+
+    from app.models.access import RespondContact
+
+    rows = (
+        db.query(RespondContact.id)
+        .filter(
+            RespondContact.respond_io_id == str(contact_id),
+            RespondContact.workspace_id.is_(None),
+        )
+        .limit(2)
+        .all()
+    )
+    if len(rows) != 1:
+        if len(rows) > 1:
+            logger.warning(
+                "respond_io_id %s matches %s NULL-workspace contacts; "
+                "denying rather than picking one",
+                contact_id,
+                len(rows),
+            )
+        return None
+    return rows[0][0]
 
 
 def contact_agent_codes(db: Session, contact_id: str) -> set[str]:

@@ -23,6 +23,8 @@ import {
   applyOrderInquiry,
   previewOrderInquiry,
   testOrderInquiry,
+  type LineNotFoundEntry,
+  type LineNotFoundReason,
   type OrderInquiryPreview,
 } from '../services/orderInquiryService';
 import { CountTile } from './UploadCountTile';
@@ -36,8 +38,10 @@ import { fmtInt } from '../../lib/format';
  * Renamed from `HistoryUploadDialog` (ingest-parity-standardisation S4, AC-P4-1): this dialog
  * used to also carry the purchase-history and sales-history curation feeds, which were
  * retired - closed history now arrives through the ESB's own document ingest. What remains is
- * the Order Inquiry sheet, which carries what neither the order book nor a history extract
- * holds - where stock is meant to land, and which purchase order a sales order is waiting on.
+ * the Order Inquiry sheet, now the migration tool for the operator's own Excel: sales orders,
+ * purchase orders and shipping orders already arrive from AutoCount in real time, what the
+ * sheet still carries is which line the operator is waiting on and which PO or SPO for
+ * (PLAN-scm-oi-sheet-migration.md).
  *
  * Test, then upload, with nothing at all running on file select. Confirm queues an import job
  * and the upload drawer follows it, because the resolve happens on the worker. So what the
@@ -48,7 +52,7 @@ import { fmtInt } from '../../lib/format';
  */
 
 const TITLE = 'Upload order inquiry sheet';
-const DESCRIPTION = 'Stock locations, and which purchase order each sales order is waiting on.';
+const DESCRIPTION = 'Raises the sheet’s rows against the sales order line and its PO/SPO.';
 const DROPZONE_LABEL = 'Order Inquiry file';
 
 /** How many codes or numbers to name before collapsing the rest into a tail count. */
@@ -64,32 +68,46 @@ function plural(n: number, one: string, many: string): string {
  * A named list. Named rather than only counted: a count says there is a problem, the codes
  * say which one, and the list is what somebody acts on.
  *
- * `total` is separate from `items.length` and is NOT optional, because the backend caps every
- * one of these lists at 200. Heading the section with the length of what it happens to be
- * showing turns 15,787 missing sales orders into "(200)", which reads like a small, closed
+ * `total`, where a list HAS one, is separate from `items.length`: the backend caps every one
+ * of these lists at 200, and heading the section with the length of what it happens to be
+ * showing turns 15,787 rows with no line into "(200)", which reads like a small, closed
  * problem. The count is the truth; the chips are a sample of it.
+ *
+ * Omitted, the heading carries NO count (review finding 11, 14 Sep). Two of the three lists
+ * have only a capped sample to count - the server sends no total for them, and inventing one
+ * from the sample is the very misreading above. No count key was added for them either: a
+ * number nobody can act on is surface for nothing.
  */
 function ChipList({
   title,
   items,
   total,
   hint,
+  limit = CHIP_LIMIT,
 }: {
   title: string;
   items: string[];
-  total: number;
+  total?: number;
   hint?: string;
+  /** Caps how many chips show before the "+N more" tail. Most lists use `CHIP_LIMIT`; the
+      no-matching-line list is denser text and asks for a taller cap (AC-S2-3). */
+  limit?: number;
 }) {
   if (!items.length) return null;
-  const hidden = Math.max(total, items.length) - Math.min(items.length, CHIP_LIMIT);
+  const counted = Math.max(total ?? items.length, items.length);
+  const hidden = counted - Math.min(items.length, limit);
   return (
     <div className="rounded-lg border border-border p-3">
       <h4 className="text-xs font-semibold">
-        {title} ({fmtInt(Math.max(total, items.length))})
+        {title}
+        {total === undefined ? '' : ` (${fmtInt(counted)})`}
       </h4>
       <div className="mt-1.5 flex flex-wrap gap-1">
-        {items.slice(0, CHIP_LIMIT).map((item) => (
-          <span key={item} className="rounded bg-muted px-1.5 py-0.5 text-2xs font-mono">
+        {items.slice(0, limit).map((item, index) => (
+          <span
+            key={`${item}-${index}`}
+            className="rounded bg-muted px-1.5 py-0.5 text-2xs font-mono"
+          >
             {item}
           </span>
         ))}
@@ -110,19 +128,48 @@ function Problems({ problems }: { problems: string[] }) {
   return <ImportFeedbackSections errors={problems} />;
 }
 
+/**
+ * The reason codes AC-S1-23 defines, in words - the chip list is read by a person, not a
+ * parser, so the code itself never reaches the screen.
+ *
+ * Word for word the sentences `import_outcome_codes.LABELS` prints on the job page for the
+ * same three codes (review finding 5, 14 Sep). They were paraphrased here, and two of the
+ * paraphrases were wrong about the rule: the match takes a CLOSED line as readily as an open
+ * one (D8), and the quantity it compares against is what the line ORDERED, not what is still
+ * outstanding. Somebody reading the preview and then the job page has to see one answer.
+ */
+const LINE_NOT_FOUND_REASON: Record<LineNotFoundReason, string> = {
+  no_line_for_item: 'No sales order line for this item',
+  location_differs: 'No line for this item at that stock location',
+  qty_exceeds_ordered: 'Quantity exceeds what the line ordered',
+};
+
+/** `SO · item · qty · reason`, one per line (AC-S2-3). */
+function formatLineNotFound(entry: LineNotFoundEntry): string {
+  return `${entry.so_number} · ${entry.item_code} · ${fmtInt(entry.qty)} · ` +
+    `${LINE_NOT_FOUND_REASON[entry.reason]}`;
+}
+
+/** How many chips the no-matching-line list shows before its "+N more" tail (AC-S2-3). */
+const LINE_NOT_FOUND_LIMIT = 20;
+
 function InquirySummary({ data }: { data: OrderInquiryPreview }) {
   return (
     <div className="space-y-4">
       <div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
           <CountTile label="Rows" value={data.rows} />
-          {/* Both figures, always. The book restates an instalment across its month, roll-up
-              and snapshot tabs, so a reader shown only the smaller number reads the drop as
-              rows lost. */}
-          <CountTile label="Scheduled deliveries" value={data.instalments} />
-          <CountTile label="Matched" value={data.lines_matched} />
-          <CountTile label="PO links" value={data.po_claims} />
-          <CountTile label="Not ordered yet" value={data.not_ordered} />
+          <CountTile label="Will raise" value={data.rows_raised} />
+          <CountTile label="Already raised" value={data.rows_already_raised} />
+          <CountTile label="No SO line" value={data.rows_line_not_found} />
+          {/* What Confirm does to the BOOK's neighbours, not only to the sheet: how many
+              planning records it opens (security review SF2, AC-S2-8). */}
+          <CountTile label="Orders adopted" value={data.orders_adopted} />
+          {/* Per ROW, not per document: a row linked to two documents is one row the book
+              answered for, and "Documents found" read as a count of documents (review
+              finding 6). */}
+          <CountTile label="Rows linked" value={data.links_written} />
+          <CountTile label="Documents not found" value={data.documents_not_linkable.length} />
         </div>
         <p className="mt-1.5 text-2xs text-muted-foreground">
           {fmtInt(data.sheets_read.length)}{' '}
@@ -132,26 +179,21 @@ function InquirySummary({ data }: { data: OrderInquiryPreview }) {
             : ''}
           .
         </p>
-        {data.rows_restating_an_instalment > 0 ? (
-          <p className="mt-1 text-2xs text-muted-foreground">
-            {fmtInt(data.rows_restating_an_instalment)}{' '}
-            {plural(data.rows_restating_an_instalment, 'row', 'rows')} restate a delivery
-            another sheet already lists, counted once.
-          </p>
-        ) : null}
       </div>
 
       <ChipList
-        title="Sales orders we have not received yet"
+        title="Sales orders not in the CRM"
         items={data.sales_orders_not_found}
-        total={data.lines_unmatched}
-        hint="Their locations are not written. Upload this sheet again once those orders land."
       />
       <ChipList
-        title="Locations we do not recognise"
-        items={data.unknown_locations}
-        total={data.unknown_locations.length}
-        hint="Add the warehouse, or correct the code in the sheet."
+        title="Documents we could not link"
+        items={data.documents_not_linkable}
+      />
+      <ChipList
+        title="Rows with no matching line"
+        items={data.line_not_found.map(formatLineNotFound)}
+        total={data.rows_line_not_found}
+        limit={LINE_NOT_FOUND_LIMIT}
       />
     </div>
   );
@@ -196,6 +238,12 @@ export function OrderInquiryUploadDialog({
   });
 
   const { file, preview: shown, previewing, applying, error } = upload;
+
+  // AC-S2-4: a preview that read fine but would raise nothing is not confirmable, even though
+  // `useTwoStepUpload`'s own `canConfirm` never requires a Test - that generic rule stays for
+  // the untested case, this narrows it once the preview says nothing would happen.
+  const nothingToRaise = !!shown && shown.ok && shown.rows_raised === 0;
+  const canConfirm = upload.canConfirm && !nothingToRaise;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -250,7 +298,7 @@ export function OrderInquiryUploadDialog({
             )}
             Test
           </Button>
-          <Button onClick={() => void upload.confirm()} disabled={!upload.canConfirm}>
+          <Button onClick={() => void upload.confirm()} disabled={!canConfirm}>
             {applying ? <LoaderCircle className="size-4 animate-spin" aria-hidden /> : null}
             Confirm upload
           </Button>

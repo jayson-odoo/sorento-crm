@@ -566,14 +566,14 @@ class TestLowSignalLaneIntegration:
         db = session_factory()
         before = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
         after = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         assert after == before, "the failed clarifier call must not write a session"
 
@@ -602,7 +602,7 @@ class TestLowSignalLaneIntegration:
         db = session_factory()
         before_session_vars = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         before_turns = session_factory().query(ChatbotTurn).count()
 
@@ -612,7 +612,7 @@ class TestLowSignalLaneIntegration:
 
         after_session_vars = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         after_turns = session_factory().query(ChatbotTurn).count()
 

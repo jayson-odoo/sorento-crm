@@ -712,6 +712,15 @@ class BoardContribution(BaseModel):
     #: raises no Order Inquiry row on confirm; the client marks it with a `Local` pill.
     #: `None` on a server build that skipped origin resolution (never asserted false).
     buy_origin: Optional[Literal["local", "overseas"]] = None
+    #: R3 (13 Sep browser walk): the book CANCELLED this line and a change row for it is
+    #: still PENDING - `false` for every ordinary row, which is every row `_demand_rows`
+    #: itself ever builds (`_cancelled_pending_change_rows` is the only writer of a truthy
+    #: pair). The service already computes this; declared here or `response_model` drops it
+    #: on its way out (the whole reason the contract is asserted in a route test).
+    cancelled: bool = False
+    #: The pending change row's own batch, so the cell can deep-link to it (`Changed` pill).
+    #: Null on every ordinary row, same rule as `cancelled`.
+    pending_change_batch_id: Optional[str] = None
 
 
 class BorrowDonorImpact(BaseModel):
@@ -1119,6 +1128,12 @@ class BoardOrderStanding(BaseModel):
     #: Always 0 from the server: the verdicts live in the board's client draft (13.4).
     decided_count: int = 0
     unplannable_count: int = 0
+    #: The newest PENDING planning-change batch on this order, or null
+    #: (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1). Lets the board fetch and draw a
+    #: change's Was/Now table and pre-marked suggestion without a `?batch=` URL param - the
+    #: fulfilment-planning list and the SCM Sales Orders list name the same id off the same
+    #: `planning_change_service.pending_batch_id_by_sales_order`.
+    pending_change_batch_id: Optional[str] = None
 
 
 class BoardPolicy(BaseModel):
