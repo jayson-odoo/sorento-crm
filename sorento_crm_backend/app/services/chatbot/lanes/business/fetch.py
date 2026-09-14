@@ -1237,7 +1237,9 @@ def _tokens(norm: str) -> set[str]:
     return set(norm.split())
 
 
-def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
+def _project_product_specs(
+    e: dict[str, Any], req_attrs: list[Any], hidden_spec_keys: list[Any] | None = None
+) -> None:
     """A1 (AC-901/AC-902): the product spec projection, product envelopes ONLY.
 
     A SEPARATE branch from the clearance/incoming projection above - deliberately
@@ -1274,13 +1276,33 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
          items loop.)
     An item with no spec hit for any asked word keeps its base fields only - byte
     identity with the no-attribute path's own field set.
+
+    `hidden_spec_keys` (PLAN-spec-visibility-policy.md "Chatbot seam", AC-15/AC-16):
+    every `spec:<key>` field whose key is hidden is dropped BEFORE either branch
+    above runs - before the "Specs:" summary is built and before asked-word
+    matching - and hidden keys are removed from the vocabulary used for matching
+    too, so a hidden key can never register a hit. An asked word naming a hidden
+    key (exact key/label, or every asked token contained in it - the same rule as
+    an ordinary hit) produces ONE `spec_hidden:<key>` miss, "<label>: not
+    available", instead of the ordinary "not recorded" line - and instead of, not
+    in addition to it.
     """
+    hidden = frozenset(str(k) for k in (hidden_spec_keys or []))
     vocab_raw = e.get("spec_vocabulary")
     vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
-    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept
+    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept.
+    # Hidden keys are excluded here - "removed from the vocabulary used for
+    # matching" - and kept in a SEPARATE list below, only for naming the "not
+    # available" line's label.
     vocab_rows: list[tuple[str, str, str, str]] = [
         (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
         for key, label in vocab.items()
+        if str(key) not in hidden
+    ]
+    hidden_vocab_rows: list[tuple[str, str, str, str]] = [
+        (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
+        for key, label in vocab.items()
+        if str(key) in hidden
     ]
 
     def vocab_label_for(norm: str) -> str | None:
@@ -1293,6 +1315,18 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         for _k, label, nk, nl in vocab_rows:
             if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
                 return label
+        return None
+
+    def hidden_ref_for(norm: str) -> tuple[str, str] | None:
+        """`(registry key, label)` when the asked word names a HIDDEN key - same
+        matching rule as `vocab_label_for`, over the hidden-only rows."""
+        for k, label, nk, nl in hidden_vocab_rows:
+            if norm in (nk, nl):
+                return (k, label)
+        toks = _tokens(norm)
+        for k, label, nk, nl in hidden_vocab_rows:
+            if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
+                return (k, label)
         return None
 
     # The normalised word AND the word the customer actually typed, PAIRED (review, nit
@@ -1311,7 +1345,23 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             asked.append((norm, text))
             seen_norms.add(norm)
 
-    missed_codes: dict[str, list[str]] = {norm: [] for norm, _ in asked}
+    # Asked words that name a HIDDEN key, resolved once (not per item): a
+    # `spec_hidden:<key>` miss instead of the ordinary flow, never both.
+    hidden_asks: dict[str, tuple[str, str]] = {}
+    for norm, _asked_word in asked:
+        ref = hidden_ref_for(norm)
+        if ref is not None:
+            hidden_asks[norm] = ref
+
+    missed_codes: dict[str, list[str]] = {
+        norm: [] for norm, _ in asked if norm not in hidden_asks
+    }
+
+    # AC-17 / code review S2: the keys ACTUALLY removed from this envelope, for
+    # the turn trace's `spec_visibility.dropped` - not vocabulary membership,
+    # which says nothing about whether the product this turn showed even
+    # carried the key.
+    dropped_keys: set[str] = set()
 
     for it in e.get("items") or []:
         if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
@@ -1327,18 +1377,38 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             for f in fields
             if not (isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX))
         ]
-        spec_fields = [
+        # Hidden keys are dropped HERE, before either branch below runs - the
+        # "Specs:" summary and the asked-word matching both read `spec_fields`.
+        raw_spec_fields = [
             f
             for f in fields
             if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
         ]
+        spec_fields = []
+        for f in raw_spec_fields:
+            raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
+            if raw_key in hidden:
+                dropped_keys.add(raw_key)
+            else:
+                spec_fields.append(f)
 
         if not asked:
             # No attribute asked: base fields untouched, plus the compact summary -
             # EVERY populated spec key, in registry order, no cap (D1).
+            # The write is UNCONDITIONAL. `base` is this item's fields minus every
+            # `spec:` field, so it is what the item must end up with whether or not a
+            # summary follows; guarding the write on `spec_fields` left `it["fields"]`
+            # as the ORIGINAL list the moment the visible set came back empty - and
+            # with every key hidden (a Contact override hiding all of them, measured
+            # 14 Sep 2026 on turn 8c432988) that original list still carried every
+            # hidden `spec:` field, which `output_structurer` then rendered one line
+            # per key. A product with no spec fields at all keeps exactly the fields
+            # it has today: `base` IS `fields` there.
+            fields_out = list(base)
             if spec_fields:
                 summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in spec_fields)
-                it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
+                fields_out.append({"key": "specs_summary", "label": "Specs", "value": summary})
+            it["fields"] = fields_out
             continue
 
         # An attribute was asked: identity fields + the base fields + the spec keys it names.
@@ -1355,7 +1425,14 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         seen_field_ids: set[int] = {id(f) for f in kept_base}
         for norm, _asked_word in asked:
             # 1. spec keys: an exact key/label match AND every key whose key or label
-            #    tokens contain every asked token - ALL of them, in registry order
+            #    tokens contain every asked token - ALL of them, in registry order.
+            #    Runs REGARDLESS of whether `norm` also names a hidden key (code
+            #    review S1): "thickness" with `thickness` hidden and
+            #    `board_thickness` visible must still render the visible field -
+            #    the hidden field is already gone from `spec_fields` above, so it
+            #    can never itself be matched here, but a DIFFERENT visible key
+            #    whose tokens contain the same asked word (like `board_thickness`
+            #    containing "thickness") is a real, separate hit.
             toks = _tokens(norm)
             contained = [
                 f
@@ -1367,15 +1444,24 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
                 if id(f) not in seen_field_ids:
                     matched.append(f)
                     seen_field_ids.add(id(f))
+            if norm in hidden_asks:
+                # Handled once, after the items loop, as a `spec_hidden:` miss
+                # instead of - never in addition to - the ordinary "not
+                # recorded" one, whatever the visible-key matching above found.
+                continue
             # 2. a spec miss - UNLESS the word names a base property, which is already
             #    on the page (kept_base, above) and needs no "not recorded" line.
             if not hit and not _names_a_base_property(norm):
                 missed_codes[norm].append(jsc.js_string(code))
         it["fields"] = kept_base + matched
 
-    # 3. one miss line per asked word, rendered ONCE after the items
+    # 3. one miss line per asked word, rendered ONCE after the items - ordinary
+    # "not recorded" misses first, then one `spec_hidden:` "not available" line
+    # per asked word naming a hidden key (AC-16).
     misses: list[dict[str, Any]] = []
     for norm, asked_word in asked:
+        if norm in hidden_asks:
+            continue
         codes = missed_codes.get(norm) or []
         if not codes:
             continue
@@ -1384,8 +1470,20 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         extra = len(codes) - _MISS_CODES_CAP
         value = f"not recorded for {listed}" + (f" (+{extra} more)" if extra > 0 else "")
         misses.append({"key": f"spec_miss:{norm}", "label": label, "value": value})
+    for norm, _asked_word in asked:
+        ref = hidden_asks.get(norm)
+        if ref is None:
+            continue
+        key, label = ref
+        misses.append({"key": f"spec_hidden:{key}", "label": label, "value": "not available"})
     if misses:
         e["spec_misses"] = misses
+
+    # AC-17 / code review S2: what this function actually removed, for the turn
+    # trace (`run_fetch`'s `spec_visibility` event) - always set when this
+    # function ran, even `[]`, so the trace reads "ran, nothing to drop" rather
+    # than reaching for a vocabulary check of its own.
+    e["spec_hidden_dropped"] = sorted(dropped_keys)
 
 
 # --------------------------------------------------------------------------- #
@@ -1588,6 +1686,10 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
         return _outstanding_report_output(result, ctx)
     e = _extract_envelope(result)
+    # Read once, for both the restricted-field drop below and the spec-visibility
+    # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one
+    # `ctx.access`, two consumers.
+    access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
 
     # S2 (security review, 13 Sep 2026): `run_fetch` redirected a customer-only
     # `so_outstanding` ask (no product, so the outstanding-report override above
@@ -1613,7 +1715,6 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # restricted field is ever dropped for the chatbot.
     restricted = e.get("restricted_fields")
     if isinstance(restricted, dict) and restricted:
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
 
@@ -1693,7 +1794,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # product with zero derived specs (no `spec_vocabulary` at all) still gets the
     # plain today's-four-fields answer rather than being skipped by accident.
     if jsc.js_string(e.get("result_type") or "") == "products":
-        _project_product_specs(e, req_attrs)
+        hidden_raw = access_ctx.get("hidden_spec_keys")
+        hidden_spec_keys = hidden_raw if isinstance(hidden_raw, list) else []
+        _project_product_specs(e, req_attrs, hidden_spec_keys)
 
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a

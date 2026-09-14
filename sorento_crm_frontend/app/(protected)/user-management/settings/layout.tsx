@@ -14,6 +14,7 @@ import {
   Mail,
   MessageSquareWarning,
   Plug,
+  Ruler,
   Settings,
   Share2,
   SlidersHorizontal,
@@ -290,6 +291,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Stock Visibility',
         icon: Eye,
         path: '/user-management/settings/stock-visibility',
+      },
+      'spec-visibility': {
+        title: 'Spec Visibility',
+        icon: Ruler,
+        path: '/user-management/settings/spec-visibility',
       },
       'search-ranking': {
         title: 'Search ranking',

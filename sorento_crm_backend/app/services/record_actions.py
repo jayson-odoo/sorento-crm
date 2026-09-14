@@ -715,6 +715,40 @@ def _remove_stock_visibility_policy(db: Session, payload: dict):
     return delete_policy(db, access_type_code=_entity_id(payload))
 
 
+def _remove_spec_visibility_policy(db: Session, payload: dict):
+    from app.services.error_handler import handle_not_found, handle_validation_error
+    from app.services.field_access import resolve_contact_id
+    from app.services.spec_visibility import delete_policy
+
+    # The scope is the entity: a contact override or a market-segment policy. The
+    # kind travels in the payload because the two are different columns, not
+    # different ids - same convention as `_remove_stock_visibility_policy`. The
+    # default tier has no DELETE route and is refused here the same way.
+    scope_kind = str(payload.get("scope_kind") or "")
+    if scope_kind == "contact":
+        # N1 (code review): resolved the SAME way the DELETE route resolves it -
+        # `entity_id` may be a Respond.io id rather than `respond_contacts.id`,
+        # and `delete_policy`'s own lookup is an exact-equality filter on the
+        # column, so an unresolved Respond.io id would match no row and return
+        # False - a SILENT no-op for anything but the internal id form.
+        #
+        # `raise_through=True` (SF-3, security re-verify): every handler's
+        # contract (`test_every_handler_resolves_its_service_import`) proves
+        # its lazy imports are correctly named by breaking the session and
+        # asserting the break itself surfaces - `resolve_contact_id`'s default
+        # fail-closed swallow would turn that into an ordinary 404 instead,
+        # hiding a renamed import exactly as it would hide a real DB failure.
+        resolved = resolve_contact_id(
+            db, _entity_id(payload), payload.get("space_id"), raise_through=True
+        )
+        if not resolved:
+            raise handle_not_found("Contact", _entity_id(payload))
+        return delete_policy(db, contact_id=resolved)
+    if scope_kind == "segment":
+        return delete_policy(db, segment_code=_entity_id(payload))
+    raise handle_validation_error("The default spec visibility policy cannot be removed.")
+
+
 def _remove_signin_background(db: Session, payload: dict):
     from app.services.signin_background import clear_signin_background
 
@@ -891,6 +925,19 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="inventory.stock.edit",
         label="Remove stock visibility",
+    )
+)
+
+register(
+    FormAction(
+        key="spec_visibility_policy.remove",
+        entity_types=("spec_visibility_policy",),
+        execute=_remove_spec_visibility_policy,
+        # Reversible: the tier falls back to the policy above it and the card can
+        # write the override again from what is still on screen.
+        window=WINDOW_REVERSIBLE,
+        permission="user_management.contacts.edit",
+        label="Remove spec visibility",
     )
 )
 

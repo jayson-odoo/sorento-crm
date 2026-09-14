@@ -26,49 +26,17 @@ def _resolve_contact_with_null_workspace_fallback(
 ) -> str | None:
     """`field_access.resolve_contact_id`, then a fallback for the NULL-workspace gap.
 
-    Measured (review, 7 Sep 2026): 16 contacts have `workspace_id` NULL and 6 sit
-    in a non-default workspace. `resolve_contact_id`'s own JOIN against the given
-    `space_id` returns zero rows for a NULL-workspace contact - `RespondContact.
-    workspace_id` has nothing to join to - so a field reveal granted in the admin
-    UI silently read as OFF to the chatbot. Recovered here, not inside
-    `resolve_contact_id` itself: that function is also called by
-    `field_access.decide()` (agent field-gating), `stock_visibility.py` (policy
-    resolution) and `contact_attachment_access.py` / `contact_access_type_service.
-    py`, each of which currently reads an unresolved contact as CONTACT_NOT_FOUND /
-    default-deny - widening resolution for all of them is a live change to
-    already-shipped access boundaries this review did not ask for and a
-    security-relevant surface a field-reveal fix should not touch as a side
-    effect. The non-default-workspace 6 are left unresolved here too, on purpose:
-    that is a genuinely different workspace context, not this bug, and the review's
-    fix names the NULL-workspace case only.
+    Moved to `app.services.field_access.resolve_contact_with_null_workspace_
+    fallback` (security re-verify, SF-1): a non-chatbot caller - the spec-
+    fallback resolve route - needs the SAME resolution `check_access` uses,
+    and importing a chatbot-lane module into a route is a layering smell. This
+    is a thin wrapper so every existing call site in this module is unchanged.
     """
-    from app.services.field_access import resolve_contact_id
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
-    resolved = resolve_contact_id(db, contact_id, space_id)
-    if resolved is not None:
-        return resolved
-
-    from app.models.access import RespondContact
-
-    rows = (
-        db.query(RespondContact.id)
-        .filter(
-            RespondContact.respond_io_id == str(contact_id),
-            RespondContact.workspace_id.is_(None),
-        )
-        .limit(2)
-        .all()
+    return resolve_contact_with_null_workspace_fallback(
+        db, contact_id=contact_id, space_id=space_id
     )
-    if len(rows) != 1:
-        if len(rows) > 1:
-            logger.warning(
-                "chatbot: respond_io_id %s matches %s NULL-workspace contacts; "
-                "denying rather than picking one",
-                contact_id,
-                len(rows),
-            )
-        return None
-    return rows[0][0]
 
 
 def _granted_field_reveal_keys(db: Session, *, contact_id: str, space_id: str | None) -> list[str]:
@@ -95,6 +63,44 @@ def _granted_field_reveal_keys(db: Session, *, contact_id: str, space_id: str | 
         return []
 
 
+def _hidden_spec_keys(db: Session, *, contact_id: str, space_id: str | None) -> list[str]:
+    """This contact's hidden spec keys, sorted (PLAN-spec-visibility-policy.md
+    "Chatbot seam"). Resolved once per turn, the SAME contact resolution field
+    reveals use (the NULL-workspace fallback) - but unlike field reveals, this
+    FAILS CLOSED TO THE DEFAULT POLICY, never to `[]`: a spec question always
+    gets an answer, so an unresolvable contact gets the default's hidden set
+    rather than "nothing hidden".
+
+    The registry read is the FULL one (B1, security review), not active-only:
+    the hidden set is a READ, and a merely deactivated key must stay hidden or
+    stay shown, whichever the stored policy already says.
+    """
+    from app.services.spec_visibility import (
+        DEFAULT_HIDDEN_KEYS,
+        default_policy,
+        full_registry_rows,
+        hidden_keys,
+        resolve_policy,
+    )
+
+    try:
+        resolved = _resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_id, space_id=space_id
+        )
+        policy = resolve_policy(db, resolved, space_id) if resolved is not None else default_policy(db)
+        registry_keys = {key for key, _label in full_registry_rows(db)}
+        return sorted(hidden_keys(policy, registry_keys))
+    except Exception:  # noqa: BLE001 - a lookup failure must fail closed to the default policy
+        logger.warning("chatbot: spec visibility lookup failed for %s", contact_id, exc_info=True)
+        try:
+            registry_keys = {key for key, _label in full_registry_rows(db)}
+            return sorted(hidden_keys(default_policy(db), registry_keys))
+        except Exception:  # noqa: BLE001 - the registry itself is unreachable too (S1: still
+            # closed, never `[]` - a spec question always gets an answer, and the ship-closed
+            # floor is a Python constant, not a query, so it survives even this).
+            return sorted(DEFAULT_HIDDEN_KEYS)
+
+
 def check_access(
     db: Session,
     *,
@@ -102,7 +108,8 @@ def check_access(
     contact_id: str,
     space_id: str | None,
 ) -> dict[str, Any]:
-    """`ctx.access`: `{allowed, decision, agent_name, attributes, all_attributes_allowed}`.
+    """`ctx.access`: `{allowed, decision, agent_name, attributes,
+    all_attributes_allowed, hidden_spec_keys}`.
 
     `attributes` is this contact's granted field-reveal keys (`[]` when none) and
     `all_attributes_allowed` is always `False`: nothing here is an "everything"
@@ -125,6 +132,7 @@ def check_access(
         "agent_name": decision.agent_name,
         "attributes": _granted_field_reveal_keys(db, contact_id=contact_id, space_id=space_id),
         "all_attributes_allowed": False,
+        "hidden_spec_keys": _hidden_spec_keys(db, contact_id=contact_id, space_id=space_id),
     }
 
 

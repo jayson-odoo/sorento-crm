@@ -23,6 +23,7 @@ import ContactAttachmentTypesSection from './components/ContactAttachmentTypesSe
 import ContactPortalFormsSection from './components/ContactPortalFormsSection';
 import ContactEditDialog from './components/ContactEditDialog';
 import { StockVisibilitySection } from '@/components/stock-visibility/StockVisibilitySection';
+import { SpecVisibilitySection } from '@/components/spec-visibility/SpecVisibilitySection';
 
 export default function ContactProfilePage() {
   const { contact, isLoading, contactId } = useContact();
@@ -180,6 +181,12 @@ export default function ContactProfilePage() {
                 375px without clipping their chips. */}
             <div className="md:col-span-2">
               <StockVisibilitySection scope={{ kind: 'contact', contactId }} />
+            </div>
+            {/* Which product spec keys (Thickness, Material, ...) the chatbot may
+                reveal to this contact. Sits directly under Stock visibility, same
+                full-width reasoning. */}
+            <div className="md:col-span-2">
+              <SpecVisibilitySection scope={{ kind: 'contact', contactId }} />
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Respond.io Workspace</p>

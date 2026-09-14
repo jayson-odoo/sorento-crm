@@ -258,11 +258,32 @@ _BARE_MEMBER_OFFER_TYPES = ("product", "customer")
 _BARE_REPLY_WORD_RE = re.compile(r"[a-z0-9]+")
 
 
+def _hidden_spec_keys_from_ctx(ctx: dict[str, Any]) -> list[str]:
+    """`ctx.access.hidden_spec_keys`, the same key `check_access` sets (PLAN-
+    spec-visibility-policy.md "Spec fallback"). `[]` when access was never
+    resolved this turn - the resolve route treats an absent/empty list as
+    inert, so this is never a widening default."""
+    access = jsc.get(ctx, "access")
+    hidden = jsc.get(access, "hidden_spec_keys") if jsc.truthy(access) else None
+    return list(hidden) if jsc.is_array(hidden) else []
+
+
+def _contact_id_from_ctx(ctx: dict[str, Any]) -> str | None:
+    """`ctx.contact.id`, the SAME read `check_access`'s own caller uses
+    (`run.py`'s `contact_respond_id`) - sent alongside `hidden_spec_keys` so
+    the resolve route can resolve this contact's policy itself rather than
+    trusting only the caller-supplied list (security review B/S2)."""
+    contact = jsc.get(ctx, "contact")
+    value = jsc.get(contact, "id") if jsc.truthy(contact) else None
+    return value if jsc.truthy(value) else None
+
+
 def resolve_bare_reply_under_member_offer(
     parser: dict[str, Any],
     *,
     ctx: dict[str, Any],
     services: ResolveGateServices,
+    space_id: str | None = None,
     dry_run: bool = False,
 ) -> bool:
     """A bare reply the parser extracted NOTHING from, under an open `member_offer`,
@@ -332,6 +353,14 @@ def resolve_bare_reply_under_member_offer(
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): this contact's
+        # hidden keys ride along so the resolve route can neither rank on one nor
+        # print it in a candidate's specifications. `contact_id` + `space_id`
+        # ride along too (security review B/S2), so the route resolves the
+        # policy itself rather than trusting only this list.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
+        "contact_id": _contact_id_from_ctx(ctx),
+        "space_id": space_id,
     }
     if dry_run:
         body["dry_run"] = True
@@ -427,7 +456,9 @@ def _token_of(entity: Any) -> Any:
     return value
 
 
-def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[str, Any]:
+def resolve_entity_body(
+    ctx: dict[str, Any], *, space_id: str | None = None, dry_run: bool = False
+) -> dict[str, Any]:
     """The `resolve-entity` httpRequest jsonBody, key for key.
 
     `entity_pins` (H38) is OMITTED in AND mode and when nothing is pinned, which is what
@@ -466,6 +497,11 @@ def resolve_entity_body(ctx: dict[str, Any], *, dry_run: bool = False) -> dict[s
         "limit": 15,
         "spec_fallback": True,
         "understand_phrase": True,
+        # AC-18 (PLAN-spec-visibility-policy.md "Spec fallback"): see the sibling
+        # body builder above for the reasoning.
+        "hidden_spec_keys": _hidden_spec_keys_from_ctx(ctx),
+        "contact_id": _contact_id_from_ctx(ctx),
+        "space_id": space_id,
     }
     if dry_run:
         body["dry_run"] = True
@@ -735,10 +771,12 @@ def run(
     # main resolve-entity call two lines down reads that same object to build its own
     # tokens - so a narrowed product/customer rides the ONE round trip the rest of the
     # turn makes, exactly as a customer's own explicit entity would have.
-    resolve_bare_reply_under_member_offer(parser, ctx=ctx, services=services, dry_run=dry_run)
+    resolve_bare_reply_under_member_offer(
+        parser, ctx=ctx, services=services, space_id=space_id, dry_run=dry_run
+    )
 
     # ── resolve-entity ──────────────────────────────────────────────────────
-    resolved = services.resolve_entity(resolve_entity_body(ctx, dry_run=dry_run))
+    resolved = services.resolve_entity(resolve_entity_body(ctx, space_id=space_id, dry_run=dry_run))
 
     # ── a container-hinted token that is ONLY a product is a product (item F) ─
     # Placed HERE, between the resolver and the gate, because this is the first point in
