@@ -375,6 +375,11 @@ class SystemSetting(Base):
     # status change and anything else that can simply be set back.
     deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
     deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+    # How many days an untouched price tag collection waits before the sweep
+    # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
+    price_tag_auto_collect_days = Column(
+        Integer, nullable=False, server_default="7", default=7
+    )
 
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).

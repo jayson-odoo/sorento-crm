@@ -23,6 +23,7 @@ from app.models.dealer_kit import Page, PageVersion
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
+    PriceTagRequestOfficeUpdate,
     ResolvedLineData,
     ReviewCommentResolvePayload,
     ReviewCommentResponse,
@@ -42,6 +43,7 @@ from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
+    PRINT_BY_CHOICES,
     STATUS_DESIGNING,
     STATUS_PROOF_READY,
 )
@@ -215,6 +217,51 @@ def transition_price_tag_request(
             )
     db.commit()
     return _with_resolved_lines(db, result)
+
+
+# ---------------------------------------------------------------------------
+# Edit request (r9 S3/D7)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/{request_id}", response_model=PriceTagRequestResponse)
+def update_price_tag_request(
+    request_id: str,
+    payload: PriceTagRequestOfficeUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """The office fixing what the salesperson answered (D7).
+
+    Only the print choice today: everything else on a submitted request is the
+    salesperson's own, and changes through the revision engine. Refused once the
+    request is finished - the choice decides a journey that has already ended.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished and can no longer be changed.",
+            code="INVALID_STATE",
+        )
+    data = payload.model_dump(exclude_unset=True)
+    if "print_by" in data:
+        choice = data["print_by"]
+        if choice is not None and choice not in PRINT_BY_CHOICES:
+            raise AppException(
+                status_code=422,
+                message="Printing must be Office prints or I print myself.",
+                code="INVALID_PRINT_BY",
+            )
+        req.print_by = choice
+    db.flush()
+    db.commit()
+    return _with_resolved_lines(db, req)
 
 
 # ---------------------------------------------------------------------------

@@ -79,6 +79,9 @@ class SystemSettingUpdate(BaseModel):
     # the new model's clothes. Both must appear here AND in the GET dict below.
     deferred_delete_seconds: Optional[int] = Field(None, ge=1, le=600)
     deferred_action_seconds: Optional[int] = Field(None, ge=1, le=600)
+    # r9 D10. Zero is meaningful here, unlike the countdowns above: it turns the
+    # auto-collect sweep off and leaves the hand-over waiting for a person.
+    price_tag_auto_collect_days: Optional[int] = Field(None, ge=0, le=90)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -189,7 +192,7 @@ class SmtpTestResult(BaseModel):
 class AppConfigResponse(BaseModel):
     """The non-sensitive slice of the system settings singleton.
 
-    Six fields, and the model is what makes "and nothing else" enforceable:
+    A short list, and the model is what makes "and nothing else" enforceable:
     anything not declared here is dropped on serialization rather than leaking
     because a dict builder grew a line. Do NOT extend it - see the route below.
     """
@@ -200,6 +203,8 @@ class AppConfigResponse(BaseModel):
     purchase_request_default_approver_email: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_email: Optional[str] = None
+    #: r9 D10. A number of days, read by the price tag detail card.
+    price_tag_auto_collect_days: Optional[int] = None
 
 
 @router.get("/")
@@ -276,6 +281,13 @@ async def get_settings(
                     getattr(settings, "deferred_action_seconds", 5) or 5
                     if settings
                     else 5
+                ),
+                # A new settings column reaches the FE only if it is in this
+                # manual dict too (LESSONS).
+                "price_tag_auto_collect_days": (
+                    getattr(settings, "price_tag_auto_collect_days", 7)
+                    if settings
+                    else 7
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
@@ -427,6 +439,12 @@ async def get_app_config(
             purchase_request_default_approver_email=user_pr.email if user_pr else None,
             sponsorship_form_default_approver_user_id=sf_uid,
             sponsorship_form_default_approver_email=user_sf.email if user_sf else None,
+            # r9 D10: the CRM price tag card says when a hand-over auto-collects,
+            # and marketing does not hold `user_management.settings.view`. A
+            # number of days is not sensitive.
+            price_tag_auto_collect_days=(
+                getattr(settings, "price_tag_auto_collect_days", 7) if settings else 7
+            ),
         )
     except Exception as e:
         raise handle_internal_error(str(e))

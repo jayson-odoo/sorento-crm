@@ -566,6 +566,35 @@ def portal_list_review_comments(
 
 
 # ---------------------------------------------------------------------------
+# Collect (the office hand-over, r9 S3/D8)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/submissions/price_tag_request/{request_id}/collect")
+def portal_collect_price_tag_request(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The salesperson confirming they have the tags (D8).
+
+    The same transition the office's own Mark collected makes, recorded against
+    the CONTACT rather than a user: whoever closed it is what the card says
+    afterwards, and the two are different people.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+
+    result = PriceTagRequestService.transition_status(db, req.id, STATUS_COLLECTED)
+    result.collected_by_contact_id = token.contact_id
+    result.collected_by_user_id = None
+    db.flush()
+    db.commit()
+    return {"status": result.status}
+
+
+# ---------------------------------------------------------------------------
 # Debtor lookup
 # ---------------------------------------------------------------------------
 

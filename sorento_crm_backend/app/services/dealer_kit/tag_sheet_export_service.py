@@ -21,7 +21,11 @@ from app.models.dealer_kit import ExportRequest, Page, PageVersion
 from app.models.download import DownloadStatus, UserDownload
 from app.models.price_tag import PriceTagRequest
 from app.services.error_handler import AppException
-from app.services.price_tag_request_service import STATUS_APPROVED, STATUS_READY
+from app.services.price_tag_request_service import (
+    STATUS_APPROVED,
+    STATUS_COLLECTED,
+    STATUS_READY_FOR_COLLECTION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +124,14 @@ def request_tag_sheet_export(
             code="NOT_FOUND",
         )
 
-    if request.status not in (STATUS_APPROVED, STATUS_READY):
+    # Every finished status can be exported (D8): the office reprints a lost
+    # sheet after collection, and asking for a PDF is not a step in the
+    # hand-over.
+    if request.status not in (
+        STATUS_APPROVED,
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_COLLECTED,
+    ):
         raise AppException(
             status_code=409,
             message=(
@@ -188,14 +199,9 @@ def request_tag_sheet_export(
         )
     )
 
-    # Transition approved -> ready on first export (AC-H.3).
-    if request.status == STATUS_APPROVED:
-        from app.services.price_tag_request_service import PriceTagRequestService
-
-        PriceTagRequestService.transition_status(
-            db, request_id, STATUS_READY, user_id=user_id,
-        )
-
+    # No transition (r9 D8). `approved -> ready` used to fire here, which said
+    # a PDF existed and nothing about who had the tags; the hand-over is its
+    # own two steps now and a PDF request is not one of them.
     db.commit()
     db.refresh(download)
 

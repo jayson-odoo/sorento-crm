@@ -10,7 +10,6 @@ import {
   AUTO_COLLECT_DAYS_DEFAULT,
   AUTO_COLLECT_DAYS_MAX,
   AUTO_COLLECT_DAYS_MIN,
-  setAutoCollectDaysOverride,
 } from '@/lib/dealer-kit/print-collection';
 import { apiFetch } from '@/lib/api';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
@@ -352,8 +351,7 @@ export default function Page() {
         form_sla_grace_seconds: values.formSlaGraceSeconds,
         deferred_delete_seconds: values.deferredDeleteSeconds,
         deferred_action_seconds: values.deferredActionSeconds,
-        // r9 D10. PHASE 1: the column does not exist yet, so the backend
-        // ignores this key and the override below is what the FE reads back.
+        // r9 D10.
         price_tag_auto_collect_days: values.priceTagAutoCollectDays,
         plan_grain: values.planGrain,
         purchase_request_default_approver_user_id:
@@ -367,10 +365,6 @@ export default function Page() {
             ? null
             : values.sponsorshipFormDefaultApproverUserId,
       };
-
-      // PHASE 1 (r9 S3): remembered here so the field survives its own save
-      // and reload while the column is still to come.
-      setAutoCollectDaysOverride(values.priceTagAutoCollectDays);
 
       const response = await apiFetch('/api/user-management/settings/general', {
         method: 'POST',

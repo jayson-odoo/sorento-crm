@@ -40,7 +40,13 @@ STATUS_COLLECTED = "collected"
 STATUS_REJECTED = "rejected"
 STATUS_VOID = "void"
 
-_TERMINAL = frozenset({STATUS_READY, STATUS_REJECTED, STATUS_VOID})
+# Terminal for everyone. `approved` joins them for a SELF print only, which is
+# why `is_terminal` takes the request rather than the status (D8).
+_TERMINAL = frozenset({STATUS_COLLECTED, STATUS_REJECTED, STATUS_VOID})
+
+PRINT_BY_OFFICE = "office"
+PRINT_BY_SELF = "self"
+PRINT_BY_CHOICES = frozenset({PRINT_BY_OFFICE, PRINT_BY_SELF})
 
 # Valid transitions: current_status -> set of allowed next statuses.
 # ``rejected`` and ``void`` are reachable from any non-terminal status.
@@ -68,9 +74,17 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
         STATUS_REJECTED,
         STATUS_VOID,
     },
-    STATUS_APPROVED: {STATUS_READY, STATUS_REJECTED, STATUS_VOID},
-    # Terminal statuses have no outgoing edges.
-    STATUS_READY: set(),
+    # The office hand-over (D8). `ready_for_collection` is reachable only when
+    # somebody has said the office prints - `transition_status` checks that on
+    # top of this table, because the graph alone cannot see `print_by`.
+    STATUS_APPROVED: {STATUS_READY_FOR_COLLECTION, STATUS_REJECTED, STATUS_VOID},
+    # Its ONLY exit: the tags exist, they are on the counter, and the single
+    # remaining question is whether anybody has taken them.
+    STATUS_READY_FOR_COLLECTION: {STATUS_COLLECTED},
+    # Terminal statuses have no outgoing edges. `ready` is retired (D8) and has
+    # no entry at all: the migration maps every row that carried it to
+    # `approved`, so nothing can arrive at it again.
+    STATUS_COLLECTED: set(),
     STATUS_REJECTED: set(),
     STATUS_VOID: set(),
 }
@@ -163,6 +177,9 @@ class PriceTagRequestService:
                 needed_by_date=data.get("needed_by_date"),
                 notes=data.get("notes"),
                 price_mode=data.get("price_mode") or "list",
+                # Who prints (r9 D7). Null on a draft; `submit` refuses until
+                # the salesperson has answered.
+                print_by=data.get("print_by"),
                 doc_number=doc_number,
                 portal_draft_at=datetime.utcnow(),
             ),
@@ -489,8 +506,33 @@ class PriceTagRequestService:
                 ),
                 code="INVALID_TRANSITION",
             )
+        if (
+            new_status == STATUS_READY_FOR_COLLECTION
+            and request.print_by != PRINT_BY_OFFICE
+        ):
+            # The graph cannot see `print_by`, and this edge exists only for an
+            # office print: a salesperson printing their own tags has nothing to
+            # collect, and a request nobody has answered the question for has
+            # nothing to promise (D7/D8).
+            raise AppException(
+                status_code=409,
+                message=(
+                    "Only an office print reaches collection. Set Printing to "
+                    "Office prints first."
+                ),
+                code="INVALID_TRANSITION",
+            )
 
         request.status = new_status
+        # The hand-over's own timestamps (D9). `collected_by_*` is whoever did
+        # it: a user here, a contact on the portal's own route, neither when the
+        # sweep closes it.
+        if new_status == STATUS_READY_FOR_COLLECTION:
+            request.ready_for_collection_at = datetime.utcnow()
+        elif new_status == STATUS_COLLECTED:
+            request.collected_at = datetime.utcnow()
+            request.collected_by_user_id = user_id
+            request.collected_auto = False
         db.flush()
 
         # D12: an approve auto-queues one tag-sheet export, so the salesperson
@@ -519,6 +561,62 @@ class PriceTagRequestService:
         return request
 
     @staticmethod
+    def is_terminal(request: PriceTagRequest) -> bool:
+        """Nothing left to do to this request (D8).
+
+        Request-aware, not status-aware: `approved` is the end of the line for
+        a salesperson who prints their own tags and the middle of it for an
+        office print, so the same status answers differently depending on the
+        one column.
+        """
+        if request.status in _TERMINAL:
+            return True
+        return (
+            request.status == STATUS_APPROVED and request.print_by == PRINT_BY_SELF
+        )
+
+    @staticmethod
+    def run_auto_collect(db: Session) -> int:
+        """Close a hand-over nobody came back for (D11).
+
+        Reads the configured days off the settings row: 0 turns the sweep off
+        entirely, which is a legitimate way to run a counter where somebody
+        always ticks it by hand. Only `ready_for_collection` rows are in scope -
+        an approved request has not been printed, so there is nothing on the
+        counter to go stale.
+
+        Returns how many it closed, which is what the scheduler logs.
+        """
+        from app.models.user import SystemSetting
+
+        settings_row = db.query(SystemSetting).first()
+        days = getattr(settings_row, "price_tag_auto_collect_days", 0) or 0
+        if days <= 0:
+            return 0
+
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        stale = (
+            db.query(PriceTagRequest)
+            .filter(
+                PriceTagRequest.status == STATUS_READY_FOR_COLLECTION,
+                PriceTagRequest.ready_for_collection_at.isnot(None),
+                PriceTagRequest.ready_for_collection_at < cutoff,
+            )
+            .all()
+        )
+        for request in stale:
+            request.status = STATUS_COLLECTED
+            request.collected_at = datetime.utcnow()
+            request.collected_auto = True
+            # Nobody did this, so nobody is recorded as having done it.
+            request.collected_by_user_id = None
+            request.collected_by_contact_id = None
+        if stale:
+            db.flush()
+            db.commit()
+        return len(stale)
+
+    @staticmethod
     def validate_submittable(
         request: PriceTagRequest, *, require_debtor: bool = True
     ) -> None:
@@ -539,6 +637,18 @@ class PriceTagRequestService:
         not touch it, so re-checking it here would refuse an edit over a field
         the edit never asked about.
         """
+        # Who prints is REQUIRED, and refused on its own rather than folded
+        # into the list below: it has its own code because the portal form
+        # names the gap under the control, and the answer decides whether the
+        # request ends at `approved` or waits for a collection (D7).
+        if request.print_by not in PRINT_BY_CHOICES:
+            raise AppException(
+                status_code=422,
+                message="Say who prints these tags before submitting.",
+                detail="print_by",
+                code="PRINT_BY_REQUIRED",
+            )
+
         # D-P2b: need by is optional - dropped from what "complete" requires.
         missing: list[tuple[str, str]] = []
         if require_debtor and not (request.debtor_name or "").strip():

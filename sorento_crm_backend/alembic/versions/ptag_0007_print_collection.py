@@ -13,6 +13,8 @@ testable by importing the revision and calling it (precedent:
 Revision ID: ptag_0007_print_collection
 Revises: 510_spec_visibility_policies
 """
+import uuid
+
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import text
@@ -47,13 +49,17 @@ def seed_auto_collect_task(bind) -> None:
     Same shape as ``promotion_active_window``: enabled, hourly, idempotent.
     The sweep itself reads the configured days and does nothing at 0.
     """
+    # An explicit id: `scheduled_tasks.id` is a plain UUID column whose default
+    # lives in Python, not in the database, so an INSERT that omits it violates
+    # the not-null constraint wherever the schema was built from the models.
     bind.execute(
         text(
             """
             INSERT INTO scheduled_tasks (
-                key, name, description, enabled, interval_unit, interval_value,
+                id, key, name, description, enabled, interval_unit, interval_value,
                 timezone, start_at, next_run_at, created_at, updated_at
             ) VALUES (
+                :task_id,
                 'price_tag_auto_collect',
                 'Price tag auto collect',
                 'Marks a price tag request collected once it has been ready for '
@@ -69,7 +75,8 @@ def seed_auto_collect_task(bind) -> None:
             )
             ON CONFLICT (key) DO NOTHING
             """
-        )
+        ),
+        {"task_id": str(uuid.uuid4())},
     )
 
 

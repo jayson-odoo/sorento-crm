@@ -8,7 +8,7 @@
  * prints and there is a hand-over to record - `ready_for_collection`, then
  * `collected` (by hand, or automatically after the configured days).
  *
- * ## Expected API contract (Phase 1: the overrides below stand in)
+ * ## API contract
  *
  * ```
  * price_tag_requests.print_by  "office" | "self" | null
@@ -84,68 +84,3 @@ export function autoCollectOn(
 export const AUTO_COLLECT_DAYS_MIN = 0;
 export const AUTO_COLLECT_DAYS_MAX = 90;
 export const AUTO_COLLECT_DAYS_DEFAULT = 7;
-
-// ---------------------------------------------------------------------------
-// PHASE 1 MOCK - deleted when the column, the routes and the setting exist
-// ---------------------------------------------------------------------------
-
-/**
- * What the backend does not carry yet, remembered per request in this tab.
- *
- * Two jobs, both temporary. First, a `print_by` the server drops on save would
- * otherwise vanish on the next read, so the choice could not be walked at all.
- * Second, the collection statuses do not exist in the status graph yet, so a
- * real transition would 409: this lets the CRM and the portal be walked at
- * `approved` + office and at `ready_for_collection` without pushing a shared
- * dev row through a graph that cannot take it back.
- */
-export interface PriceTagCollectionOverride {
-  print_by?: PrintBy | null;
-  status?: string;
-  ready_for_collection_at?: string | null;
-  collected_at?: string | null;
-  collected_by_name?: string | null;
-  collected_auto?: boolean;
-}
-
-const overrides = new Map<string, PriceTagCollectionOverride>();
-
-let autoCollectDays: number | null = null;
-
-/** Merge whatever this tab knows over a fetched request. */
-export function applyCollectionOverride<T extends { id: string }>(request: T): T {
-  const override = overrides.get(request.id);
-  return override ? { ...request, ...override } : request;
-}
-
-export function setCollectionOverride(
-  requestId: string,
-  patch: PriceTagCollectionOverride,
-): void {
-  overrides.set(requestId, { ...(overrides.get(requestId) ?? {}), ...patch });
-}
-
-export function readAutoCollectDaysOverride(): number | null {
-  return autoCollectDays;
-}
-
-export function setAutoCollectDaysOverride(days: number): void {
-  autoCollectDays = days;
-}
-
-export function _resetCollectionOverrides(): void {
-  overrides.clear();
-  autoCollectDays = null;
-}
-
-/**
- * The overrides on `window`, for a Phase 1 browser walk: the statuses the
- * graph cannot reach yet have to be seen somehow. Goes away with the store.
- */
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).__ptagPrintMock = {
-    set: setCollectionOverride,
-    days: setAutoCollectDaysOverride,
-    reset: _resetCollectionOverrides,
-  };
-}

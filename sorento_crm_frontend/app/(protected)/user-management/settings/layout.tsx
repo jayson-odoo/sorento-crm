@@ -25,10 +25,7 @@ import { Container } from '@/components/common/container';
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemSetting } from '@/app/models/system';
-import {
-  AUTO_COLLECT_DAYS_DEFAULT,
-  readAutoCollectDaysOverride,
-} from '@/lib/dealer-kit/print-collection';
+import { AUTO_COLLECT_DAYS_DEFAULT } from '@/lib/dealer-kit/print-collection';
 import { SettingsProvider } from './components/settings-context';
 
 type NavRoutes = Record<
@@ -42,7 +39,7 @@ type NavRoutes = Record<
 >;
 
 /** Map API snake_case settings to frontend camelCase SystemSetting */
-function mapSettingsFromApi(
+export function mapSettingsFromApi(
   raw: Record<string, unknown> | null,
 ): SystemSetting | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -84,15 +81,13 @@ function mapSettingsFromApi(
       typeof raw.deferred_delete_seconds === 'number' ? raw.deferred_delete_seconds : 10,
     deferredActionSeconds:
       typeof raw.deferred_action_seconds === 'number' ? raw.deferred_action_seconds : 5,
-    // A new settings column reaches the FE only if it is in this manual mapper too.
-    //
-    // PHASE 1 (r9 S3): the column does not exist yet, so a value saved in this
-    // tab is remembered by the override and everything else falls back to the
-    // shipped default. Drop the override half once the column lands.
+    // A new settings column reaches the FE only if it is in this manual mapper
+    // too. 0 is a real answer here (the sweep is off), so the check is on the
+    // TYPE, never on truthiness.
     priceTagAutoCollectDays:
       typeof raw.price_tag_auto_collect_days === 'number'
         ? raw.price_tag_auto_collect_days
-        : (readAutoCollectDaysOverride() ?? AUTO_COLLECT_DAYS_DEFAULT),
+        : AUTO_COLLECT_DAYS_DEFAULT,
     planGrain: raw.plan_grain === 'location' ? 'location' : 'product',
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,

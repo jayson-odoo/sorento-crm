@@ -102,6 +102,8 @@ class PriceTagRequestCreate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+    #: Who prints (r9 D7): "office" | "self". Required at submit.
+    print_by: Optional[str] = None
 
 
 class PriceTagRequestUpdate(BaseModel):
@@ -127,6 +129,20 @@ class PriceTagRequestUpdate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+    #: Who prints (r9 D7): "office" | "self". Required at submit.
+    print_by: Optional[str] = None
+
+
+class PriceTagRequestOfficeUpdate(BaseModel):
+    """What the office may change on a SUBMITTED request (r9 D7).
+
+    One field, deliberately: everything else belongs to the salesperson and
+    goes through the revision engine. A separate model from
+    ``PriceTagRequestUpdate`` so a draft edit and an office fix cannot drift
+    into each other's fields.
+    """
+
+    print_by: Optional[str] = None
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -184,6 +200,13 @@ class PriceTagRequestResponse(BaseModel):
     # as `expected_revision_no`, and the header line reads it too.
     revision_no: int = 0
     last_revised_at: Optional[datetime] = None
+    # Who prints, and the hand-over that follows for an office print (r9 D7/D9).
+    # Declared here or `response_model` drops them without a word (LESSONS).
+    print_by: Optional[str] = None
+    ready_for_collection_at: Optional[datetime] = None
+    collected_at: Optional[datetime] = None
+    collected_auto: bool = False
+    collected_by_name: Optional[str] = None
     lines: list[PriceTagRequestLineResponse] = []
 
     # Resolved, not stored. Filled by

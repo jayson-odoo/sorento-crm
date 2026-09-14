@@ -101,7 +101,6 @@ import {
   autoCollectOn,
   isTerminalPriceTagStatus,
   printByLabel,
-  readAutoCollectDaysOverride,
   type PrintBy,
 } from '@/lib/dealer-kit/print-collection';
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
@@ -451,8 +450,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
    * read, not the settings blob - marketing works these requests without
    * `user_management.settings.view`.
    *
-   * PHASE 1: the key is not on the projection yet, so this falls through to
-   * whatever System Settings set in this tab, then to the shipped default.
+   * 0 is a real answer (the sweep is off), so the fallback is on the TYPE.
    */
   const { data: appConfig } = useQuery({
     queryKey: ['system-app-config'],
@@ -466,7 +464,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const autoCollectDays =
     typeof appConfig?.price_tag_auto_collect_days === 'number'
       ? appConfig.price_tag_auto_collect_days
-      : (readAutoCollectDaysOverride() ?? AUTO_COLLECT_DAYS_DEFAULT);
+      : AUTO_COLLECT_DAYS_DEFAULT;
 
   const changedCount = useMemo(() => changedLineCount(dataChanges), [dataChanges]);
   const changesByLine = useMemo(() => {

@@ -21,6 +21,12 @@ class AppException(HTTPException):
                 "code": code
             }
         )
+        # Also as plain attributes: the wire shape above is what the handler
+        # serialises, and a caller that catches this (a service guard's own
+        # test, a retry that only acts on one code) should not have to dig
+        # through the detail dict to read what it already knows.
+        self.code = code
+        self.message = message
 
 
 def handle_not_found(entity: str, entity_id: str) -> AppException:

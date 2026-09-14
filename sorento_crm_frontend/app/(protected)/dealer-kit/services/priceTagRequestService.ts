@@ -7,11 +7,7 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
-import {
-  applyCollectionOverride,
-  setCollectionOverride,
-  type PrintBy,
-} from '@/lib/dealer-kit/print-collection';
+import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import {
   designPayloadFromResponse,
   type TagSheetDesignPayload,
@@ -182,11 +178,7 @@ export async function getPriceTagRequest(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load price tag request'));
   }
-  const request: PriceTagRequestDetail = await response.json();
-  // PHASE 1: the print choice and the two collection statuses do not exist
-  // server-side yet, so whatever this tab set is merged back over the read.
-  // One line to delete once the column and the graph land.
-  return applyCollectionOverride(request);
+  return response.json();
 }
 
 /**
@@ -197,13 +189,19 @@ export async function getPriceTagRequest(
  *   200 the updated request. 409 once the request is terminal.
  * ```
  *
- * PHASE 1: remembered in this tab only - the column does not exist yet.
  */
 export async function updatePriceTagPrintBy(
   id: string,
   printBy: PrintBy | null,
 ): Promise<void> {
-  setCollectionOverride(id, { print_by: printBy });
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ print_by: printBy }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to update the request'));
+  }
 }
 
 /**
@@ -216,13 +214,9 @@ export async function updatePriceTagPrintBy(
  *   409 unless the request is `approved` AND print_by = "office".
  * ```
  *
- * PHASE 1: the status is not in the graph yet, so a real call would 409.
  */
 export async function markReadyForCollection(id: string): Promise<void> {
-  setCollectionOverride(id, {
-    status: 'ready_for_collection',
-    ready_for_collection_at: new Date().toISOString(),
-  });
+  await transitionPriceTagRequest(id, 'ready_for_collection');
 }
 
 /**
@@ -235,15 +229,9 @@ export async function markReadyForCollection(id: string): Promise<void> {
  *   409 unless the request is `ready_for_collection`.
  * ```
  *
- * PHASE 1: as above.
  */
 export async function markCollected(id: string): Promise<void> {
-  setCollectionOverride(id, {
-    status: 'collected',
-    collected_at: new Date().toISOString(),
-    collected_by_name: 'You',
-    collected_auto: false,
-  });
+  await transitionPriceTagRequest(id, 'collected');
 }
 
 export async function claimPriceTagRequest(
