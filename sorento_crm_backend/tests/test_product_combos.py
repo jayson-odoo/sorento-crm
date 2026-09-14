@@ -446,11 +446,11 @@ def test_business_gate_ignores_combos(db):
     ]
     assert matches, "the cabinet's own code must still resolve"
     assert {match.entity_type for match in matches} == {"product"}
-    assert {match.id for match in matches} == {host.id}
+    assert {match.uuid for match in matches} == {host.id}
 
     # The mirror is NOT dragged in as part of the answer, and no combo table was
     # touched to produce it.
-    assert mirror.id not in {match.id for match in matches}
+    assert mirror.id not in {match.uuid for match in matches}
     combo_reads = [s for s in statements if "product_combo" in s.lower()]
     assert combo_reads == [], (
         "the resolver read the combo tables: " + "; ".join(combo_reads[:2])
