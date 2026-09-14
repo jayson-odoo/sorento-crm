@@ -66,6 +66,12 @@ export interface UseDeferredActionInput {
   invalidateKeys?: readonly (readonly unknown[])[];
   /** Where to go afterwards - a record page cannot stay open on a deleted row. */
   onCommitted?: () => void;
+  /**
+   * Extra classes on the `inline` countdown, for a caller whose slot is narrower than the
+   * countdown's own comfortable minimum: a DataGrid cell is ~200px, and the default
+   * `min-w-[13rem]` plus its padding overflows one.
+   */
+  countdownClassName?: string;
 }
 
 export interface UseDeferredActionResult {
@@ -103,6 +109,7 @@ export function useDeferredAction(
     dimEntityIds,
     invalidateKeys,
     onCommitted,
+    countdownClassName,
   } = input;
 
   const queryClient = useQueryClient();
@@ -305,6 +312,7 @@ export function useDeferredAction(
           verb={verb}
           onCancel={cancel}
           cancelling={cancelMutation.isPending}
+          className={countdownClassName}
         />
       ) : null,
   };

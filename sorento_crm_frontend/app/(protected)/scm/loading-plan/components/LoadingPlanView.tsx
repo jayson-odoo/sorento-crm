@@ -6,7 +6,12 @@ import { toast } from '@/lib/toast';
 import { ArrowLeft, LoaderCircle, Save, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card } from '@/components/ui/card';
+import {
+  Card,
+  CardHeader,
+  CardHeading,
+  CardTitle,
+} from '@/components/ui/card';
 import {
   Dialog,
   DialogBody,
@@ -21,6 +26,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import DetailActions from '@/components/common/DetailActions';
+import { Field } from '@/components/common/Field';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -68,9 +74,10 @@ import { PageHeader } from '@/components/common/PageHeader';
  *  enough that the highlight/remark she is checking still feels like it followed her. */
 const PREVIEW_DEBOUNCE_MS = 400;
 
-/** The record's three tabs (S2): Lines (default), Supplier codes, Sent. */
-type LoadingPlanTab = 'lines' | 'codes' | 'sent';
-const LOADING_PLAN_TABS: LoadingPlanTab[] = ['lines', 'codes', 'sent'];
+/** The record's four tabs (S2, S3 of the 14 Sep feedback batch): General (the plan's own
+ *  facts, first in the strip), Lines (still the landing tab), Supplier codes, Sent. */
+type LoadingPlanTab = 'general' | 'lines' | 'codes' | 'sent';
+const LOADING_PLAN_TABS: LoadingPlanTab[] = ['general', 'lines', 'codes', 'sent'];
 
 /**
  * One loading plan, as a record (R5).
@@ -442,14 +449,6 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     );
   }
 
-  const subtitle = [
-    `Started ${formatDateTimeInMalaysia(plan.started_at)}`,
-    // AC-N7: the same window wording the reorder run's own header/subtitle/list use
-    // (`describeWindow`), so a plan with a start never states the end alone.
-    describeWindow(plan.plan_horizon_start, plan.plan_horizon_date),
-    plan.document_label,
-  ].join(' · ');
-
   // Review round, 12 Sep: same guard as reorder planning's own Start Plan dialog
   // (RunPlanningModal.tsx:142-147) - a backwards window nets nothing either.
   const cutOffWindowInvalid = Boolean(
@@ -517,6 +516,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
         </>
       ) : (
         <>
+          {/* Title and trail only (S3, AC-3.1). The status pill and the started / window /
+              stock-list line used to hang here; the owner reads them as a list of facts, so
+              they live on the General tab below. */}
           <PageHeader
             title={plan.supplier_name ?? EM_DASH}
             titleClassName="max-w-full truncate"
@@ -530,23 +532,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                 Back to loading plans
               </Button>
             }
-          >
-            {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
-                so its lines are sized to their content and a long supplier name would push the
-                header past the viewport at 375px instead of ellipsing. */}
-            <div
-              className="flex w-full min-w-0 flex-wrap items-center gap-2"
-              title={plan.supplier_name ?? ''}
-            >
-
-              <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
-                {STATUS_LABEL[plan.status]}
-              </Badge>
-            </div>
-            <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
-              {subtitle}
-            </p>
-          </PageHeader>
+          />
 
           {/* The plan's own actions: pager, gear, primary (D6, S1). They sit under the
               toolbar rather than on it, and wrap at 375. The gear renders `planActions` - the
@@ -587,6 +573,7 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               edits no matter which tab is open. */}
           <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
             <TabsList variant="line" className="mb-4 w-full justify-start">
+              <TabsTrigger value="general">General</TabsTrigger>
               <TabsTrigger value="lines">Lines</TabsTrigger>
               <TabsTrigger value="codes">
                 Supplier codes{unmatchedCodes.length ? ` (${unmatchedCodes.length})` : ''}
@@ -595,6 +582,34 @@ export function LoadingPlanView({ planId }: { planId: string }) {
                 Sent{requestNotices.length ? ` (${requestNotices.length})` : ''}
               </TabsTrigger>
             </TabsList>
+
+            <TabsContent value="general">
+              {/* The plan's own facts, as a list of label/value pairs - the same `Field` the
+                  proforma invoice's General tab reads from. One column at 375px, two from
+                  the `sm` breakpoint (AC-3.3). */}
+              <Card data-testid="plan-general">
+                <CardHeader>
+                  <CardHeading>
+                    <CardTitle>Plan</CardTitle>
+                  </CardHeading>
+                </CardHeader>
+                <section aria-label="Plan" className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2">
+                  <Field label="Status">
+                    <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
+                      {STATUS_LABEL[plan.status]}
+                    </Badge>
+                  </Field>
+                  <Field label="Supplier">{plan.supplier_name ?? EM_DASH}</Field>
+                  <Field label="Started">{formatDateTimeInMalaysia(plan.started_at)}</Field>
+                  {/* AC-N7: the same window wording the reorder run's own header, subtitle
+                      and list use, so a plan with a start never states the end alone. */}
+                  <Field label="Plan window">
+                    {describeWindow(plan.plan_horizon_start, plan.plan_horizon_date)}
+                  </Field>
+                  <Field label="Stock list">{plan.document_label ?? EM_DASH}</Field>
+                </section>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="lines">
               <ContainerRequestSection

@@ -328,6 +328,27 @@ _SO_DATE = func.coalesce(
 _SO_NUMBER = func.coalesce(
     ProjectSalesOrder.autocount_doc_no, ProjectSalesOrder.provisional_ref
 )
+
+#: How many words of the search box are actually applied. Ten is far past what anybody
+#: types and far short of what a pasted paragraph would cost: each token is its own OR
+#: across eleven columns of a joined query.
+_MAX_QUERY_TOKENS = 10
+#: The LIKE escape character. Backslash, declared to Postgres per predicate rather than
+#: relied on: `standard_conforming_strings` decides whether a bare one is even special.
+_LIKE_ESCAPE = "\\"
+
+
+def _escape_like(token: str) -> str:
+    """A typed word as a LITERAL. `%` and `_` are SQL wildcards, not search syntax: typed
+    into the box they answered a different question from the one that was asked - `50%`
+    matched anything with 50 in it, `_` matched any character at all."""
+    return (
+        token.replace(_LIKE_ESCAPE, _LIKE_ESCAPE * 2)
+        .replace("%", f"{_LIKE_ESCAPE}%")
+        .replace("_", f"{_LIKE_ESCAPE}_")
+    )
+
+
 _CUSTOMER_NAME = Customer.customer_name
 # What `PROJECT/CUSTOMER` sorts and filters on. The printed label starts with the
 # customer when there is one and with the project when there is not, so this is the same
@@ -692,28 +713,41 @@ class OrderInquiryWorklistService:
             else:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         if query:
-            like = f"%{query.strip()}%"
-            base = base.filter(
-                or_(
-                    OrderInquiryRow.item_code.ilike(like),
-                    OrderInquiryRow.spo_ref.ilike(like),
-                    # Purchasing is asked about "OI-000123" by name; without this the row is
-                    # reachable only by knowing which sales order raised it.
-                    OrderInquiry.inquiry_no.ilike(like),
-                    cast(_SO_NUMBER, String).ilike(like),
-                    Product.product_name.ilike(like),
-                    Product.product_code.ilike(like),
-                    Customer.customer_name.ilike(like),
-                    Project.title.ilike(like),
-                    Project.project_code.ilike(like),
-                    # The CS who raised it. By name, and by the FRONT of the email
-                    # address rather than anywhere inside it: a buyer types "cindy",
-                    # and matching `%cindy%` across a whole address would also return
-                    # every row whose raiser happens to work at cindy.com.
-                    User.name.ilike(like),
-                    User.email.ilike(f"{query.strip()}%"),
+            # ONE FILTER PER WORD (S2, AC-2.1): an order has forty lines and a product sits
+            # on twenty orders, so "SO366990 SRTWT6801" typed as one phrase matched nothing
+            # and either word alone answers the wrong question. Each token may still hit any
+            # of the columns below (the OR), and every token has to hit something (the AND),
+            # which is what makes the pair of them name one row. No tokens - a blank or
+            # all-space box - filters nothing, the same as no query at all.
+            #
+            # Capped at ten, because every token is another OR across eleven columns over a
+            # joined query: a pasted paragraph would be a hundred of them. Dropped rather
+            # than refused - a clumsy paste deserves a search result, not a 422 - and the
+            # route caps the string's own length beside this.
+            for token in str(query).split()[:_MAX_QUERY_TOKENS]:
+                like = f"%{_escape_like(token)}%"
+                base = base.filter(
+                    or_(
+                        OrderInquiryRow.item_code.ilike(like, escape=_LIKE_ESCAPE),
+                        OrderInquiryRow.spo_ref.ilike(like, escape=_LIKE_ESCAPE),
+                        # Purchasing is asked about "OI-000123" by name; without this the row
+                        # is reachable only by knowing which sales order raised it.
+                        OrderInquiry.inquiry_no.ilike(like, escape=_LIKE_ESCAPE),
+                        cast(_SO_NUMBER, String).ilike(like, escape=_LIKE_ESCAPE),
+                        Product.product_name.ilike(like, escape=_LIKE_ESCAPE),
+                        Product.product_code.ilike(like, escape=_LIKE_ESCAPE),
+                        Customer.customer_name.ilike(like, escape=_LIKE_ESCAPE),
+                        Project.title.ilike(like, escape=_LIKE_ESCAPE),
+                        Project.project_code.ilike(like, escape=_LIKE_ESCAPE),
+                        # The CS who raised it. By name, and by the FRONT of the email
+                        # address rather than anywhere inside it: a buyer types "cindy",
+                        # and matching `%cindy%` across a whole address would also return
+                        # every row whose raiser happens to work at cindy.com. The rule
+                        # belongs to the TOKEN, not to the whole box.
+                        User.name.ilike(like, escape=_LIKE_ESCAPE),
+                        User.email.ilike(f"{_escape_like(token)}%", escape=_LIKE_ESCAPE),
+                    )
                 )
-            )
         return base
 
     def list_rows(
