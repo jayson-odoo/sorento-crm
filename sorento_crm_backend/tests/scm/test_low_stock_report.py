@@ -306,7 +306,7 @@ def test_workbook_has_two_sheets_in_order_with_16_columns(db):
     run = _run(db)
     _summary_row(db, run, _product(db, stem="SHAPE"), pool_on_hand=40, reorder_level=100)
 
-    blob, content_type, filename = lsr.export_low_stock(db, run_id=str(run.id))
+    blob, content_type, filename, _counts = lsr.export_low_stock(db, run_id=str(run.id))
 
     assert content_type == (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -359,7 +359,7 @@ def test_low_sheet_membership(db):
     _summary_row(db, run, hidden_below, pool_on_hand=40, reorder_level=100)
     _hide(db, run, hidden_below)
 
-    blob, _ct, _fn = lsr.export_low_stock(db, run_id=str(run.id))
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id))
     low_codes = set(_codes_of(_sheets(blob)["Low stock"]))
 
     assert below.product_code in low_codes, "40 of 100 is below level"
@@ -391,7 +391,7 @@ def test_sheets_sorted_by_category_then_item_code(db):
     for p in (z_code_a_cat, a_code_z_cat, m_code_m_cat_1, m_code_m_cat_2):
         _summary_row(db, run, p, pool_on_hand=40, reorder_level=100)
 
-    blob, _ct, _fn = lsr.export_low_stock(db, run_id=str(run.id))
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id))
     wb = _sheets(blob)
     expected = [
         z_code_a_cat.product_code,
@@ -427,7 +427,7 @@ def test_all_sheet_lists_every_planned_product_hidden_included(db):
     report_codes = {r["product_code"] for r in svc.report(db, run_id=str(run.id))["rows"]}
     assert report_codes == {visible.product_code, hidden.product_code}
 
-    blob, _ct, _fn = lsr.export_low_stock(db, run_id=str(run.id))
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id))
     all_codes = set(_codes_of(_sheets(blob)["All"]))
     assert all_codes == report_codes, (
         f"All must be every row report() returns, hidden included: {all_codes}"
@@ -468,7 +468,7 @@ def test_description_category_reorder_qty_come_from_master_data(db):
     for p in (full, zero, unset):
         _summary_row(db, run, p, pool_on_hand=40, reorder_level=100)
 
-    blob, _ct, _fn = lsr.export_low_stock(db, run_id=str(run.id))
+    blob, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id))
     by_code = {r[0]: r for r in _rows_of(_sheets(blob)["Low stock"])}
 
     assert by_code[full.product_code][1] == "Wall hung WC, matt black", (
@@ -593,10 +593,13 @@ def test_generate_low_stock_report_marks_ready_with_row_counts(scm_app, monkeypa
     monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
     monkeypatch.setattr(
         lsr, "export_low_stock",
+        # Four values since reviewer item 4: the builder returns the counts it already
+        # has, so the task no longer re-reads the run to count rows.
         lambda db_, *, run_id, include_supplier=True: (
             b"fake-workbook",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "low-stock-10092026.xlsx",
+            {"low": 12, "all": 340},
         ),
     )
 
@@ -673,12 +676,12 @@ def test_include_supplier_false_drops_the_supplier_column_on_both_sheets(db):
     _summary_row(db, run, product, pool_on_hand=40, reorder_level=100,
                  supplier_name="Guangdong SW")
 
-    with_supplier, _ct, _fn = lsr.export_low_stock(db, run_id=str(run.id))
+    with_supplier, _ct, _fn, _counts = lsr.export_low_stock(db, run_id=str(run.id))
     wb_with = _sheets(with_supplier)
     assert wb_with["Low stock"][1][_SUPPLIER_COLUMN].value == "Supplier"
     assert "Guangdong SW" in _rows_of(wb_with["Low stock"])[0]
 
-    without, _ct2, _fn2 = lsr.export_low_stock(
+    without, _ct2, _fn2, _counts2 = lsr.export_low_stock(
         db, run_id=str(run.id), include_supplier=False
     )
     wb_without = _sheets(without)

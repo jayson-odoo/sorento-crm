@@ -48,7 +48,10 @@ from tests.scm.conftest import (
     requires_pg,
     seed_user,
 )
-from tests.scm.test_order_sheet_export_downloads import _NoCloseSession  # noqa: F401
+from tests.scm.test_order_sheet_export_downloads import (  # noqa: F401
+    _NoCloseSession,
+    _savepoint_session,
+)
 
 pytestmark = requires_pg
 
@@ -707,10 +710,13 @@ def _patch_task_render(monkeypatch, export_tasks):
     monkeypatch.setattr(export_tasks, "get_backend", lambda provider: _FakeBackend())
     monkeypatch.setattr(
         low_stock_report_service, "export_low_stock",
+        # Four values since reviewer item 4: the builder returns the counts it already
+        # has, so the task no longer re-reads the run to count rows.
         lambda db_, *, run_id, include_supplier=True: (
             b"fake-workbook",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "low-stock-10092026.xlsx",
+            {"low": 12, "all": 340},
         ),
     )
 
@@ -1207,3 +1213,123 @@ def test_a_successful_push_leaves_no_error_on_the_row(scm_app, monkeypatch):
         "SELECT error FROM user_downloads WHERE id = :id"
     ), {"id": dl_id}).scalar()
     assert not error, f"a delivered push must leave no error: {error!r}"
+
+
+# =========================================================================== #
+# Reviewer round 5, items 1 and 5. CODER-AUTHORED.
+#
+# 1: with the wait capped at 7 s a whole-book ask nearly always answers `pending` and
+#    claims delivery. If the render THEN fails, `_record_failure` marks the row failed and
+#    the push is never reached - the contact was told "it will be sent here when ready" and
+#    never hears otherwise. The task now sends one text line through the same one-shot claim.
+# 5: `send_chat_attachment_for` writes its own outbox row before raising
+#    `respond_send_failed` (502), so logging again there would double-count one send. Only
+#    the refusals raised BEFORE that logging (the 24 h window) are logged here.
+# =========================================================================== #
+
+def test_a_claimed_row_whose_render_fails_tells_the_contact(monkeypatch):
+    """Item 1: the promise is kept or retracted, never left hanging.
+
+    `_savepoint_session` rather than `scm_app`, for the reason the tester's own
+    render-failure test records: `_record_failure` calls `db.rollback()` first, which
+    against `scm_app` cascades past every nested savepoint and takes the seeded chain with
+    it - the claim would then match no row and prove nothing.
+    """
+    from app.services import respond_chat_template_service
+    from app.services.scm import low_stock_report_service
+
+    export_tasks, task_fn = _task()
+
+    with _savepoint_session() as db:
+        contact = _contact(db)
+        db.flush()
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        def _boom(db_, *, run_id, include_supplier=True):
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(low_stock_report_service, "export_low_stock", _boom)
+
+        sends: list[dict] = []
+        monkeypatch.setattr(respond_chat_template_service, "send_chat_message_for",
+                            lambda db_, **kw: sends.append(kw) or {"status": "sent"})
+
+        run_id, dl_id = _seed_claimed_download(db, contact, claimed=True)
+        result = task_fn(dl_id, run_id, str(_download_row(db, dl_id)["user_id"]))
+
+        assert result["status"] == "failed", result
+        row = _download_row(db, dl_id)
+        assert row["status"] == "failed", row["status"]
+        assert row["delivered_at"] is not None, (
+            "the notice takes the same one-shot claim, so a retried job cannot send twice"
+        )
+        assert len(sends) == 1, f"exactly one notice: {sends}"
+        assert sends[0]["text"] == (
+            "Could not build the low stock report - ask again in a minute."
+        ), sends[0]
+        assert sends[0]["identifier"] == contact.respond_io_id, sends[0]
+
+        # A retry of the same poisoned job must not apologise twice.
+        task_fn(dl_id, run_id, str(row["user_id"]))
+        assert len(sends) == 1, f"a retried job sent the notice again: {sends}"
+
+
+def test_an_unclaimed_row_whose_render_fails_tells_nobody(monkeypatch):
+    """Item 1's other half: a plan-view export has nobody waiting on WhatsApp, so a render
+    failure there must not message a contact at all."""
+    from app.services import respond_chat_template_service
+    from app.services.scm import low_stock_report_service
+
+    export_tasks, task_fn = _task()
+
+    with _savepoint_session() as db:
+        contact = _contact(db)
+        db.flush()
+        monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+        def _boom(db_, *, run_id, include_supplier=True):
+            raise RuntimeError("render exploded")
+
+        monkeypatch.setattr(low_stock_report_service, "export_low_stock", _boom)
+
+        sends: list[dict] = []
+        monkeypatch.setattr(respond_chat_template_service, "send_chat_message_for",
+                            lambda db_, **kw: sends.append(kw) or {"status": "sent"})
+
+        run_id, dl_id = _seed_claimed_download(db, contact, claimed=False)
+        task_fn(dl_id, run_id, str(_download_row(db, dl_id)["user_id"]))
+
+        assert sends == [], f"nobody was waiting; nothing may be sent: {sends}"
+
+
+def test_a_502_push_failure_is_not_logged_twice(scm_app, monkeypatch):
+    """Item 5: `respond_send_failed` is raised AFTER `send_chat_attachment_for` has already
+    written its outbox row, so this module must not write a second one - one send, one
+    outbox row. The reason still goes on the download row."""
+    from app.services import respond_chat_template_service
+
+    export_tasks, task_fn = _task()
+    app, db, _key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    db.flush()
+    _patch_task_render(monkeypatch, export_tasks)
+    monkeypatch.setattr(export_tasks, "SessionLocal", lambda: _NoCloseSession(db))
+
+    def _send_failed(db_, **kw):
+        raise AppException(status_code=502, message="Respond.io send failed.",
+                           code="respond_send_failed")
+
+    monkeypatch.setattr(respond_chat_template_service, "send_chat_attachment_for",
+                        _send_failed)
+
+    run_id, dl_id = _seed_claimed_download(db, contact, claimed=True)
+    result = task_fn(dl_id, run_id, str(_download_row(db, dl_id)["user_id"]))
+
+    assert result["status"] == "ready", result
+    error = db.execute(text(
+        "SELECT error FROM user_downloads WHERE id = :id"
+    ), {"id": dl_id}).scalar() or ""
+    assert error.startswith("chat push failed: respond_send_failed"), repr(error)
+    assert _integration_logs_for(db, dl_id) == [], (
+        "the sender already logged this one - a second row would double-count the send"
+    )

@@ -152,17 +152,10 @@ def _split(db: Session, run_id: Optional[str]) -> dict:
     }
 
 
-def row_counts(db: Session, *, run_id: Optional[str]) -> dict:
-    """`{"low": n, "all": m}` for one run - what the export task stamps onto the download
-    row at `mark_ready` (AC-36), so S5's chat turn can answer "Low: 12 of 340 planned
-    products" without opening the workbook on the request thread (AC-43).
-
-    Counted through `_split`, the same function that builds the sheets, so the two figures
-    are the workbook's own rather than a second reading of the Low rule in SQL that could
-    drift from it.
-    """
-    split = _split(db, run_id)
-    return {"low": len(split["low_rows"]), "all": len(split["all_rows"])}
+#: `row_counts()` is GONE (reviewer item 4, round 1 S6): it called `_split` a second time,
+#: so every chat report serialised the whole frozen run TWICE on the worker - a real cost on
+#: the 1,546-product runs this lane measured. `export_low_stock` now returns the counts it
+#: already has, as the fourth element of its tuple, so the task does one read.
 
 
 def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
@@ -210,8 +203,14 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
 
 
 def export_low_stock(db: Session, *, run_id: Optional[str],
-                     include_supplier: bool = True) -> tuple[bytes, str, str]:
-    """The workbook for one run: `(bytes, content_type, filename)`.
+                     include_supplier: bool = True) -> tuple[bytes, str, str, dict]:
+    """The workbook for one run: `(bytes, content_type, filename, {"low": n, "all": m})`.
+
+    The counts ride back with the bytes (reviewer item 4) because this function has already
+    built both row sets: the task stamps them onto the download row at `mark_ready` so S5's
+    chat turn can say "Low: 12 of 340" without opening the workbook (AC-43), and reading
+    them from here rather than a second `row_counts()` call is what keeps a chat report to
+    ONE read of the frozen run.
 
     "Low stock" is written FIRST so `wb.active` is the sheet the file was opened for, then
     "All". `include_supplier=False` (S5's chat route, for a contact without the
@@ -258,4 +257,5 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
         buf.getvalue(),
         CONTENT_TYPE,
         f"low-stock-{svc.compact_ddmmyyyy(split['as_of'])}.xlsx",
+        {"low": len(split["low_rows"]), "all": len(split["all_rows"])},
     )
