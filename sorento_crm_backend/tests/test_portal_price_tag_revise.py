@@ -357,19 +357,25 @@ class TestReviseValidatesLines:
         assert fresh.revision_no == 0
         assert len(fresh.lines) == 1  # the original line survives untouched
 
-    def test_set_guarded_line_refuses_422(self, db):
+    def test_set_guarded_line_now_revises_and_carries_a_warning(self, db):
+        """Was a 422 (AC-S2-7): a revision is refused for package reasons no more.
+
+        The revision path ran the same guard as submit, so retiring it has to be
+        proved on both or a salesperson could submit a bare cabinet and then be
+        blocked from correcting the request that holds it.
+        """
         contact, product_id, row = _setup(db)
         guarded_product = _seed_product(db, class_label="Bathroom Furniture")
         token = _seed_token(contact)
 
-        with pytest.raises(HTTPException) as exc:
-            PortalRevisionService(db).revise(
-                token, "price_tag_request", str(row.id),
-                {"products": [{"product_id": guarded_product, "quantity": 1}]}, "Reason", 0,
-            )
-        assert exc.value.status_code == 422
+        PortalRevisionService(db).revise(
+            token, "price_tag_request", str(row.id),
+            {"products": [{"product_id": guarded_product, "quantity": 1}]}, "Reason", 0,
+        )
         db.expire_all()
-        assert PriceTagRequestService.get_request(db, str(row.id)).revision_no == 0
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.revision_no == 1
+        assert [line.package_warning for line in fresh.lines] == ["No package defined"]
 
     def test_duplicate_product_refuses_422_duplicate_line(self, db):
         contact, product_id, row = _setup(db)

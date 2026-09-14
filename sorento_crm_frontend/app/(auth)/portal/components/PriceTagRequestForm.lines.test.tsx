@@ -189,9 +189,12 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       product_set_id: 'set-uuid-1',
       product_id: null,
     });
-    // The field stays in the payload shape (an existing row still round-trips,
-    // D3) even though there is no longer a control to edit it.
-    expect(payload.lines[0].alternatives).toEqual([]);
+    // `alternatives` is GONE (S2, AC-S2-8) - the column is dropped and the
+    // payload never carries it again. What replaces it is `parts`: a set line
+    // has none (parts are a combo fact on a product line), so it posts empty
+    // rather than absent.
+    expect(payload.lines[0].alternatives).toBeUndefined();
+    expect(payload.lines[0].parts).toEqual([]);
   });
 
   it('a set row has no Alternatives column (D3/AC-S1-3)', async () => {
