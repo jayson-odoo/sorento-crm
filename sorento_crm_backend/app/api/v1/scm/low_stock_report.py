@@ -1,0 +1,295 @@
+"""The low stock report over chat (S5, AC-40..AC-50).
+
+`PLAN-low-stock-report.md`. Staff type "low stock report" into WhatsApp; the bot ALWAYS
+runs a FRESH plan (owner ruling 1, 14 Sep), so this route creates a run, a download row and
+two queued jobs, then holds the turn open for
+`system_settings.low_stock_sync_wait_seconds` waiting for the workbook. If it lands in
+time the turn carries it; if it does not, the route hands delivery to the worker and
+answers `pending`.
+
+**Its own module, not a second handler in `order_summary.py`**: this is the chatbot's
+route, it is reached with an API key, and it carries a gate none of the others do.
+
+-- SECURITY: THE SECOND GATE -------------------------------------------------
+`require_permission_with_api_key("scm.reorder.run")` answers "may this integration run
+plans". That is NOT the question this route has to answer, which is "may THIS CONTACT have
+the low stock report" - and this route WRITES (a run, a download row, two jobs). The
+`require_permission_with_api_key` docstring's own rule for a writing endpoint is that it
+carries a second, caller-specific gate; here that gate is the per-contact reveal key
+`scm.low_stock_report`, resolved and checked IN-ROUTE before anything is created. Without
+it: 403 `low_stock_report_not_enabled`, no run, no download row, nothing enqueued (AC-41).
+
+Two consequences worth stating plainly:
+
+* The act-as principal behind `EXTERNAL_API_KEY` (or an integration's `act_as_user_id`)
+  MUST hold `scm.reorder.run`, or every contact - granted or not - gets a 403 from the
+  FIRST gate and the feature is silently off. That is a DoD item on this lane.
+* `include_supplier` follows a SECOND reveal key, `purchase_orders.supplier` (AC-47). A
+  contact without it gets a workbook with no Supplier column at all, rather than a blank
+  one: a blank column still says "there is a supplier and you may not see it".
+
+**GET, not POST.** The MCP compiler injects `view=render` only on tools with no body
+params (`server.py:1604-1612`) and the chatbot lane sends `view=render` on every call, so a
+POST tool would never reach the presenter. `ToolSpec.read_only` already says METHOD IS
+TRANSPORT, NOT SEMANTICS, and `crm_portal_link_get` is the precedent for a read-listed tool
+that mints an artefact.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.dependencies import require_permission_with_api_key
+from app.services.download_service import DownloadService
+from app.services.error_handler import AppException
+from app.services.scm import low_stock_report_service, reorder_run_service
+
+log = logging.getLogger(__name__)
+
+router = APIRouter()
+
+_RUN = require_permission_with_api_key("scm.reorder.run")
+
+#: The per-contact reveal key this route's second gate reads (S6 adds it to
+#: `contact_field_reveal_service.FIELD_REVEAL_KEYS`, where the admin UI lists it).
+LOW_STOCK_GRANT = "scm.low_stock_report"
+#: The other key the workbook's shape follows - a dealer must never read a PO's supplier.
+SUPPLIER_GRANT = "purchase_orders.supplier"
+
+DEFAULT_SYNC_WAIT_SECONDS = 40
+#: How often `_await_download` re-reads the row while it waits. Short enough that a
+#: workbook rendered at second 3 does not wait until second 4 to be answered with.
+_POLL_SECONDS = 0.25
+
+MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _csv_list(values: Optional[list[str]]) -> Optional[list[str]]:
+    """`["BRW,PJ", "DC1"]` -> `["BRW", "PJ", "DC1"]`; `None`/empty -> `None`.
+
+    The tool may send a repeated query param or one comma-separated value (the outstanding
+    report's own parsing), and `create_run` reads `None` as "no scope, plan everything" -
+    which is exactly what an omitted filter means here.
+    """
+    if not values:
+        return None
+    out = [part.strip() for value in values for part in str(value).split(",")]
+    out = [part for part in out if part]
+    return out or None
+
+
+def _sync_wait_seconds(db: Session) -> int:
+    """`system_settings.low_stock_sync_wait_seconds`, read LIVE per request (AC-43).
+
+    Not cached, and not a constant: the owner asked for a System Setting on the lavish
+    page, so moving it must take effect on the next turn rather than on the next deploy.
+    """
+    from app.models.user import SystemSetting
+
+    row = db.query(SystemSetting).first()
+    value = getattr(row, "low_stock_sync_wait_seconds", None) if row else None
+    return int(value) if value else DEFAULT_SYNC_WAIT_SECONDS
+
+
+async def _await_download(download_id: str) -> Optional[dict]:
+    """Poll `user_downloads` until the row is `ready`, through SHORT-LIVED sessions.
+
+    Its own session per read, not the request's: the request session sits inside the
+    transaction that created the download row, and the worker's `mark_ready` commits on a
+    different connection - re-reading through the request session would keep returning the
+    snapshot this turn started with and never see it land.
+
+    The caller bounds this with `asyncio.wait_for`, so this loop has no timeout of its own;
+    it returns only when the row is ready (or terminal), and is cancelled otherwise.
+    """
+    from app.database import SessionLocal
+
+    while True:
+        db = SessionLocal()
+        try:
+            row = db.execute(text(
+                "SELECT status, storage_provider, storage_key, filename, "
+                "       row_count_low, row_count_all "
+                "FROM user_downloads WHERE id = :id"
+            ), {"id": str(download_id)}).mappings().first()
+        finally:
+            db.close()
+        if row and row["status"] in ("ready", "failed"):
+            return dict(row)
+        await asyncio.sleep(_POLL_SECONDS)
+
+
+def _as_of_for_run(db: Session, run_id: str) -> Optional[str]:
+    """The date the run's book was frozen for, off the rows themselves - the same stamp
+    the workbook's own filename carries. None when the run froze no rows, because inventing
+    today's date would label a book that was never built."""
+    stamp = db.execute(text(
+        "SELECT MAX(as_of) FROM scm.order_summary_row WHERE run_id = :r"
+    ), {"r": str(run_id)}).scalar()
+    return stamp.isoformat() if stamp else None
+
+
+def _ready_payload(db: Session, *, run_id: str, download_id: str) -> Optional[dict]:
+    """The `ready` answer, read off the download ROW - never by reopening the workbook.
+
+    `row_count_low` / `row_count_all` are stamped by `generate_low_stock_report` at
+    `mark_ready` for exactly this reason (AC-43): the route is holding a chat turn open and
+    has no business parsing a spreadsheet on the request thread. Returns None when the row
+    is not ready, so the caller can fall through to the pending path.
+    """
+    row = db.execute(text(
+        "SELECT status, storage_provider, storage_key, filename, "
+        "       row_count_low, row_count_all "
+        "FROM user_downloads WHERE id = :id"
+    ), {"id": str(download_id)}).mappings().first()
+    if not row or row["status"] != "ready" or not row["storage_key"]:
+        return None
+    key = row["storage_key"]
+    filename = key.rsplit("/", 1)[-1] or (row["filename"] or "low-stock.xlsx")
+    return {
+        "status": "ready",
+        "run_id": run_id,
+        "as_of": _as_of_for_run(db, run_id),
+        "low_count": row["row_count_low"],
+        "all_count": row["row_count_all"],
+        "attachments": [{
+            "url": low_stock_report_service.attachment_url(row["storage_provider"], key),
+            "filename": filename,
+            "mimeType": MIME_XLSX,
+            "attachmentType": "file",
+        }],
+    }
+
+
+@router.get("/low-stock-report")
+async def low_stock_report(
+    warehouse_codes: Optional[list[str]] = Query(None),
+    product_codes: Optional[list[str]] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    contact_id: str = Query(...),
+    space_id: str = Query(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(_RUN),
+):
+    """Run a fresh plan for this scope and answer with the workbook, or with a promise.
+
+    `contact_id` and `space_id` are REQUIRED (422 without): this route exists for the
+    chatbot and for nothing else, and without a contact there is nobody to check the reveal
+    key against or to push the file to (AC-40).
+
+    Three answers, all HTTP 200, because each is something the bot can SAY:
+      * `ready`   - the workbook landed inside the budget; the turn carries it.
+      * `pending` - it did not; the worker will push it when it does (AC-44).
+      * `busy`    - run creation refused with its own one-in-flight 409; "a plan is
+                    already running" is an answer, an HTTP error is not (AC-49).
+    """
+    from app.services.contact_field_reveal_service import granted_keys
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    # --- the second gate (AC-41) ------------------------------------------------------
+    resolved_contact_id = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=contact_id, space_id=space_id
+    )
+    keys = granted_keys(db, resolved_contact_id) if resolved_contact_id else []
+    if LOW_STOCK_GRANT not in keys:
+        raise AppException(
+            status_code=403,
+            message="Low stock report is not enabled for your account.",
+            code="low_stock_report_not_enabled",
+        )
+    include_supplier = SUPPLIER_GRANT in keys
+
+    # --- who owns the run and the file (AC-42) ----------------------------------------
+    # The CRM user the chatting contact is linked to, so the workbook lands in THEIR My
+    # Downloads and the plan says who asked for it. No link (a contact who is not a CRM
+    # user) falls back to the principal this request authenticated as - the act-as user
+    # behind the API key - and the file still reaches them over chat.
+    owner_user_id = db.execute(text(
+        "SELECT id FROM users WHERE respond_contact_id = :c LIMIT 1"
+    ), {"c": resolved_contact_id}).scalar() or str(current_user["id"])
+    owner_user_id = str(owner_user_id)
+
+    # --- the fresh run ----------------------------------------------------------------
+    try:
+        created = reorder_run_service.create_run(
+            db,
+            _csv_list(warehouse_codes),
+            "warehouse",
+            actor=owner_user_id,
+            enqueue=False,
+            product_codes=_csv_list(product_codes),
+            plan_horizon_start=date_from,
+            plan_horizon_date=date_to,
+            requested_via="chat",
+        )
+    except AppException as e:
+        if e.status_code == 409:
+            return {"status": "busy"}
+        raise
+    run_id = created["run_id"]
+
+    download = DownloadService(db).create(
+        user_id=owner_user_id,
+        kind="low_stock_xlsx",
+        source_entity_type="reorder_run",
+        source_entity_id=run_id,
+        filename=None,
+    )
+    download_id = str(download.id)
+
+    # The run job first, then the export with `depends_on` it: the workbook has to be
+    # rendered from a COMPLETED plan, not a half-frozen one. `enqueue_job` forwards
+    # `**kwargs` to `Queue.enqueue`, and RQ honours `depends_on` natively.
+    from app.services.queue_service import enqueue_job
+    from app.tasks.export_tasks import generate_low_stock_report
+    from app.tasks.reorder_tasks import run_reorder_job
+
+    run_job = enqueue_job(run_reorder_job, run_id, queue_name="imports")
+    enqueue_job(
+        generate_low_stock_report,
+        download_id,
+        run_id,
+        owner_user_id,
+        include_supplier=include_supplier,
+        queue_name="imports",
+        job_timeout=600,
+        depends_on=run_job,
+    )
+
+    # --- the bounded wait (AC-43) -----------------------------------------------------
+    try:
+        await asyncio.wait_for(_await_download(download_id), _sync_wait_seconds(db))
+    except asyncio.TimeoutError:
+        pass
+    except Exception:  # noqa: BLE001 - a failed poll is a pending answer, never a 500
+        log.exception("low_stock_report: waiting on download %s failed", download_id)
+
+    ready = _ready_payload(db, run_id=run_id, download_id=download_id)
+    if ready is not None:
+        return ready
+
+    # --- hand delivery to the worker (AC-44) ------------------------------------------
+    # ONE conditional UPDATE, on the REQUEST session: `WHERE status <> 'ready'` is what
+    # makes this exclusive with the task's own claim. 0 rows means the row turned ready in
+    # the same breath and this turn LOST the race - so answer with the file rather than
+    # promising a push the task will never make (its claim would find
+    # `deliver_to_contact_id IS NULL`).
+    claimed = db.execute(text(
+        "UPDATE user_downloads SET deliver_to_contact_id = :c "
+        "WHERE id = :id AND status <> 'ready'"
+    ), {"c": resolved_contact_id, "id": download_id}).rowcount
+    db.commit()
+    if not claimed:
+        won = _ready_payload(db, run_id=run_id, download_id=download_id)
+        if won is not None:
+            return won
+
+    return {"status": "pending", "run_id": run_id, "download_id": download_id}

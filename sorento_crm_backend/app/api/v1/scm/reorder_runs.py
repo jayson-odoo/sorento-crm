@@ -223,7 +223,7 @@ def list_reorder_runs(
                -- LEFT JOIN against the whole `purchase_order_lines` table this page used
                -- to run per load.
                planned_count, decided_count, confirmed_count,
-               superseded_by_run_id,
+               superseded_by_run_id, requested_via,
                -- How many warehouses were there to plan WHEN THIS RUN RAN. Compared with
                -- the run's own scope, that is what says "all" rather than "60 warehouses"
                -- - and it has to be as-of the run: 60 warehouses existed on 27 Aug and 61
@@ -346,6 +346,10 @@ def _list_item(
             str(_key(r, "superseded_by_run_id"))
             if _key(r, "superseded_by_run_id") is not None else None
         ),
+        # `chat` on a run the low stock report tool started over WhatsApp, NULL on every
+        # other run (PLAN-low-stock-report, AC-4/AC-48) - the plans list marks it so the
+        # buyer knows why a plan nobody here launched exists.
+        "requested_via": _key(r, "requested_via"),
     }
 
 
@@ -493,7 +497,8 @@ def get_reorder_run(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
         "       front_planning_contract_version, plan_horizon_date, plan_horizon_start, "
         "       started_at, "
-        "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id "
+        "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id, "
+        "       requested_via "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": run_id, **co_params}).mappings().first()
@@ -534,6 +539,7 @@ def get_reorder_run(
                               if row["supersedes_run_id"] else None),
         "superseded_by_run_id": (str(row["superseded_by_run_id"])
                                  if row["superseded_by_run_id"] else None),
+        "requested_via": row["requested_via"],
     }
 
 

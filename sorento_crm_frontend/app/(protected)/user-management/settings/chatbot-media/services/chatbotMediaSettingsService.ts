@@ -95,7 +95,10 @@ export interface ChatbotMediaSettings {
    * push (PLAN-low-stock-report S5, AC-7/AC-43). It sits beside the media wait because it
    * is the same kind of number - the one bound on how long a turn can be held - and the
    * same singleton owns it. Range 5-90; 40 keeps it inside the chatbot's own queue-wait
-   * budget. Written here in Phase 1 against the settings row; the column lands in S5.
+   * budget. REAL since S5: `system_settings.low_stock_sync_wait_seconds` exists, is in
+   * both manual dict builders, and is validated 5..90 on PUT - so this reads and writes
+   * the stored value, and the fallback below only covers a settings row that predates the
+   * column, exactly like every `media_*` key beside it.
    */
   low_stock_sync_wait_seconds: number;
 }

@@ -579,6 +579,68 @@ def generate_order_sheet(download_id: str, run_id: str, fmt: str, user_id: str) 
         db.close()
 
 
+def _push_low_stock_to_chat(db, download_id: str, *, provider: str, key: str) -> None:
+    """Push the finished workbook to the contact the chat turn handed it over to (AC-45).
+
+    The turn CLAIMS delivery for the worker by writing `deliver_to_contact_id` when its own
+    budget lapses; this claims the push BACK with one conditional UPDATE, and sends only
+    when that update touches a row. Between them the outcome is exactly one of {the turn
+    returned the file, the worker pushed it} (AC-46) - an unclaimed row was delivered
+    inside the turn, and pushing it would send the same workbook twice. `delivered_at IS
+    NULL` in the same predicate is what makes a RETRIED RQ job harmless.
+
+    A refusal from Respond is SWALLOWED. A closed 24 h window is a hard 422
+    (`attachment_window_closed`) - Respond has no attachment-carrying template - and the
+    send is already recorded in the outbox by `log_respond_send`. Raising would poison the
+    job for a file that rendered perfectly well, and the row stays `ready` either way: the
+    workbook exists and is still in My Downloads.
+    """
+    from sqlalchemy import text as _text
+
+    from app.services import respond_chat_template_service
+    from app.services.error_handler import AppException
+    from app.services.scm import low_stock_report_service
+
+    claimed = db.execute(_text(
+        "UPDATE user_downloads SET delivered_at = now() "
+        "WHERE id = :id AND deliver_to_contact_id IS NOT NULL AND delivered_at IS NULL "
+        "RETURNING deliver_to_contact_id::text"
+    ), {"id": str(download_id)}).scalar()
+    db.commit()
+    if not claimed:
+        return
+
+    respond_io_id = db.execute(_text(
+        "SELECT respond_io_id FROM respond_contacts WHERE id = :c"
+    ), {"c": claimed}).scalar()
+    if not respond_io_id:
+        logger.warning(
+            "generate_low_stock_report: contact %s has no respond_io_id; nothing pushed",
+            claimed,
+        )
+        return
+
+    try:
+        respond_chat_template_service.send_chat_attachment_for(
+            db,
+            identifier=str(respond_io_id),
+            respond_contact_id=str(claimed),
+            attachment_type="file",
+            url=low_stock_report_service.attachment_url(provider, key),
+            business_table="user_downloads",
+            business_id=str(download_id),
+        )
+    except AppException as e:
+        logger.warning(
+            "generate_low_stock_report: push for download %s refused (%s); the file is "
+            "still ready in My Downloads", download_id, getattr(e, "code", e.status_code),
+        )
+    except Exception:  # noqa: BLE001 - a broken send never fails a rendered export
+        logger.exception(
+            "generate_low_stock_report: push for download %s failed", download_id
+        )
+
+
 def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
                               include_supplier: bool = True) -> dict:
     """Render the run's low stock workbook, store it, and update the download row.
@@ -656,6 +718,7 @@ def generate_low_stock_report(download_id: str, run_id: str, user_id: str, *,
             "generate_low_stock_report: download %s ready (%d bytes, %d low of %d)",
             download_id, len(file_bytes), counts["low"], counts["all"],
         )
+        _push_low_stock_to_chat(db, download_id, provider=provider, key=stored_key)
         return {"download_id": download_id, "status": "ready", "bytes": len(file_bytes),
                 "row_count_low": counts["low"], "row_count_all": counts["all"]}
     except Exception as e:  # noqa: BLE001 - mark failed, never poison the queue

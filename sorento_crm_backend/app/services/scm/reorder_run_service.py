@@ -79,7 +79,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                product_codes: Optional[list[str]] = None,
                plan_horizon_date: Optional[date] = None,
                plan_horizon_start: Optional[date] = None,
-               supersedes_run_id: Optional[str] = None) -> dict:
+               supersedes_run_id: Optional[str] = None,
+               requested_via: Optional[str] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -119,6 +120,11 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     needed BEFORE it is excluded from the run's netting, undated demand always stays in (G2).
     Enforced ``start <= end`` when both are set lives on the HTTP schema, so a direct service
     call (tests, scripts) is trusted to pass a sane pair.
+
+    ``requested_via`` (PLAN-low-stock-report S5, AC-42) is ``"chat"`` when the low stock
+    report tool created this run over WhatsApp and None on every other path. Stamped so the
+    plans list can mark it - a buyer opening Reorder Planning can then see WHY a plan
+    nobody here launched exists, instead of reading it as a stray run.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
@@ -147,6 +153,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         decision_grain=plan_grain.resolve_plan_grain(db),
         front_planning_contract_version=plan_grain.FRONT_PLANNING_CONTRACT_VERSION,
         supersedes_run_id=supersedes_run_id,
+        requested_via=requested_via,
     ))
     db.commit()
 

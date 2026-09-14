@@ -29,6 +29,7 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from typing import Optional
+from urllib.parse import quote
 
 from sqlalchemy.orm import Session
 
@@ -70,6 +71,25 @@ def _compact_ddmmyyyy(iso: Optional[str]) -> str:
         return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
     except ValueError:
         return _date.today().strftime("%d%m%Y")
+
+
+def attachment_url(provider: Optional[str], key: str) -> str:
+    """A URL Respond.io can fetch the stored workbook from (S5, AC-43/AC-45).
+
+    The exact branch `respond_chat_template_service.upload_chat_attachment` uses, and for
+    its reason: the CloudFront signer percent-encodes and SIGNS the path itself, while the
+    R2 CDN builder concatenates raw - so R2 is encoded here rather than changing a builder
+    every stored row depends on. The storage key already ends in the filename, which is the
+    only name channel Respond has (its attachment object is `{type, url}`).
+
+    Shared by the route (the turn's own answer) and the worker's push, so the contact gets
+    the same URL whichever path delivers the file.
+    """
+    from app.services.storage_router import PROVIDER_R2, cdn_base_url, get_backend
+
+    if provider == PROVIDER_R2:
+        return cdn_base_url(provider, quote(key, safe="/"))
+    return get_backend(provider).get_signed_url(key, expires_in=60 * 60 * 24 * 7)
 
 
 def _master_map(db: Session, product_codes: list[str]) -> dict[str, dict]:
