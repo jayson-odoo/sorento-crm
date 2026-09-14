@@ -19,6 +19,7 @@ is empty.
 """
 from __future__ import annotations
 
+import re
 import uuid
 
 import pytest
@@ -104,6 +105,45 @@ def test_a_stock_list_upload_stamps_the_uploaders_name_not_their_id(scm_app):
         f"By column would print {principal['id']}"
     )
     assert stamped == {principal.get("name") or principal["email"]}
+
+
+def test_the_snapshot_row_still_records_the_uploaders_id(scm_app):
+    """The two provenance columns answer two different questions (security review, S4).
+
+    `supplier_product_code_alias.created_by` is read by a PERSON off the Remembered table, so
+    it holds the name. `supplier_inventory.uploaded_by` is a principal reference - it is what
+    an audit trail joins back to a user row - so it holds the id, and swapping a name into it
+    would silently break that join for every future upload.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    world = World(db)
+    world.product("SRTWC8357-300-RL")
+    code = world.supplier_code("SRTWC8357-RL-300")
+    supplier_id = str(world.supplier.id)
+    db.flush()
+
+    principal = app.dependency_overrides[gcu]()
+    response = TestClient(app).post(
+        "/api/v1/scm/supplier-inventory/apply",
+        files={"file": ("stock.xlsx", _workbook([[code, "toilet", 10, 0, 0.17, None]]), _XLSX)},
+        data={"supplier_id": supplier_id},
+    )
+
+    assert response.status_code == 200, response.text
+    stamped_on_stock = {
+        row[0]
+        for row in db.execute(
+            text(
+                "SELECT uploaded_by FROM scm.supplier_inventory WHERE supplier_id = :s"
+            ),
+            {"s": supplier_id},
+        ).all()
+    }
+    assert stamped_on_stock == {principal["id"]}
+    assert {row.created_by for row in _aliases(db, supplier_id)} == {
+        principal.get("name") or principal["email"]
+    }
 
 
 # --------------------------------------------------------------------------------- #
@@ -230,5 +270,8 @@ def test_the_names_are_resolved_in_one_query_for_the_whole_list():
         # The listener is real, so "no users query" cannot be the silent answer to a
         # listener that never fired.
         assert any("supplier_product_code_alias" in s for s in statements), statements
-        user_queries = [s for s in statements if " FROM users" in s]
+        # Matched on the TABLE, not on one spelling of the SQL: the resolution is an ORM
+        # query now (`actor_labels`), and SQLAlchemy renders `FROM users` on its own line
+        # where the hand-written statement had it after a space.
+        user_queries = [s for s in statements if re.search(r"\bFROM users\b", s)]
         assert len(user_queries) == 1, user_queries

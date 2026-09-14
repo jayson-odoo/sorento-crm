@@ -282,6 +282,64 @@ def test_an_all_space_query_filters_nothing(api):
     assert _ids(client, "") == everything
 
 
+# ------------------------------------------------------------------ the box has limits
+# (security review, round 1): a filter per token is a JOIN-heavy OR per token, and the box
+# is a public-facing string. Both halves are pinned here.
+
+
+def test_only_the_first_ten_tokens_are_applied(api):
+    """A pasted paragraph must not turn into a hundred ILIKE filters over eleven columns.
+
+    The tenth token still narrows; the eleventh is dropped rather than refused, because a
+    search box that answers 422 to a clumsy paste is a worse answer than a search result.
+    """
+    client, _db, _user_id, seeded = api
+
+    # Nine tokens that match everything (the marker every seeded row carries), then the
+    # order number: ten in all, and the tenth still does its work.
+    nine = " ".join([MARKER] * 9)
+    assert _ids(client, f"{nine} {seeded['so_a']}") == {
+        seeded["a_alpha"].id,
+        seeded["a_beta"].id,
+    }
+
+    # The same query with the item code as an ELEVENTH token: it falls off the end, so the
+    # answer is still the whole order rather than the one line.
+    assert _ids(client, f"{nine} {seeded['so_a']} {ALPHA}") == {
+        seeded["a_alpha"].id,
+        seeded["a_beta"].id,
+    }
+
+
+def test_an_overlong_query_is_refused(api):
+    """The cap above is on tokens; this is the cap on the string itself, at the route."""
+    client, _db, _user_id, _seeded = api
+
+    assert client.get(LIST, params={"query": "x" * 201}).status_code == 422
+    assert client.get(SUMMARY, params={"query": "x" * 201}).status_code == 422
+    assert client.get(EXPORT, params={"query": "x" * 201}).status_code == 422
+    assert client.get(LIST, params={"query": "x" * 200}).status_code == 200
+
+
+def test_a_wildcard_in_the_query_is_a_literal_character(api):
+    """`%` and `_` are SQL, not search syntax. Unescaped, `50%` matched every row with 50 in
+    it and `_` matched any character at all - so the box quietly answered a different
+    question from the one that was typed."""
+    client, _db, _user_id, seeded = api
+
+    # The item codes here are ZZTTOK-SRTWT6801 / ZZTTOK-SRTWC9042: `ZZTTOK-%` is a literal
+    # nobody carries, and `ZZTTOK_S` would match `ZZTTOK-S` if the underscore were a
+    # wildcard.
+    assert _ids(client, "ZZTTOK-%") == set()
+    assert _ids(client, "ZZTTOK_S") == set()
+    # And the plain prefix still answers, so the escaping has not broken matching itself.
+    assert _ids(client, "ZZTTOK-S") == {
+        seeded["a_alpha"].id,
+        seeded["a_beta"].id,
+        seeded["b_alpha"].id,
+    }
+
+
 # ------------------------------------------------------------------ AC-2.4
 
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.procurement import ProductSupplier
@@ -29,6 +29,7 @@ from app.models.scm import (
 )
 from app.services.error_handler import AppException
 from app.services.scm import plan_statement
+from app.services.scm.actor_labels import actor_label, actor_labels
 from app.services.scm.supplier_code_matcher import resolve
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
@@ -475,45 +476,6 @@ def _still_unmatched(
     return len(rows) if rows is not None else len(unmatched_for_supplier(db, supplier_id))
 
 
-def _actor_labels(db: Session, values) -> dict[str, str]:
-    """The people behind the ids in `created_by`, in ONE query.
-
-    `created_by` is free text: refresh matching and the PI upload path write a name, and a
-    stock-list upload used to write the caller's id (S4 fixes the route, but the rows it
-    already wrote stay on file). Only the UUID-shaped values are looked up, so a page of
-    names costs no query at all, and a page of hundreds costs one rather than one each.
-    """
-    ids = sorted({str(v) for v in values if v and _is_uuid(str(v))})
-    if not ids:
-        return {}
-    rows = (
-        db.execute(
-            text(
-                "SELECT id::text AS id, COALESCE(NULLIF(TRIM(name), ''), email) AS label "
-                "FROM users WHERE id = ANY(:ids)"
-            ),
-            {"ids": ids},
-        )
-        .mappings()
-        .all()
-    )
-    return {r["id"]: r["label"] for r in rows}
-
-
-def _actor_label(value, labels: dict[str, str]):
-    """One `created_by` as the Remembered table prints it: a name, or nothing.
-
-    An id nobody answers to is a deleted account, and `None` renders as the dash - "we do
-    not know who" - where the raw id says nothing to anybody and reads as a defect.
-    """
-    if not value:
-        return None
-    as_text = str(value)
-    if not _is_uuid(as_text):
-        return value
-    return labels.get(as_text)
-
-
 def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
     """What is on record for this supplier, in names a person reads - never an id."""
     if not _is_uuid(supplier_id):
@@ -534,7 +496,11 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
         )
         .all()
     )
-    labels = _actor_labels(db, (alias.created_by for alias, _product, _set in rows))
+    # `created_by` is free text: refresh matching and the PI upload path write a name, and
+    # a stock-list upload used to write the caller's id (S4 fixed the route, but the rows it
+    # already wrote stay on file). One query for the whole page, none at all for a page that
+    # holds no ids.
+    labels = actor_labels(db, (alias.created_by for alias, _product, _set in rows))
     return [
         {
             "id": str(alias.id),
@@ -545,7 +511,7 @@ def list_for_supplier(db: Session, supplier_id: str) -> list[dict]:
             "set_name": product_set.name if product_set else None,
             "source": alias.source,
             "matched_by": alias.matched_by,
-            "created_by": _actor_label(alias.created_by, labels),
+            "created_by": actor_label(alias.created_by, labels),
             "created_at": alias.created_at.isoformat() if alias.created_at else None,
         }
         for alias, product, product_set in rows
