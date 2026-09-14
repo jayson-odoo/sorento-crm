@@ -103,7 +103,19 @@ class PriceTagRequestLineResponse(BaseModel):
     marketing_override_reason: Optional[str] = None
     # The package under this line, in display order. Default empty rather than
     # omitted: the portal form and the CRM tab both read the key unconditionally.
-    parts: list[PriceTagRequestLinePartResponse] = []
+    #
+    # `validation_alias` is load-bearing, not decoration. This model validates
+    # FROM the ORM row, which has its own `parts` relationship holding
+    # `PriceTagRequestLinePart` objects whose `candidates` is a list of product
+    # id STRINGS - and this field wants resolved objects, so reading the
+    # attribute by name raised a validation error and every create 500'd
+    # (measured on the lane). Pointing validation at a name the ORM row does not
+    # carry leaves the default in place for `_fill_line_parts` to overwrite with
+    # the resolved rows. Serialisation is unaffected: the wire key is still
+    # `parts`.
+    parts: list[PriceTagRequestLinePartResponse] = Field(
+        default_factory=list, validation_alias="__resolved_parts__"
+    )
     created_at: datetime
     updated_at: datetime
 
