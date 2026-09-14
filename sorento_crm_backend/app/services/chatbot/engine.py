@@ -409,6 +409,33 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
     return str(kind) if kind else None
 
 
+#: The pending kinds whose answer is a POSITION against a roster the assistant printed
+#: (D17, 13 Sep 2026). Only these surface their options to the parser: every other kind
+#: either has no roster (`escalation_offer`) or already has its own resolution path, and
+#: attaching options to those would change a prompt this ruling is not about.
+_OPTION_PENDING_KINDS = ("outstanding_scope", "outstanding_detail")
+
+
+def _pending_options(variables: dict[str, Any]) -> list[str] | None:
+    """D17: the OPEN question's own numbered options, for the parser's user block.
+
+    The parser reads the customer's words against the options the assistant actually
+    offered and answers with a position; the deterministic head then maps that position
+    back through the SAME `last_result_set` (`head/output_exchange.py::
+    _outstanding_scope_pick`). One roster, read by both halves, so they cannot disagree
+    about what was on the screen.
+    """
+    if _pending_kind(variables) not in _OPTION_PENDING_KINDS:
+        return None
+    options: list[str] = []
+    for row in jsc.array(variables.get("last_result_set")):
+        label = jsc.get(row, "label")
+        if not jsc.truthy(label):
+            continue
+        options.append(f"{jsc.js_string(jsc.get(row, 'idx'))}. {jsc.js_string(label)}")
+    return options or None
+
+
 # --------------------------------------------------------------------------- #
 # Reads (session-bound, short)
 # --------------------------------------------------------------------------- #
@@ -1202,10 +1229,12 @@ def _run_stages(  # noqa: PLR0915
         "previous_conversation_state": variables,
         "referenced_result_set": referenced_result_set,
     }
+    pending_options = _pending_options(variables)
     user_block = parser.build_user_block(
         previous_response=variables.get("response"),
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
+        pending_options=pending_options,
     )
     # G6: a dry run may supply the emission instead of paying for it. The mock goes
     # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
@@ -1283,6 +1312,13 @@ def _run_stages(  # noqa: PLR0915
             # nothing: a missing row reads as "free", which no LLM call is.
             "tokens": int(parser_usage.get("total_tokens") or 0),
             "parser_bypassed": parser_bypassed,
+            # D17 (live failure, 13 Sep 2026): WHICH options the parser was shown, on the
+            # record. Diagnosing "the model answered casual" needs to separate "it was
+            # never told what was on offer" from "it was told and did not take it", and
+            # this stage stored only the parser's own output - so the first answer cost a
+            # debug print against a running stack. `None` when no numbered question was
+            # open, which is most turns.
+            "open_question_options": pending_options,
         },
         raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
     )
@@ -1529,6 +1565,12 @@ def _run_stages(  # noqa: PLR0915
                             dry_run=dry_run,
                             space_id=business_services.fetch_space_id(db),
                             trace=turn_trace,
+                            # S4c (PLAN-chatbot-outstanding-report.md): the live Session,
+                            # for `crm_outstanding_report`'s own location resolution
+                            # (D5, AC-1133) - the one thing `FetchServices` does not
+                            # already carry, since every OTHER seam it needs is an
+                            # I/O callable, not a Session.
+                            db=db,
                         )
                     except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
                         logger.exception("chatbot turn %s: fetch step failed", turn_id)

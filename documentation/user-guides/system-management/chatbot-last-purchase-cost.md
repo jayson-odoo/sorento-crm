@@ -81,6 +81,7 @@ needed either way.
 
 ## See also
 
+* [Chatbot - outstanding report (sales order backlog and delivery order pending)](chatbot-outstanding-report.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
 * [System Management - Data reference for admins](data-analysis.md)
 * [Procurement - Data analysis for the AI assistant](../procurement/data-analysis.md)

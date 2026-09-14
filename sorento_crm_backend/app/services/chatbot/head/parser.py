@@ -276,7 +276,11 @@ def resolve_config(
 
 
 def build_user_block(
-    *, previous_response: Any, latest_user_message: Any, pending_kind: str | None
+    *,
+    previous_response: Any,
+    latest_user_message: Any,
+    pending_kind: str | None,
+    pending_options: list[str] | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -285,6 +289,10 @@ def build_user_block(
     from the previous reply's wording (R3, D11). The legacy string is still present in
     `previous_response`, so a session written by n8n and one written by the CRM both
     parse the same way during the migration window.
+
+    `pending_options` is the second (D17, 13 Sep 2026): the numbered options of an open
+    question whose answer is a POSITION, so the parser can resolve a worded answer
+    against what was actually offered. Omitted, and the block is unchanged.
     """
     import re
 
@@ -297,6 +305,13 @@ def build_user_block(
     ]
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
+    if pending_options:
+        # D17 (owner design ruling, 13 Sep 2026): deterministic code never reads words.
+        # A question whose answer is a POSITION against a stored roster states that
+        # roster here, so the parser can map "the DO list" or "all" onto an option the
+        # assistant actually offered - and so the head only ever has to map the number
+        # back. Absent for every other turn, which keeps their block byte-identical.
+        lines.append("Open question options: " + "; ".join(pending_options))
     return "\n".join(lines)
 
 
