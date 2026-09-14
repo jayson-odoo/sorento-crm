@@ -4,6 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
 import { CircleCheck, CircleDashed, Info } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
@@ -20,7 +21,6 @@ import {
   bundledHeadline,
   flowExclusionLabel,
   formatInquiryQty,
-  linkedSummary,
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
@@ -61,39 +61,98 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
- * The "Outstanding PO/SPO" cell's own info icon (AC-A5): opens
- * `OrderInquiryBackingDocumentsDialog`, mounted only once asked for so a page of a hundred
- * rows does not carry a hundred dialogs - the same pattern `OrderInquiryDocumentLink` uses.
+ * The distinct document NUMBERS this row is linked to, of one book, in link order.
+ *
+ * Distinct numbers rather than links: two containers of one shipping order are one
+ * document to the person reading the list (AC-R-27), and the `+N` pill counts documents,
+ * not placements. The lightbox behind the number still lists every link.
  */
-function BackingDocumentsButton({ row }: { row: OrderInquiryWorklistRow }) {
+function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): string[] {
+  const numbers: string[] = [];
+  for (const link of row.links ?? []) {
+    if (link.kind !== kind) continue;
+    const document = (link.document ?? '').trim();
+    if (!document || numbers.includes(document)) continue;
+    numbers.push(document);
+  }
+  return numbers;
+}
+
+/**
+ * The PO cell and the SPO cell, which are the same cell over two books (owner, 14 Sep,
+ * live look at prod: "1 column to show the linked PO and 1 column to show the linked SPO
+ * (if linked to more than 1 then put as +1 pill) ... then I can click on the PO and SPO to
+ * view the lightbox popup which is what we currently have").
+ *
+ * ONE LINE: the draft/confirmed mark, the first document number as the trigger, and a `+N`
+ * pill when the row stands on more than one number of that book. The coverage headline and
+ * the info icon left the cell in this slice - both already live in the lightbox, the
+ * headline as its subtitle, and the number is a better trigger than an icon because it
+ * answers the question ("which PO?") before it is clicked.
+ *
+ * A row linked in the OTHER book only reads as a muted dash here: it is linked, and this
+ * is not where it is linked. Only a row linked in NEITHER book is a new order, and the PO
+ * cell says that in words.
+ *
+ * The dialog mounts only once opened, so a page of a hundred rows does not carry two
+ * hundred dialogs - the same pattern the info icon used.
+ */
+function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
   const [open, setOpen] = React.useState(false);
+  const numbers = documentsOf(row, kind);
+  if (numbers.length === 0) return <Muted>-</Muted>;
+  const [first, ...rest] = numbers;
+  const what = row.item_code ?? row.so_number ?? 'this row';
+  // The PO trigger keeps the id the info icon carried, so AC-A5's lightbox contract holds
+  // and nothing that already points at it has to be told about this change.
+  const triggerId =
+    kind === 'spo' ? `backing-documents-trigger-spo-${row.id}` : `backing-documents-trigger-${row.id}`;
+  const open_ = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setOpen(true);
+  };
   return (
-    <>
-      <Button
+    <span className="flex min-w-0 items-center gap-1">
+      <DraftMark row={row} />
+      <button
         type="button"
-        mode="icon"
-        variant="ghost"
-        size="sm"
-        data-testid={`backing-documents-trigger-${row.id}`}
-        aria-label={`Show documents backing ${row.item_code ?? row.so_number ?? 'this row'}`}
-        className="size-5 shrink-0 text-muted-foreground"
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen(true);
-        }}
+        data-testid={triggerId}
+        title={first}
+        aria-label={`Show documents backing ${what}`}
+        className="block min-w-0 truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={open_}
       >
-        <Info className="size-3.5" aria-hidden />
-      </Button>
+        {first}
+      </button>
+      {rest.length ? (
+        <Badge asChild size="sm" variant="secondary" appearance="light">
+          <button
+            type="button"
+            data-testid={
+              kind === 'spo'
+                ? `backing-documents-pill-spo-${row.id}`
+                : `backing-documents-pill-${row.id}`
+            }
+            aria-label={`Show all ${numbers.length} documents backing ${what}`}
+            className="shrink-0 tabular-nums"
+            onClick={open_}
+          >
+            +{rest.length}
+          </button>
+        </Badge>
+      ) : null}
       {open ? (
         <OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={setOpen} />
       ) : null}
-    </>
+    </span>
   );
 }
 
 /**
- * The "Outstanding PO/SPO" cell's info icon for a BUNDLED row (UAC D1-D3, D10;
- * PLAN-scm-supplied-with-companions.md section 3.4).
+ * The PO cell's info icon for a BUNDLED row (UAC D1-D3, D10;
+ * PLAN-scm-supplied-with-companions.md section 3.4). The only info icon left on this list
+ * since S3 (14 Sep): a bundled row has no document number of its own to click, so the icon
+ * is still the way into the anchor's lightbox.
  *
  * A row that rides ENTIRELY inside the item(s) it is bundled with has no backing
  * documents of its own - the icon opens the ANCHOR row's own lightbox instead ("the
@@ -428,23 +487,21 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
-        // WHERE the quantity sits (AC-A1..AC-A7, owner's 8 Sep cut of the mock). The cell
-        // is ONE LINE: the draft/confirmed mark, the coverage headline - `115 of 493` -
-        // and, when there is something to explain, an info icon that opens
-        // `OrderInquiryBackingDocumentsDialog`. No SupplyBar (a proportion of a number the
-        // cell already prints in full), no document number, no count and no lateness -
-        // every one of those moved behind the icon or off the cell entirely.
+        // WHICH PURCHASE ORDER this row stands on (AC-R-26..R-31, owner 14 Sep, live look
+        // at prod after the migration upload). The cell is ONE LINE: the draft/confirmed
+        // mark, the first PO number as the trigger for the backing-documents lightbox, and
+        // a `+N` pill when the row stands on more than one. The coverage headline and the
+        // info icon left this cell in that slice - both are in the lightbox already (the
+        // headline is its subtitle), and the owner's question of the list is "which PO",
+        // which an icon cannot answer until it is clicked.
         //
-        // The column id stays `po_number` even though the header no longer says PO: it
-        // is what a saved column layout is keyed by, and renaming it would silently
-        // exile the column to the right of everyone's grid.
+        // The column id stays `po_number`: it is what a saved column layout is keyed by,
+        // and renaming it would silently exile the column to the right of everyone's grid.
         id: 'po_number',
-        accessorFn: (row) => row.po_number ?? '',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Outstanding PO/SPO" column={column} />
-        ),
-        size: 220,
-        meta: { headerTitle: 'Outstanding PO/SPO', skeleton: <Skeleton className="h-4 w-28" /> },
+        accessorFn: (row) => documentsOf(row, 'po')[0] ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
+        size: 150,
+        meta: { headerTitle: 'PO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row, table }) => {
           const bundled = row.original.bundled_with;
           const bundledQty = Number(row.original.bundled_qty ?? '0');
@@ -476,31 +533,43 @@ export function useOrderInquiryWorklistColumns({
               );
             }
           }
-          const summary = linkedSummary(
-            row.original.qty,
-            row.original.linked_qty,
-            row.original.links,
-          );
-          if (!summary) {
+          if ((row.original.links ?? []).length === 0) {
             // Nothing in either book can cover this row, so it is a NEW order rather
             // than an oversight (AC-A7). "Not linked" read as a step somebody had
             // forgotten to take; the links are drafted the moment a row is raised now,
-            // so an empty cell means the cascade looked and found nothing. No icon: there
-            // is nothing behind it to open.
+            // so an empty cell means the cascade looked and found nothing. Nothing is
+            // clickable: there is nothing behind it to open.
             return (
               <div className="min-w-0">
                 <Muted>Not found (new order)</Muted>
               </div>
             );
           }
-          return (
-            <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
-              <DraftMark row={row.original} />
-              <span className="truncate" title={summary.headline}>
-                {summary.headline}
-              </span>
-              <BackingDocumentsButton row={row.original} />
-            </span>
+          // Linked in the other book only: a muted dash, and the SPO cell beside this one
+          // is where that row says where it stands.
+          return <DocumentsCell row={row.original} kind="po" />;
+        },
+      },
+      {
+        // WHICH SHIPPING ORDER this row stands on - the other half of the owner's ruling,
+        // and a new column rather than a second line in the PO cell, because "I want all
+        // rows to have 1 line only".
+        id: 'spo_number',
+        accessorFn: (row) => documentsOf(row, 'spo')[0] ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+        size: 160,
+        meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => {
+          // A bundled row's documents are the anchor's, and the PO cell already says so
+          // in words (`Included with ...`) with the bundled lightbox behind it. Repeating
+          // any of that here would make the bundle read as two separate facts.
+          const bundledQty = Number(row.original.bundled_qty ?? '0');
+          const bundled =
+            row.original.bundled_with && Number.isFinite(bundledQty) && bundledQty > 0;
+          return bundled ? (
+            <Muted>-</Muted>
+          ) : (
+            <DocumentsCell row={row.original} kind="spo" />
           );
         },
       },
