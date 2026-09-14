@@ -309,3 +309,138 @@ slice A tests AC-A4 / AC-A6 that assert "no document number in the cell" are rew
 to the new ruling, AC-A5 / AC-A7 / D1-D3 / D10 stay as they are. Browser verification on
 the lane's dev server via the sidebar (Procurement > Supply Chain > Order Inquiries) at
 1280px and 375px.
+
+## 7. Follow-up, 14 Sep evening: a line the book bought for outranks one it did not (R2 finished)
+
+Status of this section: IMPLEMENTED 14 Sep 2026 (7.1 to 7.4), review pending. Owner go
+("okay you fix this"). Branch `fix/oi-sheet-line-pick-bought-lines`, on top of #886, issue
+#895.
+
+Replayed on the 3am prod copy with all four rulings in, the upload rolled back inside the
+same transaction: 15,797 rows, 8,256 raised, 5,639 linked (5,610 from the book), 554
+partial, 868 no line. Rows taking a purchase order line AND its own shipment 555 -> 0; rows
+raised unlinked beside a free bought sibling line 203 -> 16. SO395635 / SRTWC8317-RL's
+undated row lands on a line the book bought for and links to SPO-2026/08-0045; SO368872 /
+SRTWC286-SH takes one document, SPO-2026/04-0043 for 62.
+
+One deviation from the expectation written below: that row lands on
+`AED_SORENTO:44288418:44289745` (required 15/09/2026), not `...44290050`. Its sheet cell
+reads 16/11/**2025**, which no line's required date matches, so after the new "bought"
+term the existing "earliest required date" term chooses among the four bought lines. It is
+on a bought line and it is linked, which is what this section asked for; landing it on the
+November line would need the date terms revisited, which no ruling asks for.
+
+**Seen on prod after #886 deployed and the file re-uploaded:** SO395635 / SRTWC8317-RL has
+five open lines of the item (four of 32, one of 48); PO 202603-S0123 names four of them.
+The sheet has three distinct rows (32 Oct citing the PO, 32 Nov with no remark, 48 Dec).
+The two with a way to the book linked; the Nov row cites nothing, so `_rank_for` fell to
+the date/id tiebreak and landed on the one open 32 line no purchase order bought for
+(`...44288793`), and source 1 found nothing. Reproduced on the 3am copy.
+
+**Measured on the 3am copy after the upload:** 2,529 migrated rows unlinked; 220 of them
+sit on an unbought line while a free sibling line of the same SO + item, named by a PO
+line with capacity, stands beside it. The other 2,309 are on lines nothing bought for.
+
+**Ruling (R2 finished):** the principle behind R2 is "the line the row means is the one
+AutoCount bought for". R2 applied it only when the sheet cites the document. It applies
+whether or not the sheet says so.
+
+**Change**, `_rank_for` key becomes, in order:
+
+1. named by a document the row cites (R2, unchanged);
+2. `line_status != "cancelled"` (unchanged);
+3. **new:** named by ANY purchase order line or SPO allocation (`from_so_line_ref ==
+   line.source_ref`, same product, unambiguous ref, allocation visible) before one named by
+   none;
+4. the existing terms unchanged (open before closed, required date equals the sheet date,
+   earliest required date, oldest created_at, id).
+
+`_plan` computes the "bought" ref set ONCE over every candidate line of the orders in play
+(the same two reads `_ref_targets` does, over `_unambiguous_refs`), stores it on `_Plan`
+so `_pair` reuses the rows instead of reading them again. No other change: pairing, the
+restatement key, the rollback script and the worklist are untouched.
+
+Tests: AC-R-32, AC-R-33 in the UAC. Verification: the replay on the 3am copy must land the
+SO395635 Nov row on `...44290050` and link it, and the 220 must drop to zero (re-run the
+count query in the PR).
+
+### 7.2 No double count, both documents still shown (owner, 14 Sep evening)
+
+Measured on the 3am copy after the upload: 555 rows carry a link to a PO line AND a link
+to that same PO line's own SPO allocation (`from_po_line_ref` = the PO line's
+`source_ref`, or `from_po_number` = its PO), 23,187 units counted twice. Example
+SO368872 / SRTWC286-SH: 62 on PO 202510-S0078 and 62 on SPO-2026/04-0043, which is that
+PO line shipped. D10 links the SPO first and the PO line "for the remainder", but the PO
+line's capacity in `_target_facts` is its whole `qty_ordered`, never less what its own
+allocations already carry.
+
+Owner: "we definitely cannot double count, but by this linking it helps us to know the PO
+and SPO corresponding to this order inquiry."
+
+**Change (importer):** a PO line's capacity = `qty_ordered` less the `allocated_quantity`
+of the visible allocations that came from it (`from_po_line_ref == source_ref`, else
+`from_po_number == po_number` when the allocation names no line), computed in
+`_target_facts` from the rows `_chain_allocations` already fetched. The remainder rule then
+links the PO line only for units not yet on a ship. No second link for the same units.
+
+**Change (worklist, FE only):** the PO column lists the distinct PO numbers of the row's
+`po` links PLUS the `source_po_number` of its `spo` links, so a row whose whole quantity is
+on a shipment still names the PO it came from. Same pill and lightbox. The Use PO card
+keeps counting only `po` link quantity (the units not yet shipped), which is what "no
+double count" means for the cards.
+
+### 7.3 Buy never exceeds what the sales order line still owes
+
+Buy = `row qty - linked - bundled` ignores delivery. SO368872 / SRTWC286-SH: line 364
+ordered, 352 delivered, 12 outstanding; the row shows Buy 240. Measured: capping by the
+line's outstanding moves the copy's Buy total only from 154,618 to 153,124 (138 rows sit on
+partly delivered lines), so this is a correctness fix, not the big number.
+
+**Change:** the row's quantity is capped at what its line still owes, and the cap reaches
+EVERY reader of that figure (reviewer S1, 15 Sep: capping the card alone leaves purchasing
+reading Remaining 302 beside Buy 0 while the engine buys the 302).
+
+Outstanding is `demand_qty()`'s own reading: `qty_required` when CS stated one, else
+`qty_ordered`, minus delivered, floored at zero. A row whose mirror names no core sales
+order line keeps today's reading - and the guard for that is a `CASE`, not a `COALESCE`,
+because Postgres `GREATEST()` ignores NULLs and the outstanding of a missing line therefore
+reads 0 rather than NULL.
+
+One expression per language, reused:
+
+* ORM, `order_inquiry_worklist_service._CAPPED_QTY`: the Buy card (`_kinds`), the
+  `kind=buy` filter and the Remaining column (`_quantity_flow_by_so_line`, which joins the
+  mirror and the core line for itself);
+* SQL, `demand._OWED_SQL` / `_OWED_FORM_SQL`: `scm.committed_v` (migration 511), the plan's
+  own `horizon_committed_select_sql`, and `horizon_project_need_dates_sql` - in the quantity
+  columns and in the "is this row still owed" predicates alike.
+
+The FORM legs reach the core line through their own outer join (`_FORM_CORE_LINE_JOIN_SQL`),
+because that is the leg a MIGRATED row travels on: the sheet raises rows with no supply
+decision. There is no matrix endpoint to change - the schedule matrix is a frontend
+component over these same endpoints.
+
+### 7.4 The row's delivery date is the sales order line's
+
+Owner: "we need to follow the sales order delivery date." SO325661 / SRTWT167: line
+required date 01/01/2030, the sheet row said 05/01/2026 and the inquiry shows the sheet's.
+
+**Change (importer):** `delivery_date = core_line.required_date or row.delivery_date`
+(the sheet's date only when the line carries none). The sheet's date still drives the
+restatement key and the "required date equals the sheet date" rank term, so matching is
+unchanged. Rows already on prod are corrected by the rollback + re-upload the owner does
+after this lane deploys.
+
+**What follows from it, stated rather than hidden** (reviewer S2, 15 Sep). Every planning
+and auto-place horizon reads the ROW's `delivery_date` (`delivery_date <= :horizon`), so:
+
+* a row on a line dated 01/01/2030 now sits OUTSIDE a horizon that ends this December,
+  where the sheet's own 05/01/2026 put it inside. That is the owner's ruling working as
+  asked - the book does not promise that delivery until 2030 - but it moves demand out of
+  the near plan, and a buyer who was seeing it will stop;
+* a migrated ORDER BACK row used to carry no date at all, and "no date" is always IN a
+  horizon; it now takes its line's date and can fall outside one.
+
+Both are consequences of following the sales order line, which is what was asked for. If
+the owner wants the near plan to keep them, the horizon rule is what to revisit, not the
+row's date.
