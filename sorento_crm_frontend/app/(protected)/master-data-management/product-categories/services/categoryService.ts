@@ -82,3 +82,30 @@ export async function moveCategory(id: string, parentId: string | null, displayO
     throw new Error(error.message || 'Failed to move category');
   }
 }
+
+/**
+ * The distinct class labels categories are grouped by, for a picker that has to
+ * offer them (PLAN-price-tag-combos.md D2: System Settings' guarded classes).
+ *
+ * ---- BACKEND CONTRACT (S2 Phase 2 builds this) ----------------------------
+ *  GET /api/v1/master-data/product-categories/class-labels
+ *    -> { data: string[] }
+ *    Distinct non-null `product_categories.class_label`, sorted. A tiny read
+ *    route beside the categories router, on the existing categories permission.
+ *
+ * PHASE 1: the mock below answers instead. DEBT - deleted in Phase 2, when this
+ * body becomes the apiFetch call above.
+ */
+export async function getProductClassLabels(): Promise<string[]> {
+  // --- mock ---
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  return [
+    'Bathroom Furniture',
+    'Kitchen Sink',
+    'Basin',
+    'Mirror',
+    'Shower',
+    'Tap',
+    'Water Closet',
+  ];
+}

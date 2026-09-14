@@ -174,8 +174,13 @@ list[LinePartIn]` with `LinePartIn {product_id?: str, role?: str, candidates?: l
 drop `alternatives`. `_add_lines` / `replace_lines` write parts in order.
 
 Portal lookup gains combos: `GET /portal/lookups/price-tag-items?q=` unchanged; a new
-`GET /portal/lookups/product-combos/{product_id}` returns `[{combo_id, name, parts:[{product_id,
-code, name, choice_group}]}]` under the same `_assert_visible` gate. The form calls it on
+`GET /portal/lookups/product-combos/{product_id}` returns `{host_guarded, combos:[{combo_id,
+name, parts:[{product_id, code, name, choice_group}]}]}` under the same `_assert_visible`
+gate. (`host_guarded` added in S1 Phase 1, coder deviation, captain to ratify: the
+client-side warning below needs to know whether this product's `class_label` is in
+`price_tag_guarded_classes`, and answering it on the call the form already makes beats a
+second round trip and keeps the tenant's settings list off the portal wire. The server
+evaluates the same list the submit-time guard evaluates.) The form calls it on
 product pick: one combo -> parts fill in; several -> Package select (clearable
 `SearchableSelect`), parts follow the choice. An open row = one row per choice group with a
 clearable candidate select ("Not sure, any of N" placeholder) and the single copy line

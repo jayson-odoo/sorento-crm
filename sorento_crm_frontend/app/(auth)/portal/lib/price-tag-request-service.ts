@@ -3,6 +3,50 @@
  *
  * Calls `/api/v1/public/portal/submissions/price_tag_request` and
  * `/api/v1/public/portal/lookups` via `portalFetch`.
+ *
+ * ===========================================================================
+ * COMBOS ON A REQUEST LINE (PLAN-price-tag-combos.md D2, slice S2)
+ * ===========================================================================
+ * A cabinet is sold as a catalogue package, so the line the salesperson picks
+ * grows child PART rows: the fixed parts that always come with it, and one
+ * OPEN row per choice group they may leave undecided. Submit is never refused
+ * for a package reason; a guarded product with no package, or with parts taken
+ * off, carries a `package_warning` marketing reads instead.
+ *
+ * ---- BACKEND CONTRACT (S2 Phase 2 builds this; served by the in-file mock at
+ *      the bottom of this file until then) ---------------------------------
+ *
+ *  GET /api/v1/public/portal/lookups/product-combos/{product_id}
+ *    -> ProductCombosLookup
+ *    Same `_assert_visible` gate as `price-tag-items`. The form calls it the
+ *    moment a product is picked on a line.
+ *
+ *    `combos[]` is `{combo_id, name, parts: [{product_id, code, name,
+ *    choice_group}]}` - exactly the D1 tables, read through the host.
+ *
+ *    `host_guarded` is a DEVIATION from D2's literal shape (which listed the
+ *    combos alone) and is reported as such: the client-side warning rule needs
+ *    to know whether this product's `class_label` is in system settings'
+ *    `price_tag_guarded_classes`, and answering it on the call the form is
+ *    already making beats both a second round trip and shipping the tenant's
+ *    settings list out to the portal. The server evaluates the same list the
+ *    submit-time guard evaluates, so the two cannot disagree.
+ *
+ *  Line payload (POST/PUT, `PriceTagRequestLineInput`)
+ *    `alternatives` is GONE (the column is dropped in Phase 2). Each line now
+ *    sends `combo_id` and `parts: LinePartIn[]` in display order; a resolved
+ *    part sends `{product_id, role?}`, an open one `{role, candidates: [id]}`.
+ *    `show_promo_price` is still NOT sent: it is derived server-side from the
+ *    header's `price_mode` on every save (D5), so a client value was always
+ *    dead weight. AC-S2-8 lists it; the r7 review already settled it the other
+ *    way, and that decision is left standing.
+ *
+ *  Line read shape (`PriceTagRequestLine`)
+ *    gains `combo_id`, `package_warning` and `parts: PriceTagRequestLinePart[]`
+ *    - parts RESOLVED (code, name, and each candidate's code and name) the same
+ *    way a line already resolves its own product's code and name, because the
+ *    portal shows codes and never ids.
+ * ===========================================================================
  */
 
 import { extractApiError } from '@/lib/api-client';
@@ -22,6 +66,33 @@ import {
 
 export type PriceTagLineType = 'product' | 'product_set';
 
+/** A part product the customer picks ONE of, inside an open row. */
+export interface LinePartCandidate {
+  product_id: string;
+  code: string;
+  name: string;
+}
+
+/**
+ * One part row under a line (D2).
+ *
+ * Resolved: `product_id` is set and `candidates` is empty - a specific product
+ * is on the tag. Open: `product_id` is null and `candidates` holds the group's
+ * options - the salesperson left the choice to marketing, who split it into one
+ * tag per option (S3). `role` is the choice group's label on both, so a resolved
+ * row still says which group it answered.
+ */
+export interface PriceTagRequestLinePart {
+  id: string;
+  product_id: string | null;
+  /** Resolved from the product, as everywhere else in the portal. Null on an open row. */
+  code: string | null;
+  name: string | null;
+  role: string | null;
+  candidates: LinePartCandidate[];
+  sort_order: number;
+}
+
 export interface PriceTagRequestLine {
   id: string;
   line_type: PriceTagLineType;
@@ -33,7 +104,6 @@ export interface PriceTagRequestLine {
   code: string;
   show_promo_price: boolean;
   quantity: number;
-  alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string | null;
   /** Free-text note on the line (D6). Set on the line, not the header, so
    *  each product can carry its own instruction. */
@@ -41,6 +111,12 @@ export interface PriceTagRequestLine {
   sort_order: number;
   /** Derived class on the product - used for the set guard. */
   product_class?: string | null;
+  /** The catalogue package this line was asked for as (D2). Null = none chosen. */
+  combo_id?: string | null;
+  /** What the package guard found at submit, for marketing to read. Null = clean. */
+  package_warning?: string | null;
+  /** The parts under this line, in display order. */
+  parts?: PriceTagRequestLinePart[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -139,6 +215,59 @@ export interface TagItemOption {
   name: string;
 }
 
+/** One part of a combo, as the combos lookup answers it. */
+export interface ComboPartOption {
+  product_id: string;
+  code: string;
+  name: string;
+  /** Null = fixed part. A label = one of the options for that label. */
+  choice_group: string | null;
+}
+
+/** One catalogue package on a host product, named the way the catalogue names it. */
+export interface ProductComboOption {
+  combo_id: string;
+  name: string;
+  parts: ComboPartOption[];
+}
+
+export interface ProductCombosLookup {
+  /** The host's class is in system settings' `price_tag_guarded_classes` (D2). */
+  host_guarded: boolean;
+  combos: ProductComboOption[];
+}
+
+/** One part on the way OUT, in the payload's own shape (D2). */
+export type LinePartIn = {
+  product_id?: string | null;
+  role?: string | null;
+  /** Product ids, on an open row only. Empty on a resolved one. */
+  candidates?: string[];
+};
+
+/**
+ * One line on the way OUT (AC-S2-8).
+ *
+ * Spelled out rather than derived from `PriceTagRequestLine` with `Omit`: the
+ * read shape now carries resolved parts (codes, names, candidate names) and a
+ * server-computed `package_warning`, none of which the client sends.
+ *
+ * A `type`, not an `interface`: the portal revise call takes
+ * `Record<string, unknown>[]`, and only a type alias gets TypeScript's implicit
+ * index signature - an interface would need a cast at that one call site.
+ */
+export type PriceTagRequestLineInput = {
+  line_type: PriceTagLineType;
+  product_id: string | null;
+  product_set_id: string | null;
+  combo_id: string | null;
+  quantity: number;
+  included_accessories: string | null;
+  remarks: string | null;
+  product_class: string | null;
+  parts: LinePartIn[];
+};
+
 export interface SetGuardResult {
   blocked: boolean;
   message: string | null;
@@ -227,6 +356,20 @@ export async function lookupTagItems(query?: string): Promise<TagItemOption[]> {
     : `${LOOKUPS}/price-tag-items`;
   const res = await portalFetch(url);
   return unwrap<TagItemOption[]>(res, 'Failed to load products and sets');
+}
+
+/**
+ * The catalogue packages a picked product is sold as, plus whether its class is
+ * guarded (D2). Called once per product pick on a line.
+ *
+ * PHASE 1: served by `mockProductCombos` at the bottom of this file. Phase 2
+ * replaces the body with the portalFetch call the contract at the top names and
+ * deletes the mock block.
+ */
+export async function lookupProductCombos(
+  productId: string,
+): Promise<ProductCombosLookup> {
+  return mockProductCombos(productId);
 }
 
 // ---------------------------------------------------------------------------
@@ -373,10 +516,7 @@ export interface CreatePriceTagRequestInput {
   // `show_promo_price` is NOT sent (D5, review fix): the service derives it
   // on every line save from the header's own `price_mode`, so a value the
   // client sent was always dead weight, immediately overridden either way.
-  lines: Omit<
-    PriceTagRequestLine,
-    'id' | 'name' | 'code' | 'sort_order' | 'show_promo_price'
-  >[];
+  lines: PriceTagRequestLineInput[];
 }
 
 export async function createRequest(
@@ -489,4 +629,77 @@ export async function downloadPriceTagPdf(id: string): Promise<void> {
     filenameFromContentDisposition(res.headers.get('Content-Disposition')) ||
     'tag-sheet.pdf';
   saveBlobAs(blob, filename);
+}
+
+// ---------------------------------------------------------------------------
+// --- mock --- PHASE 1 ONLY (DEBT, not done). Deleted in S2 Phase 2, when
+// `lookupProductCombos` becomes the portalFetch call its contract at the top of
+// this file describes.
+//
+// No combo exists in the database yet, so the mock assigns one of four cases by
+// a stable hash of the product id. Every case the form has to handle is then
+// reachable from the REAL product list the picker searches, without seeding
+// anything:
+//
+//   0  not guarded, no combos      - today's line, no parts, no warning
+//   1  guarded, no combos          - "No package defined"
+//   2  guarded, one combo          - parts fill in on pick
+//   3  guarded, two combos         - Package select, parts follow the choice
+//
+// Part products are invented rather than drawn from the catalogue: nothing is
+// persisted in Phase 1 either way, and made-up codes make it obvious on screen
+// which half of the row came from the mock.
+// ---------------------------------------------------------------------------
+
+const MOCK_COMBO_LATENCY_MS = 200;
+
+function mockBucket(productId: string): number {
+  let sum = 0;
+  for (let i = 0; i < productId.length; i += 1) sum += productId.charCodeAt(i);
+  return sum % 4;
+}
+
+function mockPart(code: string, name: string, choiceGroup: string | null): ComboPartOption {
+  return { product_id: `mock-part-${code}`, code, name, choice_group: choiceGroup };
+}
+
+const MOCK_BASIN_GROUP = 'Basin';
+
+const MOCK_COMBO_2_IN_1: ProductComboOption = {
+  combo_id: 'mock-combo-2in1',
+  name: '2 in 1',
+  parts: [
+    mockPart('SRTTT8050', 'Table top 800 x 500', null),
+    mockPart('SRTBS801-WH', 'Basin 800 white', MOCK_BASIN_GROUP),
+    mockPart('SRTBS801-BL', 'Basin 800 black', MOCK_BASIN_GROUP),
+  ],
+};
+
+const MOCK_COMBO_4_IN_1: ProductComboOption = {
+  combo_id: 'mock-combo-4in1',
+  name: '4 in 1',
+  parts: [
+    mockPart('SRTTT8050', 'Table top 800 x 500', null),
+    mockPart('SRTMR502', 'Mirror 500 x 700', null),
+    mockPart('SRTTAP110', 'Basin tap chrome', null),
+    mockPart('SRTPW32', 'Pop-up waste 32mm', null),
+    mockPart('SRTBS801-WH', 'Basin 800 white', MOCK_BASIN_GROUP),
+    mockPart('SRTBS801-BL', 'Basin 800 black', MOCK_BASIN_GROUP),
+    mockPart('SRTBS801-GY', 'Basin 800 grey', MOCK_BASIN_GROUP),
+    mockPart('SRTBS801-MT', 'Basin 800 matt', MOCK_BASIN_GROUP),
+  ],
+};
+
+async function mockProductCombos(productId: string): Promise<ProductCombosLookup> {
+  await new Promise((resolve) => setTimeout(resolve, MOCK_COMBO_LATENCY_MS));
+  switch (mockBucket(productId)) {
+    case 1:
+      return { host_guarded: true, combos: [] };
+    case 2:
+      return { host_guarded: true, combos: [MOCK_COMBO_4_IN_1] };
+    case 3:
+      return { host_guarded: true, combos: [MOCK_COMBO_2_IN_1, MOCK_COMBO_4_IN_1] };
+    default:
+      return { host_guarded: false, combos: [] };
+  }
 }
