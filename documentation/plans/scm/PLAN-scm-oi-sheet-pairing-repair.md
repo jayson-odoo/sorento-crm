@@ -309,3 +309,42 @@ slice A tests AC-A4 / AC-A6 that assert "no document number in the cell" are rew
 to the new ruling, AC-A5 / AC-A7 / D1-D3 / D10 stay as they are. Browser verification on
 the lane's dev server via the sidebar (Procurement > Supply Chain > Order Inquiries) at
 1280px and 375px.
+
+## 7. Follow-up, 14 Sep evening: a line the book bought for outranks one it did not (R2 finished)
+
+Status of this section: PLANNED 14 Sep 2026, owner go ("okay you fix this"). Branch
+`fix/oi-sheet-line-pick-bought-lines`, on top of #886.
+
+**Seen on prod after #886 deployed and the file re-uploaded:** SO395635 / SRTWC8317-RL has
+five open lines of the item (four of 32, one of 48); PO 202603-S0123 names four of them.
+The sheet has three distinct rows (32 Oct citing the PO, 32 Nov with no remark, 48 Dec).
+The two with a way to the book linked; the Nov row cites nothing, so `_rank_for` fell to
+the date/id tiebreak and landed on the one open 32 line no purchase order bought for
+(`...44288793`), and source 1 found nothing. Reproduced on the 3am copy.
+
+**Measured on the 3am copy after the upload:** 2,529 migrated rows unlinked; 220 of them
+sit on an unbought line while a free sibling line of the same SO + item, named by a PO
+line with capacity, stands beside it. The other 2,309 are on lines nothing bought for.
+
+**Ruling (R2 finished):** the principle behind R2 is "the line the row means is the one
+AutoCount bought for". R2 applied it only when the sheet cites the document. It applies
+whether or not the sheet says so.
+
+**Change**, `_rank_for` key becomes, in order:
+
+1. named by a document the row cites (R2, unchanged);
+2. `line_status != "cancelled"` (unchanged);
+3. **new:** named by ANY purchase order line or SPO allocation (`from_so_line_ref ==
+   line.source_ref`, same product, unambiguous ref, allocation visible) before one named by
+   none;
+4. the existing terms unchanged (open before closed, required date equals the sheet date,
+   earliest required date, oldest created_at, id).
+
+`_plan` computes the "bought" ref set ONCE over every candidate line of the orders in play
+(the same two reads `_ref_targets` does, over `_unambiguous_refs`), stores it on `_Plan`
+so `_pair` reuses the rows instead of reading them again. No other change: pairing, the
+restatement key, the rollback script and the worklist are untouched.
+
+Tests: AC-R-32, AC-R-33 in the UAC. Verification: the replay on the 3am copy must land the
+SO395635 Nov row on `...44290050` and link it, and the 220 must drop to zero (re-run the
+count query in the PR).

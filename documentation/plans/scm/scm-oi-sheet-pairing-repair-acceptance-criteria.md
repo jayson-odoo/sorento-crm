@@ -148,3 +148,12 @@ that file stays green unchanged.
   `order_link_service._purchase_side` answers with the OLDEST of them for both `by_key` and
   `by_number`, whatever order the database returns the rows in - an unordered read made the
   same file pair differently on its preview and on its apply.
+
+## Follow-up, 14 Sep evening: bought line first (plan section 7)
+
+* AC-R-32 Given a sales order with two open lines of the same item both fitting the row's
+  qty, line 1 with the earlier required date, a PO line naming line 2, and a sheet row with
+  NO remark, when applied, then the row is raised against line 2 and linked to that PO line.
+* AC-R-33 Given the same but line 2 is `closed` and line 1 is `open`, when applied, then
+  the row still lands on line 2 (bought beats open); and given line 2 is `cancelled`, the
+  row lands on line 1 (cancelled-last still comes before bought).

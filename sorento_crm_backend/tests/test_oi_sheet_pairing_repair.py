@@ -1364,3 +1364,153 @@ def test_ac_r_24_ref_shared_by_two_orders_pairs_nothing():
         assert w.links(row) == [], "an ambiguous ref paired the row anyway"
         assert result["links_written"] == 0
         assert result["links_from_autocount"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# follow-up, 14 Sep evening: a line the book BOUGHT for outranks one it did not #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_r_32_bought_line_outranks_unbought_without_citation():
+    """AC-R-32. R2 finished: the line the row means is the one AutoCount bought for,
+    whether or not the sheet says so (`PLAN-scm-oi-sheet-pairing-repair.md` section 7).
+
+    Seen on prod after #886 deployed and the file was re-uploaded. SO395635 / SRTWC8317-RL
+    holds five open lines of the item and PO 202603-S0123 names four of them; the sheet's
+    November row cites nothing, so the pick fell through to the date and id tiebreak and
+    landed on the one line no purchase order ever bought for. Source 1 then had nothing to
+    follow, and a row that could have been linked was raised bare. 220 rows on the 3am copy
+    sit like that - on an unbought line with a free, bought sibling of the same sales order
+    and item standing beside it.
+
+    The sheet's date here is the UNBOUGHT line's own required date, so the existing terms
+    all point at line 1 and only the new one can move the row.
+    """
+    with world() as w:
+        order = w.order()
+        unbought = _born_at(
+            w,
+            _with_ref(w, w.line(order, qty_ordered="50", required_date=D_OCT), _ref()),
+            datetime(2026, 1, 5, 9, 0, 0),
+        )
+        bought = _born_at(
+            w,
+            _with_ref(w, w.line(order, qty_ordered="50", required_date=D_NOV), _ref()),
+            datetime(2026, 6, 5, 9, 0, 0),
+        )
+        po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, bought.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror = w.mirror_of(bought)
+        assert mirror is not None, (
+            "the line the purchase order was raised for was never mirrored: the row landed "
+            "on the line nothing bought for"
+        )
+        assert str(row.so_line_id) == str(mirror.id)
+        unbought_mirror = w.mirror_of(unbought)
+        assert unbought_mirror is None or str(row.so_line_id) != str(unbought_mirror.id)
+        links = w.links(row)
+        assert [str(link.po_line_id) for link in links] == [str(po_line.id)], (
+            _documents(links)
+        )
+        assert links[0].document == po.po_number
+        assert result["links_from_autocount"] == 1
+
+
+def test_ac_r_33_bought_beats_open_but_not_cancelled():
+    """AC-R-33. Where the new term sits: above "open before closed", below "cancelled last".
+
+    A closed line the book bought for is still the line that quantity belongs to - the sheet
+    is history, and D8 is explicit that a closed line is exactly what it names. A CANCELLED
+    line is different in kind: 10,499 August-extract ghosts are still in the book, and a
+    ghost that happens to carry a `from_so_line_ref` must not outrank a real open line. So
+    the ordering the two halves pin is `cancelled-last` first, then `bought`, then `open`.
+    """
+    with world() as w:
+        open_line = _born_at(
+            w,
+            _with_ref(w, w.line(order := w.order(), qty_ordered="50", required_date=D_OCT), _ref()),
+            datetime(2026, 1, 5, 9, 0, 0),
+        )
+        closed_bought = _born_at(
+            w,
+            _with_ref(
+                w,
+                w.line(
+                    order, qty_ordered="50", required_date=D_NOV,
+                    line_status="closed", qty_delivered="50",
+                ),
+                _ref(),
+            ),
+            datetime(2026, 6, 5, 9, 0, 0),
+        )
+        _po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, closed_bought.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror = w.mirror_of(closed_bought)
+        assert mirror is not None, (
+            "the closed line the book bought for was never even mirrored, so the row landed "
+            "on the open line nothing bought for"
+        )
+        assert str(row.so_line_id) == str(mirror.id), (
+            "an open line nothing bought for outranked the closed line that was bought"
+        )
+        open_mirror = w.mirror_of(open_line)
+        assert open_mirror is None or str(row.so_line_id) != str(open_mirror.id)
+        assert [str(link.po_line_id) for link in w.links(row)] == [str(po_line.id)]
+
+    with world() as w:
+        order = w.order()
+        real = _born_at(
+            w,
+            _with_ref(w, w.line(order, qty_ordered="50", required_date=D_OCT), _ref()),
+            datetime(2026, 1, 5, 9, 0, 0),
+        )
+        ghost_bought = _born_at(
+            w,
+            _with_ref(
+                w,
+                w.line(
+                    order, qty_ordered="50", required_date=D_NOV,
+                    line_status="cancelled",
+                ),
+                _ref(),
+            ),
+            datetime(2026, 6, 5, 9, 0, 0),
+        )
+        _po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, ghost_bought.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror = w.mirror_of(real)
+        assert mirror is not None, "the real open line was never mirrored"
+        assert str(row.so_line_id) == str(mirror.id), (
+            "a cancelled ghost outranked a real open line because a purchase order named it"
+        )
+        assert w.links(row) == [], (
+            "the row was linked through a cancelled line's reference"
+        )
+        assert result["links_written"] == 0
