@@ -40,8 +40,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { Field } from '@/components/common/Field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
@@ -94,29 +94,6 @@ const PRODUCT_PAGE_SIZE = 50;
  *  packing rows, AC-B9), Revisions, Packing lists (which SHIPMENT this invoice's lines
  *  went to, once converted - a different question from Packing). */
 const PI_TABS = ['general', 'lines', 'packing', 'revisions', 'packing-lists'] as const;
-
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      {htmlFor ? (
-        <Label className="text-xs font-normal text-muted-foreground" htmlFor={htmlFor}>
-          {label}
-        </Label>
-      ) : (
-        <span className="text-xs text-muted-foreground">{label}</span>
-      )}
-      <span className="text-sm font-medium">{children}</span>
-    </div>
-  );
-}
 
 /**
  * One line as the EDIT DRAFT holds it - and, in view mode, as the grid reads it.

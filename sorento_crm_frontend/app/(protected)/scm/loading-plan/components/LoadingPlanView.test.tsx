@@ -272,7 +272,10 @@ describe('LoadingPlanView (the record)', () => {
     currentSearchParams = new URLSearchParams();
   });
 
-  it('titles the record with the supplier and states started, cut-off and document', () => {
+  // S3 (14 Sep feedback batch): started / window / stock list and the status pill moved off
+  // the header and onto the General tab, so this reads them where they now live.
+  it('titles the record with the supplier and states started, cut-off and document on General', () => {
+    currentSearchParams = new URLSearchParams('tab=general');
     renderView();
 
     expect(
@@ -448,7 +451,6 @@ describe('LoadingPlanView (the record)', () => {
 
     renderView();
 
-    expect(screen.getByText('Cancelled')).toBeTruthy();
     const save = screen.getByTestId('save-plan-edits') as HTMLButtonElement;
     const send = screen.getByRole('button', { name: 'Send to supplier' }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -457,6 +459,8 @@ describe('LoadingPlanView (the record)', () => {
     expect(
       screen.getByTestId('container-request-section').getAttribute('data-readonly'),
     ).toBe('true');
+    // S3: the status pill moved to the General tab (its own suite reads it there); this
+    // test is about what a cancelled plan refuses, so it no longer looks for the pill here.
   });
 
   it('a sent plan cannot be deleted from the gear either (Q5)', () => {
