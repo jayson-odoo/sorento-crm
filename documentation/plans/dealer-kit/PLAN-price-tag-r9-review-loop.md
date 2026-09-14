@@ -201,6 +201,30 @@ All line refs are `origin/main` at ae0831776.
 - D15 Prod has no `form_sla_configs` row for `price_tag_request` (r7 D13 shipped the admin
   option). Owner action after deploy, listed in the PR body; not code.
 
+### Salesperson message copy (D12, one line each, `{n}` = doc number, `{link}` = portal link)
+
+| Event | Text |
+|---|---|
+| submitted | `{n} received. We will start designing shortly. {link}` |
+| designing | `{n} is being designed by {assignee}. {link}` |
+| proof_ready | `{n} design is ready for your review. {link}` |
+| changes_requested | `You sent {count} change requests on {n}. {link}` |
+| approved (self) | `You approved {n}. The PDF is being prepared. {link}` |
+| approved (office) | `You approved {n}. The office will print and tell you when it is ready. {link}` |
+| pdf_ready (self) | `{n} PDF is ready to download. {link}` |
+| ready_for_collection | `{n} tags are ready for collection at the office. {link}` |
+| collected | `{n} marked collected. {link}` |
+| collected (auto) | `{n} marked collected automatically after {days} days. {link}` |
+| rejected / void | `{n} was rejected: {reason} {link}` (reason from the persisted transition note, else omitted) |
+
+### Migration test contract (tester, 14 Sep)
+
+`blank_session` builds the schema from `Base.metadata`, so migration data steps are tested by
+importing the revision file by glob and calling a named function (precedent
+`487_chatbot_warehouse_cue`). Required names, each called from its own `upgrade()`:
+`ptag_0007_print_collection.py`: `map_ready_rows_to_approved(bind) -> int`,
+`seed_auto_collect_task(bind)`; `ptag_0008_pins_versions.py`: `backfill_pins(bind) -> int`.
+
 ### S5 Product data pin + versions
 
 - D16 `price_tag_request_lines.pinned_tag_data JSONB NULL`, `pinned_at timestamptz NULL`,
