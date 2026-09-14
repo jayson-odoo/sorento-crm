@@ -206,6 +206,12 @@ class _Plan:
     orders_in_play: List[str] = field(default_factory=list)
     #: Of those, the ones with no planning record yet - what `orders_adopted` will be.
     orders_to_adopt: int = 0
+    #: `(source_ref, product_id)` for every candidate line the book BOUGHT for (section 7).
+    #: The third term of the line pick reads it, before any pairing happens.
+    bought_refs: set = field(default_factory=set)
+    #: The rows that set was derived from, kept so `_pair` groups them into the pairing's
+    #: first source rather than reading the same two queries a second time.
+    bought_rows: Optional[Tuple[List[Any], List[Any]]] = None
 
 
 @dataclass
@@ -425,7 +431,9 @@ def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
     }
 
 
-def _rank_for(row, named: Dict[str, set], cited: Sequence[str]) -> Callable[[tuple], tuple]:
+def _rank_for(
+    row, named: Dict[str, set], cited: Sequence[str], bought: set
+) -> Callable[[tuple], tuple]:
     """The line this row means, when several fit (D1, AC-S1-8, amended by R2 on 14 Sep 2026).
 
     The line the CITED documents name, first of all: the remark is the operator saying which
@@ -439,8 +447,19 @@ def _rank_for(row, named: Dict[str, set], cited: Sequence[str]) -> Callable[[tup
     sheet's date, an open line before a closed one, the earliest required date (undated
     last), and the oldest line, so two runs of the same sheet land the same way.
 
+    Then a line the book BOUGHT for, whether or not the sheet says so (section 7, 14 Sep
+    evening: R2 finished). R2's principle is "the line the row means is the one AutoCount
+    bought for", and reading it only when the remark cites a document left the rest to the
+    date and the id: SO395635 / SRTWC8317-RL has five open lines of the item and a purchase
+    order naming four of them, so the row with no remark landed on the fifth, the one nothing
+    bought for, and the pairing then found nothing to link it to. On the 3am prod copy 220 of
+    the 2,529 unlinked migrated rows sat on an unbought line while a free bought sibling stood
+    beside them.
+
     A cancelled line is ranked last, never excluded: when it is the only line that fits it is
-    still where the history is (D1 kept).
+    still where the history is (D1 kept). Cancelled-last stays ABOVE bought, so an
+    August-extract ghost that some document happens to name never takes a row off a real
+    line.
 
     The line's own id has the last word. Every term above it can tie - a whole AutoCount
     ingest shares one `created_at`, because Postgres freezes `now()` for the transaction that
@@ -458,6 +477,7 @@ def _rank_for(row, named: Dict[str, set], cited: Sequence[str]) -> Callable[[tup
         return (
             0 if (ref and ref in named_refs) else 1,
             0 if (line.line_status or "open") != "cancelled" else 1,
+            0 if (ref and (ref, str(line.product_id or "")) in bought) else 1,
             0 if line.required_date == wanted else 1,
             0 if (line.line_status or "open") == "open" else 1,
             line.required_date is None,
@@ -476,6 +496,7 @@ def _match_row(
     already_raised: set,
     named: Dict[str, set],
     cited: Sequence[str],
+    bought: set,
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, or the FIRST filter that refused it.
 
@@ -517,7 +538,7 @@ def _match_row(
     if not fits:
         return None, oc.QTY_EXCEEDS_ORDERED
 
-    found = sorted(fits, key=_rank_for(row, named, cited))[0]
+    found = sorted(fits, key=_rank_for(row, named, cited, bought))[0]
     if str(found[0].id) not in already_raised:
         taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
     return found, None
@@ -582,6 +603,13 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
         db,
         {number for row in parsed.rows for number in _cited_from(row.po_numbers)},
     )
+    #: Which candidate lines the book BOUGHT for, over every line of every order the sheet
+    #: names rather than only the matched ones - the line pick asks the question before a row
+    #: has a line, so the answer cannot wait for the match. `_pair` groups the same rows.
+    plan.bought_rows = _bought_rows(
+        db, [held[0] for group in lines.values() for held in group]
+    )
+    plan.bought_refs = _bought_refs(plan.bought_rows)
     #: How much of each line this FILE has already spoken for, in file order.
     taken: Dict[str, Decimal] = {}
 
@@ -627,7 +655,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             continue
         found, match.reason = _match_row(
             row, lines.get(str(order.id)) or [], taken, raised_already, named,
-            match.cited,
+            match.cited, plan.bought_refs,
         )
         if found is not None:
             match.core_line, match.line_location = found[0], found[2] or None
@@ -674,6 +702,12 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
     outstanding (AC-S1-12): the sheet is history, and a closed, fully received line is
     exactly what the rows being migrated are waiting on. What OTHER links already claim is
     subtracted by the caller.
+
+    A purchase order line's capacity has a second half, `_less_own_shipments` below: the
+    units of it that are already on a ship belong to that shipment, not to the line as well
+    (7.2). It is applied here rather than at the query because the shipments are only known
+    once `_chain_allocations` has run, and that read needs the document numbers this
+    function is what reads.
     """
     wanted = sorted(str(i) for i in target_ids if i)
     if not wanted:
@@ -727,48 +761,48 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
     return facts
 
 
-def _ref_targets(
-    db: Session, core_lines: Sequence[SalesOrderLine]
-) -> Tuple[Dict[tuple, List[str]], Dict[tuple, List[str]]]:
-    """What AutoCount itself states is for each sales order line, per `(ref, product)`.
+def _bought_rows(
+    db: Session, lines: Sequence[SalesOrderLine]
+) -> Tuple[List[SPOAllocation], List[PurchaseOrderLine]]:
+    """Every purchase document row that NAMES one of these sales order lines.
 
     The purchase side carries the exact line it was raised for in its own column -
     `purchase_order_lines.from_so_line_ref` and the `spo_allocations` twin, both joinable to
     `sales_order_lines.source_ref`. That is the owner's own query, and it is the source of
     truth this importer reads FIRST (R1, `PLAN-scm-oi-sheet-pairing-repair.md` section 2.3).
 
-    The product is part of the key as well as the ref: a ref names one line of one order, but
-    a wrong or stale ref on a document for another item must not pull that document in.
+    Read ONCE by `_plan`, over every candidate line of every order the sheet names, because
+    the answer is needed twice: the line pick asks "did the book buy for this line at all"
+    (section 7) before a row is matched, and `_ref_targets` groups the very same rows into
+    the pairing's first source afterwards. Two reads, not four.
 
     A ref that names MORE THAN ONE sales order line is dropped before either query runs
     (`_unambiguous_refs`, security review 14 Sep): a purchase document carrying the August
-    ordinal `'1'` in `from_so_line_ref` would otherwise pair itself to all 3,364 lines that
+    ordinal `'1'` in `from_so_line_ref` would otherwise answer for all 3,364 lines that
     ordinal sits on.
 
-    Three queries for the whole set of raisable rows, not per row. Order is explicit on both
-    sides - shipping order then line number, purchase order line by age - so two runs of the
-    same sheet hand the quantity out the same way.
+    Order is explicit on both sides - shipping order then line number, purchase order line by
+    age - so two runs of the same sheet hand the quantity out the same way.
     """
-    refs = {(line.source_ref or "").strip() for line in core_lines}
+    refs = {(line.source_ref or "").strip() for line in lines}
     refs.discard("")
-    products = {str(line.product_id or "") for line in core_lines}
+    products = {str(line.product_id or "") for line in lines}
     products.discard("")
     if not refs or not products:
-        return {}, {}
+        return [], []
     refs = _unambiguous_refs(db, refs)
     if not refs:
-        return {}, {}
+        return [], []
     wanted, items = sorted(refs), sorted(products)
 
-    allocations: Dict[tuple, List[str]] = {}
-    for allocation in (
+    allocations = (
         db.query(SPOAllocation)
         .filter(
             SPOAllocation.from_so_line_ref.in_(wanted),
             SPOAllocation.product_id.in_(items),
             # The same visibility test every other reader here applies: a line AutoCount
             # stopped naming, that never received anything, is not a document a link may
-            # land on.
+            # land on, nor evidence that this line was bought for.
             *spo_supply.visible_line_clauses(),
         )
         .order_by(
@@ -777,13 +811,8 @@ def _ref_targets(
             SPOAllocation.id.asc(),
         )
         .all()
-    ):
-        allocations.setdefault(
-            (str(allocation.from_so_line_ref), str(allocation.product_id or "")), []
-        ).append(str(allocation.id))
-
-    po_lines: Dict[tuple, List[str]] = {}
-    for line in (
+    )
+    po_lines = (
         db.query(PurchaseOrderLine)
         .filter(
             PurchaseOrderLine.from_so_line_ref.in_(wanted),
@@ -791,11 +820,52 @@ def _ref_targets(
         )
         .order_by(PurchaseOrderLine.created_at.asc(), PurchaseOrderLine.id.asc())
         .all()
-    ):
-        po_lines.setdefault(
+    )
+    return allocations, po_lines
+
+
+def _bought_refs(rows: Tuple[Sequence[Any], Sequence[Any]]) -> set:
+    """`(ref, product)` for every line the book BOUGHT for (section 7, R2 finished).
+
+    The product is part of the key, exactly as it is in `_ref_targets`: a stale ref on a
+    document for another item says nothing about this line.
+    """
+    allocations, po_lines = rows
+    return {
+        (str(row.from_so_line_ref), str(row.product_id or ""))
+        for row in list(allocations) + list(po_lines)
+        if row.from_so_line_ref
+    }
+
+
+def _ref_targets(
+    rows: Tuple[Sequence[Any], Sequence[Any]],
+) -> Tuple[Dict[tuple, List[str]], Dict[tuple, List[str]]]:
+    """What AutoCount itself states is for each sales order line, per `(ref, product)`.
+
+    The rows `_plan` already read (`_bought_rows`), grouped. Required rather than optional:
+    the plan always reads them, there is no other caller, and an optional fallback here would
+    be a second read nobody asks for (reviewer, 15 Sep).
+
+    The product is part of the key as well as the ref: a ref names one line of one order, but
+    a wrong or stale ref on a document for another item must not pull that document in. The
+    map may be WIDER than the rows being paired (the plan reads over every candidate line of
+    the file, not only the matched ones); a key nothing looks up costs nothing.
+    """
+    allocations, po_lines = rows
+
+    by_allocation: Dict[tuple, List[str]] = {}
+    for allocation in allocations:
+        by_allocation.setdefault(
+            (str(allocation.from_so_line_ref), str(allocation.product_id or "")), []
+        ).append(str(allocation.id))
+
+    by_po_line: Dict[tuple, List[str]] = {}
+    for line in po_lines:
+        by_po_line.setdefault(
             (str(line.from_so_line_ref), str(line.product_id or "")), []
         ).append(str(line.id))
-    return allocations, po_lines
+    return by_allocation, by_po_line
 
 
 def _chain_allocations(
@@ -854,6 +924,51 @@ def _chain_allocations(
                 (str(allocation.from_po_number), ref, product), []
             ).append(str(allocation.id))
     return held, by_line
+
+
+def _less_own_shipments(
+    facts: Dict[str, dict], chain_by_line: Dict[tuple, List[str]]
+) -> None:
+    """A purchase order line answers only for what has NOT sailed yet (7.2, owner 14 Sep).
+
+    A purchase order line and the shipping order it became are ONE supply. D10 links the
+    shipment first and the line "for the remainder", but the remainder was measured against
+    the line's whole `qty_ordered`, so the same units were owed twice: on the 3am prod copy
+    555 rows carried a link to a PO line AND to that line's own allocation, 23,187 units
+    counted twice (SO368872 / SRTWC286-SH is the owner's own case, 62 on PO 202510-S0078 and
+    62 on SPO-2026/04-0043, which IS that line shipped).
+
+    So the line's capacity drops by what its own allocations carry: ONLY the allocations
+    that quote this line's `source_ref` in `from_po_line_ref`, never the document's own
+    (reviewer B1, 15 Sep). Deducting the document's took a SIBLING line's shipment off this
+    line and left a row with no link at all when that sibling's allocation was already
+    occupied. On the 3am prod copy the fallback could not help anyway: 0 allocations carry a
+    `from_po_number` without a `from_po_line_ref`, and 0 purchase order lines have a blank
+    `source_ref`, so an allocation that really came from this line always names it.
+
+    `_through_po` still walks the document's allocations when the feed named no line, which
+    is D10 as it has always been (AC-R-2, AC-R-9). The two are not in conflict: an allocation
+    that does not name this line is not evidence that this line's units have sailed, so it
+    must not reduce the line, while taking it first is still the right walk when it is all
+    the feed states. Floored at zero, and read off the facts already built for those
+    allocations, so nothing is queried again.
+
+    The owner still sees both documents: "we definitely cannot double count, but by this
+    linking it helps us to know the PO and SPO corresponding to this order inquiry". The
+    worklist's PO column names the source purchase order of a shipment it links (7.2, FE).
+    """
+    for fact in facts.values():
+        if fact["kind"] != _PO:
+            continue
+        document, product = str(fact["document"]), fact["product_id"]
+        shipped_ids = chain_by_line.get(
+            (document, str(fact.get("source_ref") or ""), product)
+        ) or []
+        shipped = sum(
+            (facts[str(i)]["capacity"] for i in shipped_ids if str(i) in facts), _ZERO
+        )
+        if shipped > _ZERO:
+            fact["capacity"] = max(fact["capacity"] - shipped, _ZERO)
 
 
 def _claimed_capacity(db: Session) -> Dict[str, Decimal]:
@@ -938,7 +1053,7 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
         order_link_service._purchase_side(db, cited_numbers) if cited_numbers else ({}, {})
     )
 
-    ref_allocations, ref_po_lines = _ref_targets(db, [m.core_line for _, m in wanted])
+    ref_allocations, ref_po_lines = _ref_targets(plan.bought_rows or ([], []))
 
     target_ids = {claim["target_id"] for claim in claims}
     target_ids |= {target for _side, target in by_key.values()}
@@ -970,6 +1085,10 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     facts.update(
         {key: value for key, value in _target_facts(db, chained).items() if key not in facts}
     )
+    # Now that the shipments are known, a purchase order line answers only for the units
+    # that have not sailed (7.2). Before this, D10's "the line takes the remainder" measured
+    # the remainder against the line's whole size and counted the same goods twice.
+    _less_own_shipments(facts, chain_by_line)
 
     used = _claimed_capacity(db)
 
@@ -1401,11 +1520,16 @@ class _Raiser:
             so_line_id=mirror_id,
             item_code=row.item_code,
             qty=_dec(row.qty),
-            # The sheet's date, or the line's own when the operator wrote words where the
-            # date goes. `ORDER BACK` is not a date and must not become one.
-            delivery_date=row.delivery_date or (
-                None if row.order_back else match.core_line.required_date
-            ),
+            # The SALES ORDER LINE's own required date, and the sheet's only when the book
+            # promises none (7.4, owner: "we need to follow the sales order delivery date").
+            # SO325661 / SRTWT167 is required 01/01/2030 and its sheet row said 05/01/2026,
+            # so the worklist, the month grouping and the export all read a delivery nobody
+            # had promised. The sheet's date still decides which line the row matches and
+            # whether two rows restate one instruction; it stops being what the row REPORTS.
+            # An ORDER BACK row takes the line's date too - the words in the date cell are
+            # still never a date, and `verb` is what says the quantity is owed against
+            # something already ordered.
+            delivery_date=match.core_line.required_date or row.delivery_date,
             stock_location=location or match.line_location,
             verb=IV_ORDER_BACK if row.order_back else IV_ORDER,
             cited_document=match.cited[0] if match.cited else None,

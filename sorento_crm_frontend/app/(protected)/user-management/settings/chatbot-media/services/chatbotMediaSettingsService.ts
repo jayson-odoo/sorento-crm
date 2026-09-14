@@ -89,6 +89,18 @@ export interface ChatbotMediaSettings {
   media_extraction_timeout_seconds: number;
   /** Entities emitted per image before the result is truncated and says so. */
   media_max_entities: number;
+  /**
+   * How long the low stock report route holds the chat turn open, waiting for the fresh
+   * plan and its workbook, before it answers `pending` and leaves delivery to the worker
+   * push (PLAN-low-stock-report S5, AC-7/AC-43). It sits beside the media wait because it
+   * is the same kind of number - the one bound on how long a turn can be held - and the
+   * same singleton owns it. Range 5-90; 40 keeps it inside the chatbot's own queue-wait
+   * budget. REAL since S5: `system_settings.low_stock_sync_wait_seconds` exists, is in
+   * both manual dict builders, and is validated 5..90 on PUT - so this reads and writes
+   * the stored value, and the fallback below only covers a settings row that predates the
+   * column, exactly like every `media_*` key beside it.
+   */
+  low_stock_sync_wait_seconds: number;
 }
 
 const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
@@ -109,6 +121,7 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'media_sync_wait_seconds',
   'media_extraction_timeout_seconds',
   'media_max_entities',
+  'low_stock_sync_wait_seconds',
 ];
 
 /** The plan's section 2.4 defaults, used when the settings row predates the columns. */
@@ -133,6 +146,7 @@ const FALLBACKS: ChatbotMediaSettings = {
   media_sync_wait_seconds: 30,
   media_extraction_timeout_seconds: 45,
   media_max_entities: 10,
+  low_stock_sync_wait_seconds: 40,
 };
 
 /**

@@ -66,12 +66,28 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
  * Distinct numbers rather than links: two containers of one shipping order are one
  * document to the person reading the list (AC-R-27), and the `+N` pill counts documents,
  * not placements. The lightbox behind the number still lists every link.
+ *
+ * The PO side also answers with the purchase order a SHIPMENT came from (7.2, owner 14 Sep
+ * evening: "we definitely cannot double count, but by this linking it helps us to know the
+ * PO and SPO corresponding to this order inquiry"). The importer stopped linking a purchase
+ * order line for units already on its own ship, so a row whose whole quantity has sailed
+ * holds no `po` link at all, and this column would go blank on exactly the rows purchasing
+ * most wants to trace. A purchase order and its own shipment are ONE number here: the
+ * partly shipped row carries both a `po` link and an `spo` link naming the same purchase
+ * order, and the list must not read that as two.
  */
 function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): string[] {
   const numbers: string[] = [];
   for (const link of row.links ?? []) {
-    if (link.kind !== kind) continue;
-    const document = (link.document ?? '').trim();
+    const named =
+      kind === 'po'
+        ? link.kind === 'po'
+          ? link.document
+          : link.source_po_number
+        : link.kind === 'spo'
+          ? link.document
+          : null;
+    const document = (named ?? '').trim();
     if (!document || numbers.includes(document)) continue;
     numbers.push(document);
   }

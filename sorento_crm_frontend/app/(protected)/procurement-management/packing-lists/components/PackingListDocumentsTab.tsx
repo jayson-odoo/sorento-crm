@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Download, Eye, Link as LinkIcon, Link2, Unlink } from 'lucide-react';
+import { Link as LinkIcon, Link2 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,9 +14,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import AttachmentFileCard from '@/components/common/AttachmentFileCard';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
-import { useDownloadAttachment } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
-import { getAttachmentPreviewUrl } from '@/app/(protected)/resource-management/attachments/services/attachmentService';
 import { usePackingListRecord } from '../[id]/components/packing-list-context';
 
 /** Every file this container is answered by: its own attachment and the invoices behind it. */
@@ -25,7 +24,6 @@ export function PackingListDocumentsTab() {
     usePackingListRecord();
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [unlinkOpen, setUnlinkOpen] = useState(false);
-  const downloadMutation = useDownloadAttachment();
 
   const linkedAttachmentIds = useMemo(
     () =>
@@ -36,31 +34,6 @@ export function PackingListDocumentsTab() {
   );
 
   if (!packingList) return null;
-
-  const handleDownload = async (attachmentId: string, filename: string) => {
-    try {
-      const blob = await downloadMutation.mutateAsync(attachmentId);
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename || 'download';
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
-    } catch {
-      // Error is handled by the mutation hook.
-    }
-  };
-
-  const handlePreview = async (attachmentId: string) => {
-    try {
-      const previewUrl = await getAttachmentPreviewUrl(attachmentId);
-      if (previewUrl) window.open(previewUrl, '_blank');
-    } catch {
-      toast.error('Failed to open attachment preview');
-    }
-  };
 
   const handleUnlink = async () => {
     try {
@@ -83,55 +56,16 @@ export function PackingListDocumentsTab() {
         {packingList.attachment_id && packingList.attachment ? (
           <div className="space-y-2">
             <p className="text-sm font-medium">Attachment</p>
-            <div className="flex items-center gap-2 p-3 border rounded-lg">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">
-                  {packingList.attachment.original_filename || 'Unknown'}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {packingList.attachment.attachment_type?.type_name || 'No type'} •{' '}
-                  {packingList.attachment.file_size_bytes
-                    ? `${(packingList.attachment.file_size_bytes / 1024).toFixed(2)} KB`
-                    : '-'}
-                </p>
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    if (packingList.attachment_id) handlePreview(packingList.attachment_id);
-                  }}
-                  title="Preview"
-                >
-                  <Eye className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    if (packingList.attachment_id && packingList.attachment?.original_filename) {
-                      handleDownload(
-                        packingList.attachment_id,
-                        packingList.attachment.original_filename,
-                      );
-                    }
-                  }}
-                  title="Download"
-                >
-                  <Download className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setUnlinkOpen(true)}
-                  disabled={updatePending}
-                  title="Unlink attachment"
-                >
-                  <Unlink className="size-4" />
-                </Button>
-              </div>
-            </div>
+            {/* The shared file row (S8), so this card and the proforma invoice's Source
+                files read as one thing. The unlink flow behind it is unchanged. */}
+            <AttachmentFileCard
+              attachmentId={packingList.attachment_id}
+              name={packingList.attachment.original_filename || 'Unknown'}
+              typeLabel={packingList.attachment.attachment_type?.type_name}
+              sizeBytes={packingList.attachment.file_size_bytes ?? null}
+              onUnlink={() => setUnlinkOpen(true)}
+              unlinkDisabled={updatePending}
+            />
           </div>
         ) : (
           <div className="space-y-2">

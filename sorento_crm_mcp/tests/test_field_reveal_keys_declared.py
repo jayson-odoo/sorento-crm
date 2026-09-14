@@ -48,6 +48,12 @@ _LANE_GATED_KEYS = {
     # business/__init__.py::run_fetch` forces scope to `do` and skips the SO query
     # entirely without it.
     "sales_orders.outstanding": "app/services/chatbot/lanes/business/__init__.py",
+    # AC-64 (PLAN-low-stock-report.md): the whole TOOL is per contact, not one field of
+    # it - the report is a workbook, so there is nothing for a presenter to mask. Two
+    # seams enforce it and both refuse before any work: `lanes/business/__init__.py::
+    # run_fetch` answers the refusal line without fetching, and the route itself re-reads
+    # the key and 403s (AC-41), because that fetch CREATES a reorder run and sends a file.
+    "scm.low_stock_report": "app/services/chatbot/lanes/business/__init__.py",
 }
 
 
