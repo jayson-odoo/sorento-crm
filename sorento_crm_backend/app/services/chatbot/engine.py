@@ -1762,6 +1762,35 @@ def _run_stages(  # noqa: PLR0915
         if the_question_was_cleared:
             open_question_before = None
 
+    # THE HEAD CAN ALSO END THE OUTSTANDING QUESTION (R22, merged from main #862). A
+    # decline ("no"/"stop") or a second unreadable reply under an open `outstanding_scope`
+    # / `outstanding_detail` is decided in `head/output_exchange._apply_outstanding_pending`
+    # - it stamps `outstanding_pending_dropped` and composes the closing reply - but that
+    # runs INSIDE post_process, after the engine's own clearing step. A bare decline names
+    # no entity, so `clearing.apply` reads it as neither a new ask nor an answer and leaves
+    # the question open; the tail then carried it forward and the customer was asked the
+    # same thing a third time. Cleared here, where every other question-clear is traced, so
+    # `_open_question_before` reads None and the tail does not re-arm what the head just
+    # closed. Only the two outstanding kinds, and only on the head's own drop signal.
+    if (
+        not the_question_was_cleared
+        and isinstance(open_question_before, dict)
+        and open_question_before.get("kind") in ("outstanding_scope", "outstanding_detail")
+        and jsc.truthy(qf.get("outstanding_pending_dropped"))
+    ):
+        variables = {**variables, "open_question": None}
+        the_question_was_cleared = True
+        clear_line = {
+            "slot": "open_question",
+            "reason": (
+                "the customer declined or left the outstanding question rather than "
+                "answering it, so it is closed rather than asked again"
+            ),
+        }
+        cleared_question = [*cleared_question, clear_line]
+        turn_trace.add("decay", clear_line)
+        open_question_before = None
+
     # The focus is ALREADY on the parse block, stamped where the out-parameter was read.
     # What this stage adds is the answer: which question was open when the turn started,
     # what answering it decided, and the lane the outcome names.

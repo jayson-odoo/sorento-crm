@@ -102,6 +102,48 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
     }
 
 
+def _with_carried_product(entities: Any, focus: Any, carried_code: Any = None) -> list[Any]:
+    """This turn's resolved entities, plus the product the interrupted ask still holds when
+    none of them is a product (R16/R19).
+
+    A customer pick that resumes an outstanding ask resolves only the customer - the
+    interrupted ask's product was replaced off `entities` by the pick. It survives in two
+    places, and this reads whichever is alive: `focus.products` (a `reuse` pick), and the
+    RESOLVING customer_pick question's own `payload.filters.product_code` (a pick-all,
+    whose `entity_op: "clear"` wipes the focus slot but never the frozen filters the
+    question was asked over). Only ADDS, and only when the turn resolved no product of its
+    own (a turn that typed its own product is a new ask and never reaches here). The focus
+    slot stores the entity in its parse shape (`hint`, `canonical_code`); `entity_type` and
+    `code` are the keys `outstanding_product_code` and `_outstanding_filters_from` read, so
+    they are set here.
+    """
+    rows = [e for e in jsc.array(entities) if jsc.truthy(e)]
+    if any(isinstance(e, dict) and e.get("entity_type") == "product" for e in rows):
+        return rows
+    slots = focus if isinstance(focus, dict) else {}
+    slot = slots.get("products")
+    carried = slot.get("value") if isinstance(slot, dict) else None
+    for pe in jsc.array(carried):
+        if not isinstance(pe, dict):
+            continue
+        code = pe.get("canonical_code") or pe.get("code") or pe.get("raw")
+        if jsc.truthy(code):
+            rows.append({**pe, "entity_type": "product", "code": jsc.js_string(code)})
+            return rows
+    if jsc.truthy(carried_code):
+        rows.append(
+            {
+                "raw": jsc.js_string(carried_code),
+                "hint": "product",
+                "canonical_code": jsc.js_string(carried_code),
+                "entity_type": "product",
+                "code": jsc.js_string(carried_code),
+                "current_message": False,
+            }
+        )
+    return rows
+
+
 def _outstanding_scope_ask(
     entities: Any, semantic_input: dict[str, Any], *, db: Any = None
 ) -> dict[str, Any]:
@@ -880,7 +922,28 @@ def run_fetch(
             and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
             and has_so_grant
         ):
-            return _outstanding_scope_ask(entities, semantic_input, db=db)
+            # R16/R19: the scope question resumed after a CUSTOMER pick has to name the
+            # product the interrupted ask was about, and that product is not in this turn's
+            # gated `entities` - the pick replaced the scope with the customer it resolved.
+            # It is still alive on `focus.products` (a reuse pick) or on the resolving
+            # customer_pick question's own frozen `payload.filters` (a pick-all, whose
+            # `entity_op: "clear"` wipes the focus slot), so the scope-ask entities are the
+            # picked customer(s) PLUS the carried product - or the header prints
+            # `Product: all` for an ask that named one and the answering turn reports the
+            # wrong scope (the owner's own live trace).
+            prev_vars = jsc.get(jsc.get(ctx.get("session") or {}, "session_vars"), "variables")
+            prev_q_filters = jsc.get(
+                jsc.get(jsc.get(prev_vars, "open_question"), "payload"), "filters"
+            )
+            return _outstanding_scope_ask(
+                _with_carried_product(
+                    entities,
+                    (ctx.get("parse") or {}).get("_focus"),
+                    carried_code=jsc.get(prev_q_filters, "product_code"),
+                ),
+                semantic_input,
+                db=db,
+            )
 
         scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
         so_refused = False

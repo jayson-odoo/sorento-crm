@@ -475,6 +475,7 @@ def _ask_for_turn(
     born_context: Any,
     reply_text: Any,
     options: Any,
+    outstanding_options: Any = None,
     team_clarify_options: Any,
     roster_plan: Any,
     companies: Any,
@@ -521,9 +522,13 @@ def _ask_for_turn(
             payload_out["filters"] = outstanding_filters
         if outstanding_reprinted:
             payload_out["reprinted"] = True
+        # The local rows when a fresh offer was rendered this turn, else the STICKY offer's
+        # carried rows (see the call site) - never empty on a survived offer, or the next
+        # pick would have no list to count.
+        rows = list(jsc.array(options)) or list(jsc.array(outstanding_options))
         return oq.ask(
             context,
-            options=list(jsc.array(options)),
+            options=rows,
             turn_no=turn_no,
             domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
             payload=payload_out,
@@ -1458,6 +1463,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         born_context=selection_context,
         reply_text=output.get("user_response"),
         options=last_result_set,
+        # THE CARRIED ROSTER for the OUTSTANDING arms only (R2, merged from main #862). A
+        # detail offer answered by a pick re-runs the report into a DETAIL LIST, whose text
+        # carries no offer block, so `outstanding_ask` is None and the local
+        # `last_result_set` is empty - but the offer is STICKY and `_offer_carry` has just
+        # re-seated its rows onto `variables["last_result_set"]`. Passed separately rather
+        # than folded into `options`, because `member_offer` is deliberately re-armed with
+        # NO options (its company names ride the composed text, not a roster) and would
+        # inherit the carried roster if `options` fell back to it
+        # (`test_s5_escalation_seams`).
+        outstanding_options=jsc.array(variables.get("last_result_set")),
         team_clarify_options=turn_state.get("team_clarify_options"),
         roster_plan=variables.get("routing_roster_plan"),
         companies=variables.get("routing_companies"),

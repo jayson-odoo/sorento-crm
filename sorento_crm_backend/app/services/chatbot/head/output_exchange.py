@@ -2455,12 +2455,31 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         by_idx = jsc.JsMap([(jsc.js_number(jsc.get(r, "idx")), r) for r in dym_set])
         base = focus_entities(prev_state)  # retains the resolved stock entity
         applied = False
-        for p in positions:
+        # REVERSED, because each pick PREPENDS (`[picked] + prior`, ADD-BOTH). Walking the
+        # positions forward left the picked rows in the reverse of the order the customer
+        # read them, so a pick-all over a three-family customer picker printed
+        # "3, 2, 1" and the report's customer_ids came out reversed (R21). Reversed here,
+        # the final list is roster order. A did-you-mean product multi-pick is unaffected
+        # in practice: its captures pick a single position.
+        for p in reversed(list(positions)):
             row = by_idx.get(jsc.js_number(p))
             if row is None:
                 continue  # out-of-range position -> skip (never resolve)
+            # THE ROW'S OWN CODE, or its uuid when it has none (R21 pick-all). A
+            # did-you-mean product row always carries a `value` / `product` code, but a
+            # CUSTOMER-family picker row is `{idx, label, uuid, product: None}` - the uuid
+            # IS the family's identity. Without this fallback every picked family built a
+            # `{raw: None, canonical_code: None}` entity, so `_ce_key` ("hint|code")
+            # collapsed all three to `customer|` and the general deduper kept ONE - the
+            # report then ran for a single family under a header that named three. The
+            # uuid distinguishes them and is what the customer_ids extraction reads anyway.
+            row_code = (
+                row.get("value")
+                if row.get("value") is not None
+                else (row.get("product") if jsc.truthy(row.get("product")) else row.get("uuid"))
+            )
             hit = {
-                "code": row.get("value") if row.get("value") is not None else row.get("product"),
+                "code": row_code,
                 "uuid": row.get("uuid") if jsc.truthy(row.get("uuid")) else None,
                 "entity_type": row.get("entity_type") if jsc.truthy(row.get("entity_type")) else None,
                 "for_raw": row.get("for_raw"),
