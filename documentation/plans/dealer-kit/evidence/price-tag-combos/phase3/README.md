@@ -9,10 +9,12 @@ Plan: `documentation/plans/dealer-kit/PLAN-price-tag-combos.md`.
 
 Screenshots (the policy cap is two per lane):
 
-- `crm-lines-tab-1280.png` - CRM detail Lines tab at 1280, PT-202609-0009: the
-  line, its parts, and the two split tags 1a/1b under it.
 - `portal-parts-375.png` - portal request form at 375, the cabinet's package
   filled in with a fixed part row and an open Basin row.
+- `split-line-pdf-two-tiles.png` - the tag sheet print page for PT-202609-0009
+  (AC-S4-4), swapped in for the CRM Lines tab shot to stay inside the cap; the
+  Lines tab is covered in prose under "Result" and by
+  `PriceTagRequestDetail.test.tsx`.
 
 ## How the walk was navigated
 
@@ -120,6 +122,38 @@ PT-202609-0011 the same column was empty while its tag row showed
 `RM 3625.00`. The UAC does not require a line-level price (price is a TAG fact
 since D4), so this is cosmetic - but a column that is populated on one request
 and blank on another reads as missing data.
+
+## AC-S4-4 - the PDF of a split line
+
+Verified, without a worker and without touching the shared `catalogue_render`
+queue. The worker's own task function was run INLINE from a one-off shell in the
+lane backend, against the lane database and the lane frontend
+(`DEALER_KIT_PRINT_BASE_URL=http://localhost:3083`):
+
+```
+PT-202609-0009 designing -> proof_ready -> ready
+request_tag_sheet_export(...)   -> download 2beb2b2c-09a0-47f5-b498-c9c3b1399fde
+generate_tag_sheet_pdf(...)     -> {'status': 'ready', 'bytes': 45749}
+```
+
+The print page Chromium rendered carries **two tiles, one per tag**, each with
+the package price `RM 3,882` (the cabinet at 3550 plus the mirror at 75 plus the
+basin at 257 - the cabinet's list price was changed on the shared dev database
+by another lane partway through, which is why this figure is not the 1,882 the
+earlier walks recorded). `split-line-pdf-two-tiles.png` is that page.
+
+**One half of AC-S4-4 is NOT shown, and it is not a code fault.** The
+requirement is "the candidate's code in the parts text". The resolver produces
+that text correctly - the live payload for these two tags reads
+`+ SRTMR11406-WH ...\n+ SRTBS01 ...` and `... + SRTBS01-NL ...` - but the tag
+this request was auto-cloned onto is the STARTER product block, whose only slot
+binding is `barcode`; it carries no `set_members` layer, so there is nothing on
+the tile to draw the text into. D4 assumes "every existing template already
+carries it", which holds for the published templates and NOT for the starter
+block the designer falls back to when no published template matches the family.
+A published template with a `set_members` slot would print it. Raised for the
+captain rather than fixed here: adding the slot to the starter block changes
+every ala-carte tag in the system and is not this slice's call.
 
 ## Console
 
