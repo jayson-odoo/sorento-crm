@@ -294,8 +294,10 @@ describe('SalesOrdersList - planning the selected orders', () => {
     await waitFor(() => expect(screen.getByText('2 selected')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Export' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clear' })).toBeInTheDocument();
-    // No Plan BUTTON anywhere: the only one is the menu item, which is not open.
-    expect(screen.queryByRole('button', { name: /^Plan/ })).toBeNull();
+    // No "Plan selected" BUTTON anywhere: the only one is the menu item, which is not open.
+    // Named in full since S4 added a `Planned` COLUMN, whose header is a button too - a bare
+    // /^Plan/ matches that header and turns this into an assertion about the grid's columns.
+    expect(screen.queryByRole('button', { name: /^Plan selected/ })).toBeNull();
   });
 
   it('offers nothing at all without the permission the board itself requires', async () => {

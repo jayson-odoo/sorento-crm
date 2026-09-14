@@ -410,6 +410,38 @@ describe('FulfilmentBoardListView says what was suggested and what was decided',
 
     expect(await screen.findByText('Not decided')).toBeInTheDocument();
   });
+
+  /**
+   * AC-S3-2 (14 September 2026 ruling). A line carrying a LIVE order inquiry row from the
+   * migrated book (#875) is decided on the buying side: `covered` true, `decision` null,
+   * because purchasing was told about it before any board existed and there is no frozen
+   * composition to print.
+   *
+   * So the Decided column names the INQUIRY where the composition would be. It read "Not
+   * decided" over a line somebody has already been told to buy, which invites a second Buy
+   * for the same units - the one reading this criterion exists to stop.
+   */
+  it('names the order inquiry that decided the line, where the composition would be', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: null,
+          proposed: null,
+          trail: [],
+          sources: [],
+          order_inquiry: {
+            inquiry_no: 'OI-000418',
+            state: 'raised',
+            ack_state: 'acknowledged',
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('OI-000418')).toBeInTheDocument();
+    expect(screen.queryByText('Not decided')).not.toBeInTheDocument();
+  });
 });
 
 /**
