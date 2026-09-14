@@ -14,18 +14,44 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import ProductDataReviewDialog from './ProductDataReviewDialog';
 import type { LineDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 
+/**
+ * THE REAL WIRE SHAPE. `LineDataChangeSet` is answered by
+ * `GET .../data-changes`, whose response model declares `old_image_url` and
+ * `new_image_url`, so FastAPI serialises them as `null` on every row - text
+ * rows included. A fixture that omits the keys tests a body the server never
+ * sends: `undefined` and `null` take different branches, and only one of them
+ * is what a reader actually gets.
+ */
 const CHANGE_SET: LineDataChangeSet = {
   line_id: 'line-1',
   code: 'ZZT-SINK-1',
   name: 'ZZT Kitchen Sink',
   changes: [
-    { field: 'list_price', label: 'List price', old: 'RM 1,000', new: 'RM 1,200' },
-    { field: 'barcode', label: 'Barcode', old: '9550000000001', new: '9550000000999' },
+    {
+      field: 'list_price',
+      label: 'List price',
+      old: 'RM 1,000',
+      new: 'RM 1,200',
+      old_image_url: null,
+      new_image_url: null,
+      note: null,
+    },
+    {
+      field: 'barcode',
+      label: 'Barcode',
+      old: '9550000000001',
+      new: '9550000000999',
+      old_image_url: null,
+      new_image_url: null,
+      note: null,
+    },
     {
       field: 'offer_price',
       label: 'Offer price',
       old: 'RM 899',
       new: null,
+      old_image_url: null,
+      new_image_url: null,
       note: 'Promotion ended',
     },
     {
@@ -35,6 +61,7 @@ const CHANGE_SET: LineDataChangeSet = {
       new: 'new.jpg',
       old_image_url: 'https://cdn.example.test/old.jpg',
       new_image_url: 'https://cdn.example.test/new.jpg',
+      note: null,
     },
   ],
 };
@@ -75,6 +102,33 @@ describe('what the dialog shows (AC-S5-4)', () => {
     expect(within(rows).getByText('RM 1,200')).toBeInTheDocument();
     expect(within(rows).getByText('9550000000001')).toBeInTheDocument();
     expect(within(rows).getByText('9550000000999')).toBeInTheDocument();
+  });
+
+  it('a text row with a null image url still shows its values, not "No photo"', () => {
+    // The whole defect: `imageUrl !== undefined` is true for `null`, so every
+    // text row takes the image branch and the reader is asked to choose
+    // between "No photo" and "No photo".
+    renderDialog();
+    const rows = screen.getByTestId('product-data-review-rows');
+
+    expect(within(rows).queryByText('No photo')).toBeNull();
+    expect(within(rows).getByText('RM 1,000')).toBeInTheDocument();
+    expect(within(rows).getByText('RM 1,200')).toBeInTheDocument();
+  });
+
+  it('only an image row renders a thumbnail', () => {
+    renderDialog();
+
+    // Four changed fields, one of them an image: two thumbnails, not eight.
+    expect(screen.getAllByRole('img')).toHaveLength(2);
+  });
+
+  it('an offer that disappeared shows the old value and says why', () => {
+    renderDialog();
+    const rows = screen.getByTestId('product-data-review-rows');
+
+    expect(within(rows).getByText('RM 899')).toBeInTheDocument();
+    expect(within(rows).getByText('Promotion ended')).toBeInTheDocument();
   });
 
   it('draws thumbnails for an image change rather than a filename', () => {

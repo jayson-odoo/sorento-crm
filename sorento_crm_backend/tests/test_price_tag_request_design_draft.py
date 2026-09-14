@@ -33,6 +33,7 @@ from app.main import app  # noqa: E402
 
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session
+from tests import _ptag_r9_seed
 from tests.test_price_tag_request_crm_routes import (
     _MARKETER_ID,
     _seed_principals,
@@ -352,3 +353,14 @@ class TestTheGetPrefersTheDraft:
         assert body["doc"] is None
         assert body["version"] == 0
         assert body["source"] == "version"
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

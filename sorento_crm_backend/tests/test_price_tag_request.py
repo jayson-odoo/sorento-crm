@@ -46,6 +46,7 @@ from app.services.price_tag_request_service import (
     VALID_TRANSITIONS,
 )
 from app.services.portal_form_visibility_service import resolve_visible_form_types
+from tests import _ptag_r9_seed
 
 
 # ---------------------------------------------------------------------------
@@ -1419,3 +1420,14 @@ class TestSubmitCompleteness:
             PriceTagRequestService.validate_set_guard(db, req)
 
         assert exc_info.value.detail["detail"] == "line:0,line:1"
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

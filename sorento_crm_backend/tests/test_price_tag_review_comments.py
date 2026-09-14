@@ -38,6 +38,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 _PORTAL = "/api/v1/public/portal/submissions/price_tag_request/{id}"
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`."""
+    return seed.block_respond(monkeypatch)
+
 _CRM = "/api/v1/dealer-kit/price-tag-requests/{id}"
 
 

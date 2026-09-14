@@ -10,7 +10,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -509,5 +509,75 @@ describe('PriceTagRequestDetail - tabs', () => {
 
     expect(await screen.findByRole('button', { name: 'Design SRT-1' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S7 - the collection dates are read in Malaysia, off a naive UTC timestamp
+// ---------------------------------------------------------------------------
+
+describe('the collection subline (AC-S3-8)', () => {
+  /**
+   * FastAPI serialises a naive `datetime` with no zone: `2026-09-14T16:30:00`
+   * means 16:30 UTC, which is 00:30 on the 15th in Malaysia. The card builds
+   * its dates with `new Date(...)` (which reads that string as LOCAL time) and
+   * `formatDate` (which reads LOCAL getters), so the day printed is whatever
+   * the reader's browser happens to be set to - and on the one boundary that
+   * matters it is the wrong day.
+   *
+   * TZ is pinned so the assertion means the same thing on this machine
+   * (Asia/Kuala_Lumpur) and on a CI runner (UTC).
+   */
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'UTC';
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it('reads a naive backend timestamp as UTC and prints the Malaysia date', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'ready_for_collection',
+        print_by: 'office',
+        ready_for_collection_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    // 16:30 UTC on the 14th is 00:30 on the 15th in Malaysia.
+    expect(await screen.findByText(/Ready since 15\/09\/2026/)).toBeInTheDocument();
+  });
+
+  it('dates the auto-collect the same way, seven days on', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'ready_for_collection',
+        print_by: 'office',
+        ready_for_collection_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByText(/auto-collects 22\/09\/2026/),
+    ).toBeInTheDocument();
+  });
+
+  it('dates a collected request in Malaysia too', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'collected',
+        print_by: 'office',
+        collected_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText(/Collected 15\/09\/2026/)).toBeInTheDocument();
   });
 });

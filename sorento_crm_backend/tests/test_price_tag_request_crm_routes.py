@@ -21,6 +21,7 @@ from app.main import app  # noqa: E402
 
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_DB_TESTS") == "1",
@@ -576,3 +577,14 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
 
         assert resp.status_code == 409, resp.text
         assert self._page_version_count(db, request.id) == before
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

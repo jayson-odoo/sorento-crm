@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,6 +42,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 _CRM = "/api/v1/dealer-kit/price-tag-requests/{id}"
+_PORTAL = "/api/v1/public/portal/submissions/price_tag_request/{id}"
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    The notifier itself stays REAL, so the copy table and the IntegrationLog
+    row - the two things half this file is about - still run.
+    """
+    return seed.block_respond(monkeypatch)
 
 
 @pytest.fixture
@@ -478,4 +490,318 @@ class TestTheTransitionNoteIsKept:
             .filter(PriceTagReviewComment.request_id == request.id)
             .count()
             == 0
+        )
+
+
+# ---------------------------------------------------------------------------
+# B3 - the sweep is a transition, and the salesperson hears about it too
+# ---------------------------------------------------------------------------
+
+
+class TestTheAutoCollectSweepNotifies:
+    """AC-S4-1 says EVERY status change reaches the salesperson, and the copy
+    table has a line for this one - "marked collected automatically after N
+    days". The sweep writes the status straight onto the row and never calls
+    the notifier, so the ONE transition nobody is present for is the one the
+    salesperson is never told about: their tags are closed overnight and the
+    first they hear of it is an empty counter.
+    """
+
+    def _waiting(self, db, *, days_ago: int, days: int):
+        from app.models.price_tag import PriceTagRequest
+        from app.models.user import SystemSetting
+
+        row = db.query(SystemSetting).first()
+        if row is None:
+            row = SystemSetting(id=str(uuid.uuid4()), name="ZZT Co")
+            db.add(row)
+        row.price_tag_auto_collect_days = days
+        request = _request_at(db, "ready_for_collection", print_by="office")
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
+            {
+                "ready_for_collection_at": datetime.utcnow()
+                - timedelta(days=days_ago)
+            }
+        )
+        db.commit()
+        return request
+
+    def test_a_swept_request_notifies_once_with_the_auto_context(
+        self, db_only, notifier
+    ):
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        request = self._waiting(db_only, days_ago=9, days=7)
+
+        PriceTagRequestService.run_auto_collect(db_only)
+
+        assert len(notifier) == 1, notifier
+        call = notifier[0]
+        assert call["request_id"] == request.id
+        assert call["event"] == "collected"
+        assert call["ctx"].get("auto") is True, (
+            "without it the copy reads 'marked collected', which is a claim "
+            "that somebody came to the counter"
+        )
+        assert call["ctx"].get("days") == 7
+
+    def test_a_request_the_sweep_left_alone_notifies_nobody(self, db_only, notifier):
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        self._waiting(db_only, days_ago=2, days=7)
+
+        PriceTagRequestService.run_auto_collect(db_only)
+
+        assert notifier == []
+
+    def test_the_logged_text_is_the_copy_table_auto_line(self, db_only):
+        """The lane stack has Respond disabled, so the IntegrationLog row is the
+        only evidence of what was said (AC-S4-3)."""
+        from app.models.integration import IntegrationLog
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        request = self._waiting(db_only, days_ago=30, days=7)
+
+        PriceTagRequestService.run_auto_collect(db_only)
+        db_only.commit()
+
+        rows = (
+            db_only.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "price_tag_requests")
+            .filter(IntegrationLog.business_id == str(request.id))
+            .all()
+        )
+        assert len(rows) == 1, "no IntegrationLog row for the swept request"
+        payload = str(rows[0].request_payload)
+        assert "marked collected automatically after 7 days" in payload, payload
+        assert request.doc_number in payload
+
+
+# ---------------------------------------------------------------------------
+# S1 - the round travels with the change request
+# ---------------------------------------------------------------------------
+
+
+class TestTheRoundReachesBothNotifications:
+    """`transition_status` takes a `notify_ctx`, and the portal's
+    request-changes route passes none - so `round_no` falls back to 1 on every
+    round and `count` is never set.
+
+    Two consequences, both silent. The bell dedups on request + status + ROUND,
+    so a second round of changes rings nothing at all: the assignee is told
+    once, ever. And the salesperson's confirmation says "You sent change
+    requests" instead of naming how many, which is the whole point of sending
+    them in one call.
+    """
+
+    @pytest.fixture
+    def portal(self):
+        from app.api.v1.public.portal import get_portal_token
+        from app.database import get_db
+        from app.models.portal import PortalToken
+
+        with blank_session() as db:
+            seed.seed_marketer(db)
+            contact_id = seed.seed_portal_contact(db)
+            # NOT a second `block_respond`: the module's autouse `no_respond`
+            # already installed one, and re-installing here would hand the test
+            # a recorder nothing writes to.
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            app.dependency_overrides[get_portal_token] = lambda: PortalToken(
+                id=str(uuid.uuid4()), contact_id=contact_id, space_id="zzt-space"
+            )
+            try:
+                with TestClient(app, headers={"X-Portal-Token": "zzt-token"}) as client:
+                    yield client, db, contact_id
+            finally:
+                app.dependency_overrides.clear()
+
+    def _proof_ready(self, db, contact_id):
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="proof_ready",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        page, doc = seed.attach_design(db, request)
+        return request, page, doc
+
+    def _bells(self, db):
+        from app.models.notification import Notification
+
+        return (
+            db.query(Notification)
+            .filter(Notification.user_id == seed.MARKETER_ID)
+            .filter(Notification.source_entity_type == "price_tag_request")
+            .all()
+        )
+
+    def _pin(self, line_id, body):
+        return {"line_id": line_id, "x": 0.2, "y": 0.3, "w": 0, "h": 0, "body": body}
+
+    def test_a_second_round_rings_the_bell_again(self, portal):
+        from app.models.price_tag import PriceTagRequest
+
+        client, db, contact_id = portal
+        request, page, doc = self._proof_ready(db, contact_id)
+        seed.snapshot_proof_ready(db, page, doc, version=2)
+        line_id = request.lines[0].id
+
+        client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [self._pin(line_id, "Round one")]},
+        )
+        assert len(self._bells(db)) == 1
+
+        # Marketing re-sends the proof, the salesperson comments again.
+        seed.snapshot_proof_ready(db, page, doc, version=3)
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
+            {"status": "proof_ready"}
+        )
+        db.commit()
+        client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [self._pin(line_id, "Round two")]},
+        )
+
+        bells = self._bells(db)
+        assert len(bells) == 2, (
+            "round 2 deduplicated against round 1, so the assignee was never "
+            "told the salesperson came back"
+        )
+        assert len({bell.dedup_key for bell in bells}) == 2
+
+    def test_the_salesperson_text_names_how_many_were_sent(self, portal, no_respond):
+        client, db, contact_id = portal
+        request, page, doc = self._proof_ready(db, contact_id)
+        line_id = request.lines[0].id
+
+        client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={
+                "comments": [
+                    self._pin(line_id, "Bigger price"),
+                    self._pin(line_id, "Move the logo"),
+                    self._pin(line_id, "Drop the badge"),
+                ]
+            },
+        )
+
+        sent = [row["text"] for row in no_respond]
+        assert sent, "nothing was sent at all"
+        assert any("You sent 3 change requests on" in text for text in sent), sent
+
+
+# ---------------------------------------------------------------------------
+# S9 - the first line of the copy table
+# ---------------------------------------------------------------------------
+
+
+class TestSubmitNotifies:
+    """The copy table opens with "{doc} received. We will start designing
+    shortly." and nothing ever sends it: the salesperson presses Submit and
+    hears nothing back, which is the exact silence B1 was ruled to end.
+    """
+
+    @pytest.fixture
+    def portal(self):
+        from app.api.v1.public.portal import get_portal_token
+        from app.database import get_db
+        from app.models.portal import PortalToken
+
+        with blank_session() as db:
+            seed.seed_marketer(db)
+            contact_id = seed.seed_portal_contact(db)
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            app.dependency_overrides[get_portal_token] = lambda: PortalToken(
+                id=str(uuid.uuid4()), contact_id=contact_id, space_id="zzt-space"
+            )
+            try:
+                with TestClient(app, headers={"X-Portal-Token": "zzt-token"}) as client:
+                    yield client, db, contact_id
+            finally:
+                app.dependency_overrides.clear()
+
+    def test_a_submit_reaches_the_salesperson(self, portal, notifier):
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        client, db, contact_id = portal
+        product = seed.seed_product(db)
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact_id,
+            company_id=seed.SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [{"line_type": "product", "product_id": product.id}],
+            },
+        )
+        request.print_by = "office"
+        db.commit()
+
+        response = client.post(f"{_PORTAL.format(id=request.id)}/submit")
+
+        assert response.status_code == 200, response.text
+        events = [call["event"] for call in notifier]
+        assert "submitted" in events, events
+
+
+# ---------------------------------------------------------------------------
+# S6 - the message reports something that has actually happened
+# ---------------------------------------------------------------------------
+
+
+class TestTheNotifierRunsAfterTheCommit:
+    """A message is a promise about the database.
+
+    The notifier fires inside `transition_status`, before any caller commits,
+    so a failure on the way out - a constraint, a rollback in the route, a
+    request that never reaches `db.commit()` - leaves the salesperson holding a
+    WhatsApp for a transition that did not survive. The send has to come after
+    the commit that makes it true.
+    """
+
+    def test_the_transition_is_committed_before_the_notifier_is_called(
+        self, db_only, monkeypatch, no_export
+    ):
+        from app.services import price_tag_notify
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        request = _request_at(db_only, "designing")
+
+        commits = {"count": 0}
+        real_commit = db_only.commit
+
+        def _counted_commit(*args, **kwargs):
+            commits["count"] += 1
+            return real_commit(*args, **kwargs)
+
+        monkeypatch.setattr(db_only, "commit", _counted_commit)
+
+        seen: list[int] = []
+        monkeypatch.setattr(
+            price_tag_notify,
+            "notify_salesperson",
+            lambda db, req, event, **ctx: seen.append(commits["count"]),
+        )
+
+        PriceTagRequestService.transition_status(
+            db_only, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+
+        assert seen, "the notifier was never called"
+        assert seen[0] >= 1, (
+            "the notifier ran before any commit, so it can report a "
+            "transition that a later rollback throws away"
         )

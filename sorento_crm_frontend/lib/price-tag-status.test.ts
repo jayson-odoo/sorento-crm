@@ -10,7 +10,7 @@
  * purpose: `approved` is the end of the line for a salesperson printing their
  * own tags and the middle of it for an office print.
  */
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 
 import {
   PRICE_TAG_STATUS_PILL_CLASS,
@@ -86,6 +86,38 @@ describe('isTerminalPriceTagStatus (AC-S3-4, AC-S3-6)', () => {
   it('a hand-over still waiting is not finished', () => {
     expect(isTerminalPriceTagStatus('ready_for_collection', 'office')).toBe(false);
     expect(isTerminalPriceTagStatus('proof_ready', 'self')).toBe(false);
+  });
+});
+
+describe('autoCollectOn reads a naive backend timestamp as UTC (S7)', () => {
+  /**
+   * FastAPI serialises a naive `datetime` with no zone, so
+   * `2026-09-14T16:30:00` means 16:30 UTC. `new Date(str)` reads an unzoned
+   * ISO string as LOCAL time, so the instant the sweep is calculated from
+   * moves with whatever timezone the browser is set to - and the day the card
+   * prints moves with it.
+   *
+   * TZ is pinned to a zone that is neither UTC nor Malaysia, so the assertion
+   * fails for the same reason on a developer's machine and on CI.
+   */
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'America/New_York';
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it('adds the days to the UTC instant, not to a local re-reading of it', () => {
+    const on = autoCollectOn('2026-09-14T16:30:00', 7);
+
+    expect(on?.toISOString()).toBe('2026-09-21T16:30:00.000Z');
+  });
+
+  it('a timestamp that is already zoned is unchanged', () => {
+    const on = autoCollectOn('2026-09-14T16:30:00Z', 7);
+
+    expect(on?.toISOString()).toBe('2026-09-21T16:30:00.000Z');
   });
 });
 

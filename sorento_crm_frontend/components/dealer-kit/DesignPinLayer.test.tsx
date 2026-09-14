@@ -13,7 +13,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, within } from '@testing-library/react';
 
 import DesignPinLayer from './DesignPinLayer';
 import type { ReviewComment, DraftPin } from '@/lib/dealer-kit/review-comments';
@@ -155,6 +155,32 @@ describe('placing a pin (AC-S2-1)', () => {
     const placed = onPlace.mock.calls[0][0];
     expect(placed.x + placed.w).toBeLessThanOrEqual(1);
     expect(placed.y + placed.h).toBeLessThanOrEqual(1);
+  });
+
+  it('a drag that leaves the tag still finishes the pin', () => {
+    // The rail the salesperson drags a box with is the tag's own hit area, and
+    // the move/up handlers are on it - so a drag that ends anywhere else
+    // (which a box around the whole tag always does, and a fast drag usually
+    // does) never gets its pointerup. The pin is left half-placed: no box, no
+    // comment box, and the next click starts again. A real browser solves this
+    // with pointer capture, which jsdom does not implement; window listeners
+    // while placing is the shape that works in both.
+    const { onPlace } = renderLayer();
+    const area = hitArea();
+
+    fireEvent.pointerDown(area, { clientX: 150, clientY: 250 });
+    fireEvent.pointerMove(window, { clientX: 400, clientY: 500 });
+    fireEvent.pointerUp(window, { clientX: 400, clientY: 500 });
+
+    const editor = screen.getByTestId('pin-comment-editor');
+    fireEvent.change(within(editor).getByRole('textbox'), {
+      target: { value: 'This whole corner' },
+    });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Add' }));
+
+    const placed = onPlace.mock.calls[0][0];
+    expect(placed.w).toBeGreaterThan(0);
+    expect(placed.h).toBeGreaterThan(0);
   });
 
   it('Escape throws the pin away', () => {

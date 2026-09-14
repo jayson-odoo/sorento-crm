@@ -37,6 +37,13 @@ _CRM = "/api/v1/dealer-kit/price-tag-requests/{id}"
 
 
 @pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`."""
+    return seed.block_respond(monkeypatch)
+
+
+
+@pytest.fixture(autouse=True)
 def quiet_notifier(monkeypatch):
     try:
         from app.services import price_tag_notify
@@ -228,3 +235,103 @@ class TestRestore:
             client.post(f"{_CRM.format(id=request.id)}/versions/99/restore").status_code
             == 404
         )
+
+
+class TestAVersionDrawsItsOwnPinnedData:
+    """S2: `GET .../versions/{n}` resolves the lines from `row.pinned_line_data`.
+
+    A version carries TWO things (D19): the document and the product data that
+    was pinned when it was written. The route draws the version's document but
+    resolves its lines against TODAY's pins, so View shows last week's layout
+    filled with this week's prices - a page that never existed, presented as
+    history, and the one thing somebody opens History to check.
+
+    Restore already writes the pins back, so the data is there; only the read
+    ignores it.
+    """
+
+    def _version_with_its_own_pin(self, db):
+        """A request whose v1 was snapshotted at RM 1,000 and whose live pin has
+        since moved to RM 1,900. Returns ``(request, page)``."""
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="new",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        page, doc = seed.attach_design(db, request)
+
+        line_id = request.lines[0].id
+        snapshot_pin = dict(
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.id == line_id)
+            .first()
+            .pinned_tag_data
+        )
+        db.query(PageVersion).filter(
+            PageVersion.page_id == page.id, PageVersion.version == 1
+        ).update({"pinned_line_data": {line_id: snapshot_pin}})
+
+        # Marketing has since pressed Update: the LIVE pin now says 1,900.
+        moved = {**snapshot_pin, "list_price": 1900.0, "name": "ZZT renamed since"}
+        db.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.id == line_id
+        ).update({"pinned_tag_data": moved})
+        db.commit()
+        db.expire_all()
+        return (
+            db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).first(),
+            page,
+        )
+
+    def test_the_lines_come_from_the_version_own_pins(self, crm):
+        client, db = crm
+        request, _page = self._version_with_its_own_pin(db)
+
+        body = client.get(f"{_CRM.format(id=request.id)}/versions/1").json()
+
+        line = body["lines"][0]
+        assert float(line["list_price"]) == 1000.00, (
+            "the version was written when the tag said 1,000; drawing it at "
+            "1,900 invents a page that never existed"
+        )
+        assert line["name"] != "ZZT renamed since"
+
+    def test_the_live_design_still_shows_the_live_pin(self, crm):
+        """The other half of the same rule, so a fix cannot swap them over."""
+        client, db = crm
+        request, _page = self._version_with_its_own_pin(db)
+
+        body = client.get(f"{_CRM.format(id=request.id)}/design").json()
+
+        assert float(body["lines"][0]["list_price"]) == 1900.00
+
+    def test_a_version_written_before_pins_existed_still_draws(self, crm):
+        """`pinned_line_data` is nullable: every version written before r9 has
+        none, and falling back to the live resolve is the only thing left to
+        do - but it must not 500."""
+        from app.models.dealer_kit import PageVersion
+
+        client, db = crm
+        request, page = self._version_with_its_own_pin(db)
+        db.query(PageVersion).filter(
+            PageVersion.page_id == page.id, PageVersion.version == 1
+        ).update({"pinned_line_data": None})
+        db.commit()
+
+        response = client.get(f"{_CRM.format(id=request.id)}/versions/1")
+
+        assert response.status_code == 200, response.text
+        assert response.json()["lines"]

@@ -31,6 +31,7 @@ import glob
 import importlib.util
 import os
 import uuid
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -123,6 +124,32 @@ def _lines(db, request_id):
         .order_by(PriceTagRequestLine.sort_order)
         .all()
     )
+
+
+def _load_pins_migration():
+    """The pins/versions revision, imported by FILENAME PATTERN.
+
+    Revision filenames start with a digit or a label, so they cannot be
+    imported by module path (the `_run_migration` idiom); matched by pattern so
+    the coder is free to rename the numeric prefix at merge time.
+    """
+    matches = sorted(
+        glob.glob(
+            str(
+                Path(__file__).resolve().parent.parent
+                / "alembic"
+                / "versions"
+                / "*pins_versions*.py"
+            )
+        )
+    )
+    assert matches, "no alembic revision matching '*pins_versions*.py'"
+    spec = importlib.util.spec_from_file_location(
+        f"migration_{Path(matches[-1]).stem}", matches[-1]
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _designing_request(db, *, product=None, contact_id=None):
@@ -218,22 +245,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         inside ``upgrade()`` cannot be exercised without running the whole
         chain, so the migration calls a named function and so does this test.
         """
-        matches = sorted(
-            glob.glob(
-                str(
-                    Path(__file__).resolve().parent.parent
-                    / "alembic"
-                    / "versions"
-                    / "*pins_versions*.py"
-                )
-            )
-        )
-        assert matches, "no alembic revision matching '*pins_versions*.py'"
-        spec = importlib.util.spec_from_file_location(
-            f"migration_{Path(matches[-1]).stem}", matches[-1]
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        module = _load_pins_migration()
 
         contact_id = seed.seed_portal_contact(db_only)
         live = seed.seed_request(
@@ -256,6 +268,148 @@ class TestThePinIsWrittenWhenDesigningStarts:
         assert _lines(db_only, finished.id)[0].pinned_tag_data is None, (
             "a finished request can decide nothing, so a pin on it is dead weight"
         )
+
+    @pytest.mark.parametrize(
+        "status,pinned",
+        [
+            ("new", False),
+            ("designing", True),
+            ("changes_requested", True),
+            ("proof_ready", True),
+            ("approved", True),
+            ("ready_for_collection", False),
+            ("collected", False),
+            ("rejected", False),
+            ("void", False),
+        ],
+    )
+    def test_the_backfill_starts_at_designing_not_at_new(
+        self, db_only, status, pinned
+    ):
+        """D16/A1: the pin starts at `designing`.
+
+        A `new` request has not been claimed, nobody is drawing anything, and
+        pinning it freezes master data against a design that does not exist -
+        so the first thing marketing sees after claiming is a gate asking about
+        a change nobody made. `NOT IN (terminal)` is the wrong side of the
+        line: it pins `new` too.
+        """
+        module = _load_pins_migration()
+        contact_id = seed.seed_portal_contact(db_only)
+        request = seed.seed_request(
+            db_only,
+            contact_id,
+            status=status,
+            products=[seed.seed_product(db_only)],
+            print_by="office",
+        )
+
+        module.backfill_pins(db_only.get_bind())
+        db_only.expire_all()
+
+        row = _lines(db_only, request.id)[0]
+        assert (row.pinned_tag_data is not None) is pinned, (
+            f"{status!r} should {'' if pinned else 'NOT '}be pinned by the backfill"
+        )
+
+    def test_a_backfilled_product_pin_carries_the_FULL_resolved_data(self, db_only):
+        """A "light" pin is a pin that lies.
+
+        Every read path answers the pin once one exists, so a pin holding only
+        the code, the name and the list price silently blanks the dimensions,
+        the spec lines, the spec values and the photo on every tag of every
+        request that was mid-design at upgrade - and the diff then reports each
+        of those as a CHANGE, which is the opposite of "nothing changes
+        visually on day one". The pin has to equal what the resolver answers.
+        """
+        from app.services.dealer_kit import tag_data_service
+
+        module = _load_pins_migration()
+        contact_id = seed.seed_portal_contact(db_only)
+        product = seed.seed_product(db_only, list_price=1000.00, barcode="9550000000001")
+        seed.seed_product_photo(db_only, product)
+        promotion = seed.seed_promotion_on(db_only, product, offer="799.00")
+        request = seed.seed_request(
+            db_only,
+            contact_id,
+            status="proof_ready",
+            products=[product],
+            print_by="office",
+        )
+        from app.models.price_tag import PriceTagRequest
+
+        db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).update({"promotion_id": promotion.id})
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+        # What the resolver says BEFORE any pin exists is what the pin has to be.
+        live = tag_data_service.resolve_request_line_data(db_only, request)[0]
+
+        module.backfill_pins(db_only.get_bind())
+        db_only.expire_all()
+
+        pin = _lines(db_only, request.id)[0].pinned_tag_data
+        assert pin["code"] == live["code"]
+        assert pin["name"] == live["name"]
+        assert pin["dimensions"] == live["dimensions"]
+        assert pin["spec_lines"] == live["spec_lines"]
+        assert [spec["key"] for spec in pin["specs"]] == [
+            spec["key"] for spec in live["specs"]
+        ]
+        assert [image["attachment_id"] for image in pin["images"]] == [
+            image["attachment_id"] for image in live["images"]
+        ]
+        assert float(pin["list_price"]) == float(live["list_price"])
+        assert pin["sell_price"] is not None, (
+            "the promotion priced this line at 799 before the upgrade; a pin "
+            "that drops the offer makes the tag print the list price instead"
+        )
+        assert float(pin["sell_price"]) == float(live["sell_price"])
+        assert pin["barcode"] == live["barcode"]
+
+    def test_a_backfilled_set_pin_carries_the_set_own_data(self, db_only):
+        """A set line has no `products` row to read, so a backfill written as a
+        LEFT JOIN on products pins an empty code, an empty name and no price at
+        all - and the tag goes blank on day one."""
+        from app.services.dealer_kit import tag_data_service
+
+        module = _load_pins_migration()
+        contact_id = seed.seed_portal_contact(db_only)
+        member = seed.seed_product(db_only, list_price=1000.00)
+        product_set = seed.seed_product_set(db_only, members=[member])
+        request = seed.seed_request(
+            db_only, contact_id, status="proof_ready", print_by="office"
+        )
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        PriceTagRequestService.replace_lines(
+            db_only,
+            request,
+            [{"line_type": "product_set", "product_set_id": product_set.id}],
+        )
+        db_only.commit()
+        db_only.expire_all()
+        from app.models.price_tag import PriceTagRequest
+
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        live = tag_data_service.resolve_request_line_data(db_only, request)[0]
+
+        module.backfill_pins(db_only.get_bind())
+        db_only.expire_all()
+
+        pin = _lines(db_only, request.id)[0].pinned_tag_data
+        assert pin["code"] == live["code"] == product_set.set_code
+        assert pin["name"] == live["name"]
+        assert pin["list_price"] is not None
+        assert float(pin["list_price"]) == float(live["list_price"])
+        assert pin["set_members"] == live["set_members"]
 
 
 # ---------------------------------------------------------------------------
@@ -485,6 +639,184 @@ class TestTheDiff:
         ]
         assert offer_changes, self._changes(db_only, request)
         assert "promotion ended" in (offer_changes[0].get("note") or "").lower()
+
+    def test_a_marketing_override_is_not_a_product_data_change(self, db_only):
+        """S4: the override is marketing's OWN decision, made after the pin.
+
+        The live resolve applies `marketing_price_override` and the pin (taken
+        at `designing`, before anybody typed one) does not, so the diff reads
+        the office's own edit back to it as "master data moved" and the card
+        counts a line as changed that nothing changed under. Marketing then
+        presses Update to adopt its own number, which writes a version for
+        nothing.
+        """
+        from decimal import Decimal
+
+        product = seed.seed_product(db_only, list_price=1000.00)
+        request, _product, _contact = _designing_request(db_only, product=product)
+        assert self._changes(db_only, request) == []
+
+        line = _lines(db_only, request.id)[0]
+        line.marketing_price_override = Decimal("123.45")
+        db_only.commit()
+        db_only.expire_all()
+        from app.models.price_tag import PriceTagRequest
+
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+        assert self._changes(db_only, request) == [], (
+            "an override is not a change to the product"
+        )
+
+    def test_an_override_does_not_raise_the_changed_line_count(self, crm):
+        """The same defect where a reader meets it: the record card pill."""
+        from decimal import Decimal
+
+        client, db = crm
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        line = _lines(db, request.id)[0]
+        line.marketing_price_override = Decimal("123.45")
+        db.commit()
+
+        body = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
+
+        assert body == [], body
+
+    def test_no_offer_row_when_only_the_promotion_switched_off(self, db_only):
+        """S5: a line that never had an offer cannot lose one.
+
+        `promotion_ended` is ORed into the offer comparison, so a request
+        carrying a promotion that covers NONE of its lines emits an
+        `offer_price` row reading "old: null, new: null, note: Promotion
+        ended" on every single line the moment the promotion is switched off.
+        The dialog then shows a row with nothing in either column.
+
+        Something ELSE has to move as well, or the whole diff short-circuits on
+        the pin/live hash comparison and the bogus row never gets a chance to be
+        emitted - which is exactly the real case: a product renamed while a
+        promotion is switched off.
+        """
+        from app.models.price_tag import PriceTagRequest
+
+        uncovered = seed.seed_product(db_only, list_price=1000.00)
+        # The promotion prices a DIFFERENT product, so this line's offer is
+        # null before and after.
+        promotion = seed.seed_promotion_on(db_only, seed.seed_product(db_only))
+        request, _product, _contact = _designing_request(db_only, product=uncovered)
+        db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).update({"promotion_id": promotion.id})
+        db_only.commit()
+
+        promotion.is_active = False
+        uncovered.product_name = "ZZT renamed while the promotion ended"
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+        assert "name" in {
+            change["field"] for change in self._changes(db_only, request)
+        }, "the rename itself has to register, or this proves nothing"
+        offer_rows = [
+            change
+            for change in self._changes(db_only, request)
+            if change["field"] == "offer_price"
+        ]
+        assert offer_rows == [], (
+            "the offer was null before and is null now: nothing moved"
+        )
+
+    def test_exactly_one_offer_row_when_the_offer_disappears(self, db_only):
+        """One row, not two: the value moving and the promotion ending are the
+        same event, and the note is what tells them apart."""
+        from app.models.price_tag import PriceTagRequest
+
+        product = seed.seed_product(db_only, list_price=1000.00)
+        promotion = seed.seed_promotion_on(db_only, product, offer="799.00")
+        request, _product, _contact = _designing_request(db_only, product=product)
+        db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).update({"promotion_id": promotion.id})
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        # Re-pin now the promotion is on the request, so the pin holds the offer.
+        from app.services.dealer_kit import tag_data_service
+
+        tag_data_service.pin_lines(db_only, request, only_unpinned=False)
+        db_only.commit()
+        assert float(_lines(db_only, request.id)[0].pinned_tag_data["sell_price"]) == 799.0
+
+        promotion.is_active = False
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+        offer_rows = [
+            change
+            for change in self._changes(db_only, request)
+            if change["field"] == "offer_price"
+        ]
+        assert len(offer_rows) == 1, offer_rows
+        assert (offer_rows[0].get("note") or "").lower() == "promotion ended"
+        assert offer_rows[0]["new"] is None
+
+    def test_a_promotion_past_its_end_date_has_ended(self, db_only):
+        """S5: `_promotion_is_live` reads `is_active` and nothing else.
+
+        A promotion that ran to the 30th and is still flagged active is OVER on
+        the 1st - the pricing engine already knows that (it filters on the
+        window), so the offer disappears while the diff says the value simply
+        changed. The one wording that explains it to a reader is exactly the
+        one that goes missing.
+        """
+        from datetime import timedelta
+
+        from app.models.price_tag import PriceTagRequest
+        from app.services.dealer_kit import tag_data_service
+
+        product = seed.seed_product(db_only, list_price=1000.00)
+        promotion = seed.seed_promotion_on(db_only, product, offer="799.00")
+        request, _product, _contact = _designing_request(db_only, product=product)
+        db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).update({"promotion_id": promotion.id})
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        tag_data_service.pin_lines(db_only, request, only_unpinned=False)
+        db_only.commit()
+
+        # Still `is_active`, but its window closed yesterday.
+        promotion.end_date = date.today() - timedelta(days=1)
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+        assert (
+            tag_data_service._promotion_is_live(db_only, promotion.id) is False
+        ), "a promotion past its end date is not running"
+        offer_rows = [
+            change
+            for change in self._changes(db_only, request)
+            if change["field"] == "offer_price"
+        ]
+        assert len(offer_rows) == 1, offer_rows
+        assert (offer_rows[0].get("note") or "").lower() == "promotion ended"
 
     def test_a_terminal_request_never_runs_the_live_resolve(self, db_only, monkeypatch):
         """AC-S5-3: nothing can be updated, so asking master data to say so is

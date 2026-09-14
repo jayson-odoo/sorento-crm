@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 # MUST be first app import - resolves the circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _BASE = "/api/v1/public/portal/submissions/price_tag_request"
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -1588,3 +1589,14 @@ class TestPickerCompanyScope:
         assert len(rows) == 1, rows
         assert rows[0]["id"] == promo_a_id
         assert rows[0]["id"] != promo_b_id
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

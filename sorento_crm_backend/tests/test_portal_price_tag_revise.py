@@ -34,6 +34,7 @@ from app.models.user import SystemSetting
 from app.services.portal_revision_service import PortalRevisionService
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 _PORTAL_BASE = "/api/v1/public/portal"
@@ -1162,3 +1163,14 @@ class TestNeighboursRouteForPriceTagRequest:
             headers=headers,
         )
         assert res.status_code == 404, res.text
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

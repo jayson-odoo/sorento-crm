@@ -35,9 +35,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 _PORTAL = "/api/v1/public/portal/submissions/price_tag_request/{id}/design"
-_CRM = "/api/v1/dealer-kit/price-tag-requests/{id}/design"
+_CRM_BASE = "/api/v1/dealer-kit/price-tag-requests/{id}"
+_CRM = _CRM_BASE + "/design"
 
 MEDIA_KEYS = ("assets", "images", "fonts")
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`."""
+    return seed.block_respond(monkeypatch)
+
 
 
 def _sign(path, **_kwargs):
@@ -311,3 +319,105 @@ class TestCrmDesignPayloadCarriesTheSameMedia:
         )
 
         assert client.get(_CRM.format(id=request.id)).status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# S10 - the diff travels WITH the line, on every payload that carries lines
+# ---------------------------------------------------------------------------
+
+
+class TestDataChangesReachEveryPayload:
+    """`lib/dealer-kit/product-data-changes.ts` says every resolver read of a
+    non-terminal request carries `data_changes` per line, and that is how the
+    portal preview and the designer know a line is waiting on a decision
+    without asking a second time.
+
+    `ResolvedLineData` does not declare the field, and `response_model` drops
+    an undeclared key without a word (LESSONS) - so the resolver computes the
+    diff, the route serialises it away, and every reader sees a request with
+    nothing pending on it.
+    """
+
+    def _designing_request_with_a_changed_product(self, db, contact_id):
+        from app.models.price_tag import PriceTagRequest
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="new",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        db.expire_all()
+        return db.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+    def test_the_crm_design_payload_carries_it(self, crm):
+        client, db = crm
+        contact_id = seed.seed_portal_contact(db)
+        request = self._designing_request_with_a_changed_product(db, contact_id)
+
+        body = client.get(_CRM.format(id=request.id)).json()
+
+        line = body["lines"][0]
+        assert "data_changes" in line, line
+        assert [change["field"] for change in line["data_changes"]] == ["list_price"]
+
+    def test_resolve_prices_carries_it(self, crm):
+        """The designer's own call, and the one the LINES rail reads."""
+        client, db = crm
+        contact_id = seed.seed_portal_contact(db)
+        request = self._designing_request_with_a_changed_product(db, contact_id)
+
+        response = client.post(f"{_CRM_BASE.format(id=request.id)}/resolve-prices")
+
+        assert response.status_code == 200, response.text
+        line = response.json()[0]
+        assert "data_changes" in line, line
+        assert [change["field"] for change in line["data_changes"]] == ["list_price"]
+
+    def test_the_portal_design_payload_carries_it(self, portal):
+        """The salesperson's preview draws the PIN, so it has to be able to say
+        that the pin is not what master data says any more."""
+        from app.models.price_tag import PriceTagRequest
+
+        client, db, contact_id = portal
+        seed.seed_marketer(db)
+        request = self._designing_request_with_a_changed_product(db, contact_id)
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
+            {"status": "proof_ready"}
+        )
+        db.commit()
+
+        body = client.get(_PORTAL.format(id=request.id)).json()
+
+        line = body["lines"][0]
+        assert "data_changes" in line, line
+
+    def test_a_terminal_request_carries_no_key_at_all(self, crm):
+        """The contract is explicit: a terminal request never carries it,
+        because there is nothing to decide and the live resolve does not run."""
+        from app.models.price_tag import PriceTagRequest
+
+        client, db = crm
+        contact_id = seed.seed_portal_contact(db)
+        request = self._designing_request_with_a_changed_product(db, contact_id)
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
+            {"status": "collected"}
+        )
+        db.commit()
+
+        body = client.get(_CRM.format(id=request.id)).json()
+
+        assert "data_changes" not in body["lines"][0]

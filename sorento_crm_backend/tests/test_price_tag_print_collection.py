@@ -49,6 +49,13 @@ _SETTINGS_GENERAL = "/api/v1/user-management/settings/general"
 _APP_CONFIG = "/api/v1/user-management/settings/app-config"
 
 
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`."""
+    return seed.block_respond(monkeypatch)
+
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -466,6 +473,103 @@ class TestCollectionTransitions:
         ).first()
         assert row.collected_by_contact_id == contact_id
         assert row.collected_by_user_id is None
+
+    def test_the_detail_names_the_user_who_marked_it_collected(self, crm):
+        """S3: `collected_by_name` is declared on the response and filled by
+        nobody, so the card that says who took the tags says nothing.
+
+        A UUID is not an answer a screen may show (the cursor rule), which is
+        why the column is resolved to a name the way `assigned_to_name` and
+        `contact_name` already are.
+        """
+        client, db = crm
+        contact_id = seed.seed_portal_contact(db)
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="ready_for_collection",
+            products=[product],
+            print_by="office",
+        )
+
+        client.post(
+            f"{_CRM.format(id=request.id)}/transition", json={"status": "collected"}
+        )
+        body = client.get(_CRM.format(id=request.id)).json()
+
+        assert body["collected_by_name"] == seed.MARKETER_NAME
+        assert body["collected_auto"] is False
+
+    def test_the_detail_names_the_contact_who_collected_from_the_portal(self, portal):
+        """The other actor: the salesperson confirming the hand-over.
+
+        One fixture only. `portal` and `crm` each open their own
+        ``blank_session`` against the same scratch schema, and asking for both
+        in one test deadlocks the two connections on the first shared row.
+        """
+        client, db, contact_id = portal
+        from app.models.access import RespondContact
+
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="ready_for_collection",
+            products=[product],
+            print_by="office",
+        )
+        contact_name = (
+            db.query(RespondContact)
+            .filter(RespondContact.id == contact_id)
+            .first()
+            .name
+        )
+
+        assert (
+            client.post(f"{_PORTAL.format(id=request.id)}/collect").status_code == 200
+        )
+        body = client.get(_PORTAL.format(id=request.id)).json()
+
+        assert body["collected_by_name"] == contact_name
+
+    def test_an_auto_collected_request_names_nobody(self, db_only):
+        """The sweep is not a person, and a name invented for it would be a
+        claim somebody could act on."""
+        from app.models.price_tag import PriceTagRequest
+        from app.models.user import SystemSetting
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        row = db_only.query(SystemSetting).first()
+        if row is None:
+            row = SystemSetting(id=str(uuid.uuid4()), name=unique_code("Co"))
+            db_only.add(row)
+        row.price_tag_auto_collect_days = 7
+        contact_id = seed.seed_portal_contact(db_only)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only,
+            contact_id,
+            status="ready_for_collection",
+            products=[product],
+            print_by="office",
+        )
+        db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).update(
+            {"ready_for_collection_at": datetime.utcnow() - timedelta(days=30)}
+        )
+        db_only.commit()
+
+        PriceTagRequestService.run_auto_collect(db_only)
+        db_only.expire_all()
+
+        row = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+        assert row.collected_auto is True
+        labels = PriceTagRequestService.response_with_resolved_lines(db_only, row)
+        assert getattr(labels, "collected_by_name", "unset") is None
 
     def test_collected_is_terminal(self, db_only):
         from app.services.error_handler import AppException

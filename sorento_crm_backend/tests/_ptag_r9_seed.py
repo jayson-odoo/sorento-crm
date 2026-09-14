@@ -343,3 +343,117 @@ def snapshot_proof_ready(db: Session, page, doc: dict, version: int) -> None:
 
 def utcnow() -> datetime:
     return datetime.utcnow()
+
+
+def block_respond(monkeypatch) -> list[dict]:
+    """Stop a test run reaching api.respond.io, and record what it would send.
+
+    The notifier is left REAL on purpose. Patching ``notify_salesperson`` away
+    would also throw away the copy table and the ``IntegrationLog`` row, which
+    are the two things several tests are about; the network call is the only
+    part that must not happen. Cutting it at
+    ``respond_messaging_service.send_text_or_template`` (plus the window check
+    inside ``build_context_vars`` and the outbound webhook enqueue) leaves
+    everything above it running for real.
+
+    Without this a price tag suite makes live HTTPS calls from CI: the run log
+    carried ``Window check: Respond.io list_messages failed ... 400 Bad
+    Request`` and ``Respond.io send failed for price tag <uuid>`` on every
+    transition, which is slow, flaky, and a real message away from a real
+    contact the moment a token happens to be valid.
+
+    Returns the list of sends, newest last: ``{identifier, text, use_case}``.
+    """
+    sent: list[dict] = []
+
+    def _fake_send(db, *, identifier, text, use_case, context_vars=None, **_kw):
+        sent.append({"identifier": identifier, "text": text, "use_case": use_case})
+        return {
+            "sent_as": "text",
+            "response": {"id": f"zzt-msg-{len(sent)}"},
+            "window_state": "open",
+            "request_payload": {"message": {"type": "text", "text": text}},
+        }
+
+    monkeypatch.setattr(
+        "app.services.respond_messaging_service.send_text_or_template", _fake_send
+    )
+    monkeypatch.setattr(
+        "app.services.respond_messaging_service.build_context_vars",
+        lambda db, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        "app.services.crm_chat_outbound_webhook.enqueue_crm_chat_outbound_webhook",
+        lambda *a, **k: None,
+    )
+    return sent
+
+
+def seed_product_set(db: Session, *, members: list | None = None):
+    """A set with its own code and one or more member products."""
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    members = members or [seed_product(db)]
+    product_set = ProductSet(
+        id=str(uuid.uuid4()),
+        set_code=unique_code("set"),
+        name=unique_code("ZZT Set"),
+        company_id=SORENTO,
+    )
+    db.add(product_set)
+    db.flush()
+    for order, product in enumerate(members):
+        db.add(
+            ProductSetMember(
+                id=str(uuid.uuid4()),
+                product_set_id=product_set.id,
+                product_id=product.id,
+                quantity=1,
+                contributes_to_price=True,
+                sort_order=order,
+            )
+        )
+    db.flush()
+    return product_set
+
+
+def seed_promotion_on(db: Session, product, *, offer: str = "799.00"):
+    """A live promotion that actually prices ``product`` under its list price.
+
+    The whole chain, because the pricing engine reads all three: the promotion
+    (active, inside its window), a group, and the ``promotion_products`` row
+    carrying the figure.
+    """
+    from decimal import Decimal
+
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    promotion = Promotion(
+        id=str(uuid.uuid4()),
+        description=unique_code("ZZT promo"),
+        is_active=True,
+        company_id=SORENTO,
+    )
+    db.add(promotion)
+    db.flush()
+    group = PromotionGroup(
+        id=uuid.uuid4(),
+        promotion_id=promotion.id,
+        group_name=unique_code("ZZT group"),
+        sort_order=0,
+        company_id=SORENTO,
+    )
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()),
+            promotion_id=promotion.id,
+            promotion_group_id=group.id,
+            product_id=product.id,
+            promo_selling_price=Decimal(offer),
+            company_id=SORENTO,
+        )
+    )
+    db.flush()
+    return promotion

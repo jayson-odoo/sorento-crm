@@ -319,6 +319,31 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
     expect(screen.getByTestId('canvas-pin-1')).toBeInTheDocument();
   });
 
+  it('is ON by default while a pin is still open', async () => {
+    mockComments.mockResolvedValue([comment()]);
+    await renderDesigner();
+
+    expect(
+      await screen.findByRole('button', { name: /Hide change requests \(1 open\)/ }),
+    ).toBeInTheDocument();
+  });
+
+  it('is OFF by default once every pin has been ticked Done', async () => {
+    // D6: the toggle is armed BY an open pin. A round that is fully worked off
+    // leaves markers sitting over the artwork marketing is now editing, with a
+    // count of zero beside them - clutter that has to be turned off by hand
+    // every time the designer is opened.
+    mockComments.mockResolvedValue([
+      comment({ resolved_at: '2026-09-14T02:00:00Z', resolved_by_name: 'Mei' }),
+    ]);
+    await renderDesigner();
+
+    expect(
+      await screen.findByRole('button', { name: /Show change requests \(0 open\)/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('canvas-pin-1')).toBeNull();
+  });
+
   it('there is no toggle at all on a request nobody commented on', async () => {
     await renderDesigner();
 
