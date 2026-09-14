@@ -26,8 +26,15 @@ from app.services.chatbot.lanes.business.services import (
     ResolveGateServices,
 )
 from tests.chatbot import _corpus
-from tests.chatbot.conftest import set_chatbot_switches
-from tests.chatbot.test_engine import _envelope, _parser_output, seeded, stub_access, stub_parser
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
+from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
+    CONTACT_ID,
+    _envelope,
+    _parser_output,
+    seeded,
+    stub_access,
+    stub_parser,
+)
 from tests.chatbot.test_s6c_answer_lane import (
     TestChatbotCompletedLanesEngineWiring as _EngineWiring,
 )
@@ -100,7 +107,7 @@ def _srtwc8517_resolved_bundle() -> ResolveGateServices:
 
     return ResolveGateServices(
         access_types=lambda **_: [{"name": "Sorento Dealer"}],
-        resolve_entity=_resolve_entity,
+        resolve_entity=validating_resolve_entity(_resolve_entity),
         probe=lambda **_: None,
     )
 
@@ -234,7 +241,7 @@ class TestR1DemandQuantityAnswerEndToEnd:
     def _envelope_for_stock_check() -> Any:
         return _envelope(
             contact={
-                "id": "ZZT-contact-900000009",
+                "id": CONTACT_ID,
                 "firstName": "ZZT",
                 "custom_fields": [{"name": "is_allowed_stock", "value": "false"}],
             }
@@ -792,7 +799,7 @@ class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
 
         return ResolveGateServices(
             access_types=lambda **_: [{"name": "Sorento Dealer"}],
-            resolve_entity=_resolve_entity,
+            resolve_entity=validating_resolve_entity(_resolve_entity),
             probe=lambda **_: None,
         )
 
@@ -885,7 +892,7 @@ class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
                 "WHERE respond_io_id = :cid"
             ),
             {
-                "cid": CONTACT_ID,
+                "cid": str(CONTACT_ID),
                 "sv": json.dumps(
                     {
                         "variables": {

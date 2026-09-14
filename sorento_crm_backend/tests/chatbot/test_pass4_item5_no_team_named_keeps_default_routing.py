@@ -112,7 +112,7 @@ class TestARequestNamingNoTeamKeepsTheDefaultRoutingThroughTheEngine:
                 "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
             ),
             {
-                "cid": CONTACT_ID,
+                "cid": str(CONTACT_ID),
                 "phone": "+60000000009",
                 "sv": json.dumps(
                     {
@@ -208,7 +208,7 @@ class TestATrulyColdRequestGetsTheRoutingTablesOwnDefault:
                 "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
                 "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
             ),
-            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+            {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
         )
         db.commit()
         set_chatbot_switches(session_factory)

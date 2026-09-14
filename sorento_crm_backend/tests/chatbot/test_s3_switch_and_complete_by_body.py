@@ -57,7 +57,7 @@ def _set_completed_lanes(session_factory, lanes: list[str]) -> None:
 def _session_vars_raw(session_factory) -> Any:
     return session_factory().execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-        {"c": CONTACT_ID},
+        {"c": str(CONTACT_ID)},
     ).scalar()
 
 
@@ -278,7 +278,7 @@ class TestCompleteByBody:
 
         assert resp.status_code == 404, resp.text
         detail = json.dumps(resp.json())
-        assert "ZZT-msg-nobody" in detail and CONTACT_ID in detail
+        assert "ZZT-msg-nobody" in detail and str(CONTACT_ID) in detail
 
     def test_a_turn_that_never_delegated_is_a_409(
         self, client, api_key, session_factory, monkeypatch, seeded, stub_parser, stub_access

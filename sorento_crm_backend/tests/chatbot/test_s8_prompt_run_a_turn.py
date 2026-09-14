@@ -138,7 +138,7 @@ class TestChatbotSemanticParserRunsATurnNotAssistantChat:
             json={
                 "message": "price for SRTWC8517",
                 "version_id": version["id"],
-                "contact_respond_id": CONTACT_ID,
+                "contact_respond_id": str(CONTACT_ID),
             },
         )
         assert resp.status_code == 200, resp.text
@@ -165,7 +165,7 @@ class TestChatbotSemanticParserRunsATurnNotAssistantChat:
         after = session_factory()
         session_vars = after.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         assert session_vars == json.dumps({"variables": {}}) or session_vars == {
             "variables": {}
@@ -205,7 +205,7 @@ class TestChatbotSemanticParserRunsATurnNotAssistantChat:
             json={
                 "message": "hi",
                 "version_id": "00000000-0000-0000-0000-000000000000",
-                "contact_respond_id": CONTACT_ID,
+                "contact_respond_id": str(CONTACT_ID),
             },
         )
         assert resp.status_code == 403, resp.text
@@ -265,7 +265,7 @@ class TestChatbotClarifierRunsATurnNotAssistantChat:
             json={
                 "message": "hi",
                 "version_id": version["id"],
-                "contact_respond_id": CONTACT_ID,
+                "contact_respond_id": str(CONTACT_ID),
             },
         )
         assert resp.status_code == 200, resp.text

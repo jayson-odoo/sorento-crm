@@ -149,11 +149,15 @@ def _envelope_for(
 ) -> dict[str, Any]:
     """The borrowed envelope with this turn's words in it. Never mutates `base`."""
     envelope = json.loads(json.dumps(base))
-    envelope["contact"] = {**(envelope.get("contact") or {}), "id": str(contact)}
+    # The WIRE shape: respond.io puts a numeric contact id in the webhook body, and this
+    # check exists to catch what production would hit. Sending it as a string is what let
+    # #874 (`contact_id  Input should be a valid string ... input_type=int`) past the gate.
+    wire_contact = int(contact) if str(contact).isdigit() else contact
+    envelope["contact"] = {**(envelope.get("contact") or {}), "id": wire_contact}
     envelope.setdefault("message", {})
-    envelope["message"]["contact"] = {"id": str(contact)}
+    envelope["message"]["contact"] = {"id": wire_contact}
     inner = envelope["message"].setdefault("message", {})
-    inner["contactId"] = str(contact)
+    inner["contactId"] = wire_contact
     inner["messageId"] = f"console-check-{uuid.uuid4().hex[:12]}"
     inner["message"] = {"type": "text", "text": message}
     envelope["message"]["event_type"] = "message.received"

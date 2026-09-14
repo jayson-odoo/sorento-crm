@@ -24,6 +24,7 @@ from app.services.chatbot.lanes.business import pickers, resolve_gate
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices
 from app.services.chatbot.lanes.business.tier_gate import tier_gate
+from tests.chatbot.conftest import validating_resolve_entity
 
 
 def _match(uuid: str, code: str, *, company: str, tier: str = "exact") -> dict[str, Any]:
@@ -155,7 +156,7 @@ class TestAccessAskExit:
 
         return ResolveGateServices(
             access_types=lambda **_: [{"name": n} for n in names],
-            resolve_entity=_resolve,
+            resolve_entity=validating_resolve_entity(_resolve),
             probe=lambda **_: None,
         )
 
@@ -183,7 +184,9 @@ class TestAccessAskExit:
     def test_an_entitled_contact_goes_on_to_resolve_entity(self) -> None:
         services = ResolveGateServices(
             access_types=lambda **_: [{"name": "Sorento Dealer"}],
-            resolve_entity=lambda _body: {"tokens": [], "resolutions": [], "unresolved_tokens": []},
+            resolve_entity=validating_resolve_entity(
+                lambda _body: {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+            ),
             probe=lambda **_: None,
         )
         out = resolve_gate.run(self._ctx(), "access_check", {}, services=services)
@@ -356,7 +359,7 @@ class TestDelegateSeam:
             return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
 
         services = ResolveGateServices(
-            access_types=lambda **_: [], resolve_entity=_resolve, probe=lambda **_: None
+            access_types=lambda **_: [], resolve_entity=validating_resolve_entity(_resolve), probe=lambda **_: None
         )
         ctx = {"contact": {"id": "c1"}, "parse": {"output": {"entities": []}}, "session": {}}
         for branch_kind in ("stock_denied", "business_query"):
@@ -384,7 +387,7 @@ class TestDelegateSeam:
             return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
 
         services = ResolveGateServices(
-            access_types=lambda **_: [], resolve_entity=_resolve, probe=lambda **_: None
+            access_types=lambda **_: [], resolve_entity=validating_resolve_entity(_resolve), probe=lambda **_: None
         )
         ctx = {"contact": {"id": "c1"}, "parse": {"output": {"entities": []}}, "session": {}}
         business.run_until_exit(ctx, {}, branch_kind="business_query", services=services)

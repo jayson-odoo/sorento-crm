@@ -72,7 +72,7 @@ def seeded(session_factory):
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
         {
-            "cid": CONTACT_ID,
+            "cid": str(CONTACT_ID),
             "phone": "+60000000009",
             "sv": json.dumps(
                 {
@@ -244,7 +244,7 @@ def _seed_open_team_clarify(session_factory, *, roster=None) -> None:
     db.execute(
         text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
         {
-            "cid": CONTACT_ID,
+            "cid": str(CONTACT_ID),
             "sv": json.dumps(
                 {
                     "variables": {
