@@ -1454,9 +1454,23 @@ def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
 
     The rows come off the QUESTION. Main kept them on a `last_result_set` session key
     beside the marker; this lane freezes a roster onto the question that printed it
-    (AC-1013), which is the same list and cannot come apart from the kind that names it."""
+    (AC-1013), which is the same list and cannot come apart from the kind that names it.
+
+    THE PICK ARRIVES ON TWO CHANNELS, and the five-key/parser-v3 move changed which one
+    (owner console, contact 437264483). The pre-v3 parser emitted a numbered answer as
+    `reference_positions`; parser v3, sent the open question's own options as a hint,
+    emits it as `answers_open_question.picks` and leaves `reference_positions` empty (the
+    engine has no handler for the outstanding kinds, so it never translates one to the
+    other). Reading only `reference_positions` made a live `1` under a detail offer come
+    back `picked=None`, so the report never re-ran and the reply was the offer line again
+    with no rows. Both channels carry the SAME 1-based position against the SAME frozen
+    options, so `reference_positions` wins when present (the hand-set unit tests) and the
+    parser's `picks` answers a real turn."""
     options = jsc.array(jsc.get(open_question_of(prev_state), "options"))
-    for pos in jsc.array(o.get("reference_positions")):
+    positions = jsc.array(o.get("reference_positions"))
+    if not positions:
+        positions = jsc.array(jsc.get(o.get("answers_open_question"), "picks"))
+    for pos in positions:
         for row in options:
             if jsc.get(row, "idx") == pos:
                 return jsc.get(row, "value")

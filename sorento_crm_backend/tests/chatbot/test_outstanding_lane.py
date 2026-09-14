@@ -1715,6 +1715,51 @@ class TestDetailPickRerunsToolWithDetail:
         assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
         assert args.get("product_code") == PRODUCT_CODE, args
 
+    def test_reply_1_via_answers_open_question_renders_the_do_rows(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """MERGE REGRESSION (owner console, contact 437264483, turns
+        45c3780d.../a9c0a260...): in production a numbered answer to an outstanding
+        question arrives on the parser v3 `answers_open_question.picks` channel, NOT on
+        `reference_positions` - the five-key/v3 move changed the channel, and the trace
+        for `1` under "Reply 1 for the delivery order list." showed
+        `answers_open_question.picks: [1]` with `reference_positions: []`. The head's
+        `_outstanding_scope_pick` read only `reference_positions`, so `picked` came back
+        None, the detail branch fell to its re-ask arm, and the reply was the offer line
+        again with no per-DO rows (attachments []). The other detail-pick tests miss it
+        because they hand-set `reference_positions=[1]`, the pre-v3 channel.
+
+        A single-DO offer, answered `1` the way the live parser reports it: the detail
+        report must re-run and its DO rows must render."""
+        _seed_open_outstanding_detail(
+            session_factory,
+            rows=[{"idx": 1, "label": "Delivery order list", "value": "do"}],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[],
+                answers_open_question={
+                    "resolved": True, "picks": [1], "yes_no": None, "free_text": None,
+                },
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-detail-pick-aoq-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the detail pick must re-run the tool, not fall to the re-ask arm"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("detail") == "do", f"'1' on a DO-only offer must ask for the DO detail: {args}"
+        reply = (result.reply or {}).get("text") or ""
+        assert "*DO Number:*" in reply, (
+            f"the detail report's per-DO rows must render, not the offer line again: {reply!r}"
+        )
+
     def test_reply_2_reruns_with_detail_do(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)
         _result, captured = _run_turn(
