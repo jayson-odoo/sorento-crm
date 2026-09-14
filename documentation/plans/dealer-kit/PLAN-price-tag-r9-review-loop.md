@@ -98,6 +98,10 @@ All line refs are `origin/main` at ae0831776.
   `assets`, `images`, `fonts`) with `prefer="version"`. `PortalTagSheetDesignResponse` gains
   `assets: dict[str, str]`, `fonts: list[...]` matching the print payload schema. Owner and
   status gates unchanged (`ready` leaves the set, `ready_for_collection` + `collected` join).
+  The CRM `GET /dealer-kit/price-tag-requests/{id}/design` returns the SAME shape
+  (`prefer="draft"`, with `lines` + `assets` + `images` + `fonts`) so the CRM Design section
+  makes one call and never falls back to the `dealer_kit.library.manage`-gated asset library
+  (Phase 1 finding, 14 Sep). Shared FE contract: `lib/dealer-kit/design-payload.ts`.
 - D2 New `components/dealer-kit/DesignViewer.tsx` (shared by portal and CRM): inline card =
   fit-to-width `TagSheetRenderer` with media maps + `ensureFontsLoaded`, sheet pager when
   `sheetCount > 1`, one button Open. Lightbox `DesignLightbox.tsx` = same header chrome as
@@ -109,7 +113,8 @@ All line refs are `origin/main` at ae0831776.
   `PriceTagProofViewer.tsx` is deleted.
 - D3 Order. Portal read view: Design section first after the status row whenever the design
   is visible (`proof_ready` onward), then Customer, Sales Order & Lines, Price, Additional
-  Information, PO cross-check, Revisions. CRM detail: new Design section at the top of the
+  Information, PO cross-check, Design Review (until S2 D5 folds Approve into the Design
+  header), Revisions. CRM detail: new Design section at the top of the
   Request tab, same viewer, visible from `designing` (draft, `prefer="draft"`). Section-order
   test updated.
 
@@ -222,7 +227,7 @@ All line refs are `origin/main` at ae0831776.
 
 | # | Slice | Layer | Files |
 |---|---|---|---|
-| S1 | Preview payload + DesignViewer/DesignLightbox + order (D1-D3) | FE mock -> BE | `portal_price_tag.py`, `schemas/price_tag.py`, `tag_sheet_export_service.py` (payload reuse), `components/dealer-kit/DesignViewer.tsx`, `DesignLightbox.tsx`, `components/common/PreviewModalChrome.tsx`, `AttachmentPreviewModal.tsx`, `PriceTagRequestForm.tsx`, `PriceTagRequestDetail.tsx`, `sectionOrder.test.tsx` |
+| S1 | Preview payload + DesignViewer/DesignLightbox + order (D1-D3) | FE mock -> BE | `portal_price_tag.py`, `price_tag_requests.py` (CRM design route, same payload), `schemas/price_tag.py`, `tag_sheet_export_service.py` (payload reuse), `components/dealer-kit/DesignViewer.tsx`, `DesignLightbox.tsx`, `components/common/PreviewModalChrome.tsx`, `AttachmentPreviewModal.tsx`, `PriceTagRequestForm.tsx`, `PriceTagRequestDetail.tsx`, `sectionOrder.test.tsx` |
 | S2 | Review comments table + pins UI + designer markers (D4-D6) | FE mock -> BE | migration `ptag_0007` (shared with S3), `models/price_tag.py`, `price_tag_review_service.py`, routes portal + CRM, `DesignViewer` pin layer, `RequestTagDesigner.tsx`, `TagCanvasEditor.tsx` (marker group), LinesRail, `priceTagRequestActions.ts` |
 | S3 | print_by, retire ready, collection statuses, setting, scheduled task (D7-D11) | FE mock -> BE | migration `ptag_0007`, `price_tag_request_service.py`, `tag_sheet_export_service.py`, `settings.py`, `models/user.py`, `task_scheduler.py`, `lib/price-tag-status.ts`, portal form + read view, CRM detail + list, settings page |
 | S4 | Salesperson WhatsApp + assignee bell + SLA number + note persistence (D12-D15) | BE | `price_tag_notify.py`, `price_tag_request_service.py`, `form_sla_service.py`, `price_tag_requests.py`, export task |
