@@ -533,8 +533,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "them to plan everything.\n\n"
             "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the report is "
             "per-contact, and the call is refused without them.\n\n"
-            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "COMPANY SCOPE: the plan is built for the contact's own company, resolved from the "
+            "required `contact_id` + `space_id` above - there is no all-company variant of this tool."
         ),
         "/api/v1/scm/low-stock-report",
         (),
@@ -555,7 +555,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="inventory",
         related_tools=("crm_inventory_stock_balance_list",),
         escalation_team="warehouse",
-        restricted_fields=(("scm.low_stock_report", "Low stock report over chat"),),
+        restricted_fields=(("scm.low_stock_report", "Low stock report over chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)"),),
     ),
     # --- order-management ---
     ToolSpec(

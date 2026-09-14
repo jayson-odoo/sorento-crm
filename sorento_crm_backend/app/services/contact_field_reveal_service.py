@@ -47,8 +47,12 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     # PLAN-low-stock-report S6 (AC-63). Unlike its neighbours this key does not hide a
     # FIELD - it gates a whole tool, because that tool's fetch creates a reorder run and
     # sends a workbook. The lane refuses before any fetch (AC-64) and the route refuses
-    # again in-route (AC-41).
-    ("scm.low_stock_report", "Low stock report over chat"),
+    # again in-route (AC-41). Owner ruling 1 (Phase 3): it is a STAFF-ONLY SUPERSET grant,
+    # NOT a per-field toggle - the workbook is not column-gated per reveal key (only
+    # Supplier follows `purchase_orders.supplier`). The label spells out what it hands over
+    # (security S1) so an admin granting it knows it exposes the whole book incl. Dealer
+    # o/s, PO and SPO numbers, and does not read it as another narrow field reveal.
+    ("scm.low_stock_report", "Low stock report over chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)"),
 )
 
 

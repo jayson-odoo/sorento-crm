@@ -23,7 +23,7 @@ from sorento_crm_mcp.presenters import PRESENTER_TOOLS
 from sorento_crm_mcp.server import TOOL_REQUIRED_QUERY_HINTS, _compile_tool
 
 TOOL = "crm_low_stock_report"
-REVEAL_PAIR = ("scm.low_stock_report", "Low stock report over chat")
+REVEAL_PAIR = ("scm.low_stock_report", "Low stock report over chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)")
 QUERY_PARAMS = (
     "warehouse_codes", "product_codes", "date_from", "date_to",
     "contact_id", "space_id",
