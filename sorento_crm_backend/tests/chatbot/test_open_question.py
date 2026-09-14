@@ -431,7 +431,7 @@ class TestTheAnsweredStepOnARealTurn:
                 "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
                 "WHERE respond_io_id = :c"
             ),
-            {"c": CONTACT_ID, "sv": json.dumps({"variables": variables})},
+            {"c": str(CONTACT_ID), "sv": json.dumps({"variables": variables})},
         )
         db.commit()
 

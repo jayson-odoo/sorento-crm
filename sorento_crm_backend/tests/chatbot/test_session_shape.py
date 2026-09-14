@@ -34,7 +34,7 @@ def seeded(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
     )
     db.commit()
     return db
@@ -64,7 +64,7 @@ def _session_of(session_factory) -> dict:
     db = session_factory()
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
-        {"cid": CONTACT_ID},
+        {"cid": str(CONTACT_ID)},
     ).first()
     raw = row.session_vars if row is not None else {}
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
