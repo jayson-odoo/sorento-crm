@@ -11,28 +11,17 @@ was reached by clicking from `/` through the sidebar, except the three noted und
 Everything below the service boundary is still the Phase 1 mock. What these shots prove
 is that the UI, the states and the layering hold; what they cannot prove is persistence.
 
-## Index
+## The two shots
+
+`documentation/agents/browser-verification.md` caps a lane at two screenshots, so what
+is kept is one golden path at both widths - the salesperson picking a packaged cabinet,
+which is the journey the whole lane exists for. Everything else the walk covered is in
+the log below, which is what an evidence run actually is.
 
 | Shot | Width | What it shows | AC |
 | --- | --- | --- | --- |
-| `s1-01-combos-empty-1280.png` | 1280 | Product overview tab carries Combos and Sold with; "No combos." plus the Add combo CTA | AC-S1-1 |
-| `s1-02-duplicate-combo-name-1280.png` | 1280 | Second combo with the same name refused INLINE in the modal, not a toast | AC-S1-2 |
-| `s1-03-combo-parts-choice-group-1280.png` | 1280 | Three parts: one fixed, then "Basin - pick one" with both basins under it | AC-S1-3, AC-S1-4 |
-| `s1-04-sold-with-1280.png` | 1280 | The mirror's own page reads "SRTBF11834 · 3 in 1", linking to the host | AC-S1-6 |
-| `s1-05-sold-with-375.png` | 375 | Same, stacked, no horizontal page scroll | AC-S1-9 |
-| `s1-06-combo-parts-375.png` | 375 | Parts and the choice group at phone width, no page overflow | AC-S1-9 |
-| `s1-07-deferred-delete-unknown-action-1280.png` | 1280 | The KNOWN Phase 1 gap: removing a part raises "Unknown action: 'product_combo_part.delete'" | AC-S1-5 (deferred) |
-| `s2-01-parts-open-row-1280.png` | 1280 | Package "4 in 1" chosen, four fixed parts filled in, one open row "Not sure, any of 4" with "Marketing will prepare one tag per option" | AC-S2-1, AC-S2-2, AC-S2-3 |
-| `s2-02-missing-part-warning-1280.png` | 1280 | A fixed part removed (staged, no countdown, no confirm) and the row warning reads "Missing: SRTMR502" | AC-S2-4, AC-S2-5 |
-| `s2-03-parts-375.png` | 375 | Line and part rows at phone width, selects full width, no page overflow | AC-S2-11 |
-| `s2-04-no-package-defined-1280.png` | 1280 | A guarded product with no package at all warns "No package defined" | AC-S2-5 |
-| `s2-05-settings-guarded-classes-1280.png` | 1280 | System Settings "Price tag guarded classes" as a SearchableMultiSelect over the class labels, defaulting to Bathroom Furniture + Kitchen Sink | AC-S2-6 |
-| `s3-01-lines-tab-nested-1280.png` | 1280 | CRM Lines tab: line row, indented part rows, then the tag row "1a / Open: Basin (4)" with List, Sell, Designed and Design | AC-S3-2 |
-| `s3-02-rail-nested-open-1280.png` | 1280 | Designer rail: lines with tags nested under them, "Open: Basin" pill, "Split into 4 tags" and the four Pick one buttons | AC-S3-3, AC-S3-4 |
-| `s3-03-rail-after-split-1280.png` | 1280 | After Split: 1a, 1b, 1c, 1d, each resolved to one candidate code, original id kept | AC-S3-4 |
-| `s3-04-designer-deep-param-1280.png` | 1280 | `?tag=` selects that tag and the param is dropped from the URL | AC-S3-3 |
-| `s3-05-designer-375.png` | 375 | The designer at phone width, no page overflow | - |
-| `s3-06-lines-tab-375.png` | 375 | Lines tab at phone width: the table scrolls inside its own container, the page does not | AC-S3-2 |
+| `s2-01-parts-open-row-1280.png` | 1280 | Package "4 in 1" chosen on a portal request line: four fixed parts filled in, one open row reading "Not sure, any of 4" with "Marketing will prepare one tag per option" | AC-S2-1, AC-S2-2, AC-S2-3 |
+| `s2-03-parts-375.png` | 375 | The same line and its part rows at phone width: selects full width, no horizontal page scroll | AC-S2-11 |
 
 ## Walk log
 
@@ -80,9 +69,11 @@ No uncaught page errors (`errors` empty) on any surface.
 ## Not verifiable in Phase 1
 
 - **AC-S1-5 deferred delete.** The grace window is parked on the SERVER by design (D7),
-  so removing a combo or a part raises "Unknown action: 'product_combo_part.delete'" until
-  `app/services/record_actions.py` registers the two keys in Phase 2. Captain's ruling:
-  no early registration. Shot `s1-07`.
+  so removing a combo or a part raised "Unknown action: 'product_combo_part.delete'"
+  during this walk. CLOSED in S1 Phase 2, which registers the two keys in
+  `app/services/record_actions.py`: the same click now reads "Removing in 2s | Cancel |
+  SRTMR11406-WH from 3 in 1" and the row is gone from `product_combo_parts` once the
+  window lapses.
 - **AC-S2-9 draft round trip.** The backend does not yet store `combo_id` or the part
   rows, so a saved draft reopens without them.
 - **AC-S2-10 `DUPLICATE_LINE`** and every other server rule: unchanged code path, Phase 2.
@@ -104,10 +95,3 @@ them the surface being verified:
   not this lane's code.
 - `/dealer-kit/price-tag-requests/{id}/design?tag=...` and `?line=...` - the deep params
   ARE the thing under test, and no UI emits `?line=` any more.
-
-## A note on this folder
-
-`documentation/agents/browser-verification.md` caps a lane at two screenshots. This set is
-larger because the captain asked for the golden path and the edge cases at both widths.
-Each file is well under the 200 KB the pre-push `png-size` gate enforces; trim it to the
-two most load-bearing (`s3-01`, `s2-01`) if the standing cap is meant to win.
