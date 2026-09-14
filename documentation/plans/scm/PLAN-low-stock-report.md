@@ -1,6 +1,6 @@
 # PLAN - Low stock report: a run-bounded Excel on the plan, and over WhatsApp
 
-Status: approved - owner GO on the lavish page 14 Sep 2026 (six assumptions confirmed; wait time made a System Setting at the owner's request); building
+Status: built - Phase 3 review pending (14 Sep 2026). Owner GO on the lavish page 14 Sep 2026 (six assumptions confirmed; wait time made a System Setting at the owner's request); S4 (FE), S2, S1, S3, S5, S6 and S7 are in on `feat/low-stock-report`.
 UAC: `low-stock-report-acceptance-criteria.md` (same folder).
 Domain: scm (with a chatbot/MCP half). Lane branch: `feat/low-stock-report`. One lane, one PR.
 Issues: S4 #887, S2 #888, S1 #889, S3 #890, S5 #891, S6 #892, S7 #893.
