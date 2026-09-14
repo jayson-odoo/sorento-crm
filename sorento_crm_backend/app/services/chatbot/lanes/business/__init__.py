@@ -57,6 +57,18 @@ DELEGATE = "business_query"
 # function, is the one place that checks it, before any tool call.
 _OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
 
+#: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
+#: default tool pick, the tool it picks, and the per-contact key that gates it - all three
+#: read in ONE place (`run_fetch`), before any tool call, because this tool's fetch creates
+#: a reorder run.
+_LOW_STOCK_INTENT = "low_stock_report"
+_LOW_STOCK_TOOL = "crm_low_stock_report"
+_LOW_STOCK_GRANT = "scm.low_stock_report"
+#: The one sentence a contact without that key sees, verbatim (AC-64) -
+#: `fetch.SO_NOT_ENABLED_MESSAGE`'s sibling, and a literal for the same reason: one
+#: wording, in one place, so the lane and the route's own 403 cannot drift.
+LOW_STOCK_NOT_ENABLED_MESSAGE = "Low stock report is not enabled for your account."
+
 _OUTSTANDING_SCOPE_OPTIONS: tuple[dict[str, Any], ...] = (
     {"idx": 1, "label": "Sales orders", "value": "so"},
     {"idx": 2, "label": "Delivery orders", "value": "do"},
@@ -99,6 +111,49 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
         # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
         # asking turn did instead of re-running over every warehouse.
         "location_token": semantic_input.get("outstanding_location_token"),
+    }
+
+
+def _low_stock_not_enabled() -> dict[str, Any]:
+    """AC-64: refuse the low stock ask BEFORE any fetch, and end in the team picker.
+
+    Two things ride on this fragment. The refusal LINE is the reply's first line, verbatim
+    (`LOW_STOCK_NOT_ENABLED_MESSAGE`) - the customer is told plainly that the report is not
+    enabled for them, not given a vague miss. And the outcome is `not_found`, which is the
+    lane's existing route into `_run_miss_half` - the same path a total miss takes
+    (`TestTotalMissEscalates`), so the escalate offer and the team picker that follow are
+    the ones already in place rather than a second copy of them here.
+
+    `escalate` states on the fragment itself that this turn must end that way, so a reader
+    of the fragment (or of a trace) can see the intent without replaying the miss half.
+
+    No tool is called, so no reorder run is created - which is the whole point of gating
+    here rather than letting the route answer 403 after the fetch.
+    """
+    structured: dict[str, Any] = {
+        "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": False,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+        "outcome": "not_found",
+        "escalate": True,
+        "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
     }
 
 
@@ -725,6 +780,45 @@ def run_fetch(
     # the legacy `so_outstanding` bucket is no longer reachable for an outstanding ask at
     # all. What is still required is a SUBJECT: with neither a product nor a customer
     # resolved there is nothing to report on, and the plain order lane keeps that ask.
+    # PLAN-low-stock-report S6 (AC-62/AC-64): the low stock INTENT picks the tool, not the
+    # inventory domain - `crm_low_stock_report` is appended to that domain's pool, never
+    # `tools[0]`, so `tool_filter` would otherwise hand every low stock ask to
+    # `crm_inventory_stock_balance_list`. The outstanding override's own shape.
+    if jsc.js_string(parse_output.get("intent_hint") or "") == _LOW_STOCK_INTENT:
+        tool_name = _LOW_STOCK_TOOL
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "low_stock_override"}}
+
+        # THE GATE, before any fetch (AC-64). Every other tool on the chatbot's read list
+        # is a read; this one's fetch CREATES A REORDER RUN and sends a workbook, so a
+        # refused contact must be turned away HERE rather than by the route answering 403
+        # after the lane has already called it. The route checks the same key again
+        # (AC-41) - two gates, because this one protects the side effect and that one
+        # protects the data.
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = (
+            set(granted_raw)
+            if isinstance(granted_raw, (list, tuple, set, frozenset))
+            else set()
+        )
+        if _LOW_STOCK_GRANT not in granted:
+            return _low_stock_not_enabled()
+
+        # The location word, resolved to EXACT codes before the call: the route takes
+        # codes and does no suffix matching, so a token like "IB" has to be expanded here
+        # - the same `resolve_warehouse_token` pass, and the same one-word-per-turn rule,
+        # the outstanding report uses below.
+        for e in jsc.array(parse_output.get("entities")):
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
+                continue
+            token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+            if not token or db is None:
+                break
+            codes = resolve_warehouse_token(db, token)
+            if codes:
+                semantic_input["low_stock_warehouse_codes"] = codes
+            break
+
     order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
     has_customer = (
         any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)

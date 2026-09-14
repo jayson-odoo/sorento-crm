@@ -55,6 +55,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_procurement_po_last_cost_list",
         "crm_outstanding_report",
+        "crm_low_stock_report",
     }
 )
 
@@ -1556,6 +1557,14 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_outstanding_report":
         return json.dumps(_outstanding_envelope(data))
 
+    # The same bypass, for the same reason: the low stock report's payload is a STATUS
+    # (ready / pending / busy) plus an attachment list, not a row collection the generic
+    # item/field envelope could build items from. `attachments` rides through untouched -
+    # the route decides what a Respond.io attachment entry looks like, and re-shaping it
+    # here would be a second copy of that contract.
+    if tool_name == "crm_low_stock_report":
+        return json.dumps(_low_stock_envelope(data))
+
     rows = data.get("data")
     if not isinstance(rows, list):
         rows = [] if rows is None else ([rows] if isinstance(rows, dict) else [])
@@ -1998,6 +2007,62 @@ def _outstanding_envelope(report: dict) -> dict:
             (isinstance(so, dict) and so.get("so_count"))
             or (isinstance(do, dict) and do.get("do_count"))
         ),
+    }
+
+
+#: The three lines the low stock report can answer with (AC-61). Written here, once, and
+#: handed to the lane verbatim: one writer, one wording.
+_LOW_STOCK_PENDING = "Preparing the low stock report - it will be sent here when ready."
+_LOW_STOCK_BUSY = "A plan is already running - try again in a minute."
+
+
+def _low_stock_as_of(iso: Any) -> str:
+    """dd/mm/yyyy, the only date form this product writes for a reader. An unparseable or
+    absent stamp prints as it arrived rather than as today's date: a run that froze no rows
+    has no as-of, and inventing one would date a book that was never built."""
+    try:
+        return _outstanding_ddmmyyyy(iso)
+    except (TypeError, ValueError):
+        return str(iso) if iso else "-"
+
+
+def _low_stock_envelope(payload: dict) -> dict:
+    """What `present_response` returns for `crm_low_stock_report` (AC-61).
+
+    Three shapes, two of them one line:
+
+    * `ready`   - two lines, the as-of date and how many of the planned products are low.
+                  The "of <m>" half is what stops "Low: 12" reading as the whole
+                  catalogue. The workbook itself rides in `attachments`, which is what
+                  makes the engine emit a `send_attachments` action.
+    * `pending` - the plan outran the turn; the worker pushes the file when it is ready
+                  (AC-44), so the bot says so and stops.
+    * `busy`    - a plan is already running for the company (AC-49).
+
+    `has_result` is True on all three: each IS the answer to what was asked, and a False
+    would send a perfectly-answered turn down the escalate path. No UUID reaches the text -
+    the payload carries `run_id` and `download_id`, and neither is a thing to say to a
+    customer.
+    """
+    status = payload.get("status")
+    if status == "ready":
+        low = payload.get("low_count")
+        total = payload.get("all_count")
+        response = "\n".join((
+            f"Low stock report - as of {_low_stock_as_of(payload.get('as_of'))}",
+            f"Low: {low} of {total} planned products",
+        ))
+        return {
+            "result_type": "low_stock_report",
+            "response": response,
+            "attachments": payload.get("attachments") or [],
+            "has_result": True,
+        }
+    return {
+        "result_type": "low_stock_report",
+        "response": _LOW_STOCK_BUSY if status == "busy" else _LOW_STOCK_PENDING,
+        "attachments": [],
+        "has_result": True,
     }
 
 

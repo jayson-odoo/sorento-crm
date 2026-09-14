@@ -409,6 +409,9 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # is order_date, never actual_delivery_date - a pending DO by definition has
     # none, and the SO arm has no delivery date at all.
     "crm_outstanding_report": ("order_date_from", "order_date_to"),
+    # AC-71: the low stock report's window narrows which sales orders the fresh plan
+    # counts as demand - the run's own "plan until" pair, under the route's names.
+    "crm_low_stock_report": ("date_from", "date_to"),
 }
 
 # S4 point 3 (AC-1131 fetch half): so_outstanding/do_outstanding/outstanding_both ->
@@ -606,6 +609,29 @@ def entity_ids_transformer(
         detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
         if detail_pick in ("so", "do", "both"):
             out["detail"] = detail_pick
+
+    # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
+    # route resolves warehouse and product CODES, and a UUID would silently match nothing.
+    # So the generic UUID params are POPPED rather than left to be dropped by FastMCP,
+    # where a replay diff could not show they had gone. The warehouse codes come off
+    # `semantic_input` (set by `run_fetch` from the SAME token resolution the outstanding
+    # report uses, so a location word like "IB" is already expanded to exact codes); the
+    # product codes come off the entities' own resolved codes.
+    if tool_name == "crm_low_stock_report":
+        out.pop("warehouse_ids", None)
+        out.pop("product_ids", None)
+        warehouse_codes = jsc.get(semantic_input, "low_stock_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        product_codes: list[str] = []
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code) not in product_codes:
+                product_codes.append(jsc.js_string(code))
+        if product_codes:
+            out["product_codes"] = product_codes
 
     # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
     # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
@@ -1675,6 +1701,50 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
     }
 
 
+def _low_stock_report_output(result: Any) -> dict[str, Any]:
+    """PLAN-low-stock-report S6 (AC-66): `crm_low_stock_report`'s own envelope.
+
+    `_outstanding_report_output`'s shape, with one difference that is the whole point:
+    `attachments` is carried through from the presenter's envelope instead of being an
+    empty list. `engine._attachments_src` turns a non-empty list into a `send_attachments`
+    action, and that action IS the in-turn delivery of the workbook (AC-43).
+
+    The reply text is the presenter's, verbatim - one writer, one wording, for the same
+    reason the outstanding report's is: the backend container cannot import
+    `sorento_crm_mcp`, so a second rendering here could disagree with the text the customer
+    is reading and nothing would catch it.
+
+    `has_result` comes off the wire and is True on all three shapes (ready / pending /
+    busy): each is an ANSWER, and a False would send a perfectly-answered turn down the
+    escalate path.
+    """
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+        attachments = envelope.get("attachments")
+    else:
+        # The render never happened (an MCP that returned the raw body, or a failure
+        # fallback): the text stands, and there is no attachment list to trust.
+        text = result if isinstance(result, str) else jsc.js_string(result)
+        has_result = bool(text.strip())
+        attachments = None
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": attachments if isinstance(attachments, list) else [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -1685,6 +1755,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ctx = ctx if isinstance(ctx, dict) else {}
     if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
         return _outstanding_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
+        return _low_stock_report_output(result)
     e = _extract_envelope(result)
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one

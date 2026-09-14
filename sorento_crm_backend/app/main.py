@@ -424,6 +424,20 @@ async def startup_event():
 
     try:
         from app.database import SessionLocal
+        from app.services import low_stock_report_bootstrap
+        _db = SessionLocal()
+        try:
+            # Its twin (PLAN-low-stock-report S6, AC-65), for the same reason and after the
+            # same sync_catalog: a tool the code catalog carries is invisible to the in-app
+            # assistant's RAG selector until it is on `enabled_tools`.
+            low_stock_report_bootstrap.run(_db)
+        finally:
+            _db.close()
+    except Exception as e:
+        logging.error(f"Low stock report bootstrap failed at startup: {str(e)}", exc_info=True)
+
+    try:
+        from app.database import SessionLocal
         from app.services import project_seed_service
         _db = SessionLocal()
         try:
