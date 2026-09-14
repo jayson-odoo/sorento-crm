@@ -14,7 +14,7 @@
  * off the thing it was pointing at.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Trash2, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -37,6 +37,12 @@ export interface DesignReview {
   drafts: DraftPin[];
   /** True while the design is waiting on this reader (portal, proof_ready). */
   canPlace?: boolean;
+  /**
+   * Which round the design is on (R2). Pins from an EARLIER round render grey
+   * whether or not they were ticked Done: they were about a proof that has
+   * since been redrawn, so reading them as live work on this one is wrong.
+   */
+  currentRound?: number;
   onPlace?: (pin: Omit<DraftPin, 'key'>) => void;
   onRemoveDraft?: (key: string) => void;
 }
@@ -73,13 +79,20 @@ export default function DesignPinLayer({
   comments,
   drafts,
   canPlace = false,
+  currentRound,
   onPlace,
   onRemoveDraft,
 }: DesignPinLayerProps) {
   const [placing, setPlacing] = useState<Placing | null>(null);
   const [body, setBody] = useState('');
   const [openMarker, setOpenMarker] = useState<string | null>(null);
-  const draggingRef = useRef<{ startX: number; startY: number } | null>(null);
+  const draggingRef = useRef<{
+    startX: number;
+    startY: number;
+    /** The tag's box in CLIENT coordinates, so a drag that leaves it still
+     *  measures against the tag it started on. */
+    box: DOMRect;
+  } | null>(null);
 
   const rects = tagRectsForSheet(doc, sheetIndex, scale);
   const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
@@ -117,7 +130,7 @@ export default function DesignPinLayer({
       const box = event.currentTarget.getBoundingClientRect();
       const x = clampFraction((event.clientX - box.left) / box.width);
       const y = clampFraction((event.clientY - box.top) / box.height);
-      draggingRef.current = { startX: event.clientX, startY: event.clientY };
+      draggingRef.current = { startX: event.clientX, startY: event.clientY, box };
       setOpenMarker(null);
       setBody('');
       setPlacing({
@@ -135,18 +148,31 @@ export default function DesignPinLayer({
     [canPlace],
   );
 
-  const movePlacing = useCallback(
-    (event: React.PointerEvent<HTMLDivElement>) => {
+  const endPlacing = useCallback(() => {
+    draggingRef.current = null;
+    setPlacing((current) => (current ? { ...current, editing: true } : current));
+  }, []);
+
+  // A drag that ENDS off the tag still finishes the pin. The move and up
+  // handlers used to sit on the tag's own hit area, and a box around the whole
+  // tag always leaves it (a fast drag usually does too), so the pointerup
+  // never arrived: no box, no comment box, and the next click started again.
+  // The window is where a drag actually lives - pointer capture is the
+  // browser's own answer to this and jsdom does not implement it, so the
+  // listeners would be untestable.
+  const isPlacing = placing !== null && !placing.editing;
+  useEffect(() => {
+    if (!isPlacing) return;
+    const onMove = (event: PointerEvent) => {
       const from = draggingRef.current;
-      if (!from || !placing || placing.editing) return;
-      const box = event.currentTarget.getBoundingClientRect();
-      const x = clampFraction((event.clientX - box.left) / box.width);
-      const y = clampFraction((event.clientY - box.top) / box.height);
+      if (!from) return;
       const travelled =
         Math.abs(event.clientX - from.startX) + Math.abs(event.clientY - from.startY);
       if (travelled < DRAG_THRESHOLD_PX) return;
+      const x = clampFraction((event.clientX - from.box.left) / from.box.width);
+      const y = clampFraction((event.clientY - from.box.top) / from.box.height);
       setPlacing((current) =>
-        current
+        current && !current.editing
           ? {
               ...current,
               // The pin sits at the box's corner (D5), so the anchor stays
@@ -158,14 +184,14 @@ export default function DesignPinLayer({
             }
           : current,
       );
-    },
-    [placing],
-  );
-
-  const endPlacing = useCallback(() => {
-    draggingRef.current = null;
-    setPlacing((current) => (current ? { ...current, editing: true } : current));
-  }, []);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', endPlacing);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', endPlacing);
+    };
+  }, [isPlacing, endPlacing]);
 
   if (!doc) return null;
 
@@ -187,8 +213,6 @@ export default function DesignPinLayer({
               height: rect.height,
             }}
             onPointerDown={(event) => startPlacing(rect, event)}
-            onPointerMove={movePlacing}
-            onPointerUp={endPlacing}
           />
         ))}
 
@@ -209,7 +233,12 @@ export default function DesignPinLayer({
               y={comment.y as number}
               w={comment.w ?? 0}
               h={comment.h ?? 0}
-              tone={comment.resolved_at ? 'resolved' : 'sent'}
+              tone={
+                comment.resolved_at ||
+                (currentRound !== undefined && comment.round < currentRound)
+                  ? 'resolved'
+                  : 'sent'
+              }
               open={openMarker === `${comment.id}-${rect.tagId}`}
               onToggle={() =>
                 setOpenMarker((current) =>

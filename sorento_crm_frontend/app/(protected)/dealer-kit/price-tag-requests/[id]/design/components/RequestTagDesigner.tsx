@@ -119,6 +119,7 @@ import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import { designPayloadFromResponse } from '@/lib/dealer-kit/design-payload';
 import {
   canvasPinsForLine,
+  openComments,
   openCountByLine,
   type ReviewComment,
 } from '@/lib/dealer-kit/review-comments';
@@ -231,7 +232,12 @@ export function RequestTagDesigner({
   // only change when a round is sent, which happens on the portal.
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
   /** The `Comments` toolbar toggle. Armed by the first open pin (D6). */
-  const [commentsVisible, setCommentsVisible] = useState(true);
+  // Armed BY an open pin (D6), not on by default: a round that has been worked
+  // off leaves markers sitting over the artwork marketing is now editing, with
+  // a count of zero beside them, and that has to be turned off by hand every
+  // time the designer opens. Set when the comments arrive, since at mount there
+  // are none to count.
+  const [commentsVisible, setCommentsVisible] = useState(false);
   /** The request's design history (r9 S5/D19). */
   const [historyOpen, setHistoryOpen] = useState(false);
   const [viewingVersion, setViewingVersion] = useState<number | null>(null);
@@ -296,7 +302,9 @@ export function RequestTagDesigner({
     let cancelled = false;
     listReviewComments(request.id)
       .then((rows) => {
-        if (!cancelled) setReviewComments(rows);
+        if (cancelled) return;
+        setReviewComments(rows);
+        setCommentsVisible(openComments(rows).length > 0);
       })
       .catch(() => {});
     return () => {
@@ -1194,7 +1202,9 @@ export function RequestTagDesigner({
             ) : (
               <Eye className="mr-1 size-3.5" />
             )}
-            Mark design ready
+            {openPinCount > 0
+              ? `Mark design ready (${openPinCount} open)`
+              : 'Mark design ready'}
           </Button>
         )}
       </div>

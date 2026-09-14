@@ -88,6 +88,7 @@ export default function ProductDataReviewDialog({
                 <ChangeValue
                   value={change.old}
                   imageUrl={change.old_image_url}
+                  isImage={change.field.startsWith('image:')}
                   muted
                 />
               </div>
@@ -95,7 +96,11 @@ export default function ProductDataReviewDialog({
                 <p className="text-2xs uppercase tracking-wide text-muted-foreground">
                   Now in the product
                 </p>
-                <ChangeValue value={change.new} imageUrl={change.new_image_url} />
+                <ChangeValue
+                  value={change.new}
+                  imageUrl={change.new_image_url}
+                  isImage={change.field.startsWith('image:')}
+                />
                 {change.note && (
                   <p className="mt-0.5 text-xs text-amber-700">{change.note}</p>
                 )}
@@ -126,13 +131,23 @@ export default function ProductDataReviewDialog({
 function ChangeValue({
   value,
   imageUrl,
+  isImage,
   muted,
 }: {
   value: string | null;
   imageUrl?: string | null;
+  /**
+   * A PHOTO row, decided by the field name (`image:<attachment id>`) and not
+   * by whether a URL came with it. The response model declares both URL keys,
+   * so FastAPI serialises them as `null` on every row - a price row included -
+   * and `imageUrl !== undefined` was therefore true for all of them: every
+   * text row took the image branch and asked the reader to choose between
+   * "No photo" and "No photo".
+   */
+  isImage?: boolean;
   muted?: boolean;
 }) {
-  if (imageUrl !== undefined) {
+  if (isImage) {
     return imageUrl ? (
       <img
         src={imageUrl}

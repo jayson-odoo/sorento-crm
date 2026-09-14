@@ -24,7 +24,11 @@ export type PriceTagAction =
 export interface PriceTagActionSpec {
   action: PriceTagAction;
   label: string;
-  /** Needs a confirmation dialog before it runs. */
+  /**
+   * Rendered in red, and parked on the server with a countdown instead of
+   * running on the click (D7, S6). Nothing asks first: the countdown IS the
+   * way back, and Cancel is the only thing that stops it.
+   */
   destructive?: boolean;
 }
 

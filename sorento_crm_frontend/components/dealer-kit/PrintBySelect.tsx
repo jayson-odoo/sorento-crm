@@ -11,6 +11,8 @@
  * the same choice.
  */
 
+import type React from 'react';
+
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { PRINT_BY_OPTIONS, type PrintBy } from '@/lib/dealer-kit/print-collection';
@@ -34,6 +36,27 @@ export function PrintBySelect({
   error,
   'aria-labelledby': ariaLabelledBy,
 }: PrintBySelectProps) {
+  /**
+   * ArrowLeft/ArrowRight walk the group and CHOOSE as they go, which is how a
+   * radio group behaves: the option under the focus ring is the answer.
+   */
+  const move = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    const step =
+      event.key === 'ArrowRight' || event.key === 'ArrowDown'
+        ? 1
+        : event.key === 'ArrowLeft' || event.key === 'ArrowUp'
+          ? -1
+          : 0;
+    if (step === 0 || disabled) return;
+    event.preventDefault();
+    const next =
+      (index + step + PRINT_BY_OPTIONS.length) % PRINT_BY_OPTIONS.length;
+    onChange(PRINT_BY_OPTIONS[next].value);
+    const group = event.currentTarget.parentElement;
+    const target = group?.children[next];
+    if (target instanceof HTMLElement) target.focus();
+  };
+
   return (
     <div className="space-y-1.5">
       <div
@@ -42,13 +65,18 @@ export function PrintBySelect({
         aria-label={ariaLabelledBy ? undefined : 'Printing'}
         className="inline-flex items-center rounded-md border p-0.5"
       >
-        {PRINT_BY_OPTIONS.map((option) => (
+        {PRINT_BY_OPTIONS.map((option, index) => (
           <button
             key={option.value}
             type="button"
             role="radio"
             aria-checked={value === option.value}
             disabled={disabled}
+            // One stop for the whole group, and the arrows move between the
+            // options inside it - what a radio group does everywhere else. Two
+            // tab stops made Tab walk THROUGH the answer instead of past it.
+            tabIndex={value === option.value || (!value && index === 0) ? 0 : -1}
+            onKeyDown={(event) => move(event, index)}
             className={cn(
               'rounded px-3 py-1.5 text-sm transition-colors disabled:pointer-events-none disabled:opacity-50',
               value === option.value

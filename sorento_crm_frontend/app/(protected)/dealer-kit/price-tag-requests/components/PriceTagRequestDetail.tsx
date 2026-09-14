@@ -46,16 +46,6 @@ import {
   XCircle,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -73,6 +63,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { PageHeader } from '@/components/common/PageHeader';
 import AttachmentPreviewModal, {
@@ -83,7 +74,11 @@ import {
   priceTagStatusLabel,
   priceTagStatusPillClass,
 } from '@/lib/price-tag-status';
-import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import {
+  formatDate,
+  formatDateInMalaysia,
+  formatDateTimeInMalaysia,
+} from '@/lib/helpers';
 import { tagsFromDoc } from '@/lib/dealer-kit/request-tags';
 import {
   getPriceTagRequest,
@@ -150,7 +145,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
-  const [voidDialogOpen, setVoidDialogOpen] = useState(false);
   /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
   const [editOpen, setEditOpen] = useState(false);
   /** What master data has changed under the pinned tags (r9 S5/D18). */
@@ -340,19 +334,22 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     [requestId],
   );
 
-  const handleVoid = useCallback(async () => {
-    setActionLoading(true);
-    try {
-      await transitionPriceTagRequest(requestId, 'void');
-      toast.success('Request voided');
-      setVoidDialogOpen(false);
-      router.push('/dealer-kit/price-tag-requests');
-    } catch {
-      toast.error('Failed to void request');
-    } finally {
-      setActionLoading(false);
-    }
-  }, [requestId, router]);
+  /**
+   * Void is a server-deferred pending action (D7, S6): no dialog asks first,
+   * the button becomes a countdown with a Cancel, and the server commits when
+   * the window lapses even if this tab is closed.
+   */
+  const voiding = useDeferredAction({
+    actionKey: 'price_tag_request.void',
+    entityType: 'price_tag_request',
+    entityId: requestId,
+    verb: 'Voiding',
+    subject: request?.doc_number ?? '',
+    surface: 'inline',
+    watchFromMount: true,
+    successMessage: 'Request voided',
+    onCommitted: () => router.push('/dealer-kit/price-tag-requests'),
+  });
 
   const openDesigner = useCallback(() => {
     router.push(`/dealer-kit/price-tag-requests/${requestId}/design`);
@@ -379,7 +376,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       }
       if (action === 'mark_collected') return void handleMarkCollected();
       if (action === 'export') return void handleExport();
-      setVoidDialogOpen(true);
+      voiding.start();
     },
     [
       handleClaim,
@@ -388,6 +385,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       handleMarkReadyForCollection,
       handleMarkCollected,
       handleExport,
+      voiding,
     ],
   );
 
@@ -483,13 +481,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   /** "since 14/09/2026 / auto-collects 21/09/2026" under the record header. */
   const collectionSubline = (() => {
     if (!request || request.status !== 'ready_for_collection') return null;
+    // Malaysia, from a UTC instant (S7): the backend's naive timestamps are
+    // UTC, and `new Date(...)` + `formatDate` read both ends locally - so
+    // 16:30 UTC printed as the 14th here and the 15th for the office.
     const since = request.ready_for_collection_at
-      ? formatDate(new Date(request.ready_for_collection_at))
+      ? formatDateInMalaysia(request.ready_for_collection_at)
       : null;
     const auto = autoCollectOn(request.ready_for_collection_at, autoCollectDays);
     if (!since) return null;
     return auto
-      ? `Ready since ${since} \u00b7 auto-collects ${formatDate(auto)}`
+      ? `Ready since ${since} \u00b7 auto-collects ${formatDateInMalaysia(auto)}`
       : `Ready since ${since}`;
   })();
 
@@ -595,7 +596,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               )}
               {request.status === 'collected' && request.collected_at && (
                 <p className="text-sm text-muted-foreground">
-                  Collected {formatDate(new Date(request.collected_at))}
+                  Collected {formatDateInMalaysia(request.collected_at)}
                   {request.collected_auto
                     ? ' automatically'
                     : request.collected_by_name
@@ -649,6 +650,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   </DetailActionsMenu>
                 ) : null
               }
+              pendingAction={voiding.countdown}
               primary={
                 primary ? (
                   <Button
@@ -945,28 +947,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         items={attachmentPreviewItems}
         startIndex={previewIndex}
       />
-
-      {/* Void confirmation */}
-      <AlertDialog open={voidDialogOpen} onOpenChange={setVoidDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Void this request?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently void request {request.doc_number}. This
-              action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleVoid}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              Void
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
 
       <ProductDataReviewDialog
         open={reviewSet !== null}

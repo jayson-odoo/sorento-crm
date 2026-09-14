@@ -87,6 +87,9 @@ export interface PriceTagRequestSummary {
   contact_name: string | null;
   /** Who prints (r9 D7). Null on every row created before the choice existed. */
   print_by?: PrintBy | null;
+  /** Which review round the design is on (D4). Pins from an earlier round
+   *  render grey: they were about a proof that has since been redrawn. */
+  review_round?: number;
   /** When the office said the tags were ready to pick up (D9). */
   ready_for_collection_at?: string | null;
   collected_at?: string | null;

@@ -1946,7 +1946,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           className="space-y-1.5"
           {...(fieldErrors.printBy ? { 'data-error-anchor': 'print_by' } : {})}
         >
-          <Label id="print-by-label">Printing</Label>
+          <Label id="print-by-label">Printing *</Label>
           <PrintBySelect
             aria-labelledby="print-by-label"
             value={printBy}
@@ -2310,12 +2310,14 @@ function DesignSection({
     }
   }, [drafts, generalNote, onSend]);
 
-  // Earlier rounds stay on the design, greyed by `DesignPinLayer` once they
-  // are Done (D6), so a second round is read against what the first one said.
+  // Earlier rounds stay on the design and render grey (D6/R2), so a second
+  // round is read against what the first one said without being mistaken for
+  // live work on this proof.
   const review = {
     comments,
     drafts,
     canPlace: reviewable,
+    currentRound: request.review_round,
     onPlace: (pin: Omit<DraftPin, 'key'>) =>
       setDrafts((current) => [
         ...current,
@@ -2329,13 +2331,6 @@ function DesignSection({
 
   const footer = reviewable ? (
     <div className="mt-3 space-y-3 border-t pt-3">
-      {drafts.length === 0 && sentThisDesign.length === 0 && (
-        <p className="text-xs text-muted-foreground">
-          Click the tag where something needs to change, or drag a box around
-          it.
-        </p>
-      )}
-
       {drafts.length > 0 && (
         <ul className="space-y-2">
           {drafts.map((draft) => (

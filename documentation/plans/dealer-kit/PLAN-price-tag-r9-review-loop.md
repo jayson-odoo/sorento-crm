@@ -1,6 +1,6 @@
 # PLAN - Price Tag Round 9: data gate, review pins, notifications, collection
 
-Status: Grilled 14 Sep 2026 (lavish round 2, nine rulings taken), awaiting owner go on the plan
+Status: Implemented 14 Sep 2026, review round in progress
 UAC: `documentation/plans/dealer-kit/price-tag-r9-review-loop-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758), portal r8 (#861)
 Grill artifact: `.lavish/ptag-r9/price-tag-r9-plan.html`
@@ -123,8 +123,11 @@ All line refs are `origin/main` at ae0831776.
 - D4 Table `price_tag_review_comments`: id, request_id FK, line_id FK nullable (null =
   general), round int, x/y/w/h numeric(6,4) nullable (fractions of the tag box), body text,
   author_contact_id nullable, author_user_id nullable, created_at, resolved_at, resolved_by_id
-  nullable, company_id (CompanyScopedMixin). `round` = number of proof_ready snapshots at send
-  time (`count(page_versions where commit_message = 'Marked proof ready')`, stored not derived).
+  nullable, company_id (CompanyScopedMixin). `round` = `price_tag_requests.review_round`, a
+  counter incremented on every entry into `proof_ready` and stored on the comment at send time
+  (R1, 14 Sep). It was derived from the `Marked proof ready` snapshots, and that snapshot is
+  only written when a draft exists - the designer's own CTA saves first - so the send skipped
+  it and every round came back as 1. A row whose counter is still 0 is read the old way.
 - D5 Portal: in the inline card AND the lightbox, a click on a tag places a point pin
   (w=h=0), a drag places a box; either opens a popover Textarea; Escape or empty = discard.
   Pins are local state until Send. A footer rail lists them with Delete; an optional general

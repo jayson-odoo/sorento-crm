@@ -41,6 +41,8 @@
  * migration, and nothing in the UI offers it again.
  */
 
+import { parseDateTimeAsUTC } from '@/lib/helpers';
+
 export type PrintBy = 'office' | 'self';
 
 export const PRINT_BY_OPTIONS: { value: PrintBy; label: string }[] = [
@@ -69,13 +71,20 @@ export function isTerminalPriceTagStatus(
   return current === 'approved' && printBy === 'self';
 }
 
-/** When an untouched hand-over closes itself, or null when the sweep is off. */
+/**
+ * When an untouched hand-over closes itself, or null when the sweep is off.
+ *
+ * The timestamp is read as UTC (S7): FastAPI serialises a naive `datetime`
+ * with no zone, and `new Date(str)` reads an unzoned ISO string as LOCAL - so
+ * the instant the sweep counts from moved with the reader's own timezone, and
+ * so did the day the card printed.
+ */
 export function autoCollectOn(
   readyAt?: string | null,
   days?: number | null,
 ): Date | null {
   if (!readyAt || !days || days <= 0) return null;
-  const from = new Date(readyAt);
+  const from = parseDateTimeAsUTC(readyAt);
   if (Number.isNaN(from.getTime())) return null;
   return new Date(from.getTime() + days * 24 * 60 * 60 * 1000);
 }
