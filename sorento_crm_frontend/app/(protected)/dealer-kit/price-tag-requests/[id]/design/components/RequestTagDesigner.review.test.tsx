@@ -1,0 +1,455 @@
+/**
+ * The designer's two r9 overlays: change requests and the data gate
+ * (AC-S2-6, AC-S5-3, AC-S5-4).
+ *
+ * This file REPLACES `RequestTagDesigner.refresh.test.tsx`. r4's S2 added a
+ * silent refresh-on-focus that re-resolved every line whenever the tab regained
+ * focus, which is the exact behaviour D18 retires: master data must not walk
+ * onto a design behind a person's back. What stands in its place is a red dot
+ * on the LINES rail and a dialog that asks, so the assertion "focusing the
+ * window changes nothing" belongs here beside the thing that replaced it.
+ *
+ * The canvas is stood in for - Konva needs a browser - so what is asserted is
+ * RequestTagDesigner's own wiring: which pins it hands the canvas, what the
+ * Comments toggle does to them, the rail's badge and dot, and that a decision
+ * reaches the service.
+ */
+import React from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+  type ToolbarTrailingAction,
+} from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
+import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
+import type {
+  LineTagData,
+  TagLayer,
+  TagTemplateDoc,
+} from '@/lib/dealer-kit/tag-template-types';
+
+vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+  usePathname: () => '/dealer-kit/price-tag-requests/req-1/design',
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', () => ({
+  useKitLibrary: () => ({
+    assetUrls: {},
+    fonts: [],
+    specKeys: [],
+    fontOptions: [],
+    reload: vi.fn(async () => {}),
+    remember: vi.fn(),
+  }),
+}));
+
+/** Every `reviewPins` array the canvas was handed, in order. */
+const pinRenders: CanvasReviewPin[][] = [];
+
+vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor', () => ({
+  TagCanvasEditor: ({
+    doc,
+    onLayersChange,
+    leftRail,
+    toolbarTrailing,
+    reviewPins,
+  }: {
+    doc: TagTemplateDoc;
+    onLayersChange?: (layers: TagLayer[]) => void;
+    leftRail?: React.ReactNode;
+    toolbarTrailing?: ToolbarTrailingAction[];
+    reviewPins?: CanvasReviewPin[];
+  }) => {
+    pinRenders.push(reviewPins ?? []);
+    React.useEffect(() => {
+      onLayersChange?.(doc.layers);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+      <div data-testid="canvas-editor">
+        {leftRail}
+        <div data-testid="toolbar-trailing">
+          {toolbarTrailing?.map((action) =>
+            action.kind === 'menu' ? (
+              <ToolbarDropdownButton
+                key={action.id}
+                icon={action.icon}
+                label={action.label}
+                disabled={action.disabled}
+              >
+                {action.items}
+              </ToolbarDropdownButton>
+            ) : (
+              <ToolbarButton
+                key={action.id}
+                icon={action.icon}
+                iconClassName={action.iconClassName}
+                label={action.label}
+                onClick={action.onClick}
+                disabled={action.disabled}
+                active={action.active}
+              />
+            ),
+          )}
+        </div>
+        <ul data-testid="canvas-pins">
+          {(reviewPins ?? []).map((pin) => (
+            <li key={pin.id} data-testid={`canvas-pin-${pin.number}`}>
+              {pin.body} / {pin.caption}
+            </li>
+          ))}
+        </ul>
+      </div>
+    );
+  },
+}));
+
+vi.mock('./ArrangeSheetView', () => ({
+  ArrangeSheetView: () => <div data-testid="arrange-view">arrange open</div>,
+}));
+
+vi.mock('../../../../services/tagTemplateService', () => ({
+  listPublishedTemplates: vi.fn(async () => []),
+  createTemplateFromTag: vi.fn(),
+  updateTemplate: vi.fn(),
+  publishTemplate: vi.fn(),
+}));
+
+vi.mock('../../../../services/priceTagRequestService', () => ({
+  resolveRequestLines: vi.fn(),
+  transitionPriceTagRequest: vi.fn(),
+  exportTagSheet: vi.fn(),
+}));
+
+vi.mock('../../../../services/priceTagReviewService', () => ({
+  listReviewComments: vi.fn(),
+  setReviewCommentResolved: vi.fn(),
+}));
+
+vi.mock('../../../../services/priceTagDataService', () => ({
+  listLineDataChanges: vi.fn(),
+  resolveLinePin: vi.fn(),
+  updateAllLinePins: vi.fn(),
+  listRequestVersions: vi.fn(async () => []),
+  restoreRequestVersion: vi.fn(),
+}));
+
+vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
+  useTagSizesQuery: () => ({ data: [] }),
+  useDeleteTagSizePreset: () => ({ run: vi.fn(), targetId: null, isPending: false }),
+  useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
+}));
+
+import { resolveRequestLines } from '../../../../services/priceTagRequestService';
+import { listReviewComments } from '../../../../services/priceTagReviewService';
+import {
+  listLineDataChanges,
+  resolveLinePin,
+} from '../../../../services/priceTagDataService';
+import { RequestTagDesigner } from './RequestTagDesigner';
+import type {
+  PriceTagRequestDetail,
+  PriceTagRequestLine,
+} from '../../../../services/priceTagRequestService';
+
+const mockResolveLines = vi.mocked(resolveRequestLines);
+const mockComments = vi.mocked(listReviewComments);
+const mockChanges = vi.mocked(listLineDataChanges);
+const mockDecide = vi.mocked(resolveLinePin);
+
+function line(id: string, code: string, order: number): PriceTagRequestLine {
+  return {
+    id,
+    line_type: 'product',
+    product_id: `prod-${id}`,
+    product_set_id: null,
+    name: 'Kitchen Sink',
+    code,
+    show_promo_price: false,
+    quantity: 1,
+    alternatives: [],
+    included_accessories: null,
+    sort_order: order,
+    marketing_price_override: null,
+    marketing_override_reason: null,
+    list_price: 1599,
+    sell_price: null,
+  };
+}
+
+function tagData(id: string, code: string): LineTagData {
+  return {
+    line_id: id,
+    code,
+    name: 'Kitchen Sink',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: 'Stainless steel',
+    specs: [],
+    set_members: '',
+    images: [],
+    list_price: 1599,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    barcode: null,
+  };
+}
+
+const REQUEST: PriceTagRequestDetail = {
+  id: 'req-1',
+  doc_number: 'PT-000001',
+  debtor_code: null,
+  debtor_name: null,
+  promotion_id: null,
+  promotion_name: null,
+  needed_by_date: null,
+  notes: null,
+  status: 'changes_requested',
+  line_count: 2,
+  created_at: '2026-09-01T00:00:00Z',
+  assigned_to_id: 'user-1',
+  assigned_to_name: 'Jayson',
+  contact_name: 'Ziv Beh',
+  contact_id: 'contact-1',
+  lines: [line('line-1', 'SRT-1234', 0), line('line-2', 'SRT-5678', 1)],
+};
+
+function comment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'comment-1',
+    request_id: 'req-1',
+    line_id: 'line-1',
+    round: 1,
+    x: 0.25,
+    y: 0.5,
+    w: 0,
+    h: 0,
+    body: 'Make the price bigger',
+    author_name: 'Ziv Beh',
+    created_at: '2026-09-14T00:00:00Z',
+    resolved_at: null,
+    resolved_by_name: null,
+    ...overrides,
+  } as never;
+}
+
+async function renderDesigner() {
+  const result = render(
+    <RequestTagDesigner
+      request={REQUEST}
+      initialDoc={null}
+      onSave={vi.fn(async () => {})}
+      onAutosave={vi.fn(async () => {})}
+    />,
+  );
+  await waitFor(() =>
+    expect(screen.getByTestId('canvas-editor')).toBeInTheDocument(),
+  );
+  return result;
+}
+
+beforeEach(() => {
+  pinRenders.length = 0;
+  vi.clearAllMocks();
+  mockResolveLines.mockResolvedValue([
+    tagData('line-1', 'SRT-1234'),
+    tagData('line-2', 'SRT-5678'),
+  ]);
+  mockComments.mockResolvedValue([]);
+  mockChanges.mockResolvedValue([]);
+});
+
+// ---------------------------------------------------------------------------
+// AC-S2-6 - the change-request markers
+// ---------------------------------------------------------------------------
+
+describe('change-request markers on the canvas (AC-S2-6)', () => {
+  it('hands the canvas only the SELECTED line pins', async () => {
+    mockComments.mockResolvedValue([
+      comment({ id: 'c1', line_id: 'line-1' }),
+      comment({ id: 'c2', line_id: 'line-2', body: 'Other line' }),
+    ]);
+    await renderDesigner();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-pin-1')).toBeInTheDocument(),
+    );
+    expect(screen.getByTestId('canvas-pin-1')).toHaveTextContent(
+      'Make the price bigger',
+    );
+    expect(screen.queryByText(/Other line/)).toBeNull();
+  });
+
+  it('numbers a marker the same way every other surface numbers it', async () => {
+    mockComments.mockResolvedValue([
+      comment({ id: 'c1', line_id: 'line-2', body: 'First sent' }),
+      comment({ id: 'c2', line_id: 'line-1', body: 'Second sent' }),
+    ]);
+    await renderDesigner();
+
+    // line-1 is selected; its comment was the SECOND sent, so it wears 2.
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-pin-2')).toHaveTextContent('Second sent'),
+    );
+  });
+
+  it('the Comments toolbar toggle hides and shows them', async () => {
+    mockComments.mockResolvedValue([comment()]);
+    await renderDesigner();
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-pin-1')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Hide change requests \(1 open\)/ }),
+    );
+
+    expect(screen.queryByTestId('canvas-pin-1')).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /Show change requests \(1 open\)/ }),
+    );
+    expect(screen.getByTestId('canvas-pin-1')).toBeInTheDocument();
+  });
+
+  it('there is no toggle at all on a request nobody commented on', async () => {
+    await renderDesigner();
+
+    expect(screen.queryByRole('button', { name: /change requests/i })).toBeNull();
+  });
+
+  it('a resolved pin still draws, greyed by its caption, so the round reads whole', async () => {
+    mockComments.mockResolvedValue([
+      comment({ resolved_at: '2026-09-14T02:00:00Z', resolved_by_name: 'Mei' }),
+    ]);
+    await renderDesigner();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-pin-1')).toHaveTextContent(/Done/),
+    );
+  });
+
+  it('the LINES rail badges the lines that have open pins', async () => {
+    mockComments.mockResolvedValue([
+      comment({ id: 'c1', line_id: 'line-1' }),
+      comment({ id: 'c2', line_id: 'line-1', body: 'And this' }),
+      comment({ id: 'c3', line_id: 'line-2', resolved_at: '2026-09-14T02:00:00Z' }),
+    ]);
+    await renderDesigner();
+
+    expect(
+      await screen.findByTitle('2 open change requests'),
+    ).toBeInTheDocument();
+    // line-2's only comment is Done, so it carries no badge.
+    expect(screen.queryByTitle('1 open change request')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S5-3 / AC-S5-4 - the data gate replaces refresh-on-focus
+// ---------------------------------------------------------------------------
+
+describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
+  const CHANGED = {
+    line_id: 'line-1',
+    code: 'SRT-1234',
+    name: 'Kitchen Sink',
+    changes: [
+      { field: 'list_price', label: 'List price', old: 'RM 1,599', new: 'RM 1,799' },
+    ],
+  };
+
+  it('marks only the changed line with a red dot', async () => {
+    mockChanges.mockResolvedValue([CHANGED]);
+    await renderDesigner();
+
+    expect(
+      await screen.findByRole('button', {
+        name: 'Review product data changes on SRT-1234',
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', {
+        name: 'Review product data changes on SRT-5678',
+      }),
+    ).toBeNull();
+  });
+
+  it('a line with an EMPTY change list carries no dot', async () => {
+    mockChanges.mockResolvedValue([{ ...CHANGED, changes: [] }]);
+    await renderDesigner();
+
+    expect(
+      screen.queryByRole('button', { name: /Review product data changes/ }),
+    ).toBeNull();
+  });
+
+  it('the dot opens the review dialog with that line old and new values', async () => {
+    mockChanges.mockResolvedValue([CHANGED]);
+    await renderDesigner();
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Review product data changes on SRT-1234',
+      }),
+    );
+
+    expect(await screen.findByText('Product data changed')).toBeInTheDocument();
+    expect(screen.getByText('RM 1,599')).toBeInTheDocument();
+    expect(screen.getByText('RM 1,799')).toBeInTheDocument();
+  });
+
+  it('Update tag sends the decision for that line', async () => {
+    mockChanges.mockResolvedValue([CHANGED]);
+    mockDecide.mockResolvedValue(undefined as never);
+    await renderDesigner();
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Review product data changes on SRT-1234',
+      }),
+    );
+    await screen.findByText('Product data changed');
+
+    fireEvent.click(screen.getByRole('button', { name: /Update tag/ }));
+
+    await waitFor(() =>
+      expect(mockDecide).toHaveBeenCalledWith('req-1', 'line-1', 'update'),
+    );
+  });
+
+  it('Keep current sends the other decision', async () => {
+    mockChanges.mockResolvedValue([CHANGED]);
+    mockDecide.mockResolvedValue(undefined as never);
+    await renderDesigner();
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Review product data changes on SRT-1234',
+      }),
+    );
+    await screen.findByText('Product data changed');
+
+    fireEvent.click(screen.getByRole('button', { name: /Keep current/ }));
+
+    await waitFor(() =>
+      expect(mockDecide).toHaveBeenCalledWith('req-1', 'line-1', 'keep'),
+    );
+  });
+
+  it('focusing the window resolves NOTHING (D18 retires the r4 refresh)', async () => {
+    await renderDesigner();
+    await waitFor(() => expect(mockResolveLines).toHaveBeenCalledTimes(1));
+
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mockResolveLines).toHaveBeenCalledTimes(1);
+  });
+});

@@ -46,6 +46,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
   downloadPriceTagPdf: vi.fn(),
 }));
 

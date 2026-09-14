@@ -31,6 +31,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
 }));
 
 /**
@@ -125,6 +127,20 @@ async function addLine() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 }
 
+/**
+ * r9 D7: `Printing` has no default and Submit refuses without it, so every
+ * test that expects a POST has to answer it first. The control lives in
+ * "Additional Information", which is collapsed until a price mode is chosen.
+ */
+async function pickPrinting() {
+  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
+    fireEvent.click(
+      screen.getByRole('button', { name: /Additional Information/ }),
+    );
+  }
+  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
+}
+
 describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () => {
   it('adds a row with one button and offers sets and products in one dropdown', async () => {
     render(<PriceTagRequestForm />);
@@ -159,6 +175,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       target: { value: '2' },
     });
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
@@ -180,6 +197,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];

@@ -13,7 +13,9 @@ between the two screens.
 
 Owner-gated (``_require_own_request``, same as every other portal price tag
 route) and status-gated to ``proof_ready | changes_requested | approved |
-ready`` - 404 everywhere else (``new``, ``designing``, and a portal DRAFT,
+ready_for_collection | collected`` - r9 D8 retired ``ready`` and put the two
+collection statuses in its place, so a design stays readable right through the
+hand-over. 404 everywhere else (``new``, ``designing``, and a portal DRAFT,
 whose status is also ``new`` but is never a status this route allows
 regardless), so a design that is still being worked on never leaks to the
 portal before marketing means it to.
@@ -166,7 +168,8 @@ def client():
 
 
 @pytest.mark.parametrize(
-    "status", ["proof_ready", "changes_requested", "approved", "ready"]
+    "status",
+    ["proof_ready", "changes_requested", "approved", "ready_for_collection", "collected"],
 )
 class TestAllowedStatuses:
     def test_the_owning_contact_gets_200_with_the_expected_keys(self, client, status):

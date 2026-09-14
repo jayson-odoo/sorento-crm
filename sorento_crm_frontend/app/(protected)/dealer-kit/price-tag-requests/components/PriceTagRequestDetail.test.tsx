@@ -75,6 +75,10 @@ vi.mock('../../services/priceTagRequestService', () => ({
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
   listPriceTagRequests: vi.fn(),
+  // r9 S1/D3: the Request tab now opens with `RequestDesignSection`, which
+  // asks for the payload on mount. Resolving to null is the "no design yet"
+  // answer, which is what every fixture in this file is.
+  getRequestDesignPayload: vi.fn(async () => null),
 }));
 
 import {
@@ -181,7 +185,6 @@ describe('priceTagActions', () => {
     ['changes_requested', 'user-1', 'Design tags'],
     ['proof_ready', 'user-1', 'View design'],
     ['approved', 'user-1', 'Export PDF'],
-    ['ready', 'user-1', 'Export PDF'],
   ])('%s is led by %s', (status, assignee, label) => {
     expect(priceTagActions(status, assignee)[0].label).toBe(label);
   });
@@ -202,8 +205,13 @@ describe('priceTagActions', () => {
     expect(voidAction?.destructive).toBe(true);
   });
 
-  it('never offers Void once the sheet has been exported', () => {
-    expect(priceTagActions('ready', 'user-1').map((a) => a.action)).toEqual(['export']);
+  it('never offers Void once a self print request is approved and therefore finished', () => {
+    // r9 D8 retired `ready`: a self print request ENDS at `approved`, so the
+    // only thing left is the export. The office half of this matrix, and the
+    // `ready`-less status set, live in `priceTagRequestActions.test.ts`.
+    expect(priceTagActions('approved', 'user-1', 0, 'self').map((a) => a.action)).toEqual([
+      'export',
+    ]);
   });
 });
 

@@ -28,6 +28,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
 }));
 
 vi.mock('../lib/portal-client', () => ({
@@ -154,6 +156,17 @@ async function addLineWithAProduct() {
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
 }
 
+/**
+ * r9 D7/AC-S3-1: `Printing` has no default and Submit refuses without it, so
+ * every test here that expects the POST to happen has to answer it first.
+ */
+async function pickPrinting() {
+  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
+    openAdditionalInformationSection();
+  }
+  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
+}
+
 describe('Save Draft validates nothing (D48a)', () => {
   it('saves a form that has one line and no debtor and no date', async () => {
     render(<PriceTagRequestForm />);
@@ -242,8 +255,8 @@ describe('Save Draft validates nothing (D48a)', () => {
 
 describe('Submit says what is missing (D48b)', () => {
   it('is enabled on an empty form and reports instead of posting', async () => {
-    // Need by no longer blocks Submit (D-P2b, AC-P8b): only Customer and
-    // Lines are missing here, so this asserts two problems, not three.
+    // Need by no longer blocks Submit (D-P2b, AC-P8b); Printing DOES since
+    // r9 D7, so a blank form has three gaps: Customer, Lines, Printing.
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
@@ -261,7 +274,7 @@ describe('Submit says what is missing (D48b)', () => {
     expect(screen.getByText('Add at least one line.')).toBeInTheDocument();
     expect(screen.queryByText('Pick the date you need them by.')).toBeNull();
     expect(screen.getByTestId('submit-problem-summary')).toHaveTextContent(
-      '2 things need attention',
+      '3 things need attention',
     );
     expect(createRequest).not.toHaveBeenCalled();
   });
@@ -304,6 +317,7 @@ describe('Submit says what is missing (D48b)', () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
     await addLineWithAProduct();
+    await pickPrinting();
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
@@ -326,6 +340,7 @@ describe('Submit says what is missing (D48b)', () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
     await addLineWithAProduct();
+    await pickPrinting();
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
