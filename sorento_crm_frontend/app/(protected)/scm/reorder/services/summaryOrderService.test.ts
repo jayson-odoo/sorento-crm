@@ -35,7 +35,11 @@ const mockStore = vi.hoisted(() => ({
 }));
 vi.mock('../lib/summaryOrderMockStore', () => mockStore);
 
-import { exportOrderSheet, getOrderSummaryDemand } from './summaryOrderService';
+import {
+  exportLowStockReport,
+  exportOrderSheet,
+  getOrderSummaryDemand,
+} from './summaryOrderService';
 
 function ok(body: unknown) {
   return {
@@ -107,5 +111,36 @@ describe('summaryOrderService - exportOrderSheet (AC-19/AC-20)', () => {
     await expect(exportOrderSheet('run-2026-w32', 'pdf')).rejects.toThrow(
       'Narrow the plan first',
     );
+  });
+});
+
+describe('summaryOrderService - exportLowStockReport (PLAN-low-stock-report AC-2)', () => {
+  it('POSTs the SAME export endpoint with format "low_stock_xlsx" and returns the '
+    + 'MyDownload row', async () => {
+    const download = { id: 'dl-9', kind: 'low_stock_xlsx', status: 'pending', filename: null };
+    apiFetch.mockResolvedValue(ok(download));
+
+    const result = await exportLowStockReport('run-2026-w37');
+
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = apiFetch.mock.calls[0] as [string, RequestInit];
+    expect(new URL(url, 'http://x').pathname).toBe('/api/v1/scm/order-summary/export');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({
+      run_id: 'run-2026-w37',
+      format: 'low_stock_xlsx',
+    });
+    expect(result).toEqual(download);
+  });
+
+  it('throws the extracted error message on a non-ok response', async () => {
+    apiFetch.mockResolvedValue({
+      ok: false,
+      status: 422,
+      headers: { get: () => 'application/json' },
+      json: async () => ({ message: 'Narrow the plan first' }),
+    } as unknown as Response);
+
+    await expect(exportLowStockReport('run-2026-w37')).rejects.toThrow('Narrow the plan first');
   });
 });

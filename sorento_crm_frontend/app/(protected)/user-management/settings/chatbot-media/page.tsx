@@ -71,6 +71,7 @@ type Draft = {
   syncWaitSeconds: string;
   extractionTimeoutSeconds: string;
   maxEntities: string;
+  lowStockWaitSeconds: string;
 };
 
 function toDraft(settings: ChatbotMediaSettings): Draft {
@@ -92,6 +93,7 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     syncWaitSeconds: String(settings.media_sync_wait_seconds),
     extractionTimeoutSeconds: String(settings.media_extraction_timeout_seconds),
     maxEntities: String(settings.media_max_entities),
+    lowStockWaitSeconds: String(settings.low_stock_sync_wait_seconds),
   };
 }
 
@@ -114,6 +116,7 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     media_sync_wait_seconds: Number(draft.syncWaitSeconds.trim()),
     media_extraction_timeout_seconds: Number(draft.extractionTimeoutSeconds.trim()),
     media_max_entities: Number(draft.maxEntities.trim()),
+    low_stock_sync_wait_seconds: Number(draft.lowStockWaitSeconds.trim()),
   };
 }
 
@@ -133,6 +136,9 @@ const NUMBER_BOUNDS = {
   syncWaitSeconds: [5, 90],
   extractionTimeoutSeconds: [5, 110],
   maxEntities: [1, 100],
+  // The same bounds the media wait carries: both hold a chat turn open, and neither
+  // may outlast the queue-wait budget on the other side of it (AC-7/AC-43).
+  lowStockWaitSeconds: [5, 90],
 } as const satisfies Record<string, readonly [number, number]>;
 
 type NumberKey = keyof typeof NUMBER_BOUNDS;
@@ -310,6 +316,14 @@ export default function ChatbotMediaSettingsPage() {
             value={draft.extractionTimeoutSeconds}
             error={numberError.extractionTimeoutSeconds}
             onChange={(v) => set('extractionTimeoutSeconds', v)}
+          />
+          <NumberField
+            id="low-stock-sync-wait"
+            label="Low stock report chat wait (seconds)"
+            hint="How long a low stock report reply waits for the plan and its workbook before it answers pending and the worker sends the file instead."
+            value={draft.lowStockWaitSeconds}
+            error={numberError.lowStockWaitSeconds}
+            onChange={(v) => set('lowStockWaitSeconds', v)}
           />
         </CardContent>
       </Card>

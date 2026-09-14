@@ -33,7 +33,7 @@ import {
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { resetRunDecisions } from '../services/reorderRunService';
-import { useExportOrderSheet } from '../hooks/useSummaryOrder';
+import { useExportLowStockReport, useExportOrderSheet } from '../hooks/useSummaryOrder';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
@@ -89,26 +89,43 @@ export function ReorderPlanView({ runId }: { runId: string }) {
    * straight off this run. S4 (PLAN-po-spo-site-pool-and-order-sheet-downloads) moved the
    * export itself onto My Downloads: `useExportOrderSheet` starts the async render and
    * toasts, it never saves a file directly - the buyer downloads it from the drawer once
-   * the worker marks it ready. Both items disable while the request is in flight so a
+   * the worker marks it ready. Every export item disables while a request is in flight so a
    * double click starts one export, not two (AC-21).
    */
   const exportOrderSheet = useExportOrderSheet(runId);
+  /**
+   * The low stock report (PLAN-low-stock-report S4, AC-1/AC-2): the same run, printed with
+   * the client's own cut - every planned product below its raw reorder level on one sheet,
+   * the whole plan on the other. It sits directly under the two order sheet items because
+   * it is the third thing this run can be printed as, and it runs through the same async
+   * My Downloads pipeline. One pending flag covers all three (AC-1: "disabled while any
+   * export is pending"), so a second click while one render is queued starts nothing.
+   */
+  const exportLowStock = useExportLowStockReport(runId);
 
-  const actions = useMemo<ToolbarAction[]>(
-    () => [
+  const actions = useMemo<ToolbarAction[]>(() => {
+    const exportPending = exportOrderSheet.isPending || exportLowStock.isPending;
+    return [
       {
         key: 'order_sheet_pdf',
         label: 'Order sheet PDF',
         icon: FileText,
         onClick: () => exportOrderSheet.mutate('pdf'),
-        disabled: exportOrderSheet.isPending,
+        disabled: exportPending,
       },
       {
         key: 'order_sheet_xlsx',
         label: 'Order sheet Excel',
         icon: FileSpreadsheet,
         onClick: () => exportOrderSheet.mutate('xlsx'),
-        disabled: exportOrderSheet.isPending,
+        disabled: exportPending,
+      },
+      {
+        key: 'low_stock_xlsx',
+        label: 'Low stock report (Excel)',
+        icon: FileSpreadsheet,
+        onClick: () => exportLowStock.mutate(),
+        disabled: exportPending,
       },
       {
         key: 'plan_exceptions',
@@ -129,9 +146,13 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         destructive: true,
         onClick: () => setResetOpen(true),
       },
-    ],
-    [exportOrderSheet.mutate, exportOrderSheet.isPending],
-  );
+    ];
+  }, [
+    exportOrderSheet.mutate,
+    exportOrderSheet.isPending,
+    exportLowStock.mutate,
+    exportLowStock.isPending,
+  ]);
 
   const doReset = async () => {
     setResetting(true);

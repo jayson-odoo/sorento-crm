@@ -131,6 +131,14 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
                 daily
               </Badge>
             ) : null}
+            {/* The run the low stock report tool started over WhatsApp (AC-4). Same
+                identity column, no new one: it is another thing to know about WHICH plan
+                this is, and only the backend says so (`requested_via`). */}
+            {row.original.requested_via === 'chat' ? (
+              <Badge variant="secondary" appearance="light" size="sm">
+                via chat
+              </Badge>
+            ) : null}
             {/* AC-5.4: the superseded run stays readable and labelled here - a Re-plan
                 (S5, G8) never hides its history, it only says a newer one replaced it. */}
             {row.original.superseded_by_run_id ? (

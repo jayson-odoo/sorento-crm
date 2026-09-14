@@ -251,6 +251,14 @@ export interface ReorderRunHistoryItem {
   /** Re-plan (S5, AC-5.4): set once a NEWER run has superseded this one. The run itself
    *  stays readable - this only drives the "Superseded" label in the plans list. */
   superseded_by_run_id?: string | null;
+  /**
+   * Who asked for this run: `'chat'` when the low stock report tool created it over
+   * WhatsApp, null when a person started it here or the scheduler did
+   * (PLAN-low-stock-report, AC-4). Drives the "via chat" badge beside `daily` /
+   * `superseded`, so the buyer can see why a plan they never launched exists. Absent
+   * until the backend emits the column (S5) - never inferred from anything else.
+   */
+  requested_via?: 'chat' | null;
 }
 
 export interface ReorderRunHistoryPage {

@@ -179,6 +179,19 @@ describe('ReorderRunsGrid - the status is derived (A5)', () => {
     renderList([run()]);
     expect(screen.queryByText('daily')).not.toBeInTheDocument();
   });
+
+  // PLAN-low-stock-report AC-4: a run the chatbot started is marked in the identity
+  // column, so the buyer knows why a plan nobody here launched exists.
+  it('a run requested over chat wears a "via chat" badge in the Plan column', () => {
+    renderList([run({ requested_via: 'chat' })]);
+    const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
+    expect(within(row).getByText('via chat')).toBeInTheDocument();
+  });
+
+  it('a manual run carries no "via chat" badge', () => {
+    renderList([run()]);
+    expect(screen.queryByText('via chat')).not.toBeInTheDocument();
+  });
 });
 
 describe('ReorderRunsGrid - the toolbar and the row click (A2, A3)', () => {
