@@ -1518,11 +1518,16 @@ class _Raiser:
             so_line_id=mirror_id,
             item_code=row.item_code,
             qty=_dec(row.qty),
-            # The sheet's date, or the line's own when the operator wrote words where the
-            # date goes. `ORDER BACK` is not a date and must not become one.
-            delivery_date=row.delivery_date or (
-                None if row.order_back else match.core_line.required_date
-            ),
+            # The SALES ORDER LINE's own required date, and the sheet's only when the book
+            # promises none (7.4, owner: "we need to follow the sales order delivery date").
+            # SO325661 / SRTWT167 is required 01/01/2030 and its sheet row said 05/01/2026,
+            # so the worklist, the month grouping and the export all read a delivery nobody
+            # had promised. The sheet's date still decides which line the row matches and
+            # whether two rows restate one instruction; it stops being what the row REPORTS.
+            # An ORDER BACK row takes the line's date too - the words in the date cell are
+            # still never a date, and `verb` is what says the quantity is owed against
+            # something already ordered.
+            delivery_date=match.core_line.required_date or row.delivery_date,
             stock_location=location or match.line_location,
             verb=IV_ORDER_BACK if row.order_back else IV_ORDER,
             cited_document=match.cited[0] if match.cited else None,
