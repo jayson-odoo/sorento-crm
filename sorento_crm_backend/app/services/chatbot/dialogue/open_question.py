@@ -419,6 +419,15 @@ def _team_pick(answer: dict, options: list, payload: dict) -> Outcome:
             escalate=True,
             routing={"suggested_team": team or payload.get("team")},
         )
+    if answer.get("yes_no") == "yes" and len(options) >= 2:
+        # AC-1051: a bare "yes" on a MULTI-team offer names no team, so it resolves
+        # nothing and escalates nothing - the lane re-asks the SAME numbered buttons
+        # rather than guessing a team the customer never chose. `expects` is `pick` on
+        # this shape, so the yes/no arms above never claim it.
+        return Outcome(
+            handler="team_pick",
+            outcome="Reask: a bare yes named no team on a multi-team offer.",
+        )
     if answer.get("yes_no") == "yes":
         # An offer with no roster at all is the legacy marker's shape: the team rides the
         # payload, and the customer said yes to the only thing on offer.
