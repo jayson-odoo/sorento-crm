@@ -300,6 +300,12 @@ _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
 _LINE_OUTSTANDING = case(
     (SalesOrderLine.id.is_(None), OrderInquiryRow.qty), else_=demand_qty()
 )
+#: The row's quantity, capped at that (7.3). ONE expression, used by the Buy card, the
+#: `kind=buy` filter and the Remaining column, so the three cannot answer differently for
+#: one row; `scm.committed_v` and the plan's horizon SQL carry the same rule as
+#: `demand._OWED_SQL`. Every reader of it must have `SalesOrderLine` joined - `_base` does,
+#: and `_quantity_flow_by_so_line` joins it for itself.
+_CAPPED_QTY = func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
 #: PLAN-scm-supplied-with-companions.md ruling 7 excludes only a row's OWN `bundled_qty`
 #: from the cards - the item it rides ON (the host) still needs buying independently of
 #: whether a companion happens to ride inside its line: CKS1050 unlinked qty 1 is Buy 1
@@ -313,10 +319,7 @@ _LINE_OUTSTANDING = case(
 #: line), so it is a correctness fix rather than a big number. The cards (`_kinds`) and the
 #: `kind=buy` filter are the two readers, and both build on `_base`, which carries the join.
 _UNLINKED_QTY = func.greatest(
-    func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
-    - _linked_qty()
-    - OrderInquiryRow.bundled_qty,
-    0,
+    _CAPPED_QTY - _linked_qty() - OrderInquiryRow.bundled_qty, 0
 )
 #: The ANCHOR row's own item code, for a bundled row with no document of its own
 #: (export D8: "the bundled row's document column names its host, not a blank").
@@ -848,9 +851,12 @@ class OrderInquiryWorklistService:
         carries links, so per `so_line_id`:
 
         * `taken` - the sum of every LINK on the line's rows, whatever document it names;
-        * `remaining` - the sum of `qty - linked` across them, which is exactly
-          `scm.committed_v`'s own confirmed leg (migration 422) and therefore exactly what
-          still flows to reorder planning.
+        * `remaining` - the sum of `least(qty, what the line still owes) - linked` across
+          them, which is exactly `scm.committed_v`'s own confirmed leg (migrations 422 and
+          511) and therefore exactly what still flows to reorder planning. The cap is 7.3
+          (owner 14 Sep evening): SO368872 / SRTWC286-SH had 352 of its 364 delivered, so
+          Remaining 302 beside a Buy card reading 0 was the screen contradicting itself
+          while the engine went on buying the 302 (reviewer S1, 15 Sep).
 
         Scoped to the verbs `committed_v` counts: `ORDER` and, since part 2 section 4b,
         `ORDER_BACK`. Rows in `actioned` / `cancelled` are out, as they always were.
@@ -866,6 +872,10 @@ class OrderInquiryWorklistService:
         so_line_ids = {row.so_line_id for row in rows if row.so_line_id}
         if not so_line_ids:
             return {}
+        # The core sales order line the cap reads, reached the same way `_base` reaches it:
+        # the row's mirror line, then the core line it names. Both joins are on a primary
+        # key and both are OUTER, so a row whose mirror names no core line still counts,
+        # uncapped, exactly as it did before.
         linked = (
             func.coalesce(
                 select(func.sum(OrderInquiryLink.qty))
@@ -879,9 +889,16 @@ class OrderInquiryWorklistService:
             self.db.query(
                 OrderInquiryRow.so_line_id,
                 func.coalesce(func.sum(linked), 0),
-                func.coalesce(
-                    func.sum(func.greatest(OrderInquiryRow.qty - linked, 0)), 0
-                ),
+                func.coalesce(func.sum(func.greatest(_CAPPED_QTY - linked, 0)), 0),
+            )
+            .select_from(OrderInquiryRow)
+            .outerjoin(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
             )
             .filter(
                 OrderInquiryRow.so_line_id.in_(so_line_ids),
