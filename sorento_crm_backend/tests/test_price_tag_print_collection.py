@@ -360,6 +360,124 @@ class TestReadyIsRetired:
 
 
 # ---------------------------------------------------------------------------
+# r9 review-round leftover R1 - the counter needs a value for every row that
+# predates it
+# ---------------------------------------------------------------------------
+
+
+class TestTheMigrationBackfillsTheReviewRound:
+    """``ptag_0007`` also exposes ``backfill_review_round(bind) -> int``.
+
+    Same reasoning as ``map_ready_rows_to_approved`` right above: a data step
+    hidden inside ``upgrade()`` cannot be exercised without running the whole
+    chain, so it is a named function the migration calls and this test calls.
+
+    The value is the number of ``Marked proof ready`` page-version snapshots
+    the design had, floored at 1 once the request has actually been sent for
+    review (``proof_ready`` onward) - a floor of 0 there would read as "never
+    sent" for a row that plainly was. A row that never reached review keeps
+    whatever the snapshot count says, which is 0 when there is no design at
+    all.
+    """
+
+    def test_a_row_that_never_reached_review_stays_at_zero(self, db_only):
+        from app.models.price_tag import PriceTagRequest
+
+        module = _load_migration("*print_collection*.py")
+        contact_id = seed.seed_portal_contact(db_only)
+        product = seed.seed_product(db_only)
+        new_row = seed.seed_request(
+            db_only, contact_id, status="new", products=[product]
+        )
+        designing_row = seed.seed_request(
+            db_only, contact_id, status="designing", products=[product]
+        )
+
+        module.backfill_review_round(db_only.get_bind())
+        db_only.expire_all()
+
+        for row_id, label in ((new_row.id, "new"), (designing_row.id, "designing")):
+            fresh = (
+                db_only.query(PriceTagRequest)
+                .filter(PriceTagRequest.id == row_id)
+                .first()
+            )
+            assert fresh.review_round == 0, label
+
+    @pytest.mark.parametrize("status", ["rejected", "void"])
+    def test_a_finished_row_with_no_design_stays_at_zero(self, db_only, status):
+        from app.models.price_tag import PriceTagRequest
+
+        module = _load_migration("*print_collection*.py")
+        contact_id = seed.seed_portal_contact(db_only)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact_id, status=status, products=[product]
+        )
+
+        module.backfill_review_round(db_only.get_bind())
+        db_only.expire_all()
+
+        fresh = (
+            db_only.query(PriceTagRequest)
+            .filter(PriceTagRequest.id == request.id)
+            .first()
+        )
+        assert fresh.review_round == 0, status
+
+    @pytest.mark.parametrize(
+        "status",
+        ["proof_ready", "changes_requested", "approved", "ready_for_collection", "collected"],
+    )
+    def test_a_row_waiting_on_or_past_review_with_no_snapshot_floors_at_one(
+        self, db_only, status
+    ):
+        from app.models.price_tag import PriceTagRequest
+
+        module = _load_migration("*print_collection*.py")
+        contact_id = seed.seed_portal_contact(db_only)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact_id, status=status, products=[product]
+        )
+
+        module.backfill_review_round(db_only.get_bind())
+        db_only.expire_all()
+
+        fresh = (
+            db_only.query(PriceTagRequest)
+            .filter(PriceTagRequest.id == request.id)
+            .first()
+        )
+        assert fresh.review_round == 1, status
+
+    def test_the_round_counts_the_proof_ready_snapshots_not_just_a_floor(
+        self, db_only
+    ):
+        from app.models.price_tag import PriceTagRequest
+
+        module = _load_migration("*print_collection*.py")
+        contact_id = seed.seed_portal_contact(db_only)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact_id, status="changes_requested", products=[product]
+        )
+        page, doc = seed.attach_design(db_only, request)
+        seed.snapshot_proof_ready(db_only, page, doc, version=2)
+        seed.snapshot_proof_ready(db_only, page, doc, version=3)
+
+        module.backfill_review_round(db_only.get_bind())
+        db_only.expire_all()
+
+        fresh = (
+            db_only.query(PriceTagRequest)
+            .filter(PriceTagRequest.id == request.id)
+            .first()
+        )
+        assert fresh.review_round == 2
+
+
+# ---------------------------------------------------------------------------
 # AC-S3-4 / 5 / 6 - the collection transitions
 # ---------------------------------------------------------------------------
 

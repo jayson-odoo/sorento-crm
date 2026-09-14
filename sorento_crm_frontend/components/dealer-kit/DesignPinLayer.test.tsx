@@ -95,6 +95,14 @@ beforeEach(() => {
 });
 
 describe('placing a pin (AC-S2-1)', () => {
+  it('the tag hit area has a hover affordance, not just the crosshair cursor (review-round leftover R8)', () => {
+    renderLayer();
+    const area = hitArea();
+
+    expect(area.className).toContain('cursor-crosshair');
+    expect(area.className).toMatch(/hover:(ring|outline)/);
+  });
+
   it('a click drops a point pin and opens the comment box', () => {
     const { onPlace } = renderLayer();
     const area = hitArea();

@@ -221,6 +221,32 @@ describe('the rail turns on with the first pin (AC-S2-2)', () => {
     );
   });
 
+  it('scrolls the change-request rail into view when the first pin lands (review-round leftover)', async () => {
+    // jsdom has no scrollIntoView; the source can only be guarded with an
+    // optional chain, never rely on it existing.
+    const scrollIntoView = vi.fn();
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    try {
+      await renderReadView();
+
+      await placePin('Make the price bigger');
+      await screen.findByTestId('send-change-requests');
+
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+      scrollIntoView.mockClear();
+      await placePin('Move the logo');
+
+      // Only the FIRST pin scrolls - a second pin lands where the salesperson
+      // already is, not somewhere that yanks the page again.
+      expect(scrollIntoView).not.toHaveBeenCalled();
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it('a pin can be deleted before it is sent, and the button goes with the last one', async () => {
     await renderReadView();
     await placePin('Make the price bigger');

@@ -575,9 +575,19 @@ class TestTheReviewRoundIsCounted:
         sent = [row["text"] for row in no_respond]
         assert any("You sent 2 change requests" in text for text in sent), sent
 
-    def test_a_row_from_before_the_counter_falls_back_to_the_snapshots(self, portal):
-        """Every request live at deploy carries `review_round = 0`, and the
-        page versions are the only history those rows have."""
+    def test_a_row_whose_counter_is_zero_sends_round_one_never_the_snapshots(
+        self, portal
+    ):
+        """r9 review-round leftover R2: `current_round` reads ONLY
+        `request.review_round` now - the snapshot fallback is retired.
+
+        A counter of 0 answers round 1 (`max(request.review_round, 1)`)
+        whatever the page versions say, even when two "Marked proof ready"
+        snapshots exist: a genuinely pre-deploy, already-reviewed row gets its
+        real round from the migration's `backfill_review_round` (see
+        `test_price_tag_print_collection.py`), not from a second, competing
+        derivation living in the read path.
+        """
         from app.models.price_tag import PriceTagRequest
 
         client, db, contact_id = portal
@@ -591,7 +601,7 @@ class TestTheReviewRoundIsCounted:
             assigned_to_id=seed.MARKETER_ID,
         )
         page, doc = seed.attach_design(db, request)
-        # Two proofs already sent, before the column existed.
+        # Two proofs exist, but the counter is 0 - they must NOT be read.
         seed.snapshot_proof_ready(db, page, doc, version=2)
         seed.snapshot_proof_ready(db, page, doc, version=3)
         db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).update(
@@ -601,13 +611,101 @@ class TestTheReviewRoundIsCounted:
 
         body = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Still round two")]},
+            json={"comments": [_pin(request.lines[0].id, "Round one, really")]},
         ).json()
 
-        assert body["round"] == 2, (
-            "a pre-deploy row has no counter, so the snapshots are what it has"
+        assert body["round"] == 1, (
+            "current_round must read ONLY request.review_round now - the two "
+            "snapshots are a red herring the old fallback used to chase"
         )
-        assert [row.round for row in _review_rows(db, request.id)] == [2]
+        assert [row.round for row in _review_rows(db, request.id)] == [1]
+
+    def test_a_counter_of_one_sends_round_one_and_a_resend_is_round_two(
+        self, portal, no_respond
+    ):
+        """The live scenario the counter was built to fix: counter 0 at the
+        FIRST send used to derive round 1 from the snapshots without ever
+        setting the counter, so the SECOND send (counter now 1 after "Mark
+        design ready") still read as round 1 - one bell, ever, and the
+        salesperson's own confirmation never said "round 2".
+
+        Walks it for real: proof_ready (counter -> 1), Send (round 1, one
+        bell), Mark design ready again (counter -> 2), Send (round 2, a
+        SECOND distinct bell).
+        """
+        from app.models.notification import Notification
+        from app.models.price_tag import PriceTagRequest
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        client, db, contact_id = portal
+        product = seed.seed_product(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="designing",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        seed.attach_design(db, request)
+        line_id = request.lines[0].id
+
+        def bells():
+            return (
+                db.query(Notification)
+                .filter(Notification.user_id == seed.MARKETER_ID)
+                .filter(Notification.source_entity_type == "price_tag_request")
+                .filter(Notification.source_entity_id == str(request.id))
+                .all()
+            )
+
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        db.expire_all()
+        fresh = (
+            db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).first()
+        )
+        assert fresh.review_round == 1, "counter should be 1 after the first proof"
+
+        first = client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [_pin(line_id, "Round one")]},
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["round"] == 1
+        assert len(bells()) == 1
+
+        # Marketing marks the design ready again ("Mark design ready").
+        PriceTagRequestService.transition_status(
+            db, request.id, "proof_ready", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        db.expire_all()
+        fresh = (
+            db.query(PriceTagRequest).filter(PriceTagRequest.id == request.id).first()
+        )
+        assert fresh.review_round == 2, "counter should be 2 after the second proof"
+
+        second = client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [_pin(line_id, "Round two")]},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["round"] == 2, (
+            "the second send must not still read as round 1"
+        )
+
+        rung = bells()
+        assert len(rung) == 2, "the second round rang no bell of its own"
+        assert len({row.dedup_key for row in rung}) == 2
+
+        # Two separate confirmations, one per round - not deduplicated or
+        # silently dropped the way the second one used to be.
+        sent_text = [row["text"] for row in no_respond]
+        confirmations = [text for text in sent_text if "change request" in text]
+        assert len(confirmations) == 2, sent_text
 
     def test_a_request_that_has_never_been_proofed_is_round_one(self, portal):
         """Numbering it 0 would read as "before the first round"."""

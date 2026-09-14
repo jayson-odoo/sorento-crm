@@ -698,6 +698,24 @@ class TestTheRoundReachesBothNotifications:
         assert sent, "nothing was sent at all"
         assert any("You sent 3 change requests on" in text for text in sent), sent
 
+    def test_one_pin_is_singular_not_1_change_requests(self, portal, no_respond):
+        """r9 review-round leftover R6: the copy table pluralised at every
+        count, including 1 - "You sent 1 change requests on" is not English.
+        """
+        client, db, contact_id = portal
+        request, page, doc = self._proof_ready(db, contact_id)
+        line_id = request.lines[0].id
+
+        client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [self._pin(line_id, "Bigger price")]},
+        )
+
+        sent = [row["text"] for row in no_respond]
+        assert sent, "nothing was sent at all"
+        assert any("You sent 1 change request on" in text for text in sent), sent
+        assert not any("1 change requests" in text for text in sent), sent
+
 
 # ---------------------------------------------------------------------------
 # S9 - the first line of the copy table

@@ -964,3 +964,55 @@ class TestUpdateAndKeep:
 
 def line_id_of(db, request) -> str:
     return _lines(db, request.id)[0].id
+
+
+# ---------------------------------------------------------------------------
+# r9 review-round leftover R3/R4 - Update tag on a request with no page yet
+# still has to leave behind a document the designer can OPEN
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateOnARequestWithNoPageBuildsAnOpenableDocument:
+    """``_EMPTY_SHEET_DOC`` (the fallback the pin route's ``update`` action
+    writes when a page has no draft and no saved version yet - which is always
+    true the FIRST time Update tag runs on a request nobody has claimed
+    through the CRM, only auto-assigned) used to be
+    ``{"kind": "tag_sheet", "sheets": []}`` - no ``imposition`` key at all.
+
+    ``GET .../design`` answers that same document once the pin route has
+    written it, and every reader of a tag_sheet doc (``ScaledSheet``,
+    ``TagSheetRenderer``) reads ``doc.imposition.page_width_mm`` /
+    ``page_height_mm`` unconditionally - so a request whose FIRST design
+    action was Update tag (not a CRM Claim, which never wrote an imposition
+    either, but was never the only version on the page) left a document
+    nothing could draw.
+    """
+
+    def test_the_page_update_tag_creates_carries_an_imposition(self, crm):
+        client, db = crm
+
+        product = seed.seed_product(db)
+        request, _product, _contact = _designing_request(db, product=product)
+        assert request.page_id is None, (
+            "the fixture must not have claimed a page yet, or Update tag is "
+            "not the thing creating one"
+        )
+        line_id = request.lines[0].id
+
+        response = client.post(
+            f"{_CRM.format(id=request.id)}/lines/{line_id}/pin",
+            json={"action": "update"},
+        )
+        assert response.status_code == 200, response.text
+
+        design = client.get(f"{_CRM.format(id=request.id)}/design")
+        assert design.status_code == 200, design.text
+        doc = design.json()["doc"]
+        assert doc is not None
+        imposition = doc.get("imposition")
+        assert imposition, (
+            "Update tag on a page-less request wrote a doc with no imposition "
+            f"at all: {doc!r}"
+        )
+        assert imposition["page_width_mm"] == 210
+        assert imposition["page_height_mm"] == 297

@@ -193,6 +193,23 @@ describe('DesignViewer card (AC-S1-3)', () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Open/ })).toBeNull();
   });
+
+  it('does not throw when a doc has a sheet but no imposition (review-round leftover)', () => {
+    // `_EMPTY_SHEET_DOC` on the backend used to carry no `imposition` at
+    // all, and every reader of a tag_sheet doc read
+    // `doc.imposition.page_width_mm` unconditionally. A doc with sheets
+    // (so the card does NOT take the "no design yet" early return) but no
+    // imposition must not crash the card - it has to draw something,
+    // even if that something is blank, rather than throw.
+    const withSheetsNoImposition = payload(1);
+    const doc = { ...withSheetsNoImposition.doc } as Record<string, unknown>;
+    delete doc.imposition;
+    const broken = { ...withSheetsNoImposition, doc } as typeof withSheetsNoImposition;
+
+    expect(() =>
+      render(<DesignViewer docNumber="PT-202609-0001" payload={broken} />),
+    ).not.toThrow();
+  });
 });
 
 describe('Download PDF (AC-S1-6)', () => {

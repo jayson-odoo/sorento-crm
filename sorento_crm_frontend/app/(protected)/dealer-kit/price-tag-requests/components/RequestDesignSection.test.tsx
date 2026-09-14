@@ -47,13 +47,16 @@ vi.mock('@/components/dealer-kit/DesignViewer', () => ({
     emptyMessage?: string;
     headerActions?: React.ReactNode;
     footer?: React.ReactNode;
-    review?: { comments: unknown[] };
+    review?: { comments: unknown[]; currentRound?: number };
   }) => (
     <div data-testid="design-viewer">
       {props.loading && <span>loading</span>}
       {!props.loading && !props.payload && <span>{props.emptyMessage}</span>}
       <span data-testid="review-comment-count">
         {props.review?.comments.length ?? 0}
+      </span>
+      <span data-testid="review-current-round">
+        {props.review?.currentRound ?? ''}
       </span>
       {props.headerActions}
       {props.footer}
@@ -125,12 +128,13 @@ function comment(overrides: Record<string, unknown> = {}) {
   } as never;
 }
 
-function renderSection() {
+function renderSection(currentRound?: number) {
   return render(
     <RequestDesignSection
       requestId="req-1"
       docNumber="PT-202609-0001"
       lineLabels={new Map([['line-1', 'ZZT-SINK-1']])}
+      currentRound={currentRound}
     />,
   );
 }
@@ -248,6 +252,15 @@ describe('the change request list (AC-S2-5)', () => {
     await waitFor(() => expect(mockList).toHaveBeenCalled());
 
     expect(screen.queryByText('Change requests')).toBeNull();
+  });
+
+  it('passes currentRound to the pin layer so an earlier-round pin can render grey (review-round leftover)', async () => {
+    mockList.mockResolvedValue([comment()]);
+    renderSection(2);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('review-current-round')).toHaveTextContent('2'),
+    );
   });
 });
 
