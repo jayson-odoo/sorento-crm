@@ -1,6 +1,6 @@
 # PLAN - Low stock report: a run-bounded Excel on the plan, and over WhatsApp
 
-Status: built - Phase 3 review pending (14 Sep 2026). Owner GO on the lavish page 14 Sep 2026 (six assumptions confirmed; wait time made a System Setting at the owner's request); S4 (FE), S2, S1, S3, S5, S6 and S7 are in on `feat/low-stock-report`.
+Status: in review - Phase 3 round 3 fixes landed, awaiting final console check + PR (14 Sep 2026). Round 3 (reviewer re-pass): a failed export after `pending` texts the contact, the prefix prune, one report read, the 502 no longer double-logged, the menu label, the wait-cap hint, the plan-timestamp title, docs re-synced. Round 2 (console round 3): MCP hop 10 s caps the sync wait, carried entities on a bare ask, rate limit 5 + busy reasons, empty-scope line. Round 1 (reviewer + security NOT READY): async to_thread, chat-route run guard + per-contact rate limit, company resolution from the contact, error never pending, row counts in one transaction, admission SQL company predicates, assistant bootstrap dropped.
 UAC: `low-stock-report-acceptance-criteria.md` (same folder).
 Domain: scm (with a chatbot/MCP half). Lane branch: `feat/low-stock-report`. One lane, one PR.
 Issues: S4 #887, S2 #888, S1 #889, S3 #890, S5 #891, S6 #892, S7 #893.
@@ -98,9 +98,10 @@ JOIN (
   company, so the join cannot leak a row across companies. Say so in the comment.
 - Evidence run (AC-17) recorded under `evidence/low-stock-report/`. MEASURED 14 Sep on the
   0907 copy, superseding this plan's earlier "~1,600 products" estimate: an unscoped run
-  goes from 950 products / 950 recs / 4.1 s to **2,017 products / 2,017 recs / 8.5 s**
-  (1,433 products are below level and still moving, 366 of them also carry committed
-  demand; the dead guard keeps out 1,264 of the 2,697 below-level products).
+  goes from 950 products / 950 recs / 374 buys / 4.1 s to **2,017 products / 2,017 recs /
+  1,151 buys / 8.5 s** (1,433 products are below level and still moving, 366 of them also
+  carry committed demand; leg 2 alone finds 2,697 below level and the dead guard drops
+  1,264 of them). The 15 s ceiling and the 5,000-row workbook cap both hold.
 
 ### S2 - container in the incoming cell (`app/services/scm/site_pool_supply.py`, `summary_order_service.py`)
 
@@ -149,7 +150,12 @@ the builders it reuses: `report`, `_qty_text`, `_ddmmyyyy`, `_docs_text`, `_rema
 - Task: `app/tasks/export_tasks.py` `generate_low_stock_report(download_id, run_id, user_id, *, include_supplier=True)`
   mirroring `generate_order_sheet` L501-579 (scope dance, `mark_processing`, upload to
   `exports/low-stock/{download_id}/{filename}`, `mark_ready`, `_record_failure`). The push
-  step (S5) lives at the tail of this same task behind the claim update.
+  step (S5) lives at the tail of this same task behind the claim update, and the `except`
+  branch takes the SAME claim to text the contact "Could not build the low stock report -
+  ask again in a minute." (reviewer round 3 item 1): with the wait capped at 7 s a whole-book
+  ask nearly always answers `pending` first, so a render failure after that point otherwise
+  leaves a promise nobody keeps. `export_low_stock` returns the row counts with the bytes, so
+  the task reads the frozen run ONCE (reviewer round 3 item 4; `row_counts()` is gone).
 
 ### S4 - frontend (Phase 1 first, against the mock)
 
@@ -205,8 +211,9 @@ optional query params on body tools.
   the contact over chat.
 - Fast path, one thread (`asyncio.to_thread`, the `media.py:115-141` "copy everything out
   before the wait" rule): `create_run(..., actor=owner_user_id, enqueue=False,
-  requested_via="chat")` (new kwarg, new column); busy 409 from the existing one-in-flight
-  rule maps to `{status: "busy"}`; `DownloadService.create(kind="low_stock_xlsx",
+  requested_via="chat", refuse_if_in_flight=True)` (new kwargs, new column); the
+  `run_in_progress` 409 maps to `{status: "busy", reason: "in_flight"}` and the per-contact
+  rate limit to `reason: "rate_limited"` (AC-49); `DownloadService.create(kind="low_stock_xlsx",
   user_id=owner_user_id, source_entity_type="reorder_run", source_entity_id=run_id,
   filename=...)`; `run_job = enqueue_job(run_reorder_job, run_id, queue_name="imports")`;
   `enqueue_job(generate_low_stock_report, download_id, run_id, user_id,
@@ -224,17 +231,19 @@ optional query params on body tools.
   delivery to the worker push.
 - **The setting is CAPPED BY THE TRANSPORT TIMEOUT** (console round 3, 14 Sep, defect A -
   measured data loss). The effective wait is
-  `min(low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3)`. The chatbot lane's
-  MCP client gives up after `settings.chatbot_mcp_timeout_seconds` (10 s default,
-  `lanes/business/services.py`), which is SHORTER than the 40 s default: a full unscoped
-  run (>10 s measured; 2-product 2.7 s, BRW-scoped 8.7 s) made the lane raise
+  `min(low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3)`, which is 7 s today.
+  The chatbot lane's MCP client gives up after `settings.chatbot_mcp_timeout_seconds` (10 s
+  default, `lanes/business/services.py`), which is SHORTER than the 40 s default: a full
+  unscoped run (>10 s measured; 2-product 2.7 s, BRW-scoped 8.7 s) made the lane raise
   `httpx.ReadTimeout` and render its generic failure line while the route, still waiting,
   never reached its timeout branch and so never set `deliver_to_contact_id` - the worker
   built a workbook nobody delivered. Answering `pending` INSIDE the client's budget is what
   makes the claim happen. `chatbot_mcp_timeout_seconds` is deliberately NOT raised: it is
   every tool's knob. The MCP server's own CRM-facing timeout (`CRM_MCP_TIMEOUT`, default
   60 s, `sorento_crm_mcp/settings.py`) is far longer than either, so the LANE's client is
-  the binding one; if it is ever lowered below this cap it becomes binding instead.
+  the binding one; if it is ever lowered below this cap it becomes binding instead. The
+  settings field says so in its hint (AC-7), because a value above the cap is silently
+  ignored.
 - Ready in time -> `{status: "ready", run_id, as_of, low_count, all_count, attachments:
   [{url, filename, mimeType, attachmentType: "file"}]}`. URL: R2 -> `cdn_base_url(provider,
   quote(key, safe="/"))`; S3 -> `get_signed_url(key, 7 days)` (the exact branch
@@ -280,7 +289,8 @@ optional query params on body tools.
   False` here routes the turn into the inventory domain's generic miss ("Could not find
   inventory - escalate to warehouse team?"), which is the wrong thing to say about a report
   that failed to build, so an error is a TERMINAL answer rendered verbatim like busy and
-  pending, and the lane fragment carries `escalate` for any picker consumer.
+  pending, and the lane fragment carries `escalate` for any picker consumer. The lane's own
+  transport failure (`LOW_STOCK_UNAVAILABLE_MESSAGE`) takes the same shape (AC-61c).
 - Backend: `contact_field_reveal_service.FIELD_REVEAL_KEYS` + `("scm.low_stock_report", "Low
   stock report over chat")`; `mcp_tool_domains.CHATBOT_TOOL_DOMAINS["crm_low_stock_report"]
   = "inventory"`; `contracts.DOMAIN_SPEC["inventory"]`: `intents += ("low_stock_report",)`,
@@ -310,20 +320,15 @@ optional query params on body tools.
   code a `product` entity, a date phrase fills `date_filter_start/end`. Golden fixtures for
   the four journey phrasings. `test_parser_prompt_is_live.py` / `test_parser_user_block_parity.py`
   stay green.
-- **The constant is not the live prompt.** `ai_prompt_registry.render()` reads the
-  PUBLISHED `chatbot_semantic_parser` version (the `production` label) and falls back to
-  the Python constant only when no DB row exists at all - so the addendum reaches no live
-  turn until a migration publishes it. Found on the lane's own console run, 14 Sep: "low
-  stock report" parsed as `check_stock` and "reorder report" as a form lookup with every
-  parser test green. Migration `517_chatbot_low_stock_vocab` mirrors
-  `514_chatbot_outstanding_vocab` line for line: BOTH bodies (FULL and SLIM - prod's
-  label is on one, dev's on the other) land as the next versions with NO label, idempotent
-  on template text, `seed_prompt_registry` first, and the insert lives in a module-level
-  `publish(session)` so it can be run outside alembic. **The owner promotes the
-  `production` label after deploy** - a post-deploy step, not the migration's job.
 - `documentation/plans/chatbot/n8n-changes.md`: `## S-low-stock` with the standard seven
-  sub-headings; the operational steps are granting the key and promoting the prompt label.
-- Console case `tests/chatbot/console_cases/2026-09-1x-low-stock-report.yaml`.
+  sub-headings; the only operational step is granting the key.
+- Console case `tests/chatbot/console_cases/2026-09-14-low-stock-report.yaml`.
+- **Prompt registry (AC-74, found in Phase 3):** `ai_prompt_registry.render()` serves the
+  PUBLISHED `chatbot_semantic_parser` version, so the addendum reaches the chatbot only
+  through `alembic/versions/517_chatbot_low_stock_vocab.py` (mirror of 514: both bodies as
+  new unlabelled versions, idempotent, `publish(session)` callable outside alembic). Locally
+  the console check runs with `--prompt-version <new id>`; on prod the owner moves the
+  `production` label in the admin UI after deploy. Post-deploy step, PR body.
 
 ## Slices and order
 

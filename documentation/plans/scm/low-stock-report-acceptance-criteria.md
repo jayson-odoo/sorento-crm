@@ -57,7 +57,10 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   at 1280px the plans list badge does not widen the column (column keeps its explicit `size`).
 - **AC-7 [FE]** System Settings page shows "Low stock report chat wait (seconds)" beside the
   media sync wait, numeric input 5..90, saved through the existing settings mutation; mocked
-  in Phase 1, wired in S5.
+  in Phase 1, wired in S5. Its hint names the cap the admin cannot see from the field
+  ("Effective wait is capped at the chatbot MCP timeout minus 3 s (7 s today); higher values
+  have no effect."), because AC-43's `min(...)` means anything above the cap is silently
+  ignored and the field would otherwise read as a knob that does nothing.
 - **AC-6 [T]** Vitest: `ReorderPlanView.lowStock.test.tsx` asserts AC-1 and AC-2 (item present,
   disabled while pending, service called with `low_stock_xlsx`, toast text);
   `summaryOrderService.test.ts` gains one case for the new format value; the runs grid test
@@ -162,22 +165,28 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   appears in THAT user's My Downloads) and enqueues the run job and the
   export job so the export runs after the run completes (RQ `depends_on`, or the export task
   polls the run status with the same 600 s job timeout; the plan names which).
-- **AC-43 [BE]** The route waits up to `system_settings.low_stock_sync_wait_seconds` (new
-  column, default 40, validated 5..90 on PUT like `media_sync_wait_seconds`, read live, shown
-  on the System Settings page beside the media wait, present in the settings GET/PUT dict
-  builders) polling the download row. **The effective wait is
-  `min(low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3)`** (console round 3,
-  defect A): the chatbot lane's MCP client hangs up after `chatbot_mcp_timeout_seconds`
-  (10 s default), so a longer wait means the lane times out first, the route never reaches
-  its own timeout branch, `deliver_to_contact_id` is never set and the worker builds a
-  workbook nobody delivers. `chatbot_mcp_timeout_seconds` is NOT raised to suit this route
-  (it is every tool's knob), and the MCP server's `CRM_MCP_TIMEOUT` (60 s) is longer than
-  both, so the lane's client is the binding timeout. The task writes `row_count_low` / `row_count_all` onto the row at
+- **AC-43a [BE]** Every blocking step of the route (grants lookup, company resolution,
+  `create_run`, the download insert, the two enqueues, each poll, the claim) runs in
+  `asyncio.to_thread`, and the request session is committed before the wait, the shape
+  `app/api/v1/external/media.py` documents. Security B1 / reviewer S4, 14 Sep.
+- **AC-43 [BE]** The route waits up to the EFFECTIVE wait = `min(system_settings.
+  low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3)` (setting: new column, default
+  40, validated 5..90 on PUT like `media_sync_wait_seconds`, read live, shown on the System
+  Settings page beside the media wait, present in the settings GET/PUT dict builders; the cap
+  exists because the chatbot lane's MCP hop hangs up at `chatbot_mcp_timeout_seconds` = 10 s,
+  so the route must answer `pending` and claim delivery BEFORE that, else the lane renders a
+  generic error and the worker's file is never delivered - measured console round 3, 14 Sep)
+  polling the download row. The task writes `row_count_low` / `row_count_all` onto the row at
   `mark_ready` so the route never opens the file. When it turns `ready` in time, the
   response is `{status: "ready", run_id, as_of, low_count, all_count, attachments: [{url, filename,
   mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   attachmentType: "file"}]}`. `url` is the R2 CDN URL (permanent, unsigned) when the provider is
   R2, else a 7-day signed URL; the filename is the URL's last path segment.
+- **AC-44a [BE]** A download row that turns `failed` (render error, or the workbook over
+  `MAX_LOW_STOCK_ROWS`) is answered as `{status: "error", message}` and rendered by the
+  presenter as a miss ("Could not run the low stock report right now."), never as pending;
+  same for a route-side refusal (`company_unresolved`, an excluded named product). Reviewer
+  S1/S2, 14 Sep.
 - **AC-44 [BE]** When the budget lapses first, the route claims delivery for the worker with a
   single conditional update on the download row: `deliver_to_contact_id = <respond_contacts.id>
   WHERE id = :id AND status <> 'ready'`. If that update touches 0 rows the row is already ready
@@ -189,14 +198,25 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   `respond_chat_template_service.send_chat_attachment_for` for that contact with the CDN URL;
   the send logs its outbox row. A closed 24 h window surfaces as the existing
   `attachment_window_closed` outcome in the log, never an exception into RQ.
-- **AC-45a [BE]** A swallowed push failure is never silent: both except branches in
-  `_push_low_stock_to_chat` write `user_downloads.error = "chat push failed: <code>: <message>"`
-  (status stays `ready` - the workbook exists and My Downloads still serves it - and
-  `delivered_at` stays set, because it means this worker took its one shot) AND write their
-  own `integration_log` row via `log_respond_send`, because `send_chat_attachment_for`
-  checks the 24 h window UPFRONT and raises before reaching its own logging (console round
-  4: a delivered-looking row with no outbox entry and no error, and a contact who got
-  nothing).
+- **AC-45a [BE]** A swallowed push failure is never silent: `_push_low_stock_to_chat` writes
+  `user_downloads.error = "chat push failed: <code>: <message>"` (status stays `ready` - the
+  workbook exists and My Downloads still serves it - and `delivered_at` stays set, because it
+  means this worker took its one shot). It ALSO writes its own `integration_log` row via
+  `log_respond_send` for the refusals raised BEFORE the sender's own logging
+  (`attachment_window_closed`, `no_chat_template`: `send_chat_attachment_for` checks the 24 h
+  window UPFRONT), and for those ONLY - a `respond_send_failed` (502) is already in the outbox
+  and a second row would double-count one send (console round 4 found the first half: a
+  delivered-looking row with no outbox entry and no error, and a contact who got nothing;
+  reviewer round 3 item 5 found the second).
+- **AC-45b [BE]** A CLAIMED row whose export then FAILS (render error after the route already
+  answered `pending`) sends the contact one text line through `send_chat_message_for`:
+  "Could not build the low stock report - ask again in a minute." It takes the SAME one-shot
+  claim the push uses, so a contact hears exactly one of {the workbook, this line} and a
+  retried RQ job repeats neither; an UNCLAIMED row (a plan-view export, nobody waiting on
+  WhatsApp) sends nothing. Text rather than an attachment because that path carries the
+  closed-window template fallback. Reviewer round 3 item 1: with the wait capped at 7 s a
+  whole-book ask nearly always answers `pending` first, so this was the common failure, and
+  the contact was left waiting for a file that was never coming.
 - **AC-46 [BE]** The two conditional updates make the outcome exactly one of: the turn returns
   the attachment, or the worker pushes it. Test both interleavings (worker ready before the
   route's claim; route's claim before ready).
@@ -208,9 +228,18 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   `system_settings.low_stock_sync_wait_seconds`;
   `requested_via` reaches the FE in the run list/detail schema (both serializers, plus the
   `cols` string the list reads), and `list_my_downloads` is unchanged.
-- **AC-49 [BE]** Runs created here obey the existing one-in-flight rule for runs (409 while a
-  run is `queued`/`running` for the company); the route maps that 409 to
-  `{status: "busy"}` so the bot can say a plan is already running.
+- **AC-49 [BE]** (amended after the security review and console round 3, 14 Sep) The chat route
+  answers `{status: "busy", reason}` and writes nothing when (a) a run is already
+  `queued`/`running` for the resolved company - `create_run` gains an OPT-IN
+  `refuse_if_in_flight` flag that raises `AppException(409, code="run_in_progress")`, the chat
+  route is the only caller that passes True, and it maps that 409 to `reason: "in_flight"`
+  (off by default so the UI and scheduler paths, whose own tests create back-to-back runs, do
+  not gain a 409) - or (b) the contact has already asked 5 times in the last 10 minutes
+  (`rate_limit.hit("low_stock_report", <respond_contacts.id>, limit=5, window_seconds=600)`,
+  fail-open like every other bucket), which answers `reason: "rate_limited"`.
+- **AC-49a [BE]** `reason` is what lets the presenter say WHICH busy this is: the two have
+  different fixes (wait a minute vs wait ten), so one shared line left the reader guessing.
+  See AC-61 for the two lines.
 - **AC-50 [T]** pytest: 422 without contact, 403 without key (no rows created), ready path
   shape, pending path + worker push (mock `send_chat_attachment_for`), both interleavings,
   supplier omission, busy mapping, owner resolution (linked user -> their My Downloads;
@@ -225,24 +254,49 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   report over chat"),)` (the pinned-keys test shape), description stating: always runs a
   fresh plan; resolve location tokens to exact codes first; pass contact_id and space_id
   both.
+- **AC-61a [MCP]** `all_count == 0` (or `as_of` null) renders ONE line "Nothing was planned for
+  that scope - no low stock report to send." and no attachment (console round 3: a carried-entity
+  scope produced a 0-of-0 workbook).
+- **AC-61b [BE]** For intent `low_stock_report` only entities the CURRENT message named scope
+  the run; carried session entities are dropped (console round 3: entity_op replace_combine
+  merged two products from the previous turn into a bare ask). "Named" is a case-insensitive
+  SUBSTRING test of a `current_message: true` token against the resolved entity's
+  `code`/`canonical_code`, not equality: the resolver answers a typed prefix with the full
+  variant code, so "low stock for the CB100 sink" (raw `CB100`, resolved `CB100-BL-DIY`) must
+  still scope the run to that product rather than widen to the whole book (reviewer round 3,
+  item 2).
 - **AC-61 [MCP]** The presenter renders `ready` as two lines (`Low stock report - as of
   <dd/mm/yyyy>` and `Low: <n> of <m> planned products`) plus `attachments[]` carrying the
   route's entry unchanged; `pending` as one line ("Preparing the low stock report - it will be
-  sent here when ready."); `busy` as one line ("A plan is already running - try again in a
-  minute."). No UUID in any line.
+  sent here when ready."); `busy` as ONE line chosen by `reason` (AC-49) - `in_flight` reads
+  "A low stock report plan is already running - try again in a minute." and `rate_limited`
+  reads "Too many low stock reports in the last 10 minutes - try again shortly." Both busy
+  lines NAME the report: the earlier shared "A plan is already running" left the reader, and
+  the console assertion, guessing which plan. `error` is one line, "Could not run the low
+  stock report right now." `has_result` is True on EVERY branch, the error one included (see
+  the plan's S6 note). No UUID in any line.
+- **AC-61c [BE]** A low stock call that fails in TRANSPORT (the lane's MCP client giving up,
+  or any tool-side exception) renders this tool's own line, never the lane's generic "I ran
+  into a problem understanding that" and never the inventory domain's generic miss: the lane
+  holds `LOW_STOCK_UNAVAILABLE_MESSAGE = "Could not run the low stock report right now."` -
+  the same string as the presenter's error line - and answers it as a TERMINAL fragment
+  (`has_result: True`), with `escalate` still on the fragment for any picker consumer.
+  Another tool's failure keeps the generic handling.
 - **AC-62 [MCP]** `PRESENTER_TOOLS`, `mcp_tool_domains.CHATBOT_TOOL_DOMAINS`, backend
   `contracts.DOMAIN_SPEC[<domain>].tools` and `fetch.DOMAIN_CLAIMED_TOOLS` all list the tool;
   the pinned-set CI test stays green. `read_only` follows the `crm_portal_link_get` precedent
   (POST that mints an artefact, allowed on the chatbot list) and says so in its docstring.
 - **AC-63 [BE]** `FIELD_REVEAL_KEYS` gains `("scm.low_stock_report", "Low stock report over
-  chat")`; the pinned-keys test passes; the admin field-reveal UI lists it with no code change
+  chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)")` - the label tells the
+  admin this is a superset grant (security S1; owner ruling 1 (14 Sep): staff-only superset, NOT column-gated per key); the pinned-keys test passes; the admin field-reveal UI lists it with no code change
   beyond the tuple.
 - **AC-64 [BE]** In the business lane, an ask that parses to the low stock intent from a contact
   WITHOUT `scm.low_stock_report` is refused BEFORE any fetch with the literal
   "Low stock report is not enabled for your account." and ends with the existing team picker,
   the same shape as `SO_NOT_ENABLED_MESSAGE`. No run is created.
-- **AC-65 [BE]** `outstanding_report_bootstrap`'s sibling appends `crm_low_stock_report` to
-  `ai_assistant_configs.enabled_tools` at startup, idempotently.
+- **AC-65** STRUCK (security review N4, 14 Sep): the in-app assistant force-empties
+  contact_id/space_id so the tool could only 403 there, and a side-effecting tool must not sit
+  on its read list. No bootstrap; the tool is the WhatsApp lane's only.
 - **AC-66 [T]** MCP tests: tool compiled with the six body params, presenter three shapes,
   attachments passthrough. Backend chatbot tests: gate refusal (no fetch), grant path calls the
   tool with `warehouse_codes` from a location entity, `product_codes` from a product entity,
@@ -260,10 +314,6 @@ suggestion even with no open sales order. Dead products (no outbound movement in
 - **AC-72 [BE]** `documentation/plans/chatbot/n8n-changes.md` gains a section: no n8n node
   change (attachments ride the existing `send_attachments` action); the only operational step
   is granting `scm.low_stock_report` to staff contacts.
-- **AC-73 [E2E]** Console check case `tests/chatbot/console_cases/low_stock_report.yaml`:
-  granted contact gets an xlsx attachment or the pending line; ungranted contact gets the
-  refusal. Recorded agent-browser run: plan view Actions -> Low stock report -> My Downloads
-  shows it ready; open the file, two sheets, container in the incoming cell.
 - **AC-74 [BE]** Migration `517_chatbot_low_stock_vocab` publishes BOTH parser prompt
   bodies carrying `LOW_STOCK_ADDENDUM` as new UNLABELLED `chatbot_semantic_parser`
   versions (idempotent on template text, `seed_prompt_registry` first, insert in a
@@ -272,6 +322,10 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   turn. The owner promotes the `production` label after deploy: a POST-DEPLOY step,
   recorded in `n8n-changes.md` S-low-stock Step 2 and in the PR body, and no label is
   moved by the migration itself.
+- **AC-73 [E2E]** Console check case `tests/chatbot/console_cases/low_stock_report.yaml`:
+  granted contact gets an xlsx attachment or the pending line; ungranted contact gets the
+  refusal. Recorded agent-browser run: plan view Actions -> Low stock report -> My Downloads
+  shows it ready; open the file, two sheets, container in the incoming cell.
 
 ## Not in scope (backlog)
 
