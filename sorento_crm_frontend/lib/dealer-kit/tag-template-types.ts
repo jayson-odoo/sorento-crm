@@ -563,6 +563,9 @@ export interface TagOpenGroup {
 
 /** One part printed under the host on a tag (D3/D4). */
 export interface TagPartData {
+  /** Carried so a caller can match a part back to the choice that produced it.
+   *  Never rendered - the code is what a reader sees (AC-X-2). */
+  product_id?: string | null;
   code: string;
   name: string;
   dimensions: string;

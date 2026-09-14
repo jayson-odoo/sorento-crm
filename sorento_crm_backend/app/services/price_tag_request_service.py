@@ -774,8 +774,10 @@ Marketing's own work is not part of the form's payload, so it is captured
             for candidate in group.get("candidates") or []:
                 by_id[candidate["product_id"]] = candidate["code"]
         # A resolved choice is no longer an open group, so its code comes off the
-        # tag's own resolved parts instead.
-        parts = (resolved or {}).get("parts") or []
+        # tag's own resolved parts, matched by id.
+        for part in (resolved or {}).get("parts") or []:
+            if part.get("product_id"):
+                by_id.setdefault(str(part["product_id"]), part.get("code", ""))
         return {
             "id": tag.id,
             "line_id": tag.line_id,
@@ -784,13 +786,7 @@ Marketing's own work is not part of the form's payload, so it is captured
             "quantity": tag.quantity,
             "choices": chosen,
             "choices_display": [
-                {
-                    "role": role,
-                    "code": by_id.get(
-                        str(product_id),
-                        PriceTagRequestService._code_from_parts(parts, str(product_id)),
-                    ),
-                }
+                {"role": role, "code": by_id.get(str(product_id), "")}
                 for role, product_id in chosen.items()
             ],
             "open_groups": (resolved or {}).get("open_groups") or [],
@@ -803,18 +799,6 @@ Marketing's own work is not part of the form's payload, so it is captured
             "list_price": (resolved or {}).get("list_price"),
             "sell_price": (resolved or {}).get("sell_price"),
         }
-
-    @staticmethod
-    def _code_from_parts(parts: list[dict], product_id: str) -> str:
-        """The code of a chosen candidate, once it stopped being an open group.
-
-        The resolver lists it among the tag's own parts, which is the only place
-        a resolved choice's code survives - `choices` itself holds only the id.
-        """
-        # The parts list carries no id, so the fallback is the LAST part, which
-        # is where a resolved choice lands (fixed parts come first, in combo
-        # order). Good enough for a label; the printed text is D4's own job.
-        return parts[-1]["code"] if parts else ""
 
     @staticmethod
     def split_tag(db: Session, tag, role: str) -> list:

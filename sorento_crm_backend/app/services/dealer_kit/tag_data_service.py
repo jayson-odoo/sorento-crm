@@ -535,6 +535,10 @@ def _resolved_parts_for(db: Session, line, tag) -> list[dict]:
             continue
         out.append(
             {
+                # The id rides along so a caller can match a part back to the
+                # choice that produced it (`tag_body`'s `choices_display`).
+                # Never rendered - the code is what a reader sees (AC-X-2).
+                "product_id": product_id,
                 "code": product.product_code,
                 "name": product.product_name,
                 "dimensions": dimensions_text(product),

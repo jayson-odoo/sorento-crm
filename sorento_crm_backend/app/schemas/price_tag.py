@@ -950,6 +950,9 @@ class TagOpenGroup(BaseModel):
 
 
 class TagPartData(BaseModel):
+    #: Carried so a caller can match a part back to the choice that produced it.
+    #: Never rendered - the code is what a reader sees (AC-X-2).
+    product_id: Optional[str] = None
     code: str
     name: str
     dimensions: str = ""
