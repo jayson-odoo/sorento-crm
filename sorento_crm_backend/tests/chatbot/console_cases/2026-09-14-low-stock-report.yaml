@@ -1,0 +1,140 @@
+# Console case for the low stock report over WhatsApp (AC-73).
+#
+# `documentation/plans/scm/PLAN-low-stock-report.md` section S7 /
+# `low-stock-report-acceptance-criteria.md` AC-73 and the UAC's own "Staff, on WhatsApp"
+# journey - the three phrasings it names, in one conversation.
+#
+# NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane
+# stack once S7 is green (`documentation/agents/chatbot-verification.md`):
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-14-low-stock-report.yaml \
+#       --base-url http://127.0.0.1:8085 --sleep-seconds 15
+#
+# `--sleep-seconds 15` is not optional here: every turn in this file RUNS A REORDER PLAN
+# (owner ruling 1 - the chat tool always creates a fresh run), and a full unscoped run
+# takes 7-10 s on the prod copy. The chat route REFUSES with `busy` while a run for the
+# same company is still queued/running (B2, the per-company in-flight guard), so turns
+# only 8 s apart COLLIDE: the second ask answers busy because the first plan has not
+# finished yet. 15 s lets each run finish before the next turn asks, and it spaces the
+# OpenAI calls enough to stay under the TPM 429 the lessons log records.
+#
+# ═══ GRANT THE KEY BEFORE THE RUN ═══
+# Contact 437264483 must hold `scm.low_stock_report` (Contacts > Access > Field reveals,
+# or `contact_field_reveal_service.set_granted_keys`) or every turn answers the refusal
+# line and the whole file reads as red. Grant `purchase_orders.supplier` too if the
+# Supplier column is meant to be in the workbook (AC-47); without it the column is
+# omitted, which is correct behaviour, not a failure.
+#
+# ═══ RATE LIMIT: 5 ASKS PER CONTACT PER 10 MINUTES ═══
+# This file makes 4 asks from contact 437264483, so it fits. Do NOT add a fifth case
+# without clearing the bucket first, or the extra turn answers a rate-limit refusal that
+# reads as a feature failure:
+#
+#   redis-cli -n <db> del rate_limit:v1:low_stock_report:<respond_contacts.id>
+#
+# Re-running the whole file inside the same 10-minute window needs the same clear.
+#
+# ═══ WHAT THIS FILE CAN AND CANNOT GRADE ═══
+# `scripts/chatbot_console_check.py::_grade` understands `branch_kind`, `reply_contains`,
+# `reply_not_contains`, `no_uuid` and `pending_kind`. It has NO attachment assertion, so
+# the xlsx itself is graded BY EYE from the `actions` the script prints: a ready turn
+# emits a `send_attachments` action carrying `low-stock-<ddmmyyyy>.xlsx`. That is the
+# AC-73 "open the file, two sheets, container in the incoming cell" half, and it is a
+# human step by construction.
+#
+# ANY OF THREE REPLIES PASSES, per turn:
+#   (a) the two-line READY reply - "Low stock report - as of <dd/mm/yyyy>" and
+#       "Low: <n> of <m> planned products" - with the xlsx on a `send_attachments` action;
+#   (b) "Preparing the low stock report - it will be sent here when ready." when the run
+#       outruns the CAPPED sync wait. The effective wait is
+#       min(low_stock_sync_wait_seconds, chatbot_mcp_timeout_seconds - 3), which is 7 s on
+#       the defaults - so a FULL unscoped run USUALLY lands here and the worker pushes the
+#       file afterwards (AC-44). This is the expected outcome for a bare ask, not a miss;
+#   (c) a BUSY line naming the report, when a plan for the company is still in flight.
+#
+# All three carry the substring `low stock report` and `_grade` matches case-insensitively,
+# which is why `reply_contains: low stock report` is the only positive text assertion in
+# this file. Asserting any one of the three alone would fail most runs for a reason that
+# is not a defect.
+#
+# "Sorry, I ran into a problem understanding that" is NOT one of the three and NOT a
+# flake: it means the lane's MCP hop timed out. Report it as a lane defect.
+#
+# THE REPLY CARRIES NO SCOPE LINE. AC-61 pins the ready envelope at exactly two lines
+# (the as-of date and the low/all counts) - there is no "Location: BRW" header the way
+# the outstanding report has one. So turn 2 does NOT assert "BRW" in the reply; that the
+# scope actually applied is read off the workbook, or off `scm.reorder_run.warehouse_ids`
+# for the run the turn created.
+#
+# ═══ THE UNGRANTED CASE IS DOCUMENTED, NOT RUN ═══
+# AC-64's refusal ("Low stock report is not enabled for your account.") is not exercised
+# here, for the same reason `2026-09-13-outstanding-report.yaml` gives for its own no-key
+# case: every candidate non-granted contact on this prod copy has a stored `chatbot.turns`
+# envelope missing `contact.custom_fields`, which the engine's `is_human_intervened` read
+# needs, so the console script's envelope-borrowing mechanism cannot drive it. It is
+# covered by pytest instead - `tests/chatbot/test_low_stock_lane.py::
+# TestFieldRevealGateBeforeFetch::test_gate_refuses_before_fetch_without_key` - which
+# builds the `ctx.access.attributes` gate directly and additionally asserts the thing that
+# matters most and no console run could see: that NO RUN IS CREATED.
+contact: "437264483"
+
+cases:
+  - name: low stock report journey - bare ask, location scope, product + horizon
+    cold: true
+    turns:
+      # 1. The bare ask. UAC Journey, phrasing 1: the whole estate, no scope.
+      - text: "low stock report"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "low stock report"
+          reply_not_contains:
+            - "not enabled for your account"
+            - "already running"
+          no_uuid: true
+
+      # 2. UAC Journey, phrasing 2: a location word scopes the warehouses. See the header
+      # for why BRW is not asserted in the reply text - the two-line envelope has no scope
+      # line. Read the run's own `warehouse_ids`, or the workbook, to confirm the scope.
+      #
+      # THIS TURN MAY LEGITIMATELY ANSWER "busy": turn 1 started a plan, and AC-49 maps
+      # run creation's in-flight refusal to "A plan is already running - try again in a
+      # minute." If it does, re-run this case alone after turn 1's plan finishes - that is
+      # correct behaviour, which is why `reply_not_contains: already running` is NOT
+      # repeated on this turn.
+      - text: "low stock report BRW"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "low stock report"
+          reply_not_contains:
+            - "not enabled for your account"
+          no_uuid: true
+
+      # 3. UAC Journey, phrasing 3: a product code scopes the products and a date phrase
+      # sets the horizon (AC-70/AC-71). SRTWT7408 is the code the plan's own S1 evidence
+      # names; swap it for any code with stock if this copy has none.
+      - text: "low stock for SRTWT7408 until 30 Nov"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "low stock report"
+          reply_not_contains:
+            - "not enabled for your account"
+          no_uuid: true
+
+  # The buyer's own word for the same document (AC-70 trigger phrase). Its own case, cold,
+  # so it grades the parser's vocabulary from a fresh conversation rather than inheriting
+  # the intent from the three turns above.
+  - name: low stock report - the reorder report wording, cold
+    cold: true
+    turns:
+      - text: "reorder report"
+        expect:
+          branch_kind: business_query
+          reply_contains:
+            - "low stock report"
+          reply_not_contains:
+            - "not enabled for your account"
+          no_uuid: true

@@ -1,0 +1,58 @@
+{
+  "note": "Corpus samples for PLAN-low-stock-report.md Slice S7 (AC-70). Each row is a phrasing staff actually use for the low stock report, the cue the prompt teaches it by, and the parse keys that phrasing has to produce. Graded by sorento_crm_backend/tests/chatbot/test_parser_low_stock_words.py, which asserts (a) every cue is present verbatim in chatbot_parser_prompt.LOW_STOCK_ADDENDUM (so both the FULL and the SLIM published bodies carry it), and (b) every expected value is inside the declared vocabulary the code is written against (contracts.DOMAIN_HINTS / INTENT_HINTS). NOTHING HERE CALLS AN LLM: this file grades the CONTRACT between the prompt, the schema and the code, which is what a parser change can silently break. Whether the model actually obeys the vocabulary is a different gate - the console case at tests/chatbot/console_cases/2026-09-14-low-stock-report.yaml. Same shape and the same reasoning as parser_growth_r1_phrases.json beside it.",
+  "phrases": [
+    {
+      "phrase": "low stock report",
+      "language": "en",
+      "cue": "low stock report",
+      "journey": "UAC Journey, Staff on WhatsApp, phrasing 1 - the whole estate, no scope",
+      "expect": {
+        "domain_hint": "inventory",
+        "intent_hint": "low_stock_report"
+      }
+    },
+    {
+      "phrase": "low stock report BRW",
+      "language": "en",
+      "cue": "low stock",
+      "journey": "UAC Journey, phrasing 2 - a location word scopes the warehouses",
+      "expect": {
+        "domain_hint": "inventory",
+        "intent_hint": "low_stock_report",
+        "entity_hints": ["warehouse"]
+      }
+    },
+    {
+      "phrase": "low stock for SRTWT7408 until 30 Nov",
+      "language": "en",
+      "cue": "low stock",
+      "journey": "UAC Journey, phrasing 3 - a product code scopes the products, a date phrase sets the horizon",
+      "expect": {
+        "domain_hint": "inventory",
+        "intent_hint": "low_stock_report",
+        "entity_hints": ["product"],
+        "date_keys": ["date_filter_end"]
+      }
+    },
+    {
+      "phrase": "reorder report",
+      "language": "en",
+      "cue": "reorder report",
+      "journey": "AC-70 trigger phrase - the buyer's own word for the same document",
+      "expect": {
+        "domain_hint": "inventory",
+        "intent_hint": "low_stock_report"
+      }
+    },
+    {
+      "phrase": "which items are stock below level",
+      "language": "en",
+      "cue": "stock below level",
+      "journey": "AC-70 trigger phrase - the rule stated instead of the document named",
+      "expect": {
+        "domain_hint": "inventory",
+        "intent_hint": "low_stock_report"
+      }
+    }
+  ]
+}

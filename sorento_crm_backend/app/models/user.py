@@ -540,6 +540,13 @@ class SystemSetting(Base):
     # dispatcher's 120 second lock TTL.
     media_extraction_timeout_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     media_max_entities = Column(Integer, nullable=False, server_default="10", default=10)
+    # How long the low stock report route holds a chat turn open, waiting for the fresh
+    # plan and its workbook, before it answers `pending` and leaves delivery to the worker
+    # push (PLAN-low-stock-report S5, AC-43). The owner's ruling on the lavish page was a
+    # System Setting rather than a constant only a deploy can move. Range 5-90, enforced in
+    # the backend validator the way the media wait is; 40 sits under the chatbot's own 45 s
+    # queue-wait budget.
+    low_stock_sync_wait_seconds = Column(Integer, nullable=False, server_default="40", default=40)
     # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.

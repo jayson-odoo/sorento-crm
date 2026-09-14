@@ -39,6 +39,7 @@ from app.services.chatbot.lanes.business.fetch import (
 from app.services.chatbot_parser_prompt import (
     GROWTH_R1_ADDENDUM,
     LAST_COST_ADDENDUM,
+    LOW_STOCK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
     SEMANTIC_PARSER_PROMPT_SLIM,
 )
@@ -145,16 +146,16 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         """Migration 490 publishes BOTH texts because prod's `production` label is on the
         FULL body and dev's is on the SLIM one.
 
-        The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping
-        `LAST_COST_ADDENDUM` first: that one now stacks AFTER `GROWTH_R1_ADDENDUM` on
-        both bodies, the same way this addendum itself stacked after the live text, so
-        `GROWTH_R1_ADDENDUM` is still exactly the tail once the later addendum is off."""
-        assert SEMANTIC_PARSER_PROMPT.removesuffix(LAST_COST_ADDENDUM).endswith(
-            GROWTH_R1_ADDENDUM
-        )
-        assert SEMANTIC_PARSER_PROMPT_SLIM.removesuffix(LAST_COST_ADDENDUM).endswith(
-            GROWTH_R1_ADDENDUM
-        )
+        The strong `.endswith` form is restored (review S4, 12 Sep 2026) by stripping the
+        LATER addenda first, newest outermost: `LOW_STOCK_ADDENDUM`
+        (PLAN-low-stock-report.md S7, 14 Sep 2026) then `LAST_COST_ADDENDUM`. Each stacks
+        AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
+        stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
+        once the later ones are off."""
+        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+            assert body.removesuffix(LOW_STOCK_ADDENDUM).removesuffix(
+                LAST_COST_ADDENDUM
+            ).endswith(GROWTH_R1_ADDENDUM)
 
     @pytest.mark.parametrize("key", ["group_by", "top_n"])
     def test_the_output_block_declares_each_new_key(self, key: str) -> None:
