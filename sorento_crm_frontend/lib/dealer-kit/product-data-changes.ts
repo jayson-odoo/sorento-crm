@@ -9,7 +9,7 @@
  * designing, the live resolve keeps running beside it, and the difference is
  * shown to a person who decides. Nothing on a tag changes without that decision.
  *
- * ## Expected API contract (Phase 1: the store below stands in)
+ * ## API contract
  *
  * Every resolver read (`POST .../resolve-prices`, the CRM and portal design
  * payloads, the print payload) answers PINNED values, and a non-terminal
@@ -87,98 +87,4 @@ export function changedLineCount(sets: LineDataChangeSet[]): number {
 /** The field names an "Update tag" version message lists. */
 export function changedFieldLabels(changes: LineDataChange[]): string {
   return changes.map((change) => change.label).join(', ');
-}
-
-// ---------------------------------------------------------------------------
-// PHASE 1 MOCK - deleted when the pin column, the diff and the versions exist
-// ---------------------------------------------------------------------------
-
-/**
- * The diff and the version history, in memory.
- *
- * There is no pin column yet, so nothing can differ from it: a walk of this
- * screen needs the change to come from somewhere, and seeding it here is what
- * lets every state (no changes, one line, several lines, a promotion that
- * ended, a photo swapped) be seen before the backend exists. The version list
- * starts from whatever a request already has and grows as Update tag and
- * Restore write to it, so the two halves of the slice can be walked together.
- */
-const changeSets = new Map<string, LineDataChangeSet[]>();
-const versions = new Map<string, RequestVersionSummary[]>();
-
-export function mockListDataChanges(requestId: string): LineDataChangeSet[] {
-  return [...(changeSets.get(requestId) ?? [])];
-}
-
-export function mockSeedDataChanges(
-  requestId: string,
-  sets: LineDataChangeSet[],
-): void {
-  changeSets.set(requestId, sets);
-}
-
-/** `keep` and `update` both end the question; only `update` writes a version. */
-export function mockResolveLinePin(
-  requestId: string,
-  lineId: string,
-  action: 'update' | 'keep',
-): void {
-  const current = changeSets.get(requestId) ?? [];
-  const target = current.find((set) => set.line_id === lineId);
-  if (action === 'update' && target && target.changes.length > 0) {
-    mockAddVersion(
-      requestId,
-      `Before product update: ${changedFieldLabels(target.changes)}`,
-    );
-  }
-  changeSets.set(
-    requestId,
-    current.map((set) =>
-      set.line_id === lineId ? { ...set, changes: [] } : set,
-    ),
-  );
-}
-
-export function mockListVersions(requestId: string): RequestVersionSummary[] {
-  return [...(versions.get(requestId) ?? [])].sort(
-    (a, b) => b.version - a.version,
-  );
-}
-
-export function mockAddVersion(
-  requestId: string,
-  commitMessage: string,
-): RequestVersionSummary {
-  const existing = versions.get(requestId) ?? [];
-  const next: RequestVersionSummary = {
-    version: existing.reduce((max, row) => Math.max(max, row.version), 0) + 1,
-    commit_message: commitMessage,
-    created_by_name: 'You',
-    created_at: new Date().toISOString(),
-  };
-  versions.set(requestId, [...existing, next]);
-  return next;
-}
-
-export function mockSeedVersions(
-  requestId: string,
-  rows: RequestVersionSummary[],
-): void {
-  versions.set(requestId, rows);
-}
-
-export function _resetProductDataMock(): void {
-  changeSets.clear();
-  versions.clear();
-}
-
-/** The seeds on `window`, for a Phase 1 browser walk. Goes with the store. */
-if (typeof window !== 'undefined') {
-  (window as unknown as Record<string, unknown>).__ptagDataMock = {
-    seedChanges: mockSeedDataChanges,
-    seedVersions: mockSeedVersions,
-    listChanges: mockListDataChanges,
-    listVersions: mockListVersions,
-    reset: _resetProductDataMock,
-  };
 }

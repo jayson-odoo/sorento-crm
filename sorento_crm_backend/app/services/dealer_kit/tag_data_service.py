@@ -26,6 +26,7 @@ Three rules it does not get to decide for itself:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Iterable, Optional, Sequence
 
@@ -450,17 +451,82 @@ def _set_member_text(members: Sequence[dict]) -> str:
 def resolve_request_line_data(db: Session, request) -> list[dict]:
     """Display data for every line of a price tag request.
 
-    The one resolver behind both the designer's left panel and the print
-    payload, so what marketing approves on screen and what the PDF prints are
-    the same numbers from the same call. The marketing override wins over the
-    resolved offer (D9) - it is a decision somebody made and logged a reason
-    for, and the engine has no way to know about it.
+    The one resolver behind the designer's left panel, both design previews and
+    the print payload, so what marketing approves on screen and what the PDF
+    prints are the same numbers from the same call.
+
+    Since r9 (D17) it answers the PINNED data when a line has a pin: master data
+    resolved live on every render meant a price edited on Tuesday silently
+    rewrote the proof approved on Monday. The live resolve still runs beside it
+    for a request somebody can still act on, and the difference comes back as
+    ``data_changes`` for a person to decide. A terminal request skips the live
+    resolve entirely - nothing can be updated, so asking master data to say so
+    is work with no reader.
+
+    The marketing override wins over the pinned offer (D9/AC-S5-7) - it is a
+    decision somebody made and logged a reason for.
     """
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    terminal = PriceTagRequestService.is_terminal(request)
+    rows: list[dict] = []
+
+    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
+        pinned = line.pinned_tag_data
+        if pinned:
+            row = _row_from_pin(db, line, pinned)
+            if not terminal:
+                live = _live_line_data(db, request, line)
+                if live is not None:
+                    changes = _diff_pin_against_live(
+                        db, request, pinned, live, line.data_change_ack_hash
+                    )
+                    row["data_changes"] = changes
+            rows.append(row)
+            continue
+
+        live = _live_line_data(db, request, line)
+        if live is not None:
+            if not terminal:
+                live["data_changes"] = []
+            rows.append(live)
+
+    return rows
+
+
+def _row_from_pin(db: Session, line, pinned: dict) -> dict:
+    """The pin, as the resolver's own row shape.
+
+    Two things are read fresh rather than from the pin: the photo URLs (a
+    signed link expires within the hour) and the marketing override (a decision
+    that must survive whatever the pin says).
+    """
+    from app.services.dealer_kit.product_images import resign_images
+
+    row = dict(pinned)
+    row["line_id"] = line.id
+    row["images"] = resign_images(db, pinned.get("images") or [])
+    row["quantity"] = line.quantity
+    row["show_promo_price"] = line.show_promo_price
+    row["included_accessories"] = line.included_accessories or ""
+    if line.marketing_price_override is not None:
+        row["sell_price"] = Decimal(str(line.marketing_price_override))
+    return row
+
+
+def _live_line_data(db: Session, request, line) -> Optional[dict]:
+    """What master data says about this line RIGHT NOW."""
+    rows = _resolve_lines_live(db, request, [line])
+    return rows[0] if rows else None
+
+
+def _resolve_lines_live(db: Session, request, lines) -> list[dict]:
+    """The pre-r9 resolver, unchanged, over the lines it is given."""
     viewer = staff_viewer()
     promotion_id = getattr(request, "promotion_id", None)
     rows: list[dict] = []
 
-    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
+    for line in lines:
         data: dict
         set_members = ""
 
@@ -516,8 +582,216 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
     return rows
 
 
+
+# ---------------------------------------------------------------------------
+# The product data gate (r9 S5/D16-D18)
+# ---------------------------------------------------------------------------
+
+
+def _plain(value):
+    """JSONB-safe: Decimal is not serialisable, and money must not lose cents."""
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, list):
+        return [_plain(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _plain(item) for key, item in value.items()}
+    return value
+
+
+def pin_payload(row: dict) -> dict:
+    """What gets stored on the line: the resolved row, JSON-safe.
+
+    Photos keep their ``attachment_id``/``is_primary``; the URL travels too but
+    is re-signed on every read (`_row_from_pin`), because a signed link is dead
+    within the hour and the pin lives for weeks.
+    """
+    return _plain(row)
+
+
+def data_hash(row: dict) -> str:
+    """A stable fingerprint of the fields the gate compares.
+
+    Only the fields a person is asked about: quantity, remarks and the override
+    are the request's own and change without master data moving at all.
+    """
+    import hashlib
+    import json
+
+    subject = {
+        key: _plain(row.get(key))
+        for key in (
+            "code",
+            "name",
+            "dimensions",
+            "spec_lines",
+            "specs",
+            "set_members",
+            "list_price",
+            "sell_price",
+            "barcode",
+        )
+    }
+    subject["images"] = sorted(
+        image.get("attachment_id") for image in row.get("images") or []
+    )
+    return hashlib.sha256(
+        json.dumps(subject, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def _money(value) -> Optional[str]:
+    """Two decimals, no thousands separator and no currency symbol.
+
+    The dialog puts old beside new, so what matters is that the two are
+    comparable at a glance; the money formatting each surface already has is
+    what dresses them.
+    """
+    return None if value is None else f"{float(value):.2f}"
+
+
+def _diff_pin_against_live(
+    db: Session, request, pinned: dict, live: dict, ack_hash: Optional[str]
+) -> list[dict]:
+    """What master data has moved under this tag, field by field (D17).
+
+    Silent when the live data matches the pin, and silent when it matches an
+    ack somebody has already looked at and chosen to keep. A change AFTER a
+    keep asks again, because it is a different change.
+    """
+    if ack_hash and data_hash(live) == ack_hash:
+        return []
+    if data_hash(live) == data_hash(pinned):
+        return []
+
+    changes: list[dict] = []
+
+    def add(field, label, old, new, note=None):
+        if old == new:
+            return
+        entry = {"field": field, "label": label, "old": old, "new": new}
+        if note:
+            entry["note"] = note
+        changes.append(entry)
+
+    add("name", "Name", pinned.get("name"), live.get("name"))
+    add("dimensions", "Dimensions", pinned.get("dimensions"), live.get("dimensions"))
+    add("spec_lines", "Specs", pinned.get("spec_lines"), live.get("spec_lines"))
+    add("set_members", "Set members", pinned.get("set_members"), live.get("set_members"))
+    add("barcode", "Barcode", pinned.get("barcode"), live.get("barcode"))
+    add(
+        "list_price",
+        "List price",
+        _money(pinned.get("list_price")),
+        _money(live.get("list_price")),
+    )
+
+    pinned_offer = _money(pinned.get("sell_price"))
+    live_offer = _money(live.get("sell_price"))
+    promotion_ended = bool(
+        getattr(request, "promotion_id", None)
+    ) and not _promotion_is_live(db, getattr(request, "promotion_id", None))
+    if pinned_offer != live_offer or promotion_ended:
+        # The one case with no obvious wording: the number did not change, the
+        # REASON it existed did.
+        changes.append(
+            {
+                "field": "offer_price",
+                "label": "Offer price",
+                "old": pinned_offer,
+                "new": live_offer,
+                "note": "Promotion ended" if promotion_ended else None,
+            }
+        )
+
+    # Specs key by key, so the dialog names the one that moved.
+    pinned_specs = {spec.get("key"): spec for spec in pinned.get("specs") or []}
+    live_specs = {spec.get("key"): spec for spec in live.get("specs") or []}
+    for key in sorted(set(pinned_specs) | set(live_specs)):
+        before, after = pinned_specs.get(key), live_specs.get(key)
+        label = (after or before or {}).get("label") or key
+        add(
+            f"spec:{key}",
+            f"Spec: {label}",
+            (before or {}).get("value"),
+            (after or {}).get("value"),
+        )
+
+    # Photos by attachment id: a swapped picture is two changes (one gone, one
+    # arrived), which is what the dialog draws side by side.
+    pinned_images = {
+        image.get("attachment_id"): image for image in pinned.get("images") or []
+    }
+    live_images = {
+        image.get("attachment_id"): image for image in live.get("images") or []
+    }
+    for attachment_id in sorted(set(pinned_images) | set(live_images)):
+        if attachment_id in pinned_images and attachment_id in live_images:
+            continue
+        gone = attachment_id in pinned_images
+        changes.append(
+            {
+                "field": f"image:{attachment_id}",
+                "label": "Photo",
+                "old": "Photo on the tag" if gone else None,
+                "new": None if gone else "New photo",
+                "old_image_url": (pinned_images.get(attachment_id) or {}).get("url"),
+                "new_image_url": (live_images.get(attachment_id) or {}).get("url"),
+                "note": "Photo removed" if gone else None,
+            }
+        )
+
+    return changes
+
+
+def _promotion_is_live(db: Session, promotion_id) -> bool:
+    """Whether the request's promotion is still running."""
+    if not promotion_id:
+        return False
+    from app.models.marketing import Promotion
+
+    promotion = db.query(Promotion).filter(Promotion.id == promotion_id).first()
+    return bool(promotion and promotion.is_active)
+
+
+def pin_lines(db: Session, request, *, only_unpinned: bool = True) -> int:
+    """Freeze what the tags are drawn from (D16).
+
+    Called when a request starts being designed and when a line is added to one
+    already in progress. ``only_unpinned`` is the default and the reason the
+    gate works at all: re-pinning on the way back from ``changes_requested``
+    would swallow the very difference it exists to show.
+    """
+    pinned = 0
+    lines = [
+        line
+        for line in request.lines
+        if not (only_unpinned and line.pinned_tag_data is not None)
+    ]
+    if not lines:
+        return 0
+    rows = {
+        row["line_id"]: row for row in _resolve_lines_live(db, request, lines)
+    }
+    now = datetime.utcnow()
+    for line in lines:
+        row = rows.get(line.id)
+        if row is None:
+            continue
+        line.pinned_tag_data = pin_payload(row)
+        line.pinned_at = now
+        line.data_change_ack_hash = None
+        pinned += 1
+    if pinned:
+        db.flush()
+    return pinned
+
+
 __all__ = [
     "STAFF_VIEWER",
+    "data_hash",
+    "pin_lines",
+    "pin_payload",
     "dimensions_text",
     "format_dimensions_mm",
     "get_product",

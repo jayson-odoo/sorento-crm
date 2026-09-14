@@ -360,6 +360,14 @@ class PriceTagRequestService:
         # next access to re-query.
         db.expire(request, ["lines"])
 
+        # A line added to a design already in progress is pinned on save
+        # (D16), so it enters the gate the same way the others did.
+        if request.status == STATUS_DESIGNING:
+            from app.services.dealer_kit import tag_data_service
+
+            tag_data_service.pin_lines(db, request, only_unpinned=True)
+            db.flush()
+
     @staticmethod
     def submit_request(
         db: Session,
@@ -529,6 +537,15 @@ class PriceTagRequestService:
             )
 
         request.status = new_status
+        if new_status == STATUS_DESIGNING:
+            # r9 D16: the tags are drawn from what master data said when the
+            # design started, so that is the moment it is frozen. Only lines
+            # with no pin yet - re-pinning on the way back from
+            # `changes_requested` would swallow the very difference the gate
+            # exists to show.
+            from app.services.dealer_kit import tag_data_service
+
+            tag_data_service.pin_lines(db, request, only_unpinned=True)
         # The hand-over's own timestamps (D9). `collected_by_*` is whoever did
         # it: a user here, a contact on the portal's own route, neither when the
         # sweep closes it.

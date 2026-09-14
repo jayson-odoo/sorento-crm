@@ -1003,3 +1003,50 @@ class RequestChangesResponse(BaseModel):
 
 class ReviewCommentResolvePayload(BaseModel):
     resolved: bool
+
+
+# ---------------------------------------------------------------------------
+# The product data gate and the request's history (r9 S5/D18-D19)
+# ---------------------------------------------------------------------------
+
+
+class LineDataChange(BaseModel):
+    """One field master data has moved under a pinned tag (r9 D17)."""
+
+    field: str
+    label: str
+    old: Optional[str] = None
+    new: Optional[str] = None
+    old_image_url: Optional[str] = None
+    new_image_url: Optional[str] = None
+    #: Why the value moved, when that is not obvious ("Promotion ended").
+    note: Optional[str] = None
+
+
+class LineDataChangeSet(BaseModel):
+    """One line's worth of pending decision, named by its code not its id."""
+
+    line_id: str
+    code: str
+    name: str
+    changes: list[LineDataChange] = []
+
+
+class LinePinPayload(BaseModel):
+    """What to do about the change master data has made under a tag."""
+
+    action: Literal["update", "keep"]
+
+
+class LinePinResponse(BaseModel):
+    line_id: str
+    pinned_at: Optional[datetime] = None
+
+
+class RequestVersionSummary(BaseModel):
+    """One row of the design's history. Names, never ids."""
+
+    version: int
+    commit_message: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime

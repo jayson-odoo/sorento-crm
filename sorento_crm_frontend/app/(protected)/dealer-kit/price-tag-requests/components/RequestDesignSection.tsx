@@ -22,6 +22,7 @@ import DesignViewer from '@/components/dealer-kit/DesignViewer';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
 import {
+  getRequestVersion,
   listRequestVersions,
   restoreRequestVersion,
 } from '../../services/priceTagDataService';
@@ -54,7 +55,11 @@ export default function RequestDesignSection({
   const [busyId, setBusyId] = useState<string | null>(null);
   /** The request's own design history (r9 S5/D19). */
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [viewingVersion, setViewingVersion] = useState<number | null>(null);
+  /** The version being read, and ITS own document - never the live one. */
+  const [viewing, setViewing] = useState<{
+    version: number;
+    payload: TagSheetDesignPayload;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -209,7 +214,13 @@ export default function RequestDesignSection({
         onOpenChange={setHistoryOpen}
         docNumber={docNumber}
         load={() => listRequestVersions(requestId)}
-        onView={(version) => setViewingVersion(version)}
+        onView={(version) => {
+          void getRequestVersion(requestId, version)
+            .then((versionPayload) =>
+              setViewing({ version, payload: versionPayload }),
+            )
+            .catch(() => toast.error('Could not open that version'));
+        }}
         onRestore={async (version) => {
           await restoreRequestVersion(requestId, version);
           const restored = await getRequestDesignPayload(requestId);
@@ -218,20 +229,19 @@ export default function RequestDesignSection({
         }}
       />
 
-      {/* Viewing a version draws it read-only in the same lightbox the live
-          design uses - a request version IS a sheet document, so there is no
-          second renderer to keep in step.
-          PHASE 1: `GET .../versions/{n}` does not exist, so this draws the
-          CURRENT document under the version's title; Phase 2 fetches the
-          version's own doc and pins. */}
-      {payload && viewingVersion !== null && (
+      {/* Viewing a version draws THAT version, read-only, in the same lightbox
+          the live design uses - a request version IS a sheet document, so there
+          is no second renderer to keep in step. Drawing today's draft under a
+          version's name would tell the reader that v1 looked like something it
+          never looked like. */}
+      {viewing && (
         <DesignLightbox
           open
           onOpenChange={(next) => {
-            if (!next) setViewingVersion(null);
+            if (!next) setViewing(null);
           }}
-          title={`${docNumber} / version ${viewingVersion}`}
-          payload={payload}
+          title={`${docNumber} / version ${viewing.version}`}
+          payload={viewing.payload}
         />
       )}
     </>

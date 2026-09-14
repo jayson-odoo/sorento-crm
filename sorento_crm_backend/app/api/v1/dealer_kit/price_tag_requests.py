@@ -10,6 +10,7 @@ Permission gates:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, status
@@ -21,9 +22,15 @@ from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.dealer_kit import Page, PageVersion
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+from app.models.user import User
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
+    LineDataChange,
+    LineDataChangeSet,
+    LinePinPayload,
+    LinePinResponse,
     PriceTagRequestOfficeUpdate,
+    RequestVersionSummary,
     ResolvedLineData,
     ReviewCommentResolvePayload,
     ReviewCommentResponse,
@@ -281,6 +288,249 @@ def update_price_tag_request(
 
 
 # ---------------------------------------------------------------------------
+# The product data gate and the request's own history (r9 S5/D18-D19)
+# ---------------------------------------------------------------------------
+
+
+def _line_of(db: Session, request_id: str, line_id: str) -> PriceTagRequestLine:
+    line = (
+        db.query(PriceTagRequestLine)
+        .filter(
+            PriceTagRequestLine.id == line_id,
+            PriceTagRequestLine.request_id == request_id,
+        )
+        .first()
+    )
+    if line is None:
+        raise AppException(
+            status_code=404, message="Line not found on this request.", code="NOT_FOUND"
+        )
+    return line
+
+
+@router.get("/{request_id}/data-changes", response_model=list[LineDataChangeSet])
+def list_line_data_changes(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What master data has moved under this request's pinned tags (D17/D18).
+
+    The SAME diff the resolver computes - this route only reshapes it per line
+    with the line's code, so the card and the Lines tab can name what changed
+    without resolving anything a second time. A terminal request answers an
+    empty list: nothing on it can be updated.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    return [
+        LineDataChangeSet(
+            line_id=row["line_id"],
+            code=row.get("code") or "",
+            name=row.get("name") or "",
+            changes=row.get("data_changes") or [],
+        )
+        for row in tag_data_service.resolve_request_line_data(db, req)
+        if row.get("data_changes")
+    ]
+
+
+@router.post("/{request_id}/lines/{line_id}/pin", response_model=LinePinResponse)
+def resolve_line_pin(
+    request_id: str,
+    line_id: str,
+    payload: LinePinPayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """Answer the product-data question for one line (D18).
+
+    ``update`` takes the new values, and keeps the design as it stood in a
+    version FIRST - so the tag is always one Restore away from what it was.
+    ``keep`` records the hash of what was looked at, so the same change stops
+    asking; a different change later asks again.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    line = _line_of(db, request_id, line_id)
+
+    live_rows = {
+        row["line_id"]: row
+        for row in tag_data_service._resolve_lines_live(db, req, [line])
+    }
+    live = live_rows.get(line.id)
+    if live is None:
+        raise AppException(
+            status_code=409,
+            message="This line's product can no longer be resolved.",
+            code="INVALID_STATE",
+        )
+
+    if payload.action == "update":
+        if req.page_id:
+            page = db.query(Page).filter(Page.id == req.page_id).first()
+            doc = page.draft_doc if page is not None and page.draft_doc else None
+            if page is not None:
+                latest = _latest_version(db, page)
+                doc = doc or (latest.doc if latest else None)
+                if doc is not None:
+                    fields = ", ".join(
+                        change["label"]
+                        for change in (
+                            tag_data_service._diff_pin_against_live(
+                                db, req, line.pinned_tag_data or {}, live, None
+                            )
+                        )
+                    )
+                    _snapshot_draft(
+                        db,
+                        page,
+                        doc,
+                        _user_id(user),
+                        f"Before product update: {fields}" if fields else
+                        "Before product update",
+                    )
+        line.pinned_tag_data = tag_data_service.pin_payload(live)
+        line.pinned_at = datetime.utcnow()
+        line.data_change_ack_hash = None
+    else:
+        # Keep: the TAG stays as it is. The hash of what was looked at is the
+        # ack, so this exact change stops asking and the next one does not.
+        line.data_change_ack_hash = tag_data_service.data_hash(live)
+
+    db.flush()
+    db.commit()
+    return LinePinResponse(line_id=line.id, pinned_at=line.pinned_at)
+
+
+@router.get("/{request_id}/versions", response_model=list[RequestVersionSummary])
+def list_request_versions(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The design's history, newest first (D19).
+
+    An empty history is a state the sheet draws, not an error: a request whose
+    design has never been saved answers `[]`.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req or not req.page_id:
+        return []
+    rows = (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == req.page_id)
+        .order_by(PageVersion.version.desc())
+        .all()
+    )
+    authors = {
+        user.id: (user.name or user.email)
+        for user in db.query(User)
+        .filter(User.id.in_({row.created_by for row in rows if row.created_by}))
+        .all()
+    } if rows else {}
+    return [
+        RequestVersionSummary(
+            version=row.version,
+            commit_message=row.commit_message,
+            created_by_name=authors.get(row.created_by),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{request_id}/versions/{version}", response_model=TagSheetDesignResponse)
+def get_request_version(
+    request_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """One version, as the shared lightbox draws it (D19).
+
+    The same payload shape a live design answers - a version IS a whole tag
+    sheet document, so it needs the same media maps to draw.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req, page = _require_request_page(db, request_id)
+    row = (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == page.id, PageVersion.version == version)
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404, message="That version no longer exists.", code="NOT_FOUND"
+        )
+    rows, media = tag_sheet_export_service.design_media(db, req, row.doc)
+    return TagSheetDesignResponse(
+        page_id=str(page.id),
+        version=row.version,
+        doc=row.doc,
+        source="version",
+        lines=[ResolvedLineData.model_validate(line) for line in rows],
+        **media,
+    )
+
+
+@router.post(
+    "/{request_id}/versions/{version}/restore", response_model=RequestVersionSummary
+)
+def restore_request_version(
+    request_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """Put a version's document AND its pins back (D19).
+
+    Adds a version rather than destroying one, so the way back is the list
+    itself - which is also why it asks nothing first.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req, page = _require_request_page(db, request_id)
+    row = (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == page.id, PageVersion.version == version)
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404, message="That version no longer exists.", code="NOT_FOUND"
+        )
+
+    pins = row.pinned_line_data or {}
+    for line in req.lines:
+        if line.id in pins:
+            line.pinned_tag_data = pins[line.id]
+            line.data_change_ack_hash = None
+    page.draft_doc = row.doc
+    db.flush()
+    created = _snapshot_draft(db, page, row.doc, _user_id(user), f"Restored v{version}")
+    # The restored document is the draft AND the newest version: the designer
+    # opens draft-first, and the history has to show what happened.
+    page.draft_doc = row.doc
+    db.flush()
+    db.commit()
+    return RequestVersionSummary(
+        version=created.version,
+        commit_message=created.commit_message,
+        created_by_name=None,
+        created_at=created.created_at,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Pinned change requests (r9 S2/D6)
 # ---------------------------------------------------------------------------
 
@@ -441,6 +691,20 @@ def resolve_tag_sheet_design(db: Session, page: Page, *, prefer: str = "draft") 
     }
 
 
+def _pins_snapshot(db: Session, page: Page) -> dict:
+    """Every line's pinned data for the request this page belongs to (D19)."""
+    request = (
+        db.query(PriceTagRequest).filter(PriceTagRequest.page_id == page.id).first()
+    )
+    if request is None:
+        return {}
+    return {
+        line.id: line.pinned_tag_data
+        for line in request.lines
+        if line.pinned_tag_data is not None
+    }
+
+
 def _snapshot_draft(
     db: Session, page: Page, doc: dict, user_id: str | None, commit_message: str | None
 ) -> PageVersion:
@@ -463,6 +727,9 @@ def _snapshot_draft(
         doc=doc,
         commit_message=commit_message,
         created_by=user_id,
+        # The pins are half the version (r9 D19): a doc restored over today's
+        # product data would show old artwork at new prices.
+        pinned_line_data=_pins_snapshot(db, page),
     )
     db.add(version)
     # The draft has become history, so there is no work in progress left. Not

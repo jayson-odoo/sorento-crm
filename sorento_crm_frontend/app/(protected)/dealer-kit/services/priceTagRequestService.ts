@@ -11,7 +11,6 @@ import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import {
   designPayloadFromResponse,
   type TagSheetDesignPayload,
-  type TagSheetDesignResponse,
 } from '@/lib/dealer-kit/design-payload';
 
 // ---------------------------------------------------------------------------
