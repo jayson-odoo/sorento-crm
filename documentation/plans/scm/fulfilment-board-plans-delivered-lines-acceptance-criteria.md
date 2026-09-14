@@ -99,6 +99,16 @@ order does today.
 - **AC-S2-15 [BE]** Given an open order with one still-owed line and one delivered undecided
   line, when adopted, then BOTH are mirrored: the mirror predicate is `is_undecided_demand()`,
   the board's, not `is_open_demand()`. A covered line and a cancelled line are not mirrored.
+- **AC-S2-16 [BE]** Given a closed order's delivered undecided line, when a suggestion is saved
+  or deleted on it (`project_line_draft_service._resolve_core_line`, behind
+  `PUT`/`DELETE /fulfilment-planning/lines/{contribution_key}/draft`), then the key resolves and
+  the draft is written and removed. The draft service's line set is the board's `_demand_rows`
+  set - `SalesOrder.status IN ('open','closed')` and `is_undecided_demand()` - because the key it
+  resolves is the one the board just handed out, and a resolver narrower than the board refuses
+  a line the planner is looking at. A cancelled line is still a 422: the board never offered it.
+  (Found on the lane's own browser walk, 14 Sep: three `Save all suggested` PUTs 422'd on a
+  Completed order whose board had proposed Buy on every line, which blocks the whole of
+  AC-E2E-1 after the board renders.)
 
 ### S3 - The board reads right [FE]
 

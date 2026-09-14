@@ -826,3 +826,91 @@ def test_a_re_save_with_no_proposal_keeps_the_one_already_stored(api):
     assert again.json()["proposed"][0]["location"] == "ZZT-BRW"
     saved = _contribution(_board(client, core_so), core_so.so_number)["draft"]
     assert saved["proposed"][0]["qty"] == "10"
+
+
+# --------------------------------------------------------------------------- #
+# AC-S2-16: the draft resolver's line set is the BOARD's                       #
+# (`PLAN-fulfilment-board-plans-delivered-lines.md`)                           #
+#                                                                             #
+# Found on the lane's own browser walk, 14 September 2026, not by a unit test - #
+# the same way SO391698's ordinal bug above was. A Completed order with three   #
+# delivered undecided lines opened the board and proposed Buy 1 on each, and    #
+# then every one of the three `Save all suggested` PUTs came back 422: the      #
+# board had been widened to `SalesOrder.status IN ('open','closed')` plus       #
+# `is_undecided_demand()`, and `_resolve_core_line` was still on                #
+# `status == 'open'` plus `is_open_demand()`.                                   #
+#                                                                             #
+# The resolver reads a key THE BOARD JUST HANDED OUT, so a set narrower than    #
+# the board's refuses a line the planner is looking at, and there is nothing on #
+# screen to explain it. That coupling is the criterion, not the two spellings:  #
+# whatever the board admits, this must resolve.                                 #
+# --------------------------------------------------------------------------- #
+
+
+def _delivered_closed_order(api, *, qty="3"):
+    """SO421404's own shape: Completed, one line ordered and delivered whole, undecided."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_so.status = "closed"
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered=qty, qty_delivered=qty,
+    )
+    core_line.line_status = "closed"
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+    return client, world, core_so, core_line, order, line
+
+
+def test_a_draft_saves_and_deletes_on_a_closed_orders_delivered_line(api):
+    """AC-S2-16. The key comes off a real board read, as everywhere else in this file: it IS
+    the contract between the two sides, and spelling it out by hand here would prove the
+    resolver agrees with the test rather than with the board."""
+    client, _world, core_so, _core_line, _order, _line = _delivered_closed_order(api)
+
+    board = _board(client, core_so)
+    contribution = _contribution(board, core_so.so_number)
+    assert contribution["qty"] == "3", "sanity: the board plans the ordered quantity"
+    assert contribution["qty_delivered"] == "3"
+
+    saved = _save(client, contribution["key"])
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["decision"]["verdict"] == "amended"
+
+    # And it comes back on the next read, so the save landed on THIS line and not beside it.
+    again = _contribution(_board(client, core_so), core_so.so_number)
+    assert again["draft"] is not None
+
+    removed = client.delete(
+        f"{BASE}/fulfilment-planning/lines/{contribution['key']}/draft"
+    )
+    assert removed.status_code == 204, removed.text
+    assert _contribution(_board(client, core_so), core_so.so_number)["draft"] is None
+
+
+def test_a_draft_on_a_cancelled_line_is_still_refused(api):
+    """The other half of AC-S2-16, and the reason it is a coupling rather than "resolve
+    anything": the board never offers a cancelled line, so a key naming one did not come from
+    a board and must not resolve. Widening the resolver past `is_undecided_demand()` would
+    let a planner save a decision on demand nobody owes."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="9")
+    core_line.line_status = "cancelled"
+    core_line.qty_delivered = Decimal("4")
+    db.commit()
+
+    assert _board(client, core_so)["contributions"] == [], (
+        "sanity: a cancelled line is not on the board, so no key for it was ever issued"
+    )
+
+    # Built by hand for exactly that reason - there is no board key to read.
+    key = f"{core_so.id}|1|{world.product.product_code}|2026-08-31"
+    response = _save(client, key)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_contribution_line_not_found"
