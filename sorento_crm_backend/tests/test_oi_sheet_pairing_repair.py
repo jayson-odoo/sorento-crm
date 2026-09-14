@@ -37,7 +37,9 @@ from datetime import datetime
 from decimal import Decimal
 
 import pytest
+import sqlalchemy as sa
 
+from app.models.base import company_scope
 from app.models.order import SalesOrderLine
 from app.models.procurement import PurchaseOrderLine
 from app.models.project_so import (
@@ -50,9 +52,11 @@ from app.services import project_order_inquiry_import_service as importer
 from app.services.import_outcome import ImportOutcome
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 
+from ._pg_fixture import blank_session
 from .test_project_order_inquiry_import_migration import (  # the seeded world, not copied
     D_NOV,
     D_OCT,
+    MARKER,
     World,
     _n,
     _uid,
@@ -1009,3 +1013,89 @@ def test_ac_r_19_rollback_matches_the_whole_file_name():
         assert w.db.query(OrderInquiryRow).filter(
             OrderInquiryRow.id == str(long_row.id)
         ).count() == 0
+
+
+def test_ac_r_20_rollback_refuses_a_run_spanning_companies():
+    """AC-R-20. One file name in two companies is REFUSED until it is asked for out loud.
+
+    The script has no request and no principal, so it runs under the system scope
+    (`None`, every company) - which is the only way one stamp can be found at all, and
+    equally what would let one company's operator take another company's rows out without
+    ever seeing them. Two companies can hold the same sales order number (AC-S1-43) and
+    nothing stops two of them uploading a file called `JAN.xlsx`, so this is a real shape,
+    not a hypothetical one.
+    """
+    with blank_session() as db:
+        srt = db.execute(sa.text("select id from companies where code = 'SRT'")).scalar()
+        other = _uid()
+        db.execute(
+            sa.text(
+                "insert into companies (id, name, code, is_active) "
+                "values (:id, :name, :code, true)"
+            ),
+            {"id": other, "name": f"{MARKER} other company", "code": f"ZZTC{_n():04d}"},
+        )
+
+        with company_scope(db, frozenset({other})):
+            far = World(db, other)
+            far_order = far.order()
+            far.line(far_order, qty_ordered="50")
+            far_result = importer.apply(
+                db,
+                sheet([
+                    (far_order.so_number, far.product.product_code, 30, D_OCT,
+                     far.warehouse.warehouse_code, ""),
+                ]),
+                actor=far.actor,
+                file_name="a.xlsx",
+            )
+            assert far_result["rows_raised"] == 1, far_result
+
+        with company_scope(db, frozenset({srt})):
+            near = World(db, srt)
+            near_order = near.order()
+            near.line(near_order, qty_ordered="50")
+            near_result = importer.apply(
+                db,
+                sheet([
+                    (near_order.so_number, near.product.product_code, 30, D_OCT,
+                     near.warehouse.warehouse_code, ""),
+                ]),
+                actor=near.actor,
+                file_name="a.xlsx",
+            )
+            assert near_result["rows_raised"] == 1, near_result
+
+        stamp = f"{importer._MIGRATION_STAMP} a.xlsx"
+        with company_scope(db, None):
+            def stamped() -> int:
+                return (
+                    db.query(OrderInquiryRow)
+                    .filter(OrderInquiryRow.note.startswith(stamp, autoescape=True))
+                    .count()
+                )
+
+            assert stamped() == 2, "the premise: one stamp, two companies"
+
+            with pytest.raises(ValueError):
+                _rollback().run(db, file_name="a.xlsx", apply=True)
+
+            assert stamped() == 2, "the refused run deleted rows anyway"
+
+            counts = _rollback().run(
+                db, file_name="a.xlsx", apply=True, all_companies=True
+            )
+
+            assert counts["rows"] == 2, counts
+            assert counts["inquiries"] == 2, counts
+            assert stamped() == 0
+
+    with world() as w:
+        # And a run that stays inside ONE company needs nothing said: the flag answers a
+        # question this upload does not raise.
+        _uploaded(w, file_name="a.xlsx")
+
+        counts = _rollback().run(w.db, file_name="a.xlsx", apply=True)
+
+        assert counts["rows"] == 1, counts
+        assert _rows_of(w, "a.xlsx") == []

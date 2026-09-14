@@ -98,3 +98,9 @@ that file stays green unchanged.
   not a prefix of it); when it runs for `JAN.xlsx`, then only that file's rows go - including
   a row whose note carries the operator's own remark and its links' stamps after the file
   name.
+* AC-R-20 Given rows raised under ONE file name in TWO companies, when the rollback runs,
+  then it is REFUSED with a `ValueError` naming the companies and nothing is deleted; with
+  `--all-companies` it removes both companies' rows. A run whose rows are all in one company
+  needs no flag. (The script runs under the system scope - `None`, all companies - which is
+  what lets one stamp be found at all, and equally what would let one company's operator take
+  another company's rows out unnoticed.)
