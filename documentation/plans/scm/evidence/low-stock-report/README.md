@@ -40,9 +40,9 @@ Dashboards -> Procurement -> Supply Chain -> Reorder Planning -> plan `10/09/202
 
 | Step | Read |
 | --- | --- |
-| Actions menu at 1280x900 | `Order sheet PDF`, `Order sheet Excel`, `Low stock report (Excel)`, `Plan exceptions`, `PO worklist`, `Reset planning` - the new item third, directly under Order sheet Excel (AC-1). Screenshot `s4-actions-1280.png`. |
+| Actions menu at 1280x900 | `Order sheet PDF`, `Order sheet Excel`, `Low stock report (Excel)`, `Plan exceptions`, `PO worklist`, `Reset planning` - the new item third, directly under Order sheet Excel (AC-1). |
 | Click `Low stock report (Excel)` | `POST /api/v1/scm/order-summary/export`, body `{"run_id":"00788044-...","format":"low_stock_xlsx"}` -> `422` (AC-2's request shape). The backend has no such format until S3, so the toast reads the extracted server message, `format must be pdf or xlsx.` - `extractApiError` is doing its job; nothing is hand-rolled. |
-| Actions menu at 375x812 | All six items render, none clipped, `Low stock report (Excel)` fully readable in a 216px menu (AC-5). Screenshot `s4-actions-375.png`. |
+| Actions menu at 375x812 | All six items render, none clipped, `Low stock report (Excel)` fully readable in a 216px menu (AC-5). |
 | Plans list at 1280 | Unchanged: `daily` and `superseded` badges render in the Plan column at its existing `size: 190`. No `via chat` row exists yet - `requested_via` is emitted by the backend in S5, and the FE never infers it (AC-4 is covered by `ReorderRunsGrid.test.tsx` until then). |
 | Settings > Chatbot Media | `Low stock report chat wait (seconds)` sits in the Pacing card beside `Synchronous wait seconds`, seeded 40 from the service fallback (the column lands in S5); typing `120` refuses inline with "Enter a whole number between 5 and 90." and disables Save (AC-7). Nothing was saved. |
 
@@ -135,9 +135,11 @@ FIXED in reviewer round 3 (item 8): the span now carries that `title`, asserted 
 
 ### Artifacts, all from this attested run (14 Sep 2026, 21:22-21:35 MYT)
 
-Pruned to the two screenshots `documentation/agents/browser-verification.md` allows per lane; the
-other eleven and the two workbooks were read for the verdicts above and then dropped rather than
-committed. Both files below are under the 200 KB pre-push `png-size` limit.
+Pruned to the two screenshots `documentation/agents/browser-verification.md` allows per lane. The
+other eleven Phase 3 shots, the two Phase 1 ones (`s4-actions-1280.png` / `s4-actions-375.png`)
+and the two workbooks were all read for the verdicts recorded above and then dropped rather than
+committed, so the lane tracks exactly the two files below. Both are under the 200 KB pre-push
+`png-size` limit.
 
 | File | What it shows |
 | --- | --- |
