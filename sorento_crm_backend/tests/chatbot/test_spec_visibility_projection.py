@@ -23,6 +23,7 @@ from app.services.chatbot.head.access import check_access
 from app.services.chatbot.lanes import business
 from app.services.chatbot.lanes.business import fetch
 from app.services.chatbot.lanes.business.services import FetchServices
+from tests._pg_fixture import unique_code
 
 CONTACT_ID = "ZZT-spec-visibility-1"
 SPACE_ID = "364817"
@@ -94,6 +95,64 @@ def _seed_default_policy(session_factory, *, excluded_spec_keys: list[str]) -> N
     db.commit()
 
 
+def _seed_spec_key(session_factory, key: str, label: str, *, is_active: bool = True) -> None:
+    from app.models.product_spec import ProductSpecRegistry
+
+    db = session_factory()
+    db.add(
+        ProductSpecRegistry(
+            id=str(uuid.uuid4()), spec_key=key, label=label, data_type="enum", is_active=is_active
+        )
+    )
+    db.commit()
+
+
+def _set_spec_key_active(session_factory, key: str, is_active: bool) -> None:
+    from app.models.product_spec import ProductSpecRegistry
+
+    db = session_factory()
+    db.query(ProductSpecRegistry).filter(ProductSpecRegistry.spec_key == key).update(
+        {"is_active": is_active}
+    )
+    db.commit()
+
+
+def _seed_contact(session_factory) -> str:
+    from app.models.access import RespondContact
+
+    db = session_factory()
+    row = RespondContact(
+        id=unique_code("CONTACT"),
+        phone_number=f"+60{uuid.uuid4().int % 10**9:09d}",
+        name="ZZT Contact",
+    )
+    db.add(row)
+    db.commit()
+    return row.id
+
+
+def _seed_policy_row(
+    session_factory,
+    *,
+    contact_id: str | None = None,
+    spec_keys: list[str] | None = None,
+    excluded_spec_keys: list[str] | None = None,
+) -> None:
+    from app.models.access import SpecVisibilityPolicy
+
+    db = session_factory()
+    db.add(
+        SpecVisibilityPolicy(
+            id=str(uuid.uuid4()),
+            contact_id=contact_id,
+            segment_code=None,
+            spec_keys=spec_keys,
+            excluded_spec_keys=excluded_spec_keys,
+        )
+    )
+    db.commit()
+
+
 class TestCheckAccessHiddenSpecKeys:
     def test_check_access_carries_hidden_spec_keys_sorted(self, session_factory):
         """AC-14: a retail-segment contact inherits the default policy (retail
@@ -118,6 +177,51 @@ class TestCheckAccessHiddenSpecKeys:
         )
 
         assert access["hidden_spec_keys"] == ["board_thickness", "thickness"]
+
+    def test_hidden_keys_keeps_a_key_that_was_deactivated_after_the_policy_was_stored(
+        self, session_factory
+    ):
+        """Security finding B1 (moved from `tests/test_spec_visibility_policy.py`,
+        AC-002 `tests/chatbot/test_import_boundary.py`: only files under
+        `tests/chatbot/` and the module's own doorways may import
+        `app.services.chatbot`).
+
+        Deactivating a spec key AFTER a policy already named it must not
+        un-hide it - `is_active` is a merchandising decision (should the
+        parser still offer/derive this key), not "does this key still exist"
+        for a stored policy's read.
+
+        Exercises `check_access`'s real seam (`_hidden_spec_keys`, private but
+        it IS the unit under test: the exact call that resolves
+        `resolve_policy` and feeds its result into `hidden_keys` with
+        whichever registry list it obtains) rather than reimplementing the
+        registry read here, so this stays correct whatever helper backs it."""
+        from app.services.chatbot.head.access import _hidden_spec_keys
+
+        _seed_spec_key(session_factory, "thickness", "Thickness", is_active=True)
+        _seed_spec_key(session_factory, "material", "Material", is_active=True)
+        _seed_policy_row(session_factory, spec_keys=None, excluded_spec_keys=["thickness"])
+        _set_spec_key_active(session_factory, "thickness", False)
+
+        # Hide-these shape: the default row named `thickness` explicitly; an
+        # unresolvable contact falls back to it (fail-closed).
+        hidden = _hidden_spec_keys(
+            session_factory(), contact_id="ZZT-NO-SUCH-CONTACT", space_id=None
+        )
+        assert "thickness" in hidden
+
+        # Show-only shape: a contact override naming ONLY `material` must
+        # still hide `thickness` - it was never in the show list, active or
+        # not.
+        contact_id = _seed_contact(session_factory)
+        _seed_policy_row(
+            session_factory, contact_id=contact_id, spec_keys=["material"], excluded_spec_keys=None
+        )
+
+        hidden_show_only = _hidden_spec_keys(
+            session_factory(), contact_id=contact_id, space_id=None
+        )
+        assert "thickness" in hidden_show_only
 
 
 # --------------------------------------------------------------------- projection

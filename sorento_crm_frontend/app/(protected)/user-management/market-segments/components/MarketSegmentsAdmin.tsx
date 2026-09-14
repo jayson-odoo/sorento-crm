@@ -420,7 +420,7 @@ export default function MarketSegmentsAdmin() {
 
       {/* Spec visibility policy for one market segment */}
       <Dialog open={!!specSegment} onOpenChange={(open) => !open && setSpecSegment(null)}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Spec visibility - {specSegment?.name}</DialogTitle>
           </DialogHeader>
