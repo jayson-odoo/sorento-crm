@@ -58,6 +58,7 @@ from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL, SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
     DEFAULT_OVERSTOCK_DAYS,
+    resolve_global_dead_stock_days,
 )
 
 log = logging.getLogger(__name__)
@@ -847,10 +848,16 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     params["horizon_start"] = horizon_start
 
     # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`, captain-intent ruling 2 Sep - PENDING
-    # CAPTAIN CONFIRM): the run universe is committed demand only, admitted at PRODUCT
-    # GRAIN, not per row. "As long as got committed demand -> into plan" is a statement
-    # about the PRODUCT: a product with committed demand > 0 ANYWHERE among its own
-    # locations (inside the horizon) admits ALL of that product's rows into the run, so an
+    # CAPTAIN CONFIRM; SECOND LEG added by `PLAN-low-stock-report.md` S1, owner ruling
+    # 14 Sep): the run universe is admitted at PRODUCT GRAIN, not per row, and a product
+    # enters on EITHER of two legs:
+    #
+    #     committed demand > 0        OR        (below level AND not dead)
+    #
+    # LEG 1, committed demand. "As long as got committed demand -> into plan" is a
+    # statement about the PRODUCT: a product with committed demand > 0 ANYWHERE among its
+    # own locations (inside the horizon) admits ALL of that product's rows into the run,
+    # so an
     # aggregate basis (pooled netting, a network-scope buy, the product-wide reorder_level
     # basis) keeps every location's on-hand/on-order in its net - a location with none of
     # the committed demand itself is still real SUPPLY an aggregate is entitled to see.
@@ -876,14 +883,82 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     # IS NULL` in `cv_all` - already has committed > 0 on ITS row of the product-only
     # GROUP BY below, so it needs no second join either).
     #
+    # LEG 2, the dead guard. Leg 1 alone admits 950 of 14,789 plannable products on the
+    # 0907 prod copy, while 7,778 sit below their level and only 582 of those reach a run
+    # - 7,196 products the plan cannot see, CB100-BL-DIY (87 on hand, level 100, no open
+    # sales order) among them. The owner rejected the obvious alternative of admitting
+    # every non-discontinued product: ~60 s a run at the measured 4 s per 950, and ~7,000
+    # buy rows for SKUs nobody sells. So a product also enters when it is BELOW LEVEL AND
+    # STILL MOVING.
+    #
+    #   * "Below level" reads the SAME level the engine will plan against and the SAME
+    #     on-hand figure the low stock sheet filters on, so admission and planning cannot
+    #     disagree about whether a product is short: a person's product-wide
+    #     `scm.reorder_level` row (`warehouse_id IS NULL`, `source` in
+    #     `rl_service.VALID_SOURCES` - only a person's row is an override, and 0 is not a
+    #     level), else `products.reorder_level` with the same 0-is-not-a-level rule;
+    #     compared against `stock` summed over ACTIVE SITE POOL warehouses that
+    #     `counts_as_available`, which is `summary_order_service._pool_on_hand_map`'s own
+    #     predicate. `_product_level` additionally reads a mirrored `autocount` row as a
+    #     master level; that row is a COPY of `products.reorder_level` by construction, so
+    #     the SQL reads the master directly rather than carrying the mirror's precedence
+    #     into the admission gate (captain's ruling, 14 Sep).
+    #   * "Dead" is the DASHBOARD's rule, not a second definition (AC-15): last outbound
+    #     movement from `scm.consumption_v` against the GLOBAL
+    #     `scm.reorder_policy.dead_stock_days`, else `DEFAULT_DEAD_STOCK_DAYS` (180),
+    #     bound as a parameter so the window is whatever the admin set. A product with no
+    #     `consumption_v` row at all has no `mv` match and is therefore NOT admitted -
+    #     the same reading `_compute_status` takes (`last_movement is None -> dead`).
+    #     `dashboard_service._dead_days_for` also honours sku / product_class scoped rows;
+    #     this leg does not. The trigger for adding that lookup is the first
+    #     `scm.reorder_policy` row with `scope_type <> 'global'` carrying a
+    #     `dead_stock_days` on the prod copy - there is none today.
+    #   * No zero-stock exemption. `_compute_status` reads stockout before dead, but a
+    #     stockout that has not moved in the window is still a SKU nobody sells, and the
+    #     owner's ruling was to keep those out.
+    #
+    # Company scope: both legs are joined onto `keys.product_id`, and `keys` is already
+    # narrowed by the `cp*` / `cw*` predicates in `where` (the product AND the location),
+    # so a product id that belongs to another company never reaches this join - the leg's
+    # own subqueries can safely aggregate by `product_id` alone.
+    #
     # G10 is the other exception: a NAMED product (`product_ids` was given) is buyer intent
-    # and enters regardless of committed demand, so the join below applies ONLY to the
-    # unscoped daily run.
+    # and enters regardless of committed demand, level or movement, so the join below
+    # applies ONLY to the unscoped daily run.
     product_admit_join = ""
     if product_ids is None:
-        product_admit_join = """
+        params["rl_sources"] = list(rl_service.VALID_SOURCES)
+        params["dead_days"] = (
+            resolve_global_dead_stock_days(db) or DEFAULT_DEAD_STOCK_DAYS
+        )
+        product_admit_join = f"""
         JOIN (
             SELECT DISTINCT product_id FROM cv_all WHERE COALESCE(committed, 0) > 0
+            UNION
+            SELECT lvl.product_id
+            FROM (
+                SELECT p.id AS product_id,
+                       COALESCE(rl.level, NULLIF(p.reorder_level, 0)) AS level
+                FROM products p
+                LEFT JOIN scm.reorder_level rl
+                       ON rl.product_id = p.id AND rl.warehouse_id IS NULL
+                      AND rl.level > 0 AND rl.source = ANY(:rl_sources)
+                WHERE p.is_active AND p.is_discontinued = false
+                  AND p.exclude_from_planning = false
+            ) lvl
+            JOIN (
+                SELECT s.product_id, SUM(s.quantity_on_hand) AS pool_on_hand
+                FROM stock s JOIN warehouses w ON w.id = s.warehouse_id
+                WHERE w.counts_as_available AND {ACTIVE_SITE_POOL_SQL}
+                GROUP BY s.product_id
+            ) oh ON oh.product_id = lvl.product_id
+            JOIN (
+                SELECT product_id, MAX(day) AS last_day
+                FROM scm.consumption_v GROUP BY product_id
+            ) mv ON mv.product_id = lvl.product_id
+            WHERE lvl.level IS NOT NULL
+              AND oh.pool_on_hand < lvl.level
+              AND mv.last_day >= (CURRENT_DATE - :dead_days)
         ) admitted_product ON admitted_product.product_id = keys.product_id"""
 
     # Captain, 20 Aug: "the on hand need to consider pool quantity only ... project on
