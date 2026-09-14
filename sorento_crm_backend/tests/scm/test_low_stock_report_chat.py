@@ -239,6 +239,21 @@ def _download_row(db, download_id):
     ), {"id": str(download_id)}).mappings().first()
 
 
+def _clear_in_flight_runs(db) -> None:
+    """B2 (Phase 3 security review): the chat route now refuses a second queued/running
+    run for the SAME company - `create_run(refuse_if_in_flight=True)` maps its 409 to
+    `{"status": "busy"}` (AC-49). A test that fires two SEQUENTIAL asks to compare their
+    two outcomes is not exercising concurrency; it just needs the first run finished
+    before the next, which a real between-turns gap always provides. Marking every
+    in-flight run completed between the asks reproduces that gap. Same session the guard
+    reads (`db.query(ReorderRun)` on the injected session), so a flush is enough."""
+    db.execute(text(
+        "UPDATE scm.reorder_run SET status = 'completed' "
+        "WHERE status IN ('queued', 'running')"
+    ))
+    db.flush()
+
+
 # =========================================================================== #
 # AC-40: the route's own shape
 # =========================================================================== #
@@ -358,6 +373,7 @@ def test_owner_is_the_user_linked_to_the_contact(scm_app, monkeypatch):
 
     with TestClient(app) as c:
         linked_resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(linked))
+        _clear_in_flight_runs(db)  # B2: the two asks are sequential, not concurrent
         unlinked_resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(unlinked))
 
     assert linked_resp.status_code == 200, linked_resp.text
@@ -587,6 +603,73 @@ def test_timeout_but_row_already_ready_returns_ready(scm_app, monkeypatch):
     )
 
 
+def test_claim_update_refuses_a_row_that_turned_ready_inside_the_window(
+        scm_app, monkeypatch):
+    """AC-44/AC-46: the `AND status <> 'ready'` half of the claim, on its own.
+
+    Reviewer kill test B1 (Phase 3): the test above never reaches the UPDATE. The route
+    reads `_ready_payload` BEFORE claiming, so a row that is already ready returns there
+    and the predicate is never exercised - delete `AND status <> 'ready'` and that test
+    stays green.
+
+    The window the predicate actually guards is narrower: the row turns `ready` BETWEEN
+    the route's pre-claim read and the UPDATE itself. That is a real interleaving - the
+    export task runs on the worker, on its own connection, while this request is between
+    two statements - and it is the one where getting it wrong sends the contact the same
+    workbook twice (the turn answers `pending`, AND the task's claim finds a
+    `deliver_to_contact_id` to push to).
+
+    Driven by blinding the FIRST `_ready_payload` call while marking the row ready
+    underneath it: the route then arrives at the UPDATE believing the row is not ready,
+    which is exactly the state the predicate exists for. Its second call (after a 0-row
+    claim) is the real function again, so the ready shape this asserts is the route's own,
+    not the fake's.
+    """
+    mod = _route_mod()
+    app, db, key, _uid = _api_key_caller(scm_app)
+    contact = _contact(db)
+    db.flush()
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    real_ready_payload = mod._ready_payload
+    seen: list[str] = []
+
+    def _blind_on_the_first_read(db_, *, run_id, download_id):
+        seen.append(str(download_id))
+        if len(seen) == 1:
+            # The worker finishes HERE - after the route's pre-claim read has begun and
+            # before its UPDATE. Marking it ready and answering None is that instant.
+            _mark_ready_with_counts(db, download_id)
+            return None
+        return real_ready_payload(db_, run_id=run_id, download_id=download_id)
+
+    monkeypatch.setattr(mod, "_ready_payload", _blind_on_the_first_read)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact))
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(seen) >= 2, (
+        "the route must re-read the row after a 0-row claim - otherwise it answers "
+        f"pending for a file that exists: {seen}"
+    )
+    assert body["status"] == "ready", (
+        "the claim touched 0 rows because the row was already ready, so this turn LOST "
+        f"the race and must answer with the file: {body}"
+    )
+    assert body["attachments"], body
+
+    dl_id = db.execute(text(
+        "SELECT id::text FROM user_downloads WHERE source_entity_id = :r"
+    ), {"r": body["run_id"]}).scalar()
+    assert _download_row(db, dl_id)["deliver_to"] is None, (
+        "without `AND status <> 'ready'` the UPDATE claims a ready row and the worker "
+        "pushes a workbook this turn already delivered"
+    )
+
+
 # =========================================================================== #
 # AC-45 / AC-46: the worker's push, and the exclusivity of the two claims
 # =========================================================================== #
@@ -753,6 +836,7 @@ def test_interleaving_worker_ready_before_claim_and_claim_before_ready(
     assert sends == [], "the worker pushed a file the turn had already delivered"
 
     # --- order B: the route's claim first, then the task ---------------------------
+    _clear_in_flight_runs(db)  # B2: order A's run is finished before order B's ask
     contact_b = _contact(db)
     db.flush()
     _patch_wait(monkeypatch, on_wait=_timeout)
@@ -789,6 +873,7 @@ def test_supplier_column_omitted_without_purchase_orders_supplier_key(
     with TestClient(app) as c:
         c.get(ROUTE, headers={"X-API-Key": key}, params=_params(without))
         first_export = calls[1]
+        _clear_in_flight_runs(db)  # B2: the two asks are sequential, not concurrent
         c.get(ROUTE, headers={"X-API-Key": key}, params=_params(with_key))
         second_export = calls[3]
 
@@ -862,6 +947,7 @@ def test_busy_maps_the_in_flight_run_409_to_status_busy(scm_app, monkeypatch):
     app, db, key, _uid = _api_key_caller(scm_app)
     contact = _contact(db)
     db.flush()
+    before = _counts(db)
     calls = _fake_queue(monkeypatch)
 
     def _busy(*args, **kwargs):
@@ -881,9 +967,15 @@ def test_busy_maps_the_in_flight_run_409_to_status_busy(scm_app, monkeypatch):
     # busy this is - an in-flight plan clears in a minute, a rate limit needs the window.
     assert resp.json() == {"status": "busy", "reason": "in_flight"}, resp.text
     assert calls == [], "a busy answer must not enqueue anything"
-    assert db.execute(text(
-        "SELECT count(*) FROM user_downloads WHERE kind = 'low_stock_xlsx'"
-    ).bindparams()).scalar() == 0, "a busy answer must not create a download row"
+    # A DELTA against this test's own starting point, not `count(*) == 0`. The absolute
+    # form assumed an empty `user_downloads`, which is true on CI and true on a private
+    # lane database and false the moment the suite is pointed anywhere else - it cost a
+    # false bug report against the route when a stray `low_stock_xlsx` row from another
+    # lane's database made it fail. The route's own guarantee is "creates nothing", and a
+    # delta is what states that.
+    assert _counts(db) == before, (
+        "a busy answer must create neither a run nor a download row"
+    )
 
 
 # =========================================================================== #
