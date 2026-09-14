@@ -85,3 +85,16 @@ that file stays green unchanged.
   then that header is deleted; a header that still has rows from another file stays.
 * AC-R-16 Given the rollback ran, when the same sheet is applied again, then the rows are
   raised again (D2's "already raised" no longer blocks them).
+* AC-R-17 Given a link whose `claim_id` names a claim this upload did NOT open - either
+  another feed's (`claim_placed_on_po` resolves onto the existing row at that identity and
+  keeps its source) or one another file's link still points at - when `--apply` runs, then
+  that claim SURVIVES with its source unchanged and is not counted under `claims`. Only a
+  claim of source `order_inquiry` that no surviving link names is deleted.
+* AC-R-18 Given a blank or whitespace-only `--file-name`, when run, then it is REFUSED with
+  a `ValueError` and nothing is deleted - the bare stamp is the prefix of every migrated row
+  ever raised, including the rows an upload with no file name stamped.
+* AC-R-19 Given rows raised under `JAN - DEC 2026 ORDER.xlsx` and under `JAN.xlsx`, when
+  the rollback runs for `JAN`, then NOTHING is deleted (the match is on the whole file name,
+  not a prefix of it); when it runs for `JAN.xlsx`, then only that file's rows go - including
+  a row whose note carries the operator's own remark and its links' stamps after the file
+  name.

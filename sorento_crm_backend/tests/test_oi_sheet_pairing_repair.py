@@ -36,6 +36,8 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 
+import pytest
+
 from app.models.order import SalesOrderLine
 from app.models.procurement import PurchaseOrderLine
 from app.models.project_so import (
@@ -823,3 +825,187 @@ def test_ac_r_16_rows_raise_again_after_rollback():
         assert again["rows_already_raised"] == 0, again
         assert len(_rows_of(w, "a.xlsx")) == 1
         assert again["links_written"] == 1, again
+
+
+def test_ac_r_17_rollback_keeps_another_feeds_claim():
+    """AC-R-17. The rollback deletes the claims this upload OPENED. A claim it merely
+    reused is not its to take away (security review, 15 Sep 2026).
+
+    `claim_placed_on_po` is fill-never-repoint: at an identity `(company, so_number,
+    po_number, item_code)` that already carries a claim it resolves onto the EXISTING row
+    and keeps whoever stated the pairing first. So `order_inquiry_links.claim_id` routinely
+    names a claim the sheet never wrote - on the 3am 14 Sep prod copy that identity is taken
+    by the August `po_history` extract for 28,397 pairings - and deleting every claim a
+    deleted link happens to name would erase another feed's record of a pairing that is
+    still true.
+
+    Both halves of the same rule, because both are one line of SQL apart:
+
+    * a claim another FEED owns (`autocount` here) keeps its row and its source;
+    * a claim of this feature's own source that a SURVIVING link still names - two uploads
+      linking the same SO, item and purchase order share one claim - stays for that link.
+    """
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="50")
+        po, po_line = w.po_line(qty_ordered="50")
+        foreign = w.claim(
+            order=order, core_line=line, document=po.po_number,
+            po_line=po_line, source="autocount",
+        )
+        foreign_id = str(foreign.id)
+
+        result = _apply(w, sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, po.po_number),
+        ]), file_name="a.xlsx")
+
+        assert result["rows_raised"] == 1, result
+        rows = _rows_of(w, "a.xlsx")
+        links = w.links(rows[0])
+        assert len(links) == 1, _documents(links)
+        assert str(links[0].claim_id) == foreign_id, (
+            "the premise of this test: the link reused the claim already at that identity"
+        )
+        row_id = str(rows[0].id)
+
+        counts = _rollback().run(w.db, file_name="a.xlsx", apply=True)
+
+        assert counts["rows"] == 1, counts
+        assert counts["claims"] == 0, "the rollback counted another feed's claim as its own"
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == row_id
+        ).count() == 0
+        kept = w.db.query(OrderLinkClaim).filter(OrderLinkClaim.id == foreign_id).first()
+        assert kept is not None, "the rollback deleted a claim the AutoCount ingest wrote"
+        assert kept.source == "autocount", kept.source
+
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50", required_date=D_OCT)
+        w.line(order, qty_ordered="50", required_date=D_NOV)
+        po, _po_line = w.po_line(qty_ordered="60")
+        first = _apply(w, sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, po.po_number),
+        ]), file_name="a.xlsx")
+        second = _apply(w, sheet([
+            (order.so_number, w.product.product_code, 30, D_NOV,
+             w.warehouse.warehouse_code, po.po_number),
+        ]), file_name="b.xlsx")
+
+        assert first["rows_raised"] == 1 and second["rows_raised"] == 1, (first, second)
+        link_a = w.links(_rows_of(w, "a.xlsx")[0])[0]
+        row_b = _rows_of(w, "b.xlsx")[0]
+        link_b = w.links(row_b)[0]
+        shared = str(link_a.claim_id)
+        assert shared == str(link_b.claim_id), (
+            "the premise: one SO, one item, one purchase order is ONE claim identity"
+        )
+
+        counts = _rollback().run(w.db, file_name="a.xlsx", apply=True)
+
+        assert counts["rows"] == 1, counts
+        assert counts["claims"] == 0, (
+            "the rollback took the claim b.xlsx's link still stands on"
+        )
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == str(row_b.id)
+        ).count() == 1
+        assert w.db.query(OrderLinkClaim).filter(
+            OrderLinkClaim.id == shared
+        ).count() == 1, "b.xlsx's link lost the evidence it points at"
+        w.db.refresh(link_b)
+        assert str(link_b.claim_id) == shared
+
+
+def test_ac_r_18_rollback_refuses_blank_file_name():
+    """AC-R-18. A blank file name is REFUSED, because the bare stamp is the prefix of every
+    migrated row ever raised (security review, 15 Sep 2026).
+
+    `_stamp("")` strips back to `"Migrated from order inquiry sheet"`, which every row this
+    importer has ever written begins with - including the rows of an upload that stamped no
+    file name at all. Run with `--apply` on prod that is not a rollback of one upload, it is
+    the deletion of the whole migration. A whitespace-only name strips to the same string.
+    """
+    with world() as w:
+        unnamed_order = w.order()
+        w.line(unnamed_order, qty_ordered="50")
+        result = _apply(w, sheet([
+            (unnamed_order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ]))
+        assert result["rows_raised"] == 1, result
+        bare = [
+            row for row in w.db.query(OrderInquiryRow).all()
+            if (row.note or "") == importer._MIGRATION_STAMP
+        ]
+        assert len(bare) == 1, "the premise: an upload with no file name carries the stamp alone"
+        _uploaded(w, file_name="a.xlsx", product=w.product_row())
+        before = w.db.query(OrderInquiryRow).count()
+
+        for blank in ("", "   "):
+            with pytest.raises(ValueError):
+                _rollback().run(w.db, file_name=blank, apply=True)
+
+        assert w.db.query(OrderInquiryRow).count() == before, (
+            "a blank file name deleted rows"
+        )
+        assert len(_rows_of(w, "a.xlsx")) == 1
+
+
+def test_ac_r_19_rollback_matches_the_whole_file_name():
+    """AC-R-19. The stamp is matched as a WHOLE file name, not as a prefix of one.
+
+    `note LIKE 'Migrated from order inquiry sheet JAN%'` takes
+    `JAN - DEC 2026 ORDER.xlsx` with it, and the owner's own file is called exactly that.
+    What the note legitimately carries AFTER the file name is the operator's remark and each
+    link's stamp, both introduced by `"; "` - so the row's own name still matches it.
+    """
+    with world() as w:
+        long_name = "JAN - DEC 2026 ORDER.xlsx"
+        short_name = "JAN.xlsx"
+
+        remarked = w.order()
+        w.line(remarked, qty_ordered="50")
+        long_result = _apply(w, sheet([
+            (remarked.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, "CUSTOMER HOLD"),
+        ]), file_name=long_name)
+        _uploaded(w, file_name=short_name, product=w.product_row())
+
+        assert long_result["rows_raised"] == 1, long_result
+        long_row = _rows_of(w, long_name)[0]
+        assert (long_row.note or "").startswith(
+            f"{importer._MIGRATION_STAMP} {long_name}; CUSTOMER HOLD"
+        ), long_row.note
+        short_row = _rows_of(w, short_name)[0]
+
+        partial = _rollback().run(w.db, file_name="JAN", apply=True)
+
+        assert partial == {"rows": 0, "links": 0, "claims": 0, "inquiries": 0}, (
+            "a prefix of the file name matched two whole uploads"
+        )
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id.in_([str(long_row.id), str(short_row.id)])
+        ).count() == 2
+
+        named = _rollback().run(w.db, file_name=short_name, apply=True)
+
+        assert named["rows"] == 1, named
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == str(short_row.id)
+        ).count() == 0
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == str(long_row.id)
+        ).count() == 1, "the other file's row went with it"
+
+        remaining = _rollback().run(w.db, file_name=long_name, apply=True)
+
+        assert remaining["rows"] == 1, (
+            "a row carrying the operator's own remark after the stamp was not matched by "
+            "its own file name"
+        )
+        assert w.db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.id == str(long_row.id)
+        ).count() == 0
