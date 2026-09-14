@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import type { ColumnDef } from '@tanstack/react-table';
 import { describe, expect, it, vi } from 'vitest';
@@ -62,7 +62,11 @@ function OneColumnOnly({
     // one built off a bare `accessorKey` (`qty`) only gets an `id` once react-table
     // resolves the column internally, so the lookup has to try both.
     return withKeys.id === columnId || withKeys.accessorKey === columnId;
-  })!;
+  });
+  // Said out loud rather than left to `useReactTable` to trip over an `undefined` column
+  // def: a test for a column that does not exist yet is a normal red state here, and
+  // "Cannot read properties of undefined" names nothing a reader can act on.
+  if (!named) throw new Error(`no column with id or accessorKey "${columnId}"`);
   const table = useReactTable({
     data: rows,
     columns: [named],
@@ -159,7 +163,13 @@ describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slic
     expect(row.querySelector('[title*="arrives late"]')).not.toBeInTheDocument();
   });
 
-  it('AC-A6: a row backing exactly one document prints NO document number in the cell', () => {
+  it('AC-A6, as the owner reset it on 14 Sep: the cell prints the DOCUMENT NUMBER, and it is the trigger', () => {
+    // Superseded by AC-R-26. The 8 Sep cut moved the number behind an info icon; the
+    // owner, looking at prod after the 14 Sep upload: "1 column to show the linked PO and
+    // 1 column to show the linked SPO ... then I can click on the PO and SPO to view the
+    // lightbox popup which is what we currently have". So the number is back in the cell
+    // and IS the lightbox trigger - one line still, and one trigger still, which is what
+    // the rest of AC-A6 was protecting.
     renderRows([
       worklistRow({
         id: 'row-one-doc',
@@ -171,15 +181,20 @@ describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slic
     ]);
 
     const row = screen.getByTestId('row-row-one-doc');
-    expect(within(row).queryByText('202607-S0105')).not.toBeInTheDocument();
+    const triggers = within(row).getAllByTestId('backing-documents-trigger-row-one-doc');
+    expect(triggers).toHaveLength(1);
+    expect(triggers[0].textContent).toBe('202607-S0105');
     expect(
       within(row).queryByTestId('document-detail-trigger-202607-S0105'),
     ).not.toBeInTheDocument();
-    // Still offers the icon (AC-A6's other half).
-    expect(within(row).getByTestId('backing-documents-trigger-row-one-doc')).toBeInTheDocument();
   });
 
-  it('AC-A4: the cell prints only the coverage headline and the draft/confirmed mark', () => {
+  it('AC-A4, as the owner reset it on 14 Sep: the cell prints the number and the draft/confirmed mark, and NOT the coverage headline', () => {
+    // Superseded by AC-R-26. `115 of 493` is already the lightbox's own subtitle, and the
+    // cell has one line to spend: the owner wants it spent on the document number. The
+    // one-line proof is unchanged and still the point of this test - the row's own
+    // rendered text (this file isolates one column at a time, see `OneColumnOnly`) is
+    // exactly the number, so a count or a headline creeping back in fails here.
     renderRows([
       worklistRow({
         id: 'row-headline',
@@ -191,14 +206,9 @@ describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slic
     ]);
 
     const row = screen.getByTestId('row-row-headline');
-    expect(within(row).getByText('115 of 493')).toBeInTheDocument();
+    expect(within(row).queryByText('115 of 493')).not.toBeInTheDocument();
     expect(within(row).getByTestId('link-draft-mark')).toBeInTheDocument();
-    // No document count, no document number, nothing else: the row's own rendered text
-    // (this test isolates the `po_number` column alone, see `OneColumnOnly`) is exactly
-    // the headline and nothing more - the mark and the info icon are both icon-only, no
-    // text node of their own. A `queryByText` regex would have passed just as wrongly
-    // with a "3 documents" count present, since it never reads an icon's aria-label.
-    expect(row.textContent).toBe('115 of 493');
+    expect(row.textContent).toBe('202607-S0105');
   });
 });
 
@@ -264,7 +274,10 @@ describe('a cancelled row (coverage restored after the old SupplyBar-only case w
     ]);
 
     const row = screen.getByTestId('row-row-cancelled-linked');
-    expect(within(row).getByText('6 of 6')).toBeInTheDocument();
+    // The document number, since 14 Sep (AC-R-26); the headline it used to read moved to
+    // the lightbox's subtitle. What this test is about is unchanged: a cancelled row reads
+    // its own history like any other row.
+    expect(within(row).getByText('202607-S0105')).toBeInTheDocument();
     expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
     expect(
       within(row).getByTestId('backing-documents-trigger-row-cancelled-linked'),
@@ -443,7 +456,10 @@ describe('AC-A1/AC-A6: the cell prints no per-document detail any more - it all 
     expect(within(row).queryByText(/BRW 52/)).not.toBeInTheDocument();
     expect(within(row).queryByText('L14')).not.toBeInTheDocument();
     expect(within(row).queryByText('no location')).not.toBeInTheDocument();
-    expect(within(row).getByText('115 of 493')).toBeInTheDocument();
+    // The PO column shows the first PO number and how many more there are, since 14 Sep
+    // (AC-R-26/AC-R-28) - not the coverage headline it read before.
+    expect(within(row).getByText('202607-S0105')).toBeInTheDocument();
+    expect(within(row).queryByText('115 of 493')).not.toBeInTheDocument();
     expect(within(row).getByTestId('backing-documents-trigger-row-spo')).toBeInTheDocument();
   });
 });
@@ -727,5 +743,216 @@ describe('AC-D6: the instruction column tooltip prints the reallocation note in 
 
     const row = screen.getByTestId('row-row-reallocated');
     expect(within(row).getByText('Found: PO-A 34')).toBeInTheDocument();
+  });
+});
+
+/**
+ * Slice S3 (`PLAN-scm-oi-sheet-pairing-repair.md` section 6, owner ruling 14 Sep 2026 off a
+ * live look at prod after the upload): "1 column to show the linked PO and 1 column to show
+ * the linked SPO (if linked to more than 1 then put as +1 pill), I want all rows to have 1
+ * line only, then I can click on the PO and SPO to view the lightbox popup which is what we
+ * currently have."
+ *
+ * So the `po_number` column keeps its id - a saved column layout is keyed by it - loses the
+ * coverage headline and the info icon, and prints the first PO number as the lightbox
+ * trigger; a new `spo_number` column does the same for the shipping orders beside it.
+ */
+
+/**
+ * What an empty cell reads. The plan says "a muted dash", and this pins the ASCII hyphen:
+ * every en dash and em dash is out across this repository, in code and in writing alike, so
+ * a coder reaching for a typographic one would be breaking a standing rule to satisfy a
+ * test. One character to change here if the owner wants another placeholder.
+ */
+const MUTED_DASH = '-';
+
+/** The raw column defs, for the shape assertions AC-R-31 makes about them. */
+function columnDefs() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result } = renderHook(() => useOrderInquiryWorklistColumns(), {
+    wrapper: ({ children }: { children: React.ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    ),
+  });
+  return result.current as Array<
+    ColumnDef<OrderInquiryWorklistRow> & {
+      id?: string;
+      size?: number;
+      meta?: { headerTitle?: string };
+    }
+  >;
+}
+
+describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
+  it('AC-R-26: one PO link prints that number as the trigger, with no pill and no headline, and the SPO cell reads a dash', () => {
+    const row = worklistRow({
+      id: 'row-one-po',
+      qty: '5',
+      linked_qty: '5',
+      po_number: '202607-S0105',
+      links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '5', location: 'BRW' }],
+    });
+
+    const po = renderRows([row]);
+    const poCell = screen.getByTestId('row-row-one-po');
+    const triggers = within(poCell).getAllByTestId('backing-documents-trigger-row-one-po');
+    expect(triggers).toHaveLength(1);
+    expect(triggers[0].textContent).toBe('202607-S0105');
+    // One line, and only the number on it: no coverage headline, no document count, and no
+    // second trigger left over from the info icon the number replaces.
+    expect(poCell.textContent).toBe('202607-S0105');
+    expect(within(poCell).queryByText('5 of 5')).not.toBeInTheDocument();
+    expect(within(poCell).queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+    po.unmount();
+
+    renderRows([row], 'spo_number');
+    const spoCell = screen.getByTestId('row-row-one-po');
+    expect(spoCell.textContent?.trim()).toBe(MUTED_DASH);
+    expect(
+      within(spoCell).queryByTestId('backing-documents-trigger-spo-row-one-po'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-R-27: two links on ONE shipping order print that number once, with no pill', () => {
+    // The pill counts DISTINCT document numbers, not links. A shipping order that states
+    // this row's product on two containers is still one document to click on, and "+1"
+    // beside it would be the screen inventing a second one.
+    const row = worklistRow({
+      id: 'row-two-links',
+      qty: '50',
+      linked_qty: '50',
+      links: [
+        { id: 'l1', kind: 'spo', document: 'SPO-2026/08-0061', qty: '30', location: 'BRW' },
+        { id: 'l2', kind: 'spo', document: 'SPO-2026/08-0061', qty: '20', location: 'BRW' },
+        { id: 'l3', kind: 'po', document: '202607-S0105', qty: '50', location: 'BRW-IB' },
+      ],
+    });
+
+    const spo = renderRows([row], 'spo_number');
+    const spoCell = screen.getByTestId('row-row-two-links');
+    expect(within(spoCell).getAllByText('SPO-2026/08-0061')).toHaveLength(1);
+    expect(within(spoCell).queryByText(/^\+\d+$/)).not.toBeInTheDocument();
+    expect(
+      within(spoCell).getByTestId('backing-documents-trigger-spo-row-two-links').textContent,
+    ).toBe('SPO-2026/08-0061');
+    spo.unmount();
+
+    renderRows([row]);
+    const poCell = screen.getByTestId('row-row-two-links');
+    expect(
+      within(poCell).getByTestId('backing-documents-trigger-row-two-links').textContent,
+    ).toBe('202607-S0105');
+  });
+
+  it('AC-R-28: three shipping orders print the first and a +2 pill, and the number or the pill opens the lightbox', () => {
+    // Two rows carrying the same links, so both halves of "either opens it" are asserted
+    // in one render: one dialog per row, addressed by the row's own id.
+    const links = [
+      { id: 'l1', kind: 'spo' as const, document: 'SPO-2026/08-0061', qty: '20', location: 'BRW' },
+      { id: 'l2', kind: 'spo' as const, document: 'SPO-2026/09-0036', qty: '20', location: 'BRW' },
+      { id: 'l3', kind: 'spo' as const, document: 'SPO-2026/09-0040', qty: '10', location: 'BRW' },
+    ];
+    renderRows(
+      [
+        worklistRow({ id: 'row-a', qty: '50', linked_qty: '50', links }),
+        worklistRow({ id: 'row-b', qty: '50', linked_qty: '50', links }),
+      ],
+      'spo_number',
+    );
+
+    const first = screen.getByTestId('row-row-a');
+    expect(within(first).getByTestId('backing-documents-trigger-spo-row-a').textContent).toBe(
+      'SPO-2026/08-0061',
+    );
+    expect(within(first).getByText('+2')).toBeInTheDocument();
+    expect(within(first).queryByText('SPO-2026/09-0036')).not.toBeInTheDocument();
+
+    fireEvent.click(within(first).getByTestId('backing-documents-trigger-spo-row-a'));
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not the row.
+    const fromNumber = screen.getByTestId('backing-documents-row-a');
+    expect(within(fromNumber).getByText('SPO-2026/08-0061')).toBeInTheDocument();
+    expect(within(fromNumber).getByText('SPO-2026/09-0036')).toBeInTheDocument();
+    expect(within(fromNumber).getByText('SPO-2026/09-0040')).toBeInTheDocument();
+
+    const second = screen.getByTestId('row-row-b');
+    fireEvent.click(within(second).getByText('+2'));
+    const fromPill = screen.getByTestId('backing-documents-row-b');
+    expect(within(fromPill).getByText('SPO-2026/09-0040')).toBeInTheDocument();
+  });
+
+  it('AC-R-29: a row with no links reads "Not found (new order)" in PO and a dash in SPO, and nothing is clickable', () => {
+    const row = worklistRow({ id: 'row-none', qty: '85', linked_qty: '0', links: [] });
+
+    const po = renderRows([row]);
+    const poCell = screen.getByTestId('row-row-none');
+    expect(within(poCell).getByText('Not found (new order)')).toBeInTheDocument();
+    expect(within(poCell).queryByRole('button')).not.toBeInTheDocument();
+    po.unmount();
+
+    renderRows([row], 'spo_number');
+    const spoCell = screen.getByTestId('row-row-none');
+    expect(spoCell.textContent?.trim()).toBe(MUTED_DASH);
+    expect(within(spoCell).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('AC-R-30: a bundled row keeps the PO cell it reads today, and its SPO cell is a dash', () => {
+    // The D1 fixture verbatim (`PLAN-scm-supplied-with-companions.md` S5): a companion that
+    // rides entirely inside its host has no documents of its own, and the new columns must
+    // not disturb what that cell already says.
+    const rows = [
+      worklistRow({
+        id: 'host-row',
+        item_code: 'CKS1050',
+        qty: '1',
+        linked_qty: '1',
+        links: [{ id: 'l1', kind: 'po', document: '202609-S0105', qty: '1' }],
+      }),
+      worklistRow({
+        id: 'companion-row',
+        item_code: 'CKSW015',
+        qty: '1',
+        linked_qty: '0',
+        links: [],
+        bundled_qty: '1',
+        bundled_with: {
+          row_id: 'host-row',
+          item_code: 'CKS1050',
+          item_codes: ['CKS1050'],
+          anchor_headline: '1 of 1',
+        },
+      }),
+    ];
+
+    const po = renderRows(rows);
+    const poCell = screen.getByTestId('row-companion-row');
+    expect(within(poCell).getByTitle('Included with CKS1050 · 1 of 1')).toBeInTheDocument();
+    expect(
+      within(poCell).getByTestId('backing-documents-trigger-companion-row'),
+    ).toBeInTheDocument();
+    po.unmount();
+
+    renderRows(rows, 'spo_number');
+    const spoCell = screen.getByTestId('row-companion-row');
+    expect(spoCell.textContent?.trim()).toBe(MUTED_DASH);
+    expect(
+      within(spoCell).queryByTestId('backing-documents-trigger-spo-companion-row'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-R-31: the two columns carry the ids, header titles and explicit sizes a saved layout keys on', () => {
+    const columns = columnDefs();
+    const po = columns.find((column) => column.id === 'po_number');
+    const spo = columns.find((column) => column.id === 'spo_number');
+
+    expect(po, 'the po_number column must keep its id - saved layouts are keyed by it').toBeDefined();
+    expect(spo, 'the spo_number column is missing').toBeDefined();
+    expect(po?.meta?.headerTitle).toBe('PO');
+    expect(spo?.meta?.headerTitle).toBe('SPO');
+    // `tableLayout: { width: 'fixed' }` is this listing's contract, so a column with no
+    // size of its own takes whatever is left and the row stops being one line.
+    expect(typeof po?.size).toBe('number');
+    expect(typeof spo?.size).toBe('number');
+    // Side by side, SPO immediately after PO (section 6).
+    expect(columns.indexOf(spo!)).toBe(columns.indexOf(po!) + 1);
   });
 });

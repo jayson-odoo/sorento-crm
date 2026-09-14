@@ -272,10 +272,14 @@ def _contact_id_from_ctx(ctx: dict[str, Any]) -> str | None:
     """`ctx.contact.id`, the SAME read `check_access`'s own caller uses
     (`run.py`'s `contact_respond_id`) - sent alongside `hidden_spec_keys` so
     the resolve route can resolve this contact's policy itself rather than
-    trusting only the caller-supplied list (security review B/S2)."""
+    trusting only the caller-supplied list (security review B/S2).
+
+    Stringified like every sibling read of this id in this file: the Respond.io
+    contact id arrives on the wire as a JSON INTEGER, and the schema field it
+    lands in (`ResolveReferenceRequest.contact_id`) is a string."""
     contact = jsc.get(ctx, "contact")
     value = jsc.get(contact, "id") if jsc.truthy(contact) else None
-    return value if jsc.truthy(value) else None
+    return jsc.js_string(value) if jsc.truthy(value) else None
 
 
 def resolve_bare_reply_under_member_offer(

@@ -31,7 +31,7 @@ from app.services.chatbot.lanes.business.services import (
     ResolveGateServices,
 )
 from tests._pg_fixture import unique_code
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (
     CONTACT_ID as _ENGINE_CONTACT_ID,
     _envelope,
@@ -508,7 +508,7 @@ class TestEndToEndRenderedAnswerHonoursHiddenSpecs:
 
         return ResolveGateServices(
             access_types=lambda **_: [{"name": "Sorento Dealer"}],
-            resolve_entity=_resolve_entity,
+            resolve_entity=validating_resolve_entity(_resolve_entity),
             probe=lambda **_: None,
         )
 
@@ -625,3 +625,70 @@ class TestEndToEndRenderedAnswerHonoursHiddenSpecs:
         )
 
         self._assert_no_leak(result)
+
+
+# --------------------------------------------------------- the id on the wire
+
+
+class TestResolveBodyContactIdIsAString:
+    """Production regression from #874 (measured 14 Sep, every `business_query`
+    turn): the lane sent `ctx.contact.id` into the resolve body raw, and that id
+    is the Respond.io contact id, which arrives from the webhook as a JSON
+    INTEGER. The new `ResolveReferenceRequest.contact_id: str | None` rejected
+    it, so the whole lane threw before any resolution:
+
+        ValidationError: 1 validation error for ResolveReferenceRequest
+        contact_id  Input should be a valid string
+        [type=string_type, input_value=437264483, input_type=int]
+
+    Every sibling read of the same id in `resolve_gate.py` already wraps it in
+    `jsc.js_string(...)` (the access-types call, the semantic-input builder);
+    `_contact_id_from_ctx` is the one that forgot. The schema pin covers the
+    external callers too - n8n posts the same integer straight at the route.
+    """
+
+    @staticmethod
+    def _ctx_with_int_contact_id() -> dict[str, Any]:
+        """The measured production shape: `contact.id` an int, copied otherwise
+        from `TestEntityPinsBody._ctx` in
+        `tests/chatbot/test_s6a_gate_dry_run_and_seams.py`."""
+        return {
+            "contact": {"id": 437264483},
+            "text": {"message": {"message": {"text": "ZZT-1"}}},
+            "access": {"hidden_spec_keys": ["thickness"]},
+            "parse": {
+                "output": {
+                    "match_mode": "or",
+                    "entities": [
+                        {
+                            "hint": "product",
+                            "raw": "ZZT-1",
+                            "canonical_code": "ZZT-1",
+                            "current_message": True,
+                        }
+                    ],
+                }
+            },
+        }
+
+    def test_lane_body_stringifies_an_integer_respond_io_contact_id(self) -> None:
+        from app.api.v1.system.references import ResolveReferenceRequest
+        from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
+
+        body = resolve_entity_body(self._ctx_with_int_contact_id(), space_id="364817")
+
+        assert body["contact_id"] == "437264483"
+        # The body the lane hands `services.resolve_entity` must survive the
+        # route's own validation - this is the exact call that threw in prod.
+        assert ResolveReferenceRequest(**body).contact_id == "437264483"
+
+    def test_resolve_request_coerces_an_integer_contact_id_and_leaves_the_rest(self) -> None:
+        """The schema pin: any caller sending the Respond.io id as a number (n8n
+        posts the webhook value straight through) gets it coerced, while a
+        string id and an absent id are untouched."""
+        from app.api.v1.system.references import ResolveReferenceRequest
+
+        assert ResolveReferenceRequest(query="x", contact_id=437264483).contact_id == "437264483"
+        assert ResolveReferenceRequest(query="x", contact_id=None).contact_id is None
+        assert ResolveReferenceRequest(query="x", contact_id="abc").contact_id == "abc"
+        assert ResolveReferenceRequest(query="x").contact_id is None

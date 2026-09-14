@@ -98,7 +98,7 @@ def seeded_contact(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
     )
     db.commit()
     return db
@@ -205,6 +205,7 @@ class TestResponseModelSurvival:
             "included - n8n's stand-in chain reads all six by name"
         )
         assert body["branch_kind"] == "business_query"
+        # The wire shape survives the round trip: the id stays the NUMBER respond.io sent.
         assert body["ctx"]["contact"]["id"] == CONTACT_ID
         assert body["item"]["branch_kind"] == "business_query"
         assert body["actions"] and body["actions"][0]["dry_run"] is True
@@ -254,7 +255,7 @@ class TestDryRunEndpointZeroWrites:
         return (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .count()
         )
 
@@ -263,7 +264,7 @@ class TestDryRunEndpointZeroWrites:
     ):
         before_session_vars = session_factory().execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         before_sla = self._count(session_factory, "conversation_sla_tracking")
         before_chat_history = self._count(session_factory, "chat_histories")
@@ -283,7 +284,7 @@ class TestDryRunEndpointZeroWrites:
 
         after_session_vars = session_factory().execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         after_sla = self._count(session_factory, "conversation_sla_tracking")
         after_chat_history = self._count(session_factory, "chat_histories")
@@ -382,4 +383,4 @@ class TestTheCallLogNeverStoresACredentialOrAnUnboundedBody:
         assert len(stored) < MAX_LOGGED_PAYLOAD_BYTES
         assert big not in stored
         assert json.loads(stored)["note"].startswith("payload omitted")
-        assert json.loads(stored)["reference"] == CONTACT_ID
+        assert json.loads(stored)["reference"] == str(CONTACT_ID)

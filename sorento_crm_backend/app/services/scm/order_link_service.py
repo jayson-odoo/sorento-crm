@@ -255,9 +255,13 @@ def _purchase_side(db: Session, po_numbers: set[str]):
     the import channels route on, and the only one that cannot disagree with itself - so a
     claim never has to be asked which table it meant.
 
-    Ordering is explicit on the SPO side: one shipping order can state the same product on
-    several lines (two containers), so the lowest line number wins rather than whichever row
-    the database happened to return first.
+    Ordering is explicit on BOTH sides: one document can state the same product on several
+    lines (two containers on a shipping order, two deliveries on a purchase order), so the
+    lowest line number - and, on the purchase order side, the oldest line - wins rather than
+    whichever row the database happened to return first. The purchase order side gained its
+    order on 14 Sep 2026: it was an unordered read feeding a dict comprehension, so `by_key`
+    took whichever same-item line came last, and the order inquiry sheet import paired the
+    same file differently on its preview and on its apply.
     """
     spo_numbers = {n for n in po_numbers if doc_family(n) == FAMILY_SPO}
     po_only = po_numbers - spo_numbers
@@ -266,23 +270,30 @@ def _purchase_side(db: Session, po_numbers: set[str]):
         db.query(PurchaseOrder.po_number, Product.product_code, PurchaseOrderLine.id)
         .join(PurchaseOrderLine, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
         .join(Product, Product.id == PurchaseOrderLine.product_id)
-        .filter(PurchaseOrder.po_number.in_(list(po_only)))
+        .filter(PurchaseOrder.po_number.in_(sorted(po_only)))
+        .order_by(
+            PurchaseOrder.po_number.asc(),
+            Product.product_code.asc(),
+            PurchaseOrderLine.created_at.asc(),
+            PurchaseOrderLine.id.asc(),
+        )
         .all()
         if po_only
         else []
     )
-    by_key: dict[tuple[str, str], tuple[str, str]] = {
-        (str(po), str(code)): (_PO_SIDE, str(line_id)) for po, code, line_id in rows
-    }
+    by_key: dict[tuple[str, str], tuple[str, str]] = {}
     by_number: dict[str, tuple[str, str]] = {}
-    for po, _code, line_id in rows:
+    for po, code, line_id in rows:
+        # First wins on both, which under the order above is the OLDEST line of that
+        # document for that item - the same rule the SPO side states with its line number.
+        by_key.setdefault((str(po), str(code)), (_PO_SIDE, str(line_id)))
         by_number.setdefault(str(po), (_PO_SIDE, str(line_id)))
 
     spo_rows = (
         db.query(SPOAllocation.spo_number, Product.product_code, SPOAllocation.id)
         .join(Product, Product.id == SPOAllocation.product_id)
         .filter(
-            SPOAllocation.spo_number.in_(list(spo_numbers)),
+            SPOAllocation.spo_number.in_(sorted(spo_numbers)),
             # Section 4 ruling: a claim's TARGET is never resolved onto a line
             # AutoCount deleted - `by_key`/`by_number` below pick the first
             # surviving row, or leave the claim unresolved on this side.

@@ -62,6 +62,15 @@ a filtered export of one or the other.
   separately and file into the SPO allocations list rather than the purchase order book - see
   [Upload SPO allocations](../purchasing/upload-spo.md).
 
+## Order inquiries list search
+
+On the **Order Inquiries** page, the search box uses multi-word narrowing: typing several words
+splits them on spaces and finds rows matching ALL of them. For example, typing `SO366990 SRTWT6801`
+finds only rows on sales order SO366990 whose product or item code contains SRTWT6801. The order of
+words does not matter. Single words behave the same as before, matching any of the eleven searchable
+columns (sales order, item code, product name, customer, project, user name/email, and others). Up
+to ten words are used; extra spaces are ignored.
+
 ## Upload order inquiry sheet
 
 This is the migration tool for the order inquiry Excel you have been keeping by hand. Sales
@@ -180,8 +189,7 @@ stated, the instruction it was raised with, and the note naming the file it came
 
 ### Who can upload it
 
-Anybody who can run a reorder plan. It is the same permission, so no new access is needed to
-migrate the sheet.
+Anybody who can run a reorder plan.
 
 ## Upload reorder levels
 

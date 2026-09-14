@@ -352,12 +352,36 @@ export interface RevisionDiff {
   changes: RevisionLineChange[];
 }
 
+/**
+ * One file this invoice was read from, as the record's own attachment link holds it.
+ *
+ * The workbook the lines were parsed out of, and the packing list uploaded against the same
+ * invoice: both are linked to the record, so both can be previewed and downloaded rather
+ * than merely named (S8).
+ */
+export interface ProformaInvoiceSourceFile {
+  /** The LINK's id, which is what identifies the row. */
+  id: string;
+  /** The attachment itself - what preview and download act on. */
+  attachment_id: string;
+  name: string | null;
+  /** The attachment type in words, e.g. "Packing list". */
+  type: string | null;
+  uploaded_at: string | null;
+  download_url: string;
+  file_size_bytes: number | null;
+  mime_type: string | null;
+}
+
 export interface ProformaInvoiceDetail extends ProformaInvoiceListRow {
   lines: ProformaInvoiceLine[];
   converted_shipments: ConvertedShipmentRef[];
   revisions: RevisionRef[];
   revision_of_pi_number: string | null;
   diff: RevisionDiff | null;
+  /** Optional while an older payload (or a record uploaded before the link existed) carries
+   *  no links at all - the detail then names its files without offering to open them. */
+  source_files?: ProformaInvoiceSourceFile[];
 }
 
 /** One PI's outcome inside a convert - always present, so the caller can name every
