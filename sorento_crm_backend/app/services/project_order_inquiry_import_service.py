@@ -217,10 +217,25 @@ class _RowLinks:
 
 
 def _orders_by_number(db: Session, numbers: set) -> Dict[str, SalesOrder]:
+    """The sales orders the sheet names, one per number, the OLDEST first.
+
+    Ordered and first-wins rather than a dict comprehension over an unordered read: two
+    orders can carry the same number (AC-S1-43 - the company scope normally keeps them
+    apart), and "whichever row the database returned last" is not an answer a second run
+    would repeat. `preview` and `apply` each run this, and they must agree.
+    """
     if not numbers:
         return {}
-    rows = db.query(SalesOrder).filter(SalesOrder.so_number.in_(list(numbers))).all()
-    return {str(o.so_number): o for o in rows}
+    rows = (
+        db.query(SalesOrder)
+        .filter(SalesOrder.so_number.in_(sorted(numbers)))
+        .order_by(SalesOrder.so_number.asc(), SalesOrder.id.asc())
+        .all()
+    )
+    held: Dict[str, SalesOrder] = {}
+    for order in rows:
+        held.setdefault(str(order.so_number), order)
+    return held
 
 
 def _lines_of(db: Session, order_ids: set) -> Dict[str, List[tuple]]:
@@ -229,6 +244,11 @@ def _lines_of(db: Session, order_ids: set) -> Dict[str, List[tuple]]:
     Any status: the sheet is history, and D8 is explicit that a closed or fully delivered
     line is exactly what it names. The warehouse is outer-joined because a line with no
     location matches whatever the sheet states for it (D1).
+
+    ORDERED, because `_rank_for` sorts these candidates and a sort is only as stable as what
+    it is given: a whole AutoCount ingest shares one `created_at` (Postgres freezes `now()`
+    per transaction), so without an explicit order the tie fell to whatever order the read
+    happened to return and `preview` and `apply` could pick different lines for the same row.
     """
     if not order_ids:
         return {}
@@ -236,7 +256,12 @@ def _lines_of(db: Session, order_ids: set) -> Dict[str, List[tuple]]:
         db.query(SalesOrderLine, Product.product_code, Warehouse.warehouse_code)
         .join(Product, Product.id == SalesOrderLine.product_id)
         .outerjoin(Warehouse, Warehouse.id == SalesOrderLine.warehouse_id)
-        .filter(SalesOrderLine.sales_order_id.in_([str(i) for i in order_ids]))
+        .filter(SalesOrderLine.sales_order_id.in_(sorted(str(i) for i in order_ids)))
+        .order_by(
+            SalesOrderLine.sales_order_id.asc(),
+            SalesOrderLine.created_at.asc(),
+            SalesOrderLine.id.asc(),
+        )
         .all()
     )
     held: Dict[str, List[tuple]] = {}
@@ -319,7 +344,7 @@ def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
     """
     if not numbers:
         return {}
-    wanted = [str(number) for number in numbers if number]
+    wanted = sorted(str(number) for number in numbers if number)
     named: Dict[str, set] = {}
 
     def _po_refs(po_numbers: List[str]) -> List[tuple]:
@@ -377,6 +402,11 @@ def _rank_for(row, named: Dict[str, set]) -> Callable[[tuple], tuple]:
 
     A cancelled line is ranked last, never excluded: when it is the only line that fits it is
     still where the history is (D1 kept).
+
+    The line's own id has the last word. Every term above it can tie - a whole AutoCount
+    ingest shares one `created_at`, because Postgres freezes `now()` for the transaction that
+    wrote it - and a tie left to the read order is a sheet that pairs differently on the
+    preview and on the apply.
     """
     wanted = row.delivery_date
     cited: set = set()
@@ -394,6 +424,7 @@ def _rank_for(row, named: Dict[str, set]) -> Callable[[tuple], tuple]:
             line.required_date is None,
             line.required_date or date.min,
             line.created_at or datetime.min,
+            str(line.id),
         )
 
     return key
@@ -600,7 +631,7 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
     exactly what the rows being migrated are waiting on. What OTHER links already claim is
     subtracted by the caller.
     """
-    wanted = [str(i) for i in target_ids if i]
+    wanted = sorted(str(i) for i in target_ids if i)
     if not wanted:
         return {}
     facts: Dict[str, dict] = {}
@@ -675,7 +706,7 @@ def _ref_targets(
     products.discard("")
     if not refs or not products:
         return {}, {}
-    wanted, items = list(refs), list(products)
+    wanted, items = sorted(refs), sorted(products)
 
     allocations: Dict[tuple, List[str]] = {}
     for allocation in (
@@ -741,8 +772,8 @@ def _chain_allocations(
     rows = (
         db.query(SPOAllocation)
         .filter(
-            SPOAllocation.from_po_number.in_(list(po_numbers)),
-            SPOAllocation.product_id.in_([str(p) for p in product_ids]),
+            SPOAllocation.from_po_number.in_(sorted(str(n) for n in po_numbers)),
+            SPOAllocation.product_id.in_(sorted(str(p) for p in product_ids)),
             *spo_supply.visible_line_clauses(),
         )
         .order_by(
