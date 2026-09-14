@@ -135,9 +135,14 @@ class OrderSummaryRowOut(BaseModel):
 
 class SupplyDocOut(BaseModel):
     """One open document's remaining quantity for a product (issue #795 Slice 3) - a PO
-    number or an SPO number, never a UUID."""
+    number or an SPO number, never a UUID.
+
+    `container` is the box the goods are in, present only on an SPO doc that names one
+    (PLAN-low-stock-report S2, AC-20); a PO has none. Declared here so `response_model`
+    does not silently drop it from the API row (reviewer N1)."""
 
     number: Optional[str] = None
+    container: Optional[str] = None
     qty: float = 0.0
 
 
@@ -279,8 +284,8 @@ class OrderSummaryExportIn(BaseModel):
     """S4, PLAN-po-spo-site-pool-and-order-sheet-downloads.md (AC-15): the async export
     request. `run_id` is opaque, same rule as every other read here; omitted means the
     newest completed run, exactly like the GET report. `format` is validated in the route
-    (422 on anything but ``pdf``/``xlsx``) rather than here, so the message stays the
-    existing wording the old synchronous export used.
+    (422 on anything but ``pdf`` / ``xlsx`` / ``low_stock_xlsx``) rather than here, so the
+    message stays the existing wording the old synchronous export used.
     """
 
     run_id: Optional[str] = None

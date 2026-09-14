@@ -170,11 +170,12 @@ export interface OrderSummaryRow {
    *  #795). Null on a row nothing carries a reason for. */
   suggestion?: string | null;
   /** Open BRW PO lines behind `po_open_qty`, one entry per document (issue #795 Slice
-   *  3). Empty when nothing is open. */
-  po_open_docs?: { number: string; qty: number }[];
+   *  3). Empty when nothing is open. A PO carries no container. */
+  po_open_docs?: { number: string; container?: string | null; qty: number }[];
   /** Open incoming SPO allocations behind `incoming_spo_qty`, one entry per document
-   *  (issue #795 Slice 3). Empty when nothing is open. */
-  incoming_spo_docs?: { number: string; qty: number }[];
+   *  (issue #795 Slice 3). `container` is the box the goods are in, present only when
+   *  the SPO names one (PLAN-low-stock-report S2). Empty when nothing is open. */
+  incoming_spo_docs?: { number: string; container?: string | null; qty: number }[];
 }
 
 /** The whole report for one run, as of one date (AC-C2.9). */

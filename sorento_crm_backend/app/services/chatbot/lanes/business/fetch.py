@@ -1701,6 +1701,12 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
     }
 
 
+#: The miss line for an unrendered low stock payload (N6). The presenter carries the same
+#: wording for its own error envelope; this copy covers only the "render never happened"
+#: fallback, where the presenter's text never reached this function.
+_LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
+
+
 def _low_stock_report_output(result: Any) -> dict[str, Any]:
     """PLAN-low-stock-report S6 (AC-66): `crm_low_stock_report`'s own envelope.
 
@@ -1714,9 +1720,9 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
     `sorento_crm_mcp`, so a second rendering here could disagree with the text the customer
     is reading and nothing would catch it.
 
-    `has_result` comes off the wire and is True on all three shapes (ready / pending /
-    busy): each is an ANSWER, and a False would send a perfectly-answered turn down the
-    escalate path.
+    `has_result` comes off the wire: True on `ready` / `pending` / `busy` (each an ANSWER),
+    and False on the presenter's error envelope (reviewer S1/N6), which drops the turn onto
+    the lane's own miss path with its team picker rather than reading the failure as pending.
     """
     envelope = result if isinstance(result, dict) else {}
     if "response" in envelope:
@@ -1724,10 +1730,13 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
         has_result = envelope.get("has_result") is True
         attachments = envelope.get("attachments")
     else:
-        # The render never happened (an MCP that returned the raw body, or a failure
-        # fallback): the text stands, and there is no attachment list to trust.
-        text = result if isinstance(result, str) else jsc.js_string(result)
-        has_result = bool(text.strip())
+        # N6: the render never happened (an MCP that returned a RAW route body - `{status:
+        # error|busy|...}` - or a failure fallback). This tool has a side effect and no
+        # safe default text, so an unrendered payload is a MISS, never an answer: stringing
+        # a raw status dict into the reply would read as gibberish, and treating it as
+        # `has_result` would suppress the escalate the customer needs.
+        text = _LOW_STOCK_ERROR_TEXT
+        has_result = False
         attachments = None
     return {
         "response": text,

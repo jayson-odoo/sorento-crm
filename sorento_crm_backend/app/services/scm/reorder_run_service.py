@@ -80,7 +80,8 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                plan_horizon_date: Optional[date] = None,
                plan_horizon_start: Optional[date] = None,
                supersedes_run_id: Optional[str] = None,
-               requested_via: Optional[str] = None) -> dict:
+               requested_via: Optional[str] = None,
+               refuse_if_in_flight: bool = False) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
 
@@ -125,6 +126,12 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     report tool created this run over WhatsApp and None on every other path. Stamped so the
     plans list can mark it - a buyer opening Reorder Planning can then see WHY a plan
     nobody here launched exists, instead of reading it as a stray run.
+
+    ``refuse_if_in_flight`` (B2, security review) raises ``AppException(409,
+    code="run_in_progress")`` when the company already has a ``queued`` / ``running`` run,
+    so a caller cannot start an unbounded number of concurrent plans. Off by default (the
+    UI / scheduler create back-to-back runs in their own tests); the chat route passes
+    True and maps the 409 to ``{"status": "busy"}``.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
@@ -132,6 +139,25 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     # buyer who types one into Start Plan is refused outright, before anything is created.
     _reject_excluded_named_products(db, product_codes)
     product_ids = _resolve_product_ids(db, product_codes)
+    # B2 (security review, Phase 3): one plan in flight per company. Opt-in, because the
+    # bound this closes is the CHAT route's - an X-API-Key caller could otherwise start an
+    # unbounded number of reorder runs, each a real worker job. `db.query(ReorderRun)`
+    # carries the ORM company-isolation filter, so it reads exactly the company the insert
+    # below will stamp; the 409 the chat route maps to `{"status": "busy"}` (AC-49). Off by
+    # default so the UI / scheduler callers, whose own tests create back-to-back runs, are
+    # unchanged - flip it on at a call site once its tests expect the refusal.
+    if refuse_if_in_flight:
+        in_flight = (
+            db.query(ReorderRun.id)
+            .filter(ReorderRun.status.in_(("queued", "running")))
+            .first()
+        )
+        if in_flight is not None:
+            raise AppException(
+                status_code=409,
+                message="A reorder run is already in progress.",
+                code="run_in_progress",
+            )
     run_id = str(uuid.uuid4())
     now = datetime.utcnow()
     db.add(ReorderRun(
@@ -924,10 +950,18 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     #     stockout that has not moved in the window is still a SKU nobody sells, and the
     #     owner's ruling was to keep those out.
     #
-    # Company scope: both legs are joined onto `keys.product_id`, and `keys` is already
-    # narrowed by the `cp*` / `cw*` predicates in `where` (the product AND the location),
-    # so a product id that belongs to another company never reaches this join - the leg's
-    # own subqueries can safely aggregate by `product_id` alone.
+    # Company scope (security S3/N4, Phase 3): both legs join onto `keys.product_id`, and
+    # `keys` is already narrowed by the `cp*` / `cw*` predicates in `where`, so a product id
+    # from another company never reaches the outer join. But the leg's own subqueries are
+    # ADDED company predicates too rather than relying on that alone - the invariant they
+    # protect is that "below level" is judged on THIS company's stock and movement only.
+    # A product id belongs to one company, but its `oh` (stock x warehouses) and `mv`
+    # (consumption_v x warehouses/products) aggregates could otherwise pick up a row a
+    # cross-company data error placed at another company's location, and admission would
+    # then buy against a figure the asker cannot see. The predicates below reuse the SAME
+    # `prod_scope` / `wh_scope` strings (and their already-bound `cp*` / `cw*` params) the
+    # outer query uses, so the two readings can never disagree; both are empty for an
+    # unscoped (superadmin) caller, which correctly narrows nothing.
     #
     # G10 is the other exception: a NAMED product (`product_ids` was given) is buyer intent
     # and enters regardless of committed demand, level or movement, so the join below
@@ -938,6 +972,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
         params["dead_days"] = (
             resolve_global_dead_stock_days(db) or DEFAULT_DEAD_STOCK_DAYS
         )
+        lvl_co = f"AND {prod_scope}" if prod_scope else ""
+        oh_co = f"AND {wh_scope}" if wh_scope else ""
+        mv_co = f"WHERE {prod_scope}" if prod_scope else ""
         product_admit_join = f"""
         JOIN (
             SELECT DISTINCT product_id FROM cv_all WHERE COALESCE(committed, 0) > 0
@@ -951,17 +988,20 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                        ON rl.product_id = p.id AND rl.warehouse_id IS NULL
                       AND rl.level > 0 AND rl.source = ANY(:rl_sources)
                 WHERE p.is_active AND p.is_discontinued = false
-                  AND p.exclude_from_planning = false
+                  AND p.exclude_from_planning = false {lvl_co}
             ) lvl
             JOIN (
                 SELECT s.product_id, SUM(s.quantity_on_hand) AS pool_on_hand
                 FROM stock s JOIN warehouses w ON w.id = s.warehouse_id
-                WHERE w.counts_as_available AND {ACTIVE_SITE_POOL_SQL}
+                WHERE w.counts_as_available AND {ACTIVE_SITE_POOL_SQL} {oh_co}
                 GROUP BY s.product_id
             ) oh ON oh.product_id = lvl.product_id
             JOIN (
-                SELECT product_id, MAX(day) AS last_day
-                FROM scm.consumption_v GROUP BY product_id
+                SELECT cv.product_id, MAX(cv.day) AS last_day
+                FROM scm.consumption_v cv
+                JOIN products p ON p.id = cv.product_id
+                {mv_co}
+                GROUP BY cv.product_id
             ) mv ON mv.product_id = lvl.product_id
             WHERE lvl.level IS NOT NULL
               AND oh.pool_on_hand < lvl.level

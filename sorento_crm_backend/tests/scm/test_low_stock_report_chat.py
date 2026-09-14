@@ -239,6 +239,21 @@ def _download_row(db, download_id):
     ), {"id": str(download_id)}).mappings().first()
 
 
+def _clear_in_flight_runs(db) -> None:
+    """B2 (Phase 3 security review): the chat route now refuses a second queued/running
+    run for the SAME company - `create_run(refuse_if_in_flight=True)` maps its 409 to
+    `{"status": "busy"}` (AC-49). A test that fires two SEQUENTIAL asks to compare their
+    two outcomes is not exercising concurrency; it just needs the first run finished
+    before the next, which a real between-turns gap always provides. Marking every
+    in-flight run completed between the asks reproduces that gap. Same session the guard
+    reads (`db.query(ReorderRun)` on the injected session), so a flush is enough."""
+    db.execute(text(
+        "UPDATE scm.reorder_run SET status = 'completed' "
+        "WHERE status IN ('queued', 'running')"
+    ))
+    db.flush()
+
+
 # =========================================================================== #
 # AC-40: the route's own shape
 # =========================================================================== #
@@ -358,6 +373,7 @@ def test_owner_is_the_user_linked_to_the_contact(scm_app, monkeypatch):
 
     with TestClient(app) as c:
         linked_resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(linked))
+        _clear_in_flight_runs(db)  # B2: the two asks are sequential, not concurrent
         unlinked_resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(unlinked))
 
     assert linked_resp.status_code == 200, linked_resp.text
@@ -820,6 +836,7 @@ def test_interleaving_worker_ready_before_claim_and_claim_before_ready(
     assert sends == [], "the worker pushed a file the turn had already delivered"
 
     # --- order B: the route's claim first, then the task ---------------------------
+    _clear_in_flight_runs(db)  # B2: order A's run is finished before order B's ask
     contact_b = _contact(db)
     db.flush()
     _patch_wait(monkeypatch, on_wait=_timeout)
@@ -856,6 +873,7 @@ def test_supplier_column_omitted_without_purchase_orders_supplier_key(
     with TestClient(app) as c:
         c.get(ROUTE, headers={"X-API-Key": key}, params=_params(without))
         first_export = calls[1]
+        _clear_in_flight_runs(db)  # B2: the two asks are sequential, not concurrent
         c.get(ROUTE, headers={"X-API-Key": key}, params=_params(with_key))
         second_export = calls[3]
 
@@ -956,3 +974,62 @@ def test_busy_maps_the_in_flight_run_409_to_status_busy(scm_app, monkeypatch):
     assert _counts(db) == before, (
         "a busy answer must create neither a run nor a download row"
     )
+
+
+# =========================================================================== #
+# Console round 2, finding A - the request carries NO company scope
+#
+# CODER-AUTHORED (14 Sep 2026). Every test above runs under `_company_scope_only`, which
+# pre-sets an active company on the session - so none of them could see that a REAL
+# API-key request carries none, and that `scm.reorder_run` is `CompanyScopedMixin`: on the
+# lane stack the first insert answered 400 `company_scope_required` and no run, no
+# download row and no job were ever created. The route now resolves the company from the
+# contact (its own membership when it has exactly one, else the owner user's active
+# company) and stamps it BEFORE either write.
+# =========================================================================== #
+
+def _contact_company(db, contact, company_id=SORENTO_COMPANY_ID) -> None:
+    """The admin-managed `respond_contact_companies` membership - the same M2M the
+    API-key READ scope resolves through, so the plan is built for the company whose stock
+    the asker can actually see."""
+    from app.models.company import RespondContactCompany
+
+    db.add(RespondContactCompany(
+        id=_u(), respond_contact_id=contact.id, company_id=company_id,
+    ))
+    db.flush()
+
+
+def test_the_run_takes_the_contacts_company_with_no_ambient_scope(scm_app, monkeypatch):
+    """The console's own request shape: `X-API-Key`, a contact, and NO company scope on
+    the session. The run must be created and stamped with the CONTACT's company.
+
+    `_api_key_caller`'s scope override is removed deliberately - reinstating it would
+    reproduce the fixture that hid this defect rather than the request that found it.
+    """
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, key, _uid = _api_key_caller(scm_app)
+    app.dependency_overrides.pop(apply_company_scope, None)
+    contact = _contact(db)
+    _contact_company(db, contact)
+    db.flush()
+    _fake_queue(monkeypatch)
+    _patch_wait(monkeypatch, on_wait=_timeout)
+
+    with TestClient(app) as c:
+        resp = c.get(ROUTE, headers={"X-API-Key": key}, params=_params(contact))
+
+    assert resp.status_code == 200, (
+        f"an API-key turn with no ambient company scope must still run: {resp.text}"
+    )
+    run_id = resp.json()["run_id"]
+    company_id = db.execute(text(
+        "SELECT company_id::text FROM scm.reorder_run WHERE id = :r"
+    ), {"r": run_id}).scalar()
+    assert company_id == SORENTO_COMPANY_ID, (
+        f"the run must be stamped with the contact's own company: {company_id}"
+    )
+    assert db.execute(text(
+        "SELECT count(*) FROM user_downloads WHERE source_entity_id = :r"
+    ), {"r": run_id}).scalar() == 1, "the download row was not created either"

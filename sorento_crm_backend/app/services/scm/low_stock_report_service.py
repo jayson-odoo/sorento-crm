@@ -26,7 +26,6 @@ What is DIFFERENT from the order sheet, and why:
 """
 from __future__ import annotations
 
-from datetime import datetime
 from io import BytesIO
 from typing import Optional
 from urllib.parse import quote
@@ -58,19 +57,6 @@ MAX_LOW_STOCK_ROWS = 5000
 _SUPPLIER_INDEX = LOW_STOCK_COLUMNS.index("Supplier")
 
 CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-
-
-def _compact_ddmmyyyy(iso: Optional[str]) -> str:
-    """`2026-09-10` -> `10092026`, for a FILENAME (no separators) - the same stamp the
-    export route writes onto the `user_downloads` row, so the row and the file agree."""
-    from datetime import date as _date
-
-    if not iso:
-        return _date.today().strftime("%d%m%Y")
-    try:
-        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
-    except ValueError:
-        return _date.today().strftime("%d%m%Y")
 
 
 def attachment_url(provider: Optional[str], key: str) -> str:
@@ -271,5 +257,5 @@ def export_low_stock(db: Session, *, run_id: Optional[str],
     return (
         buf.getvalue(),
         CONTENT_TYPE,
-        f"low-stock-{_compact_ddmmyyyy(split['as_of'])}.xlsx",
+        f"low-stock-{svc.compact_ddmmyyyy(split['as_of'])}.xlsx",
     )

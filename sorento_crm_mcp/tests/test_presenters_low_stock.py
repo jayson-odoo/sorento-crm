@@ -118,3 +118,43 @@ def test_no_uuid_in_any_line():
             f"{payload['status']}: a UUID reached the reply text: {found.group(0)!r} in "
             f"{env['response']!r}"
         )
+
+
+# --------------------------------------------------------------------------- AC-44a
+# CODER-AUTHORED (Phase 3, reviewer S1 / N6): the error shape. Added because the red set
+# covered only ready/pending/busy - and the console found a 400 rendering as the pending
+# line, which leaves the contact waiting for a file that never comes.
+
+ERROR = {"status": "error", "message": "Could not run the low stock report right now."}
+
+
+def test_error_status_renders_as_a_miss():
+    """An `error` payload is a MISS: the fixed "could not run" line, `has_result` False (so
+    the lane's team picker takes over), and no attachment."""
+    env = _envelope(ERROR)
+    assert env["result_type"] == "low_stock_report", env
+    assert env["has_result"] is False, env
+    assert env["response"] == "Could not run the low stock report right now.", repr(
+        env["response"]
+    )
+    assert env.get("attachments") in ([], None), env.get("attachments")
+
+
+def test_unknown_status_and_raw_error_body_are_a_miss_never_pending():
+    """A status the presenter does not know (a raw route error body, a shape drift) must
+    NOT fall through to the pending line - the exact bug this branch closes."""
+    for payload in ({"status": "boom"}, {"message": "x", "code": "company_unresolved"}, {}):
+        env = _envelope(payload)
+        assert env["has_result"] is False, (payload, env)
+        assert env["response"] == "Could not run the low stock report right now.", (
+            payload, env["response"],
+        )
+
+
+def test_ready_without_counts_drops_the_count_line():
+    """reviewer S3 guard, presenter side: a `ready` payload missing its counts still sends
+    the file, but prints only the header - never "Low: None of None"."""
+    env = _envelope({**READY, "low_count": None, "all_count": None})
+    assert env["has_result"] is True, env
+    assert env["response"] == "Low stock report - as of 10/09/2026", repr(env["response"])
+    assert env["attachments"] == [ATTACHMENT], env["attachments"]
