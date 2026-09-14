@@ -40,7 +40,7 @@ from tests.chatbot.test_outstanding_lane import _capturing_mcp
 
 TOOL = "crm_low_stock_report"
 GRANT_KEY = "scm.low_stock_report"
-REVEAL_PAIR = (GRANT_KEY, "Low stock report over chat")
+REVEAL_PAIR = (GRANT_KEY, "Low stock report over chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)")
 REFUSAL = "Low stock report is not enabled for your account."
 
 WAREHOUSE_UUID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
@@ -401,3 +401,36 @@ class TestABareAskNeedsNoFilter:
             f"a bare ask must send no product scope: {args.get('product_codes')!r}"
         )
         assert args.get("contact_id") and args.get("space_id"), args
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3, reviewer S1 / N6 - a failed call is a MISS, not pending
+#
+# CODER-AUTHORED: the red set had no error-envelope case, so nothing caught that the
+# structurer would read an unknown/error payload as an answer. The presenter renders an
+# error as `has_result: False`; the lane's output must carry that through so the miss
+# path (team picker) fires instead of the pending line.
+# --------------------------------------------------------------------------- #
+
+
+class TestErrorEnvelopeIsAMiss:
+    _ERROR_ENVELOPE = {
+        "result_type": "low_stock_report",
+        "response": "Could not run the low stock report right now.",
+        "has_result": False,
+        "attachments": [],
+    }
+
+    def test_error_envelope_carries_has_result_false_and_no_attachment(self) -> None:
+        out = fetch_mod.output_structurer(self._ERROR_ENVELOPE, {"tool": TOOL})
+        assert out.get("has_result") is False, out
+        assert out.get("attachments") == [], out
+        assert out.get("response") == "Could not run the low stock report right now.", out
+
+    def test_unrendered_raw_body_is_a_miss_never_an_answer(self) -> None:
+        """The render-never-happened fallback (a raw route body reached the lane): a
+        side-effecting tool has no safe default text, so it is a miss - never a stringified
+        status dict read as `has_result`."""
+        out = fetch_mod.output_structurer({"status": "error"}, {"tool": TOOL})
+        assert out.get("has_result") is False, out
+        assert "Could not run the low stock report" in out.get("response", ""), out
