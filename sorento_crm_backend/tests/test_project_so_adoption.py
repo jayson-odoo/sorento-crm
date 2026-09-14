@@ -623,3 +623,102 @@ def test_adopting_an_already_adopted_order_mirrors_new_unmirrored_open_lines_too
                 "every open core line must have a mirror after adopt, including the "
                 "re-ingested ones nobody mirrored", mirrored_core_ids,
             )
+
+
+# --------------------------------------------------------------------------- #
+# AC-S2-14 / AC-S2-15: adoption follows the BOARD's predicate, not the         #
+# netting one (`PLAN-fulfilment-board-plans-delivered-lines.md`)               #
+#                                                                             #
+# TEST-FIRST, and they are the gap the tester found writing S2's red tests: the #
+# board now admits a line NOBODY DECIDED, delivered or not, on a `closed` order #
+# as readily as an open one - but `confirm` names a line by its MIRROR id       #
+# (`lines[].project_line_id`), and `adopt` refuses a non-open order and mirrors #
+# only `is_open_demand()` lines. So the journey's "CS ticks the Completed order #
+# and chooses Plan selected" reaches a board whose every contribution carries   #
+# `project_line_id: null` and cannot be confirmed at all.                      #
+#                                                                             #
+# `adopt_for_migration` already mirrors closed lines, so the shape exists; what #
+# is missing is `adopt` reading the same predicate the board does.             #
+# --------------------------------------------------------------------------- #
+
+
+def test_closed_order_with_delivered_undecided_lines_is_adopted():
+    """AC-S2-14. SO421404's own shape: Completed, three lines, 3 of 3 delivered, no decision
+    and no inquiry row. The stock left the bin with nothing behind it, so those units are
+    owed back - and CS cannot raise the order-back without a record to confirm against.
+
+    A CANCELLED order is still refused. "Closed" is a book that shipped, which is exactly the
+    order this slice is about; "cancelled" is a book that says the demand went away, and there
+    is nothing to put back for it.
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        with company_scope(db, frozenset({company_id})):
+            product = _product(db)
+            warehouse = _warehouse(db, company_id)
+            core = _core_order(db, company_id, status="closed")
+            delivered = [
+                _core_line(
+                    db, core, product, warehouse=warehouse,
+                    qty_ordered="3", qty_delivered="3", line_status="closed",
+                )
+                for _ in range(3)
+            ]
+            db.flush()
+
+            result = ProjectSOAdoptionService(db).adopt(core.id, actor_user_id=None)
+
+            mirror = _mirror_lines(db, result["project_sales_order_id"])
+            assert {str(row.core_sales_order_line_id) for row in mirror} == {
+                str(line.id) for line in delivered
+            }, "one mirror line per undecided core line, delivered or not"
+            assert [row.line_no for row in mirror] == [1, 2, 3]
+
+            cancelled = _core_order(db, company_id, status="cancelled")
+            _core_line(db, cancelled, product, warehouse=warehouse)
+            db.flush()
+
+            with pytest.raises(AppException) as excinfo:
+                ProjectSOAdoptionService(db).adopt(cancelled.id, actor_user_id=None)
+            assert excinfo.value.status_code == 409
+
+
+def test_adoption_mirrors_undecided_lines_not_only_still_owed():
+    """AC-S2-15. The mirror carries what the BOARD will walk.
+
+    Four lines, one order: 5 ordered and nothing shipped, 3 ordered and 3 shipped, one a
+    person marked `covered`, one the book cancelled. Exactly the first two are mirrored -
+    `covered` is somebody ruling "no purchase needed" and a cancelled line is owed to nobody,
+    which are the two the board leaves out too (`is_undecided_demand()`).
+
+    A mirror line for a line the board will not show would put a row in the reconciliation
+    figures that no screen ever accounts for (the same reason `adopt_for_migration` mirrors
+    only what the upload NAMED).
+    """
+    with blank_session() as db:
+        company_id = _sorento(db)
+        with company_scope(db, frozenset({company_id})):
+            product = _product(db)
+            warehouse = _warehouse(db, company_id)
+            core = _core_order(db, company_id)
+            still_owed = _core_line(
+                db, core, product, warehouse=warehouse, qty_ordered="5", qty_delivered="0"
+            )
+            delivered = _core_line(
+                db, core, product, warehouse=warehouse, qty_ordered="3", qty_delivered="3",
+            )
+            _core_line(
+                db, core, product, warehouse=warehouse, purchasing_status="covered"
+            )
+            _core_line(
+                db, core, product, warehouse=warehouse, line_status="cancelled",
+                qty_delivered="4",
+            )
+            db.flush()
+
+            result = ProjectSOAdoptionService(db).adopt(core.id, actor_user_id=None)
+
+            mirror = _mirror_lines(db, result["project_sales_order_id"])
+            assert {str(row.core_sales_order_line_id) for row in mirror} == {
+                str(still_owed.id), str(delivered.id),
+            }, "delivery is not a decision; covered and cancelled are"
