@@ -1305,11 +1305,24 @@ def _docs_text(total: Any, docs: list[dict]) -> str:
     open document (issue #796, AC-13), shaped like `_month_text`/`_customers_text`. The
     bare total, with nothing to trace, when `docs` is empty (AC-14) - the H1 "quantities
     are numbers" rule yields on these two cells only once a document exists; a product
-    with nothing open keeps the plain figure exactly as before this slice."""
+    with nothing open keeps the plain figure exactly as before this slice.
+
+    A doc that names a CONTAINER prints "<number> - <container> - <qty>"
+    (PLAN-low-stock-report S2, AC-21), the client's own `TLLU8306312 - 180 nos` cell with
+    the document number kept in front of it: the sheet has always named the document, and
+    the container is extra traceability rather than a replacement for it. The key is read
+    with `.get`, so a run FROZEN BEFORE that slice - whose `incoming_spo_docs` carry only
+    `{number, qty}` - still prints the two-part line (AC-23, and why no migration is
+    needed). PO docs never carry one, by construction."""
     if not docs:
         return _qty_text(total)
     lines = [_qty_text(total)]
-    lines.extend(f"{d['number']} - {_qty_text(d['qty'])}" for d in docs)
+    for d in docs:
+        container = d.get("container")
+        lines.append(
+            f"{d['number']} - {container} - {_qty_text(d['qty'])}" if container
+            else f"{d['number']} - {_qty_text(d['qty'])}"
+        )
     return "\n".join(lines)
 
 
