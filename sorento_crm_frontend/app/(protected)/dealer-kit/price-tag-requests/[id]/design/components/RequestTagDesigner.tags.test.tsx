@@ -19,7 +19,10 @@
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+// The designer mounts a react-query mutation (the deferred tag Remove), so a
+// bare `render` throws "No QueryClient set" before the component exists.
+import { renderWithQueryClient as render } from './testQueryClient';
 
 import type {
   LineTagData,
@@ -75,6 +78,45 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
       </div>
     );
   },
+}));
+
+/**
+ * "Pick one" is a `SearchableSelect` (AC-X-1): one choice with N answers, not N
+ * buttons. The real control is a Radix popover whose options exist only while it
+ * is open - testing it would test the popover - so it is stubbed as a native
+ * select, the same stand-in `ProductCombosSection.test.tsx` and the portal form
+ * specs use.
+ */
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: (props: {
+    value: string;
+    onChange: (v: string) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+    disabled?: boolean;
+  }) => (
+    <select
+      aria-label={props.placeholder ?? ''}
+      value={props.value}
+      disabled={props.disabled}
+      onChange={(event) => props.onChange(event.target.value)}
+    >
+      <option value="">{props.placeholder ?? ''}</option>
+      {(props.options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+/** The deferred tag Remove (D7): the countdown is parked on the SERVER, so there
+ *  is nothing in the browser to wait out - what a test can assert is that the
+ *  row dispatched the action for ITS tag. */
+const deferredRun = vi.hoisted(() => vi.fn());
+vi.mock('@/hooks/useDeferredRowAction', () => ({
+  useDeferredRowAction: () => ({ run: deferredRun, targetId: null, isPending: false }),
 }));
 
 vi.mock('./ArrangeSheetView', () => ({
@@ -415,10 +457,12 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
     expect(
       screen.getByRole('button', { name: 'Split into 4 tags' }),
     ).toBeInTheDocument();
-    // Pick one is the four candidates by CODE - the alternative to splitting.
-    for (const candidate of BASIN_CANDIDATES) {
-      expect(screen.getByText(candidate.code)).toBeInTheDocument();
-    }
+    // Pick one offers the four candidates by CODE - one choice with four
+    // answers, which is the alternative to splitting.
+    const pickOne = screen.getByLabelText('Pick one');
+    expect(
+      within(pickOne).getAllByRole('option').map((option) => option.textContent),
+    ).toEqual(['Pick one', ...BASIN_CANDIDATES.map((c) => c.code)]);
   });
 
   it('Split calls the server and re-reads the request, rather than splitting locally', async () => {
@@ -472,7 +516,9 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
     mockGetRequest.mockResolvedValue(picked);
     await mount(before);
 
-    fireEvent.click(screen.getByText(BASIN_CANDIDATES[1].code));
+    fireEvent.change(screen.getByLabelText('Pick one'), {
+      target: { value: BASIN_CANDIDATES[1].product_id },
+    });
 
     await waitFor(() =>
       expect(mockUpdateTag).toHaveBeenCalledWith('req-1', OPEN_TAG.id, {
@@ -482,6 +528,42 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
     expect(mockSplit).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByText('Open: Basin')).toBeNull());
     expect(screen.queryByText('1b')).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-S3-6 - a tag can be removed, never the line's last
+  // -------------------------------------------------------------------------
+
+  it('a tag row offers Remove, disabled with a reason while the line has only one tag', async () => {
+    await mount(request({ lines: [line({ tags: [tag()] })] }));
+
+    const remove = screen.getByRole('button', { name: 'Remove tag 1a' });
+    expect(remove).toBeDisabled();
+    // Disabled with no explanation reads as a broken button. The server answers
+    // this case with a named 422 (LAST_TAG); the UI says the same thing before
+    // the click rather than after it.
+    expect(remove).toHaveAttribute('title', expect.stringMatching(/only tag|last tag/i));
+    expect(deferredRun).not.toHaveBeenCalled();
+  });
+
+  it('on a two-tag line Remove parks the deferred action for THAT tag', async () => {
+    const detail = request({
+      lines: [line({ tags: [tag(), tag({ id: 'tag-1b', label: '1b', sort_order: 1 })] })],
+    });
+    mockResolve.mockResolvedValue([row(), row({ tag_id: 'tag-1b', tag_label: '1b' })]);
+    await mount(detail);
+
+    const remove = screen.getByRole('button', { name: 'Remove tag 1b' });
+    expect(remove).not.toBeDisabled();
+    fireEvent.click(remove);
+
+    // Deferred, not confirmed: no dialog, and the countdown is the server's
+    // (D7), so what this asserts is the dispatch and its subject.
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(deferredRun).toHaveBeenCalledTimes(1);
+    expect(deferredRun).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'tag-1b' }),
+    );
   });
 
   it('shows the line\'s package warning on the LINE, not on its tags', async () => {

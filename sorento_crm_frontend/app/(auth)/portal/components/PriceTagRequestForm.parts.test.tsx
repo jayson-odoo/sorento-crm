@@ -102,6 +102,13 @@ const CABINET = {
   name: 'ZZT Cabinet',
 };
 
+const SINK = {
+  kind: 'product' as const,
+  id: 'prod-sink',
+  code: 'SRTKS2435',
+  name: 'ZZT Kitchen Sink',
+};
+
 const MIRROR = { product_id: 'prod-mirror', code: 'SRTMR502-BL', name: 'ZZT Mirror' };
 const TOP = { product_id: 'prod-top', code: 'SRTTT800', name: 'ZZT Table Top' };
 const BASIN_WHITE = { product_id: 'prod-basin-wh', code: 'SRTBS900-WH', name: 'ZZT Basin White' };
@@ -134,6 +141,7 @@ beforeEach(() => {
     // The Add part picker reads the SAME catalogue lookup, products only, so a
     // part added by hand has to be findable here.
     { kind: 'product' as const, id: MIRROR.product_id, code: MIRROR.code, name: MIRROR.name },
+    SINK,
   ]);
   mockCombos.mockResolvedValue({ host_guarded: false, combos: [] });
   mockCreate.mockResolvedValue({ id: 'req-1' });
@@ -369,6 +377,45 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(line.parts).toEqual([
       { product_id: MIRROR.product_id, role: null, candidates: [] },
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Review S1 - the lookup is per PICK, not per product
+  // -------------------------------------------------------------------------
+
+  it('re-picking a product the line held before asks for its packages again', async () => {
+    // A -> B -> A. Cached by product id, the third pick is a no-op and the line
+    // comes back with no package and no parts, which reads as a cabinet that
+    // lost its combo rather than as a lookup that never ran.
+    mockCombos.mockImplementation(async (productId: string) =>
+      productId === CABINET.id
+        ? { host_guarded: true, combos: [COMBO_3_IN_1, COMBO_4_IN_1] }
+        : { host_guarded: false, combos: [] },
+    );
+    await startWithALine();
+
+    await pickTheCabinet();
+    await screen.findByLabelText('Package');
+
+    await selectOption('Search a set or product...', `product:${SINK.id}`);
+    await waitFor(() => expect(mockCombos).toHaveBeenCalledWith(SINK.id));
+    expect(screen.queryByLabelText('Package')).toBeNull();
+
+    await pickTheCabinet();
+
+    await waitFor(() =>
+      expect(
+        mockCombos.mock.calls.filter(([id]) => id === CABINET.id),
+      ).toHaveLength(2),
+    );
+    // And the line is usable again, not left holding the sink's emptiness.
+    expect(await screen.findByLabelText('Package')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText('Package'), {
+      target: { value: COMBO_3_IN_1.combo_id },
+    });
+    expect(await screen.findByText(MIRROR.code)).toBeInTheDocument();
+    expect(screen.getByLabelText('Not sure, any of 2')).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------

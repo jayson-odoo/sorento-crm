@@ -474,3 +474,37 @@ def test_migration_remaps_r9_pins(db):
     assert pinned is not None
     assert pinned.get("tag_id") == tag_id
     assert "line_id" not in pinned
+
+
+# ---------------------------------------------------------------------------
+# `_locate` - the branch production takes, which no other test in this file
+# reaches (review S2)
+# ---------------------------------------------------------------------------
+
+
+def test_locate_finds_the_dealer_kit_schema_when_the_search_path_does_not(db):
+    """Production reaches `page` as `dealer_kit.page`; these tests reach it bare.
+
+    Every other test here runs with the scratch `_dealer_kit` schema ON the
+    search_path, so `_locate` returns the bare name and the qualified branch -
+    the only one production ever takes - is never executed. A typo there would
+    make the whole doc rewrite a silent no-op on the real database and be caught
+    by nothing.
+
+    Read-only: `SET LOCAL` is scoped to this transaction, which the fixture
+    rolls back.
+    """
+    module = _load_migration()
+    conn = db.connection()
+
+    # Bare first, which is what the rest of this file exercises.
+    assert module._locate(conn, "page") == "page"
+
+    # Now hide the scratch schema the way production's search_path does, leaving
+    # the REAL `dealer_kit` schema as the only place `page` can be found.
+    db.execute(text("SET LOCAL search_path TO public"))
+    assert module._locate(conn, "page") == "dealer_kit.page"
+    assert module._locate(conn, "page_version") == "dealer_kit.page_version"
+
+    # A table that is in neither place is None, not a guess.
+    assert module._locate(conn, "zzt_table_that_does_not_exist") is None

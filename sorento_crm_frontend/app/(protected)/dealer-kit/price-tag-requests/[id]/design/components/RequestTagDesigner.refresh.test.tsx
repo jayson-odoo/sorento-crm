@@ -10,7 +10,10 @@
  * on a failed background call.
  */
 
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
+// The designer mounts a react-query mutation (the deferred tag Remove), so a
+// bare `render` throws "No QueryClient set" before the component exists.
+import { renderWithQueryClient as render } from './testQueryClient';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));

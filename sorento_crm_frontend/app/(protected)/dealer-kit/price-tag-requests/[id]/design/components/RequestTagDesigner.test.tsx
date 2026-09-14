@@ -10,7 +10,10 @@
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+// The designer mounts a react-query mutation (the deferred tag Remove), so a
+// bare `render` throws "No QueryClient set" before the component exists.
+import { renderWithQueryClient as render } from './testQueryClient';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
