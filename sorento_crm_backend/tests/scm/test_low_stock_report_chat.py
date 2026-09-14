@@ -514,7 +514,7 @@ def test_low_stock_sync_wait_seconds_validates_5_to_90_on_the_settings_route(scm
     assert too_big.status_code == 422, too_big.text
     assert ok.status_code == 200, ok.text
     assert echoed.status_code == 200, echoed.text
-    assert echoed.json().get("low_stock_sync_wait_seconds") == 60, (
+    assert echoed.json()["settings"].get("low_stock_sync_wait_seconds") == 60, (
         "the new column must be in the settings GET dict builder too"
     )
 
