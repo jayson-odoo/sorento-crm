@@ -660,6 +660,93 @@ describe('bound text and pictures on the print page', () => {
     );
   });
 
+  // ---------------------------------------------------------------------
+  // F8 (D7, AC-S4-3/S4-5): a part subject's photo resolves from the SAME
+  // `images` payload map product_image slots already read for the parent -
+  // the page passes `payload.images` straight through
+  // (`app/(public)/c/print/tag-sheet/[downloadId]/page.tsx`), so the map
+  // has to actually carry a part's attachment id for the print path to
+  // agree with the canvas.
+  // ---------------------------------------------------------------------
+  it("draws a part subject's OWN photo from the payload map, not the parent's", () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'slot',
+            type: 'product_slot',
+            props: { kind: 'product_slot', fieldKey: 'product_image', subjectPart: 0 },
+          }),
+        ])}
+        resolvedData={{
+          [TAG_ID]: resolved({
+            images: [
+              { attachment_id: 'att-parent', url: 'https://cdn.test/parent.jpg', is_primary: true },
+            ],
+            parts: [
+              {
+                product_id: 'p-tap',
+                code: 'SRTTAP100',
+                name: 'ZZT Kitchen Tap',
+                dimensions: '',
+                images: [
+                  { attachment_id: 'att-part-tap', url: 'https://cdn.test/tap.jpg', is_primary: true },
+                ],
+              },
+            ],
+          }),
+        }}
+        images={{
+          'att-parent': 'https://cdn.test/parent.jpg',
+          'att-part-tap': 'https://cdn.test/tap.jpg',
+        }}
+      />,
+    );
+
+    expect(container.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://cdn.test/tap.jpg',
+    );
+  });
+
+  it("shows the empty placeholder (no <img>) when the part subject's attachment id is missing from the payload's images map", () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'slot',
+            type: 'product_slot',
+            props: { kind: 'product_slot', fieldKey: 'product_image', subjectPart: 0 },
+          }),
+        ])}
+        resolvedData={{
+          [TAG_ID]: resolved({
+            images: [
+              { attachment_id: 'att-parent', url: 'https://cdn.test/parent.jpg', is_primary: true },
+            ],
+            parts: [
+              {
+                product_id: 'p-tap',
+                code: 'SRTTAP100',
+                name: 'ZZT Kitchen Tap',
+                dimensions: '',
+                images: [
+                  { attachment_id: 'att-part-tap', url: 'https://cdn.test/tap.jpg', is_primary: true },
+                ],
+              },
+            ],
+          }),
+        }}
+        // The part's id ('att-part-tap') is missing - a gap between what the
+        // resolved row's own `parts[].images` says and what the payload's
+        // top-level `images` map actually carries.
+        images={{ 'att-parent': 'https://cdn.test/parent.jpg' }}
+      />,
+    );
+
+    expect(container.querySelector('img')).toBeNull();
+  });
+
   it('still draws an image layer saved before the source discriminator existed', () => {
     const { container } = render(
       <TagSheetRenderer

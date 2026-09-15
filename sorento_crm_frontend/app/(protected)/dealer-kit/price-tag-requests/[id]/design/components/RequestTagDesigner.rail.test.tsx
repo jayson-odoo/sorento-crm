@@ -380,3 +380,50 @@ describe('RequestTagDesigner rail (S12-2)', () => {
     ).toBeTruthy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// F9 - the rail renders no React "unique key" warning
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner rail - no React key warning (F9)', () => {
+  it('renders a split line (two tags) alongside a plain line with no "unique key" console.error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const splitLine = line({
+      id: 'line-1',
+      code: 'SRTBF11834',
+      tags: [
+        tag({ id: 'tag-1a', label: '1a' }),
+        tag({ id: 'tag-1b', label: '1b', sort_order: 1 }),
+      ],
+    });
+    const plainLine = line({
+      id: 'line-2',
+      code: 'SRTKS2435',
+      product_id: 'prod-sink',
+      name: 'ZZT Kitchen Sink',
+      sort_order: 1,
+      tags: [tag({ id: 'tag-2a', label: '1a' })],
+    });
+
+    mockResolve.mockResolvedValue([
+      row({ tag_id: 'tag-1a', line_id: 'line-1' }),
+      row({ tag_id: 'tag-1b', line_id: 'line-1' }),
+      row({ tag_id: 'tag-2a', line_id: 'line-2', code: 'SRTKS2435', name: 'ZZT Kitchen Sink' }),
+    ]);
+
+    await mount(request({ lines: [splitLine, plainLine] }));
+
+    // Both lines actually rendered, so the warning (if any) had a chance to
+    // fire - not a false green from a line silently failing to mount.
+    await screen.findByText('SRTBF11834');
+    await screen.findByText('SRTKS2435');
+
+    const keyWarning = errorSpy.mock.calls.find((call) =>
+      String(call[0]).includes('unique "key" prop'),
+    );
+    expect(keyWarning).toBeUndefined();
+
+    errorSpy.mockRestore();
+  });
+});
