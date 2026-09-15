@@ -374,12 +374,10 @@ class PriceTagRequestService:
             PriceTagRequestService._validate_line_price_basis(
                 promotion_id, manual_sell_price, request.price_mode, detail=f"line:{idx}"
             )
-            # D1/D3/AC-S7-5: a product line's price basis, resolved through
-            # the SAME engine the portal's and the CRM's own line-pricing
-            # routes call (S7) - `show_promo_price` can never disagree with
-            # what those routes just showed the salesperson. A set line has
-            # no line_pricing path (S7 is products only) and keeps the old
-            # simple rule.
+            # D1/D3/AC-S7-5: a line's price basis, resolved through the SAME
+            # engine the portal's and the CRM's own line-pricing routes call
+            # (S7) - `show_promo_price` can never disagree with what those
+            # routes just showed the salesperson.
             basis = "list"
             if product_id:
                 parts_data = line_data.get("parts") or []
@@ -426,6 +424,43 @@ class PriceTagRequestService:
                     # list `line_pricing` just computed, so validation and
                     # pricing can never disagree about what "covers this
                     # line" means.
+                    raise AppException(
+                        status_code=422,
+                        message="This promotion does not apply to this line.",
+                        detail=f"line:{idx}",
+                        code="PROMOTION_NOT_AVAILABLE",
+                    )
+                basis = pricing_row["sell_price_basis"]
+            elif product_set_id:
+                # Security review finding (H1/S1): this whole block used to
+                # be gated on `if product_id:` alone, so a `product_set`
+                # line skipped promotion validation AND pricing entirely - a
+                # promotion outside the audience was never refused, and a
+                # covering one never priced the set as SP. The set's members
+                # ARE its resolved products for this purpose (AC-S6-5), the
+                # same "parent + fixed parts" reading a product line's own
+                # parts get - no single "parent", so they go through as
+                # `part_product_ids` with no `product_id` of their own.
+                member_ids = PriceTagRequestService._set_member_product_ids(
+                    db, product_set_id
+                )
+                pricing_row = line_pricing(
+                    db,
+                    lines=[
+                        {
+                            "key": "_p",
+                            "product_id": None,
+                            "part_product_ids": member_ids,
+                            "candidate_product_ids": [],
+                            "promotion_id": promotion_id,
+                            "manual_sell_price": manual_sell_price,
+                        }
+                    ],
+                    viewer=viewer,
+                )[0]
+                if promotion_id and promotion_id not in {
+                    option["id"] for option in pricing_row["promotion_options"]
+                }:
                     raise AppException(
                         status_code=422,
                         message="This promotion does not apply to this line.",
@@ -724,6 +759,26 @@ class PriceTagRequestService:
             ) from None
 
     @staticmethod
+    def _set_member_product_ids(db: Session, product_set_id: str) -> list[str]:
+        """A set's resolved products, for promotion validation and pricing
+        (security H1/S1) - the same "contributes to price" members
+        ``product_set_tag_data`` sums for the set's own list/offer total, so
+        a line's promotion basis and the tag's own price can never look at a
+        different set of products.
+        """
+        from app.models.product_set import ProductSetMember
+
+        rows = (
+            db.query(ProductSetMember.product_id)
+            .filter(
+                ProductSetMember.product_set_id == product_set_id,
+                ProductSetMember.contributes_to_price.is_(True),
+            )
+            .all()
+        )
+        return [row.product_id for row in rows if row.product_id]
+
+    @staticmethod
     def _resolve_combo_id(db: Session, line_data: dict, company_id: str | None) -> str | None:
         """The package this line is asked for as, or None.
 
@@ -947,6 +1002,36 @@ Marketing's own work is not part of the form's payload, so it is captured
                         "product_id": line.product_id,
                         "part_product_ids": resolved_part_ids,
                         "candidate_product_ids": candidate_ids,
+                        "promotion_id": promotion_id,
+                        "manual_sell_price": manual_sell_price,
+                    }
+                ],
+                viewer=viewer,
+            )[0]
+            if promotion_id and promotion_id not in {
+                option["id"] for option in pricing_row["promotion_options"]
+            }:
+                raise AppException(
+                    status_code=422,
+                    message="This promotion does not apply to this line.",
+                    code="PROMOTION_NOT_AVAILABLE",
+                )
+            basis = pricing_row["sell_price_basis"]
+        elif line.product_set_id:
+            # Security review finding (H1/S1), same gap as `_add_lines`: a
+            # `product_set` line PATCHed through here skipped promotion
+            # validation and pricing entirely.
+            member_ids = PriceTagRequestService._set_member_product_ids(
+                db, line.product_set_id
+            )
+            pricing_row = line_pricing(
+                db,
+                lines=[
+                    {
+                        "key": "_p",
+                        "product_id": None,
+                        "part_product_ids": member_ids,
+                        "candidate_product_ids": [],
                         "promotion_id": promotion_id,
                         "manual_sell_price": manual_sell_price,
                     }

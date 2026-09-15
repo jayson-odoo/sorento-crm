@@ -399,7 +399,14 @@ def line_pricing(
             parts_at_list: list[str] = []
         elif chosen_total is not None:
             sell_price, parts_at_list = chosen_total
-            sell_price_basis = "promotion"
+            # R11a (security H1): `chosen_total` legitimately equals
+            # `list_price` when the only covering promotion prices a
+            # CANDIDATE nobody has picked yet (AC-S7-2 counts that as
+            # "covering" so it shows up as an option) - a line is not "on
+            # sale" for a discount that lives on a product not actually on
+            # it. `promotion` basis is reserved for an offer that beat list
+            # on something RESOLVED (the parent or a fixed part).
+            sell_price_basis = "promotion" if sell_price < list_price else "list"
         else:
             sell_price = list_price
             sell_price_basis = "list"
