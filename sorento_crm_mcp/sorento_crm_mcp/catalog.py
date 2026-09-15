@@ -512,6 +512,51 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="inventory",
         escalation_team="warehouse",
     ),
+    ToolSpec(
+        "crm_low_stock_report",
+        (
+            "The LOW STOCK REPORT as an Excel workbook - use it for 'low stock', 'low stock report', "
+            "'reorder report', 'stock below level', 'what needs reordering'. Every call RUNS A FRESH "
+            "PLAN and answers with the file, so it is not a cheap lookup to retry: one call per ask.\n\n"
+            "Answers one of three shapes: the workbook as an attachment, 'being prepared' when the plan "
+            "outran the turn (the file is then sent here the moment it is ready - do NOT call again), or "
+            "'a plan is already running' when one is in flight for the company.\n\n"
+            "The workbook holds two sheets - 'Low stock' (every planned product whose BRW on hand is "
+            "below its reorder level) and 'All' (every product the plan covered), each with item code, "
+            "description, category, on hand, reorder level and quantity, the engine's suggested "
+            "quantity, dealer o/s, PO and incoming quantities with their container numbers, and the "
+            "last receipt.\n\n"
+            "SCOPE: `warehouse_codes` - EXACT warehouse codes (csv/JSON/repeated); resolve a location "
+            "TOKEN (e.g. an 'IB' suffix matching several codes) to exact codes yourself before calling, "
+            "this tool does no suffix matching. `product_codes` - exact product codes. `date_from` / "
+            "`date_to` (YYYY-MM-DD) narrow which sales orders the plan counts as demand. Omit any of "
+            "them to plan everything.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the report is "
+            "per-contact, and the call is refused without them.\n\n"
+            "COMPANY SCOPE: the plan is built for the contact's own company, resolved from the "
+            "required `contact_id` + `space_id` above - there is no all-company variant of this tool."
+        ),
+        "/api/v1/scm/low-stock-report",
+        (),
+        (
+            "warehouse_codes", "product_codes", "date_from", "date_to",
+            "contact_id", "space_id",
+        ),
+        # GET, and therefore `read_only` stays at its default False - "every GET tool is
+        # read-only by definition and does NOT set this" (see `ToolSpec.read_only`). The
+        # method is TRANSPORT here, not semantics: this call has a real side effect (it
+        # creates a reorder run and a download row), and it is a GET because the compiler
+        # injects `view=render` only on tools with no `body_params` while the chatbot lane
+        # sends `view=render` on every call - a POST tool would never reach the presenter.
+        # `crm_portal_link_get` is the standing precedent for a tool that mints an artefact
+        # and still sits on the chatbot's read list; the gate that makes that safe is the
+        # per-contact reveal key below, checked in-route before anything is created.
+        module="scm",
+        domain="inventory",
+        related_tools=("crm_inventory_stock_balance_list",),
+        escalation_team="warehouse",
+        restricted_fields=(("scm.low_stock_report", "Low stock report over chat (staff: full workbook incl. Dealer o/s, PO and SPO numbers)"),),
+    ),
     # --- order-management ---
     ToolSpec(
         "crm_order_management_orders_list",

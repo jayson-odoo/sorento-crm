@@ -57,6 +57,26 @@ DELEGATE = "business_query"
 # function, is the one place that checks it, before any tool call.
 _OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
 
+#: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
+#: default tool pick, the tool it picks, and the per-contact key that gates it - all three
+#: read in ONE place (`run_fetch`), before any tool call, because this tool's fetch creates
+#: a reorder run.
+_LOW_STOCK_INTENT = "low_stock_report"
+_LOW_STOCK_TOOL = "crm_low_stock_report"
+_LOW_STOCK_GRANT = "scm.low_stock_report"
+#: The one sentence a contact without that key sees, verbatim (AC-64) -
+#: `fetch.SO_NOT_ENABLED_MESSAGE`'s sibling, and a literal for the same reason: one
+#: wording, in one place, so the lane and the route's own 403 cannot drift.
+LOW_STOCK_NOT_ENABLED_MESSAGE = "Low stock report is not enabled for your account."
+#: Console round 3, defect A: what the customer hears when the CALL ITSELF failed - the
+#: lane's MCP client gives up at `chatbot_mcp_timeout_seconds` (10 s), and a run that
+#: outlasts it raises `httpx.ReadTimeout` in `call_tool`. The generic lane failure line
+#: ("Sorry, I ran into a problem understanding that") is wrong twice over: the bot
+#: understood perfectly, and the report is very likely still being built and about to be
+#: pushed. Same wording as the presenter's own error line, so the customer hears ONE
+#: sentence for this tool's failures however they arise.
+LOW_STOCK_UNAVAILABLE_MESSAGE = "Could not run the low stock report right now."
+
 _OUTSTANDING_SCOPE_OPTIONS: tuple[dict[str, Any], ...] = (
     {"idx": 1, "label": "Sales orders", "value": "so"},
     {"idx": 2, "label": "Delivery orders", "value": "do"},
@@ -142,6 +162,87 @@ def _with_carried_product(entities: Any, focus: Any, carried_code: Any = None) -
             }
         )
     return rows
+
+
+def _low_stock_not_enabled() -> dict[str, Any]:
+    """AC-64: refuse the low stock ask BEFORE any fetch, and end in the team picker.
+
+    Two things ride on this fragment. The refusal LINE is the reply's first line, verbatim
+    (`LOW_STOCK_NOT_ENABLED_MESSAGE`) - the customer is told plainly that the report is not
+    enabled for them, not given a vague miss. And the outcome is `not_found`, which is the
+    lane's existing route into `_run_miss_half` - the same path a total miss takes
+    (`TestTotalMissEscalates`), so the escalate offer and the team picker that follow are
+    the ones already in place rather than a second copy of them here.
+
+    `escalate` states on the fragment itself that this turn must end that way, so a reader
+    of the fragment (or of a trace) can see the intent without replaying the miss half.
+
+    No tool is called, so no reorder run is created - which is the whole point of gating
+    here rather than letting the route answer 403 after the fetch.
+    """
+    structured: dict[str, Any] = {
+        "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": False,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+        "outcome": "not_found",
+        "escalate": True,
+        "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
+    }
+
+
+def _low_stock_unavailable() -> dict[str, Any]:
+    """Console round 3, defect A: the low stock CALL failed - say so in this tool's own
+    words, never the lane's generic "I ran into a problem understanding that".
+
+    The lane's MCP client gives up after `chatbot_mcp_timeout_seconds` (10 s). The route
+    now answers `pending` inside that budget (`_sync_wait_seconds`'s cap), so this path is
+    the remainder: a genuine transport or tool failure. It is a TERMINAL answer rather than
+    the miss half's not-found arm (`has_result: True`, like the presenter's own error
+    envelope) - the miss half would compose the inventory domain's generic "Could not find
+    inventory" line, which says the wrong thing about a report that failed to build.
+    `escalate` still rides on the fragment for any consumer that offers the team picker.
+    """
+    structured: dict[str, Any] = {
+        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+        "escalate": True,
+        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+    }
 
 
 def _outstanding_scope_ask(
@@ -803,6 +904,92 @@ def run_fetch(
     # the legacy `so_outstanding` bucket is no longer reachable for an outstanding ask at
     # all. What is still required is a SUBJECT: with neither a product nor a customer
     # resolved there is nothing to report on, and the plain order lane keeps that ask.
+    # PLAN-low-stock-report S6 (AC-62/AC-64): the low stock INTENT picks the tool, not the
+    # inventory domain - `crm_low_stock_report` is appended to that domain's pool, never
+    # `tools[0]`, so `tool_filter` would otherwise hand every low stock ask to
+    # `crm_inventory_stock_balance_list`. The outstanding override's own shape.
+    if jsc.js_string(parse_output.get("intent_hint") or "") == _LOW_STOCK_INTENT:
+        tool_name = _LOW_STOCK_TOOL
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "low_stock_override"}}
+
+        # THE GATE, before any fetch (AC-64). Every other tool on the chatbot's read list
+        # is a read; this one's fetch CREATES A REORDER RUN and sends a workbook, so a
+        # refused contact must be turned away HERE rather than by the route answering 403
+        # after the lane has already called it. The route checks the same key again
+        # (AC-41) - two gates, because this one protects the side effect and that one
+        # protects the data.
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = (
+            set(granted_raw)
+            if isinstance(granted_raw, (list, tuple, set, frozenset))
+            else set()
+        )
+        if _LOW_STOCK_GRANT not in granted:
+            return _low_stock_not_enabled()
+
+        # ── B (console round 3): a report ask is a FRESH SCOPE ────────────────
+        # `entity_op = replace_combine` merges the PREVIOUS turn's session entities into
+        # the gate's list, so a bare "low stock report" asked after an unrelated product
+        # question arrived carrying two products (`current_message: false`) and planned
+        # "0 of 0". Unlike the outstanding report - whose carried filters are deliberate,
+        # because an answering turn ("1", "both") has no subject of its own - a low stock
+        # ask always states its own scope, so ONLY entities the CURRENT message named may
+        # narrow the run. Everything carried is dropped.
+        current_tokens = {
+            jsc.js_string(tok).strip().casefold()
+            for e in jsc.array(parse_output.get("entities"))
+            if isinstance(e, dict) and e.get("current_message") is True
+            for tok in (e.get("raw"), e.get("canonical_code"))
+            if jsc.truthy(tok)
+        }
+        current_tokens.discard("")
+
+        # The location word, resolved to EXACT codes before the call: the route takes
+        # codes and does no suffix matching, so a token like "IB" has to be expanded here
+        # - the same `resolve_warehouse_token` pass, and the same one-word-per-turn rule,
+        # the outstanding report uses below.
+        for e in jsc.array(parse_output.get("entities")):
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
+                continue
+            if e.get("current_message") is not True:
+                continue  # carried from an earlier turn - not this ask's scope
+            token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+            if not token or db is None:
+                break
+            codes = resolve_warehouse_token(db, token)
+            if codes:
+                semantic_input["low_stock_warehouse_codes"] = codes
+            break
+
+        # The resolved entity list is PRUNED here, not in the transformer: only this side
+        # has `parse_output`, and the gate's entities carry no `current_message` flag, so
+        # the typed tokens are the only way to tell this turn's subjects from the ones the
+        # session carried in. Pruning the list (rather than publishing a second one) keeps
+        # the transformer's own contract - it still reads product codes off the entities it
+        # is handed - so every other tool's arg building is untouched.
+        #
+        # The match is SUBSTRING, not equality (reviewer round 3, item 2). The resolver
+        # answers a typed prefix with the full variant code, so "low stock for the CB100
+        # sink" arrives as raw "CB100" against a resolved "CB100-BL-DIY": equality pruned
+        # the very product the customer named and widened the run to the whole book - the
+        # opposite of what defect B's prune is for. Any token the CURRENT message carried
+        # is still the test, so a carried entity nothing was typed about still drops.
+        def _named_this_turn(entity: dict) -> bool:
+            codes = [
+                jsc.js_string(entity.get(field) or "").strip().casefold()
+                for field in ("code", "canonical_code")
+            ]
+            return any(
+                tok in code for code in codes if code for tok in current_tokens
+            )
+
+        entities = [
+            e
+            for e in jsc.array(entities)
+            if isinstance(e, dict) and _named_this_turn(e)
+        ]
+
     order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
     has_customer = (
         any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
@@ -1006,6 +1193,12 @@ def run_fetch(
         return _error_fragment(str(refused), outcome="tool_not_allowed")
     except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
         logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
+        if tool_name == _LOW_STOCK_TOOL:
+            # Console round 3, defect A: a run that outlasts the client's 10 s raised
+            # `httpx.ReadTimeout` here and the customer read "I ran into a problem
+            # understanding that" - about a report the worker was still building and would
+            # push. This tool says its own line instead.
+            return _low_stock_unavailable()
         return _error_fragment(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )

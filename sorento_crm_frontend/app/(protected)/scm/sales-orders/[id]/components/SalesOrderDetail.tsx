@@ -75,6 +75,7 @@ import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { SoLineLinksBody } from './SoLineLinksBody';
 import { fmtDate, fmtInt } from '../../../lib/format';
 import { demandClassBadge } from '../../../lib/demandClass';
+import { salesOrderPlannedBadge } from '../../../lib/salesOrderPlanned';
 import {
   salesOrderPriorityVariant,
   salesOrderStatusLabel,
@@ -1283,6 +1284,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
 
   const so = data;
   const lineCount = so.line_count ?? lines.length;
+  // How far the order has been planned, in the same chip the list carries.
+  const plannedBadge = salesOrderPlannedBadge(so.planned_lines, so.plannable_lines);
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
 
   const handleSave = async () => {
@@ -1378,6 +1381,17 @@ export function SalesOrderDetail({ id }: { id: string }) {
                 <CardTitle className="text-lg">{so.so_number}</CardTitle>
                 <Badge variant={salesOrderStatusVariant(so.status)} appearance="light" size="md">
                   {salesOrderStatusLabel(so.status)}
+                </Badge>
+                {/* How far the order has been PLANNED, beside the status it keeps being
+                    confused with. The SAME chip the list carries, in the header rather than a
+                    tab body because it is read-only metadata about the whole record - so view
+                    and edit show it identically, with nothing to change about it here. */}
+                <Badge
+                  variant={plannedBadge.variant}
+                  appearance="light"
+                  size="md"
+                >
+                  {plannedBadge.label}
                 </Badge>
               </div>
               {/* Read-only metadata belongs in the header, not a tab body - the project the

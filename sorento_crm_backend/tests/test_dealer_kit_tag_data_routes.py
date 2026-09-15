@@ -518,17 +518,23 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     )
     db.commit()
     line_id = request.lines[0].id
+    # The body is TAG ids since S3 (D3) - a line may print several tags, so a
+    # line id could no longer name one row. One tag per line exists from
+    # creation (`_add_lines`), so this line's first tag is the one to ask for.
+    tag_id = request.lines[0].tags[0].id
 
     with TestClient(app) as client:
         res = client.post(
             f"/api/v1/dealer-kit/price-tag-requests/{request.id}/resolve-prices",
-            json=[line_id],
+            json=[tag_id],
         )
 
     assert res.status_code == 200, res.text
     rows = res.json()
     assert len(rows) == 1
     row = rows[0]
+    assert row["tag_id"] == tag_id
+    # `line_id` still says which line asked for the tag.
     assert row["line_id"] == line_id
     assert row["code"] == product.product_code
     assert row["name"] == product.product_name
@@ -742,7 +748,9 @@ def test_print_payload_lines_carry_their_photos(api):
         },
     )
     db.flush()
-    line_id = request.lines[0].id
+    # `resolvedData` is keyed by TAG id since S3 (AC-S3-8), and one tag per line
+    # exists from creation - so the line's first tag is this row's key.
+    tag_id = request.lines[0].tags[0].id
 
     stem = unique_code("zzttag").lower()
     page = Page(
@@ -786,7 +794,7 @@ def test_print_payload_lines_carry_their_photos(api):
 
     payload = resolve_tag_sheet_print_payload(db, download.id)
 
-    row = payload["resolvedData"][line_id]
+    row = payload["resolvedData"][tag_id]
     assert [img["attachment_id"] for img in row["images"]] == [photo.id]
     assert row["images"][0]["is_primary"] is True
     assert row["images"][0]["url"].startswith("https://")
@@ -924,7 +932,8 @@ def test_print_payload_lines_carry_their_specs(api):
         },
     )
     db.flush()
-    line_id = request.lines[0].id
+    # Keyed by TAG id since S3 (AC-S3-8), same as the photos case above.
+    tag_id = request.lines[0].tags[0].id
 
     slug = unique_code("zztspec").lower()
     page = Page(
@@ -973,4 +982,4 @@ def test_print_payload_lines_carry_their_specs(api):
         "label": "Material",
         "value": "ceramic",
         "unit": None,
-    } in payload["resolvedData"][line_id]["specs"]
+    } in payload["resolvedData"][tag_id]["specs"]

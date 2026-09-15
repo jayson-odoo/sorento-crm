@@ -2,6 +2,54 @@
  * CRM-side price tag request service.
  *
  * Calls `/api/v1/dealer-kit/price-tag-requests` via `apiFetch`.
+ *
+ * ===========================================================================
+ * ONE LINE, MANY TAGS (PLAN-price-tag-combos.md D3, slice S3)
+ * ===========================================================================
+ * A request LINE is what the salesperson asked for. A TAG is what gets
+ * printed. They were the same thing until S3; now a line whose package leaves
+ * a choice group open is split by marketing into one tag per candidate, each
+ * with its own design, quantity, choices and marketing override. A tag is
+ * shown as "1a", "1b" (line index plus a letter) and never as an id (AC-X-2).
+ *
+ * ---- BACKEND CONTRACT (built, S3 Phase 2) --------------------------------
+ *
+ *  GET /dealer-kit/price-tag-requests/{id}
+ *    `lines[]` gains:
+ *      `parts: PriceTagRequestLinePart[]`   what the salesperson asked for (S2)
+ *      `package_warning: string | null`     the S2 guard's verdict
+ *      `tags: PriceTagRequestTag[]`         one per printed tag, sort order
+ *    and LOSES `marketing_price_override` / `marketing_override_reason`, which
+ *    move onto the tag, and `alternatives`, which is dropped in S2.
+ *
+ *  POST /dealer-kit/price-tag-requests/{id}/resolve-prices
+ *    body: string[] | null  (TAG ids now, or null for every tag)
+ *    -> one row per TAG: today's keys plus `tag_id`, `line_id`, `tag_label`,
+ *       `open_groups` and `parts`; `quantity` is the TAG's.
+ *
+ *  PATCH /dealer-kit/price-tag-requests/{id}/tags/{tag_id}
+ *    body `{quantity?, marketing_price_override?, marketing_override_reason?,
+ *    choices?}` -> the updated tag. "Pick one" sends `choices`; the marketing
+ *    override moves here from the retired line route.
+ *
+ *  POST /dealer-kit/price-tag-requests/{id}/tags/{tag_id}/split
+ *    body `{role}` -> the LINE's tags after the split. The tag keeps its id,
+ *    its geometry and its pins and resolves to candidate 1; N-1 siblings are
+ *    inserted after it, one per remaining candidate, with the geometry copied
+ *    in the draft doc.
+ *
+ *  DELETE /dealer-kit/price-tag-requests/{id}/tags/{tag_id}
+ *    204, or 422 `LAST_TAG` when it is the line's only tag. No UI in S3 (the
+ *    UAC puts tag removal on the designer in a later round); documented because
+ *    it is part of D3's route table.
+ *
+ *  PUT /dealer-kit/price-tag-requests/{id}/lines/{line_id}   REMOVED
+ *    `updateRequestLine` is gone with it: the override it carried is a tag fact.
+ *
+ *  The tag sheet document keys its placements by `request_tag_id` (see
+ *  `PlacedTag`), and the print payload's `resolvedData` is keyed the same way.
+ *  The S3 migration rewrote every saved doc in place.
+ * ===========================================================================
  */
 
 import { apiFetch } from '@/lib/api';
@@ -14,6 +62,45 @@ import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-typ
 
 export type PriceTagLineType = 'product' | 'product_set';
 
+/** One part under a line: what the salesperson asked to come with it (S2, D2). */
+export interface PriceTagRequestLinePart {
+  id: string;
+  product_id: string | null;
+  code: string | null;
+  name: string | null;
+  /** The choice group this row answers. Null on a fixed or hand-added part. */
+  role: string | null;
+  /** The group's options, on a row still open. Codes, never ids (AC-X-2). */
+  candidates: { product_id: string; code: string; name: string }[];
+  sort_order: number;
+}
+
+/**
+ * One printed tag under a line (D3).
+ *
+ * `choices` is the stored `{role: product_id}` map and is never rendered;
+ * `choices_display` is the same answer resolved to codes, which is what the
+ * rail and the Lines tab show (AC-X-2). `list_price` / `sell_price` ride along
+ * because price is a TAG fact since D4 - the host plus this tag's own resolved
+ * parts - and both surfaces the brief asks for render them per tag.
+ */
+export interface PriceTagRequestTag {
+  id: string;
+  sort_order: number;
+  /** "1a", "1b" - line index plus a letter. Never an id. */
+  label: string;
+  quantity: number;
+  choices: Record<string, string>;
+  choices_display: { role: string; code: string }[];
+  /** Groups still undecided on this tag: what Split / Pick one act on.
+   *  Candidates carry the id beside the code - see `TagOpenGroup`. */
+  open_groups: { role: string; candidates: { product_id: string; code: string }[] }[];
+  marketing_price_override: number | null;
+  marketing_override_reason: string | null;
+  list_price: number | null;
+  sell_price: number | null;
+}
+
 export interface PriceTagRequestLine {
   id: string;
   line_type: PriceTagLineType;
@@ -23,18 +110,21 @@ export interface PriceTagRequestLine {
   code: string;
   show_promo_price: boolean;
   quantity: number;
-  alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string | null;
   /** Free-text note on the line (D6). Optional: absent on a request created
    *  before r7. */
   remarks?: string | null;
   sort_order: number;
-  marketing_price_override: number | null;
-  marketing_override_reason: string | null;
   /** Resolved list price. */
   list_price: number | null;
   /** Resolved selling price. */
   sell_price: number | null;
+  /** The package under this line, in display order (S2). */
+  parts: PriceTagRequestLinePart[];
+  /** What the S2 package guard found at submit. Null = clean. */
+  package_warning: string | null;
+  /** What gets printed for this line: one tag by default, N after a split. */
+  tags: PriceTagRequestTag[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch. */
@@ -195,26 +285,69 @@ export async function transitionPriceTagRequest(
 }
 
 // ---------------------------------------------------------------------------
-// Line update
+// Tag update, split and pick one (D3)
 // ---------------------------------------------------------------------------
 
-export async function updateRequestLine(
+export interface PriceTagRequestTagUpdate {
+  quantity?: number;
+  marketing_price_override?: number | null;
+  marketing_override_reason?: string | null;
+  /** `{role: product_id}` - what "Pick one" writes. */
+  choices?: Record<string, string>;
+}
+
+/** PATCH one tag. Replaces the retired line-level PUT. */
+export async function updateRequestTag(
   requestId: string,
-  lineId: string,
-  data: { marketing_price_override?: number | null; marketing_override_reason?: string | null },
-): Promise<PriceTagRequestLine> {
+  tagId: string,
+  data: PriceTagRequestTagUpdate,
+): Promise<PriceTagRequestTag> {
   const response = await apiFetch(
-    `${BASE}/${encodeURIComponent(requestId)}/lines/${encodeURIComponent(lineId)}`,
+    `${BASE}/${encodeURIComponent(requestId)}/tags/${encodeURIComponent(tagId)}`,
     {
-      method: 'PUT',
+      method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
     },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to update line'));
+    throw new Error(await extractApiError(response, 'Failed to update the tag'));
   }
-  return response.json();
+  return (await response.json()) as PriceTagRequestTag;
+}
+
+/**
+ * "Split into N tags": the tag resolves to the group's first candidate and
+ * N-1 siblings follow it, one per remaining candidate. Answers the LINE's tags.
+ */
+export async function splitRequestTag(
+  requestId: string,
+  tagId: string,
+  role: string,
+): Promise<PriceTagRequestTag[]> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/tags/${encodeURIComponent(tagId)}/split`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to split the tag'));
+  }
+  return (await response.json()) as PriceTagRequestTag[];
+}
+
+/** Remove one tag. 422 `LAST_TAG` when it is the line's only one (AC-S3-6). */
+export async function deleteRequestTag(requestId: string, tagId: string): Promise<void> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/tags/${encodeURIComponent(tagId)}`,
+    { method: 'DELETE' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to remove the tag'));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -304,24 +437,28 @@ export async function saveTagSheetDoc(
  * ```
  *
  * Prices resolve at render time through the pricing engine and are never stored
- * in the tag sheet document (ADR 0008). A marketing override on the line wins
- * over the resolved offer, which is why this is resolved per LINE rather than
+ * in the tag sheet document (ADR 0008). A marketing override on the TAG wins
+ * over the resolved offer, which is why this is resolved per tag rather than
  * per product.
+ *
+ * One row per TAG since S3 (D3) - see the contract at the top of this file.
  */
-export async function resolveRequestLines(
+export async function resolveRequestTags(
   requestId: string,
-  lineIds?: string[],
+  tagIds?: string[],
 ): Promise<LineTagData[]> {
   const response = await apiFetch(
     `${BASE}/${encodeURIComponent(requestId)}/resolve-prices`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(lineIds ?? null),
+      // TAG ids since S3. Null resolves every tag, which is what the designer
+      // asks for when it opens.
+      body: JSON.stringify(tagIds ?? null),
     },
   );
   if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to resolve line prices'));
+    throw new Error(await extractApiError(response, 'Failed to resolve tag prices'));
   }
   return response.json();
 }

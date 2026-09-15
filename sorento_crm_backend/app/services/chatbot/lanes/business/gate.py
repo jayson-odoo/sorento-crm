@@ -72,6 +72,15 @@ ALLOWED: dict[str, list[str]] = {
     "purchase_cost": ["product", "warehouse", "category", "brand"],
 }
 
+#: PLAN-low-stock-report S6 (owner ruling, console round 2, 14 Sep 2026): INTENTS that
+#: permit a scope-less ask even though their DOMAIN does not. `inventory` is
+#: `ALLOWS_EMPTY: False` on purpose - a bare "stock?" must ask which product - but a bare
+#: "low stock report" is a WHOLE-BOOK question by definition: it runs every site-pool
+#: warehouse and every admitted product, which is the journey's own first phrasing.
+#: Keyed on the intent rather than by flipping the domain, so the plain stock ask keeps
+#: its narrowing prompt.
+INTENTS_ALLOWING_EMPTY: frozenset[str] = frozenset({"low_stock_report"})
+
 # S1 (promotion-picker): a promotion cannot be answered by a general search. Flipping
 # `promotion` to true routes a scope-less promotion ask past the `needsScope` renderer.
 ALLOWS_EMPTY: dict[str, bool] = {
@@ -339,12 +348,19 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 if jsc.truthy(token):
                     incompatible_only[jsc.js_string(token)] = list(dict.fromkeys(types))
         if len(entities) == 0:
-            gate_passed = ALLOWS_EMPTY.get(domain) is True
-            gate_reason = (
-                f"no entities; '{domain}' permits broad query"
-                if gate_passed
-                else f"no entities and '{domain}' requires a scoping entity"
-            )
+            intent = jsc.js_string(parser.get("intent_hint") or "")
+            intent_allows_empty = intent in INTENTS_ALLOWING_EMPTY
+            gate_passed = ALLOWS_EMPTY.get(domain) is True or intent_allows_empty
+            if intent_allows_empty and ALLOWS_EMPTY.get(domain) is not True:
+                # Its own reason string, so a trace says WHY a domain that normally
+                # demands a filter let this one through.
+                gate_reason = f"no entities; intent '{intent}' permits broad query"
+            else:
+                gate_reason = (
+                    f"no entities; '{domain}' permits broad query"
+                    if gate_passed
+                    else f"no entities and '{domain}' requires a scoping entity"
+                )
         elif len(compatible_entities) == 0:
             got = ", ".join(dict.fromkeys(jsc.js_string(e["entity_type"]) for e in entities))
             gate_passed = False

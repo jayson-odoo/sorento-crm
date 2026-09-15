@@ -479,6 +479,21 @@ export interface SalesOrder {
    *  done about it. */
   order_inquiries?: SalesOrderInquiry[];
   /**
+   * How much of this order anybody has DECIDED, in two counts, on the LIST and on the single
+   * read (a field missing from either dict builder never reaches the screen).
+   *
+   * `plannable_lines` is how many of its lines the fulfilment board would admit - not
+   * cancelled, not marked no purchase needed, and asking for something. `planned_lines` is
+   * how many of those are already settled, by an active supply decision or by a live order
+   * inquiry row. The two are counted by the SAME predicates the board itself uses, so the
+   * list and the board cannot disagree about one order.
+   *
+   * Not the delivery question. A completed order whose stock shipped without anybody sourcing
+   * it reads 0 of 3, which is the whole point: it is the order nobody planned.
+   */
+  planned_lines?: number;
+  plannable_lines?: number;
+  /**
    * The PENDING planning-change batch this order is in, when a re-uploaded book moved one of
    * its planned lines and nobody has applied the change yet (AC-P3-1). Present on the LIST,
    * which is where the Changed badge is; `null` on every order with nothing outstanding, which

@@ -1280,6 +1280,23 @@ def _ddmmyyyy(iso: Optional[str]) -> str:
         return str(iso)
 
 
+def compact_ddmmyyyy(iso: Optional[str]) -> str:
+    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
+    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
+    still needs a name, and today is the only date anyone has to stamp on it.
+
+    The ONE home for this (reviewer N3): the export route and `low_stock_report_service`
+    each carried a copy, and both import this module already."""
+    from datetime import date as _date
+
+    if not iso:
+        return _date.today().strftime("%d%m%Y")
+    try:
+        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
+    except ValueError:
+        return _date.today().strftime("%d%m%Y")
+
+
 def _month_text(groups: list[dict]) -> str:
     """"Jul - 1\\nAug - 1\\nUndated - 5" - one "Mon - qty" per line, oldest first, the
     undated bucket always last (S14, AC-S14.5). The printed sheet's cells wrap and grow,
@@ -1305,11 +1322,24 @@ def _docs_text(total: Any, docs: list[dict]) -> str:
     open document (issue #796, AC-13), shaped like `_month_text`/`_customers_text`. The
     bare total, with nothing to trace, when `docs` is empty (AC-14) - the H1 "quantities
     are numbers" rule yields on these two cells only once a document exists; a product
-    with nothing open keeps the plain figure exactly as before this slice."""
+    with nothing open keeps the plain figure exactly as before this slice.
+
+    A doc that names a CONTAINER prints "<number> - <container> - <qty>"
+    (PLAN-low-stock-report S2, AC-21), the client's own `TLLU8306312 - 180 nos` cell with
+    the document number kept in front of it: the sheet has always named the document, and
+    the container is extra traceability rather than a replacement for it. The key is read
+    with `.get`, so a run FROZEN BEFORE that slice - whose `incoming_spo_docs` carry only
+    `{number, qty}` - still prints the two-part line (AC-23, and why no migration is
+    needed). PO docs never carry one, by construction."""
     if not docs:
         return _qty_text(total)
     lines = [_qty_text(total)]
-    lines.extend(f"{d['number']} - {_qty_text(d['qty'])}" for d in docs)
+    for d in docs:
+        container = d.get("container")
+        lines.append(
+            f"{d['number']} - {container} - {_qty_text(d['qty'])}" if container
+            else f"{d['number']} - {_qty_text(d['qty'])}"
+        )
     return "\n".join(lines)
 
 
@@ -1516,24 +1546,21 @@ _XLSX_COLUMN_WIDTHS = {
 }
 
 
-def _render_export_xlsx(rows: list[tuple]) -> bytes:
-    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
-    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
-    a different journey (a multi-sheet monthly register) this export does not have. Every
-    cell in `rows` has already been through `_export_xlsx_rows` (numbers for quantities,
-    `_xlsx_safe_text` for strings) - this function only writes what it is given, styled
-    like the paper sheet (S14, AC-S14.6): a dark bold white header, a thin border and
-    wrapped text on every cell, frozen at A2, explicit column widths.
-    """
-    from io import BytesIO
+def write_sheet(ws, columns, rows: list[tuple], widths: dict) -> None:
+    """Write ONE styled sheet - header, rows, borders, freeze, widths - into an openpyxl
+    worksheet the caller owns.
 
-    from openpyxl import Workbook
+    Lifted out of `_render_export_xlsx` (PLAN-low-stock-report S3) so the low stock
+    workbook can call it TWICE, for its "Low stock" and "All" sheets, instead of growing a
+    second copy of the same styling. Every cell in `rows` has already been shaped by the
+    caller's own row builder (numbers for quantities, `_xlsx_safe_text` for strings) - this
+    function only writes what it is given, styled like the paper sheet (S14, AC-S14.6): a
+    dark bold white header, a thin border and wrapped text on every cell, frozen at A2, the
+    caller's explicit column widths.
+    """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Order summary"
-    ws.append(list(_EXPORT_COLUMNS))
+    ws.append(list(columns))
     for r in rows:
         ws.append(list(r))
 
@@ -1552,8 +1579,23 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
         cell.fill = header_fill
 
     ws.freeze_panes = "A2"
-    for col, width in _XLSX_COLUMN_WIDTHS.items():
+    for col, width in widths.items():
         ws.column_dimensions[col].width = width
+
+
+def _render_export_xlsx(rows: list[tuple]) -> bytes:
+    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
+    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
+    a different journey (a multi-sheet monthly register) this export does not have.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Order summary"
+    write_sheet(ws, _EXPORT_COLUMNS, rows, _XLSX_COLUMN_WIDTHS)
 
     buf = BytesIO()
     wb.save(buf)
@@ -1641,6 +1683,31 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     return {
         "run_id": str(run.id),
         "row_count": int(row["n"] or 0) - int(hidden_count),
+        "as_of": row["as_of"].isoformat() if row["as_of"] else None,
+    }
+
+
+def low_stock_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
+    """`export_guard_stats`'s twin for the low stock workbook (PLAN-low-stock-report S3,
+    AC-35) - the same lightweight `COUNT(*)`/`MAX(as_of)`, and the same resolved run id and
+    `as_of` stamp that names the file.
+
+    The ONE difference, and the reason this is a separate function rather than a flag: the
+    count is NOT reduced by the hidden-by-default rows. That workbook prints them (a
+    comfortably-covered row can still sit below its raw level - AC-32), so subtracting them
+    here would let a request through that the render then refuses, or refuse one it would
+    have answered.
+    """
+    run = _run_for(db, run_id)
+    co, co_params = company_sql_predicate(db, "company_id", param_prefix="lgs")
+    co_clause = f"AND {co}" if co else ""
+    row = db.execute(text(f"""
+        SELECT COUNT(*) AS n, MAX(as_of) AS as_of
+        FROM scm.order_summary_row WHERE run_id = :rid {co_clause}
+    """), {"rid": str(run.id), **co_params}).mappings().first()
+    return {
+        "run_id": str(run.id),
+        "row_count": int(row["n"] or 0),
         "as_of": row["as_of"].isoformat() if row["as_of"] else None,
     }
 

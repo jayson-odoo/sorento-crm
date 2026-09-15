@@ -9,7 +9,11 @@ from __future__ import annotations
 import pytest
 
 from sorento_crm_mcp.catalog import CATALOG
-from sorento_crm_mcp.server import TOOL_REQUIRED_NARROWING_FILTERS, _compile_tool
+from sorento_crm_mcp.server import (
+    TOOL_REQUIRED_NARROWING_FILTERS,
+    TOOL_REQUIRED_QUERY_HINTS,
+    _compile_tool,
+)
 
 
 class _FakeSettings:
@@ -58,6 +62,14 @@ async def test_tool_runs_with_fake_context(spec):
     needed = TOOL_REQUIRED_NARROWING_FILTERS.get(spec.name)
     if needed:
         kwargs.setdefault(needed[0], _PP_UUID)
+    # A query param in TOOL_REQUIRED_QUERY_HINTS is promoted to a NO-DEFAULT argument by
+    # `_compile_tool` (that is the whole point - the generated JSON schema then marks it
+    # `required: true` so the LLM stops skipping it), so calling the tool without it is a
+    # TypeError, not a tool that returns an empty page. The table was an empty dict until
+    # `crm_low_stock_report` used it, which is why this loop had no reason to exist
+    # before.
+    for q in TOOL_REQUIRED_QUERY_HINTS.get(spec.name, ()):
+        kwargs.setdefault(q, "x")
     out = await fn(_FakeCtx(_FakeClient()), **kwargs)  # type: ignore[arg-type]
     assert spec.path in out
     assert "ok" in out

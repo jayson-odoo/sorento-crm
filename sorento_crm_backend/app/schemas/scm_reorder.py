@@ -128,6 +128,9 @@ class ReorderRunStatusResponse(BaseModel):
     # given run: a run that supersedes an older one is never itself superseded on arrival.
     supersedes_run_id: Optional[str] = None
     superseded_by_run_id: Optional[str] = None
+    # `chat` when the low stock report tool created this run over WhatsApp, None on every
+    # other path (PLAN-low-stock-report S5, AC-48).
+    requested_via: Optional[str] = None
 
 
 # --- run history (list) -----------------------------------------------------
@@ -175,6 +178,9 @@ class ReorderRunListItem(BaseModel):
     # AC-5.4: the superseded run stays readable and labelled in the plans list. Set only
     # once its replacement actually completed (never on a still-running or failed re-plan).
     superseded_by_run_id: Optional[str] = None
+    # The "via chat" marker on the plans list (AC-4): `chat`, or None for a run a person
+    # or the scheduler started. Never inferred from anything else.
+    requested_via: Optional[str] = None
 
 
 class ReorderRunListResponse(BaseModel):

@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 
 TOOL_QUERY_ALIASES: dict[str, dict[str, tuple[str, ...]]] = {}
 
-TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {}
+TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
+    # The low stock report is per-CONTACT: the route reads that contact's reveal key
+    # before it creates anything and answers 422 without the pair, so both ids have to
+    # be no-default arguments or the LLM reads them as optional and skips them.
+    "crm_low_stock_report": ("contact_id", "space_id"),
+}
 
 # Parent-relation tools: meaningless without a parent entity UUID.
 # These are "list X belonging to parent Y" tools, not general browse lists.

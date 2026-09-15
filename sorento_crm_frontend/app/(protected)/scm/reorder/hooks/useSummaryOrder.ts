@@ -3,7 +3,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { ENTITY_DOWNLOADS_QUERY_KEY, MY_DOWNLOADS_QUERY_KEY } from '@/services/myDownloadsService';
-import { exportOrderSheet, getOrderSummaryDemand } from '../services/summaryOrderService';
+import {
+  exportLowStockReport,
+  exportOrderSheet,
+  getOrderSummaryDemand,
+} from '../services/summaryOrderService';
 import type { OrderSummaryDemandKind } from '../types/summaryOrder.types';
 
 /**
@@ -52,5 +56,27 @@ export function useExportOrderSheet(runId: string | null) {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to start the order sheet export'),
+  });
+}
+
+/**
+ * The low stock report, through the same My Downloads pipeline (PLAN-low-stock-report S4,
+ * AC-2). Its own mutation rather than a third `format` on `useExportOrderSheet`, so the
+ * two report kinds carry their own toast and their own pending flag - and so a reader of
+ * the Actions menu can tell which of the two is in flight.
+ */
+export function useExportLowStockReport(runId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => exportLowStockReport(runId as string),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: MY_DOWNLOADS_QUERY_KEY });
+      queryClient.invalidateQueries({
+        queryKey: [...ENTITY_DOWNLOADS_QUERY_KEY, 'reorder_run', runId],
+      });
+      toast.success('Preparing the low stock report - it will appear in My Downloads.');
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || 'Failed to start the low stock report'),
   });
 }

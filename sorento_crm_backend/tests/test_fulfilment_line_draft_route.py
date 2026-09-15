@@ -315,19 +315,26 @@ def test_saving_a_valid_uuid_that_names_no_sales_order_is_422_not_500(api):
     assert "select" not in body and "constraint" not in body
 
 
-def test_saving_a_line_whose_order_also_carries_a_closed_line_resolves_correctly(api):
+def test_saving_a_line_whose_order_also_carries_an_unplanned_line_resolves_correctly(api):
     """Found by hand on the real lane (SO391698), not by a unit test: `_resolve_core_line`
-    used to number EVERY line of the order, while the board numbers only the lines
-    `is_open_demand()` counts (`SalesOrder.status == "open"`, `demand_class == "project"`,
-    the line itself open and not covered) - `_demand_rows` in
-    `project_fulfilment_board_service.py`. An order carrying a closed line beside open ones
-    got a DIFFERENT ordinal on each side: the board handed out "line 2" for the second OPEN
-    line, and the resolver, counting the closed one too, read ordinal 2 as a different row -
-    "That sales order line does not exist" for a line that plainly did, on a real board.
+    used to number EVERY line of the order, while the board numbers only the lines its own
+    predicate counts (`SalesOrder.status IN ('open','closed')`, `demand_class == "project"`,
+    `is_undecided_demand()` on the line) - `_demand_rows` in
+    `project_fulfilment_board_service.py`. An order carrying a line the board leaves out, beside
+    lines it takes, got a DIFFERENT ordinal on each side: the board handed out "line 2" for the
+    second line it counted, and the resolver, counting the excluded one too, read ordinal 2 as a
+    different row - "That sales order line does not exist" for a line that plainly did, on a
+    real board.
+
+    THE EXCLUDED LINE IS NOW A CANCELLED ONE. It used to be a `closed` one, which under the
+    14 September 2026 rule is ordinary board demand - a line the book closed by delivering it,
+    that nobody decided a source for, is exactly what this lane puts on the board. Cancelled is
+    what the board still leaves out, so it is what can still shift an ordinal. The subject of
+    the test is unchanged: the board's ordinal and the resolver's ordinal must be the same one.
 
     Three core lines, DIFFERENT products (a same-product fixture would resolve to the WRONG
     line silently instead of 422ing, which is worse and would not have failed this test),
-    the closed one sorted FIRST (earliest date) so it shifts every ordinal after it if it
+    the cancelled one sorted FIRST (earliest date) so it shifts every ordinal after it if it
     is wrongly counted."""
     client, world = api
     db = world.db
@@ -337,9 +344,9 @@ def test_saving_a_line_whose_order_also_carries_a_closed_line_resolves_correctly
     _stock(db, product_b, world.pool_wh, on_hand=100)
     _stock(db, product_c, world.pool_wh, on_hand=100)
     core_so = _core_so(db, world.company_id)
-    closed = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
-                        required_date=date(2026, 1, 1))
-    closed.line_status = "closed"
+    cancelled = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5",
+                           required_date=date(2026, 1, 1))
+    cancelled.line_status = "cancelled"
     _core_line(db, core_so, product_b, world.own_wh, qty_ordered="10",
               required_date=date(2026, 6, 1))
     _core_line(db, core_so, product_c, world.own_wh, qty_ordered="8",
@@ -348,7 +355,7 @@ def test_saving_a_line_whose_order_also_carries_a_closed_line_resolves_correctly
 
     board = _board(client, core_so)
     contributions = board["contributions"]
-    assert len(contributions) == 2, "the closed line must not appear on the board at all"
+    assert len(contributions) == 2, "the cancelled line must not appear on the board at all"
     target = next(row for row in contributions if row["line_no"] == 2)
     assert target["item_code"] == product_c.product_code, (
         "sanity: line 2 must be the LATER open line (product_c), never product_b shifted "
@@ -415,29 +422,104 @@ def test_undo_on_a_line_nobody_saved_is_a_404(api):
     assert response.status_code == 404, response.text
 
 
-def test_a_saved_line_whose_outstanding_qty_changes_reads_stale(api):
+def test_a_saved_line_whose_plan_qty_changes_reads_stale(api):
     """AC-4.4, second half, S1 (code review round 3, captain ruling): staleness is judged
-    on the LINE's own facts - outstanding qty and required date - never on the proposal.
+    on the LINE's own facts - plan quantity and required date - never on the proposal.
 
     The proposal depends on which orders share the board, its granularity and its window,
     so comparing IT flipped `stale` falsely across views and silently dropped a saved line
     from Confirm the moment a planner opened a different one. The line's own facts do not
-    move with the view - only with a real change, exactly like this one."""
+    move with the view - only with a real change, exactly like this one.
+
+    AC-S2-17: STALE MEANS THE ASK CHANGED, AND THE ASK IS THE PLAN QUANTITY. The board asks
+    for `coalesce(qty_required, qty_ordered)` now, so that is the figure a saved suggestion
+    was made against and the figure staleness compares. The customer raising the order from
+    10 to 14 is the change - the planner decided 10 units of supply and there are 14 to find."""
     client, world, core_so, core_line, _order, _line = _world(api)
     db = world.db
     board = _board(client, core_so)
     contribution = _contribution(board, core_so.so_number)
+    assert contribution["qty"] == "10", "sanity: saved against the plan quantity"
     assert _save(client, contribution["key"]).status_code == 200
 
-    # The customer takes part delivery: the outstanding qty this line owes moves, the same
-    # fact an SO re-upload changes.
-    core_line.qty_delivered = Decimal("4")
+    # The book raises the ordered quantity: the ASK moves, the same fact an SO re-upload
+    # changes, and the composition the planner saved no longer covers it.
+    core_line.qty_ordered = Decimal("14")
     db.commit()
 
     after = _contribution(_board(client, core_so), core_so.so_number)
     assert after["draft"]["stale"] is True
     # Still SAVED, and still readable: staleness is a warning on the row, not a deletion.
     assert after["draft"]["decision"]["verdict"] == "amended"
+
+
+def test_a_part_delivery_does_not_make_a_saved_line_stale(api):
+    """AC-S2-17, the other side. A delivery is not a change to the ask.
+
+    The planner saved a decision about where 10 units come from. Four of them shipping does
+    not make that decision out of date - the board still asks for 10, because a delivered unit
+    nobody sourced is a unit to put back, and the saved composition still answers the question
+    it was saved against. Flagging it stale would send CS back to re-decide a line nothing had
+    happened to, and drop it out of Confirm until they did.
+
+    This is the assertion that pins the two sides together: the snapshot
+    (`project_line_draft_service._line_snapshot`) and its reader
+    (`sales_order_service._saved_is_stale`) must BOTH read the plan quantity. Either one left
+    on the still-owed figure and this line reads stale.
+    """
+    client, world, core_so, core_line, _order, _line = _world(api)
+    db = world.db
+    contribution = _contribution(_board(client, core_so), core_so.so_number)
+    assert _save(client, contribution["key"]).status_code == 200
+
+    core_line.qty_delivered = Decimal("4")
+    db.commit()
+
+    after = _contribution(_board(client, core_so), core_so.so_number)
+    assert after["qty"] == "10", "the board still asks for the whole 10"
+    assert after["draft"]["stale"] is False, (
+        "a delivery did not change what the planner was asked to decide"
+    )
+
+
+def test_a_draft_saved_on_a_delivered_line_is_not_stale_straight_away(api):
+    """AC-S2-17, and the case where the two sides being out of step actually bites.
+
+    The WRITER (`project_line_draft_service._line_snapshot`) still freezes `_open_of` - the
+    still-owed figure - while the board's READER already compares `row.qty`, the plan quantity.
+    On a line with nothing delivered the two agree and nothing shows. On SO421404's own shape -
+    3 ordered, 3 delivered, the very line this lane exists to plan - the snapshot is written as
+    0 and compared against 3, so a suggestion comes back flagged STALE the instant it is saved,
+    before anybody has touched anything.
+
+    That reads to CS as "somebody changed this line under me", and a stale draft is dropped
+    from Confirm - so the delivered line they just decided cannot be confirmed at all. Both
+    sides have to speak the plan quantity, which is what makes this a coupling rather than a
+    preference about which figure is nicer.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_so.status = "closed"
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered="3", qty_delivered="3",
+    )
+    core_line.line_status = "closed"
+    order = _project_so(db, world.project, so_id=core_so.id)
+    _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    contribution = _contribution(_board(client, core_so), core_so.so_number)
+    assert contribution["qty"] == "3", "sanity: the board plans the ordered quantity"
+    assert _save(client, contribution["key"]).status_code == 200
+
+    after = _contribution(_board(client, core_so), core_so.so_number)
+    assert after["draft"] is not None
+    assert after["draft"]["stale"] is False, (
+        "nothing changed between the save and the read; the snapshot and the board have to "
+        "be comparing the same figure"
+    )
 
 
 def test_a_saved_line_read_under_a_different_granularity_is_not_stale(api):
@@ -826,3 +908,91 @@ def test_a_re_save_with_no_proposal_keeps_the_one_already_stored(api):
     assert again.json()["proposed"][0]["location"] == "ZZT-BRW"
     saved = _contribution(_board(client, core_so), core_so.so_number)["draft"]
     assert saved["proposed"][0]["qty"] == "10"
+
+
+# --------------------------------------------------------------------------- #
+# AC-S2-16: the draft resolver's line set is the BOARD's                       #
+# (`PLAN-fulfilment-board-plans-delivered-lines.md`)                           #
+#                                                                             #
+# Found on the lane's own browser walk, 14 September 2026, not by a unit test - #
+# the same way SO391698's ordinal bug above was. A Completed order with three   #
+# delivered undecided lines opened the board and proposed Buy 1 on each, and    #
+# then every one of the three `Save all suggested` PUTs came back 422: the      #
+# board had been widened to `SalesOrder.status IN ('open','closed')` plus       #
+# `is_undecided_demand()`, and `_resolve_core_line` was still on                #
+# `status == 'open'` plus `is_open_demand()`.                                   #
+#                                                                             #
+# The resolver reads a key THE BOARD JUST HANDED OUT, so a set narrower than    #
+# the board's refuses a line the planner is looking at, and there is nothing on #
+# screen to explain it. That coupling is the criterion, not the two spellings:  #
+# whatever the board admits, this must resolve.                                 #
+# --------------------------------------------------------------------------- #
+
+
+def _delivered_closed_order(api, *, qty="3"):
+    """SO421404's own shape: Completed, one line ordered and delivered whole, undecided."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_so.status = "closed"
+    core_line = _core_line(
+        db, core_so, world.product, world.own_wh, qty_ordered=qty, qty_delivered=qty,
+    )
+    core_line.line_status = "closed"
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+    return client, world, core_so, core_line, order, line
+
+
+def test_a_draft_saves_and_deletes_on_a_closed_orders_delivered_line(api):
+    """AC-S2-16. The key comes off a real board read, as everywhere else in this file: it IS
+    the contract between the two sides, and spelling it out by hand here would prove the
+    resolver agrees with the test rather than with the board."""
+    client, _world, core_so, _core_line, _order, _line = _delivered_closed_order(api)
+
+    board = _board(client, core_so)
+    contribution = _contribution(board, core_so.so_number)
+    assert contribution["qty"] == "3", "sanity: the board plans the ordered quantity"
+    assert contribution["qty_delivered"] == "3"
+
+    saved = _save(client, contribution["key"])
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["decision"]["verdict"] == "amended"
+
+    # And it comes back on the next read, so the save landed on THIS line and not beside it.
+    again = _contribution(_board(client, core_so), core_so.so_number)
+    assert again["draft"] is not None
+
+    removed = client.delete(
+        f"{BASE}/fulfilment-planning/lines/{contribution['key']}/draft"
+    )
+    assert removed.status_code == 204, removed.text
+    assert _contribution(_board(client, core_so), core_so.so_number)["draft"] is None
+
+
+def test_a_draft_on_a_cancelled_line_is_still_refused(api):
+    """The other half of AC-S2-16, and the reason it is a coupling rather than "resolve
+    anything": the board never offers a cancelled line, so a key naming one did not come from
+    a board and must not resolve. Widening the resolver past `is_undecided_demand()` would
+    let a planner save a decision on demand nobody owes."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=100)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="9")
+    core_line.line_status = "cancelled"
+    core_line.qty_delivered = Decimal("4")
+    db.commit()
+
+    assert _board(client, core_so)["contributions"] == [], (
+        "sanity: a cancelled line is not on the board, so no key for it was ever issued"
+    )
+
+    # Built by hand for exactly that reason - there is no board key to read.
+    key = f"{core_so.id}|1|{world.product.product_code}|2026-08-31"
+    response = _save(client, key)
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "board_contribution_line_not_found"

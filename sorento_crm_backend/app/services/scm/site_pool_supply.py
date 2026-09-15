@@ -26,10 +26,19 @@ from app.services.scm.spo_supply import open_incoming_clauses
 
 def _grouped_supply_map(rows) -> dict[str, dict]:
     """Common shape for `open_po_by_product` / `open_spo_by_product` (issue #796, AC-13):
-    rows of ``(product_id, document_number, qty)`` collapse to ``{pid: {"qty": total,
-    "docs": [{"number", "qty"}, ...]}}``.
+    rows of ``(product_id, document_number, container, qty)`` collapse to ``{pid: {"qty":
+    total, "docs": [{"number", "qty"}, ...]}}``, each doc entry carrying ``"container"``
+    as well WHEN ONE IS KNOWN (PLAN-low-stock-report S2, AC-20).
 
-    `docs` is sorted by number, a NULL number groups under "(no number)". Each document's
+    A document with no container keeps EXACTLY the two-key shape it has always had rather
+    than gaining a null third key: `_docs_text` prints what is there, and a
+    ``"container": None`` would be a key nobody can print. A purchase order has no
+    container at all and hands in a NULL from its own SELECT, which is why one shape
+    serves both callers.
+
+    `docs` is sorted by ``(number, container or "")``, so on one SPO number the entry with
+    no container sorts ahead of the loaded one. A NULL number groups under "(no number)".
+    Each document's
     remainder is CLAMPED to 0 before it is added to `qty` or considered for the list
     (review fix round, AC-15): an over-received still-open line (a line the book marks
     open despite `qty_received > qty_ordered`, or an SPO allocation over-received the
@@ -42,15 +51,18 @@ def _grouped_supply_map(rows) -> dict[str, dict]:
     "feature" rather than fixed.
     """
     out: dict[str, dict] = {}
-    for pid, number, qty in rows:
+    for pid, number, container, qty in rows:
         key = str(pid)
         q = max(float(qty or 0.0), 0.0)
         bucket = out.setdefault(key, {"qty": 0.0, "docs": []})
         bucket["qty"] += q
         if q > 0:
-            bucket["docs"].append({"number": number or "(no number)", "qty": q})
+            doc = {"number": number or "(no number)", "qty": q}
+            if container:
+                doc["container"] = container
+            bucket["docs"].append(doc)
     for bucket in out.values():
-        bucket["docs"].sort(key=lambda d: d["number"])
+        bucket["docs"].sort(key=lambda d: (d["number"], d.get("container") or ""))
     return out
 
 
@@ -64,6 +76,10 @@ def open_po_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
     Grouped by `purchase_orders.po_number` too (issue #796, AC-13/AC-15): the buyer wants
     to see WHICH document the total is owed on, for traceability.
+
+    `NULL AS container` is what lets both callers hand `_grouped_supply_map` one row shape
+    (S2, AC-20). A purchase order has no container - the goods have not been shipped under
+    one yet - so the PO half of the cell prints exactly as it did before that slice.
     """
     if not product_ids:
         return {}
@@ -71,6 +87,7 @@ def open_po_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
     rows = db.execute(text(f"""
         SELECT pol.product_id::text AS pid,
                po.po_number AS po_number,
+               NULL::text AS container,
                SUM(pol.qty_ordered - COALESCE(pol.qty_received, 0)) AS qty
         FROM purchase_order_lines pol
         JOIN warehouses w ON w.id = pol.warehouse_id
@@ -92,16 +109,30 @@ def open_spo_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
     allocation naming no warehouse, or naming a project bin, is not counted: not known to
     be pool supply, or known not to be, either way it is not a site-pool figure.
 
-    Grouped by `spo_allocations.spo_number` too (issue #796, AC-13/AC-15) - the document
-    IS the line (D3, no header table), so the number is the row's own identity, one group
-    per allocation number.
+    Grouped by `spo_allocations.spo_number` AND BY CONTAINER (issue #796, AC-13/AC-15;
+    PLAN-low-stock-report S2, AC-20) - the document IS the line (D3, no header table), so
+    the number is the row's own identity, and the client's own sheet writes this cell as
+    `TLLU8306312 - 180 nos`, the box the goods are in. Two allocations on one SPO number,
+    one loaded and one not, are therefore TWO entries: "SPO-A - 300" would hide that half
+    of it has not been loaded yet.
+
+    The container is `COALESCE(NULLIF(spo_allocations.container_number, ''),
+    inbound_shipments.shipping_container_number)`: the value a person put on the line
+    itself wins, an empty string there is not a container number and falls through to the
+    shipment's, and a line on neither carries no container key at all. The
+    `inbound_shipments` outer join was already here, for `open_incoming_clauses`.
     """
     if not product_ids:
         return {}
+    container = func.coalesce(
+        func.nullif(SPOAllocation.container_number, ""),
+        InboundShipment.shipping_container_number,
+    )
     rows = (
         db.query(
             SPOAllocation.product_id,
             SPOAllocation.spo_number,
+            container,
             func.sum(
                 SPOAllocation.allocated_quantity
                 - func.coalesce(SPOAllocation.quantity_received, 0)
@@ -114,7 +145,7 @@ def open_spo_by_product(db: Session, product_ids: list[str]) -> dict[str, dict]:
             *open_incoming_clauses(),
             text(active_site_pool_sql("warehouses")),
         )
-        .group_by(SPOAllocation.product_id, SPOAllocation.spo_number)
+        .group_by(SPOAllocation.product_id, SPOAllocation.spo_number, container)
         .all()
     )
     return _grouped_supply_map(rows)
