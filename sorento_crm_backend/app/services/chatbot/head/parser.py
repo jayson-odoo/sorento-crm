@@ -23,6 +23,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.services.ai_prompt_registry import agent_model, render
+from app.services.chatbot.contracts import ParserOutputError  # noqa: F401 - re-export
 
 logger = logging.getLogger(__name__)
 

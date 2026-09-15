@@ -20,6 +20,21 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.services.chatbot import jsc
 from app.services.chatbot.turn import policy_rows
 
+
+class ParserOutputError(ValueError):
+    """The parser's emission SUCCEEDED (a real answer came back) but its SHAPE is
+    malformed - a declared key holding the wrong container type. Distinct from
+    `head.parser.ParserError` (the call itself failed - no answer at all).
+
+    Declared here, not in `head/parser.py`, because `turn/apply.py` (pure, AC-1520 -
+    no imports from `head`/`dialogue`/`tail`/`engine`) is the reader that validates a
+    malformed emission today (`entities` must be an array) and needs to raise it
+    without crossing that boundary. `head/parser.py` re-exports the same class so a
+    caller that imports it from there (the old `head/output_exchange.py`'s own name
+    for this error, AC-1592 test triage) still finds it.
+    """
+
+
 # --------------------------------------------------------------------------- #
 # Domain vocabulary (D9, AC-1501/AC-1594). Used to live here as `DOMAIN_SPEC`, one
 # hand-authored dict with five views over it; the chatbot turn re-architecture (S0/S6)

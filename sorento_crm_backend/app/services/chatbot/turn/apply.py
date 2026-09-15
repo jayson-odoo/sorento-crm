@@ -8,6 +8,7 @@ import copy
 from dataclasses import replace
 from typing import Any
 
+from app.services.chatbot import contracts
 from app.services.chatbot.turn.narrow import decide as narrow_decide
 from app.services.chatbot.turn.pending import ROSTER_KINDS, Pending, ask as pending_ask, with_answered_positions
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
@@ -255,6 +256,17 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
     if message_type == "clarification":
         return "clarification"
     if message_type in _CASUAL_TYPES:
+        # Owner console pass 4 item E (`member_offer_filter_modification` in the old
+        # ladder): a casual-typed turn that still names or carries a domain is
+        # narrowing a LIVE business question, not idle chat - the customer's own
+        # words were the whole reason `domains` resolved to something, and swallowing
+        # it here would answer "hanlim" with small talk instead of the order it names.
+        if domains:
+            return None
+        # Owner console defect E: `scope_intent: "broaden"` on a casual/no-domain turn
+        # asks to see MORE, not less - that is a clarifying question, never idle chat.
+        if verdict.get("scope_intent") == "broaden":
+            return "clarification"
         return "casual"
     if message_type == "business_query" and not domains:
         return "casual"
@@ -424,6 +436,34 @@ def apply(
     candidates: dict[str, list[dict[str, Any]]] | None = None,
 ):
     trace = Trace()
+
+    # F3 (contract 65): a `domain_hint` outside the declared enum must never reach a
+    # reader - evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b emitted "purchasing"
+    # (a TEAM name, not a domain) and it survived into a tool pick. `coerce_domain_hint`
+    # existed but had no call site anywhere in the rearch (AC-1592 test triage);
+    # coerced ONCE here, at the verdict's one entry point into apply(), so every
+    # downstream read (`_reconcile_step`, `_answer_pending`, `_exclusive`,
+    # `_focus_rules`, the `domains` build below, `_lane`) sees the same coerced value
+    # rather than needing its own guard.
+    coerced_domain_hint = contracts.coerce_domain_hint(verdict.get("domain_hint"))
+    if coerced_domain_hint != verdict.get("domain_hint"):
+        trace.rules_fired.append("domain_hint_coerced")
+        verdict = {**verdict, "domain_hint": coerced_domain_hint}
+
+    # AC-1592 test triage: the old `head/output_exchange.py::_assert_emission` named
+    # a malformed emission's bad KEY and expected TYPE before anything downstream ever
+    # touched it; the S3 rewrite dropped it with no equivalent, so a malformed
+    # `entities` (a real LLM call cannot produce one - `head/parser.py::parse` passes
+    # `json_schema=PARSE_OUTPUT_JSON_SCHEMA` straight to the provider - this is a
+    # harness-injected-mock hazard only) surfaced as an unnamed `AttributeError` deep
+    # in a helper instead of a clear, named failure. `entities` is the one declared
+    # ARRAY key this module actually reads item-by-item.
+    raw_entities = verdict.get("entities")
+    if raw_entities is not None and not isinstance(raw_entities, list):
+        raise contracts.ParserOutputError(
+            f"parser emission key 'entities' must be an array, got "
+            f"{type(raw_entities).__name__}"
+        )
 
     verdict_entities = list(verdict.get("entities") or [])
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
