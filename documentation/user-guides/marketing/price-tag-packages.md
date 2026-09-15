@@ -45,8 +45,8 @@ Nothing is asked of them that they did not already know. They pick the cabinet c
    * **No package defined** - the product is in a guarded class and has no combo on it at all. Somebody has to record one (the steps above), or the tag prints the product alone.
    * **No package chosen** - the product has combos and the salesperson picked none.
    * **Missing: SRTMR502-BL** - the chosen package's parts are not all on the line. The codes and group labels named are the ones missing.
-3. Each line starts with one tag, labelled by its line position and a letter: **1a**, then **1b**, **1c** if it is split. The tag row carries the resolved choice, **Qty**, **List Price**, **Sell Price**, and **Designed** or **No tag**. Prices are a tag fact, so the line row itself leaves both money columns empty.
-4. Click **Design** on a tag to open the designer on it. The **Lines** rail on the left lists each line with its tags nested underneath.
+3. A line with parts, or more than one tag, still splits into rows: the line row, then each tag labelled by its line position and a letter - **1a**, then **1b**, **1c** if it is split - carrying the resolved choice, **Qty**, **List Price**, **Sell Price**, and **Designed** or **No tag**. A line with exactly one tag and no parts is a single row instead - no `1a` label - the line row itself carries the price and status.
+4. Click **Design** on a tag to open the designer on it. The **Lines** rail on the left lists each line with its tags nested underneath; a line with exactly one tag, no parts and no open choice group is drawn as one block instead, since there's nothing to nest.
 5. A tag whose line left a choice group open carries an **Open: Basin** pill and two ways to answer it:
    * **Split into 4 tags** - the tag stays where it is, keeps its design, and takes the first candidate; the remaining candidates each get their own tag after it, with the design copied. Use this when the customer should see every colour. Toast: *"Split into one tag per basin."*
    * **Pick one** - a select beside it that resolves the group on this tag alone, leaving the line with a single tag.
@@ -58,6 +58,7 @@ A line always keeps at least one tag, so the last tag on a line cannot be taken 
 ## What prints on the tag
 
 * The parts go into the members block the tag templates already carry, so no template has to be touched. Each resolved part prints as `+ CODE NAME DIMENSIONS`, in part order. A group still open prints as `Basin: SRTBS100-WH / SRTBS100-BL / SRTBS100-GR`.
+* A custom layout can also pull the parts on their own with the **Parts (codes)** and **Parts (names)** merge fields in the designer's Line group - useful when a template wants just the codes or just the names rather than the whole members block.
 * **List price** on the tag is the host's list price plus the list price of every resolved part. A group still open adds nothing until it is resolved or split.
 * **Selling price** is the promotion engine's answer for each of those products, added up; where the engine has no offer for a product, its list price is used, because a price with no promotion behind it is simply the price. A marketing override on the tag wins over that sum.
 * A tag with no parts prints exactly what it always did.

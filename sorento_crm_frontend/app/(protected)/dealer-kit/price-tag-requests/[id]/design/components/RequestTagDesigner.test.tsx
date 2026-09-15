@@ -209,6 +209,9 @@ vi.mock('../../../../services/priceTagRequestService', () => ({
   updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
+  // AC-S10-3 (PLAN-price-tag-ai-extract-resolver.md D15): the approved+office
+  // bar's primary button - not imported by RequestTagDesigner.tsx yet.
+  markReadyForCollection: vi.fn(),
 }));
 // Tag Size control's "Saved sizes" group (S4): a react-query hook this suite
 // has no QueryClientProvider for. `useTagSizesQuery` is a `vi.fn()` so the
@@ -230,7 +233,11 @@ vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
 }));
 
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
-import { resolveRequestTags } from '../../../../services/priceTagRequestService';
+import {
+  resolveRequestTags,
+  exportTagSheet,
+  markReadyForCollection,
+} from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
 import type {
   PriceTagRequestDetail,
@@ -242,6 +249,8 @@ import type { LineTagData, TagSheetDoc, TagTemplate } from '@/lib/dealer-kit/tag
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolveRequestTags = vi.mocked(resolveRequestTags);
+const mockExportTagSheet = vi.mocked(exportTagSheet);
+const mockMarkReadyForCollection = vi.mocked(markReadyForCollection);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -438,6 +447,10 @@ beforeEach(() => {
   push.mockReset();
   replace.mockReset();
   mockToastSuccess.mockReset();
+  // D9: TagSizeControl's open/closed state persists in localStorage across
+  // mounts by design - cleared per test so one test opening the panel does
+  // not leave it open (or a later click's toggle closing it) for the next.
+  window.localStorage.clear();
 });
 
 // ---------------------------------------------------------------------------
@@ -608,6 +621,60 @@ describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => 
 });
 
 // ---------------------------------------------------------------------------
+// AC-S10-3/S10-4 (PLAN-price-tag-ai-extract-resolver.md D15): the request
+// bar at `approved` - print and hand-over live here now, not just export.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - the approved request bar (AC-S10-3, AC-S10-4)', () => {
+  function barButtonNames() {
+    const canvas = screen.getByTestId('canvas-editor');
+    return Array.from(document.body.querySelectorAll('button'))
+      .filter((btn) => !canvas.contains(btn))
+      .map((btn) => btn.textContent?.trim());
+  }
+
+  it('AC-S10-3: office - Export PDF and the primary Mark ready for collection, no Mark design ready', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
+    mockExportTagSheet.mockResolvedValue(undefined as never);
+    mockMarkReadyForCollection.mockResolvedValue(undefined as never);
+
+    renderDesigner(request({ status: 'approved', print_by: 'office' } as never));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const names = barButtonNames();
+    expect(names.some((t) => t?.includes('Export PDF'))).toBe(true);
+    expect(names.some((t) => t?.includes('Mark ready for collection'))).toBe(true);
+    expect(names.some((t) => t?.includes('Mark design ready'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /Export PDF/ }));
+    await waitFor(() => expect(mockExportTagSheet).toHaveBeenCalledWith('req-1'));
+    expect(mockExportTagSheet).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /Mark ready for collection/ }));
+    await waitFor(() =>
+      expect(mockMarkReadyForCollection).toHaveBeenCalledWith('req-1'),
+    );
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Marked ready for collection'),
+    );
+  });
+
+  it('AC-S10-4: self - Export PDF only, no Mark ready for collection', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
+
+    renderDesigner(request({ status: 'approved', print_by: 'self' } as never));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const names = barButtonNames();
+    expect(names.some((t) => t?.includes('Export PDF'))).toBe(true);
+    expect(names.some((t) => t?.includes('Mark ready for collection'))).toBe(false);
+    expect(names.some((t) => t?.includes('Mark design ready'))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A design must survive Design -> Arrange -> Design (Fix B).
 //
 // `docRef` snapshots the open tag's layers once, keyed by tag id, so the
@@ -669,9 +736,12 @@ describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
     // Switch to line-2 (clones its own starter) and back to line-1 - the
     // canvas remounts on the tag id both times (existing behaviour, not part
     // of Fix B), so the clear must still be there when line-1 reopens.
-    fireEvent.click(screen.getByText(tagLabelFor('line-2')));
+    // D8: one tag, no parts - each line folds to ONE block, selected by
+    // clicking its code rather than the ordinal text a folded row no
+    // longer renders.
+    fireEvent.click(screen.getByText('SRT-2').closest('button') as HTMLElement);
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-    fireEvent.click(screen.getByText(tagLabelFor('line-1')));
+    fireEvent.click(screen.getByText('SRT-1').closest('button') as HTMLElement);
     await waitFor(() => expect(drawnLayers()).toHaveLength(0));
 
     // Add 3 layers back.
@@ -1068,8 +1138,10 @@ describe('RequestTagDesigner - the starter clone is not a user change (S3)', () 
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
     // Line B has no tag either - switching to it clones one, which must be as
-    // silent as opening was.
-    fireEvent.click(screen.getByText(tagLabelFor('line-b')));
+    // silent as opening was. D8: one tag, no parts - line B folds to ONE
+    // block, selected by its code rather than the ordinal text a folded row
+    // no longer renders.
+    fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
     // Well past the debounce, on real timers, so a scheduled save would have
@@ -1287,6 +1359,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Tag Size/ }));
 
     const wInput = screen.getByLabelText('Tag width (mm)');
     const hInput = screen.getByLabelText('Tag height (mm)');
@@ -1320,9 +1393,12 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Tag Size/ }));
     // Line B needs a tag of its own before "apply to all" has two lines to
-    // reach - selecting it clones one the same way selecting line A already did.
-    fireEvent.click(screen.getByText(tagLabelFor('line-b')));
+    // reach - selecting it clones one the same way selecting line A already
+    // did. D8: one tag, no parts - the line folds to ONE block, selected by
+    // its code rather than the ordinal text a folded row no longer renders.
+    fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
     await waitFor(() =>
       expect(canvasDocs[canvasDocs.length - 1].doc.width_mm).toBe(60),
     );
@@ -1369,6 +1445,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Tag Size/ }));
 
     const mountsBeforeTyping = canvasMountCount;
     const hInput = screen.getByLabelText('Tag height (mm)');
@@ -1420,6 +1497,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Tag Size/ }));
     // Only line A has opened so far - B and C are untouched.
 
     const wInput = screen.getByLabelText('Tag width (mm)');
@@ -1432,7 +1510,9 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
 
     // Open line C for the FIRST time - it must clone at the request's
     // default size (95x44.5), not its template's own print_size (60x40).
-    fireEvent.click(screen.getByText(tagLabelFor('line-c')));
+    // D8: one tag, no parts - the line folds to ONE block, selected by its
+    // code rather than the ordinal text a folded row no longer renders.
+    fireEvent.click(screen.getByText('CCC-3').closest('button') as HTMLElement);
     await waitFor(() => {
       const drawn = canvasDocs[canvasDocs.length - 1].doc;
       expect(drawn.width_mm).toBe(95);
@@ -1461,6 +1541,7 @@ describe('RequestTagDesigner - tag size control (D24, AC-S9-3)', () => {
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Tag Size/ }));
 
     const wInput = screen.getByLabelText('Tag width (mm)');
     fireEvent.change(wInput, { target: { value: '400' } });
@@ -1524,6 +1605,10 @@ describe('RequestTagDesigner - tag size dropdown grouping (S5, AC-S4-3/S4-4)', (
       />,
     );
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+    // D9 (PLAN-price-tag-ai-extract-resolver.md): the Tag Size panel is
+    // collapsed by default - open it before any test here reads its select
+    // or inputs, the same way `TagSizeControl.test.tsx` does.
+    fireEvent.click(screen.getByRole('button', { name: /Tag Size/ }));
   }
 
   it('groups the dropdown into Template sizes and Saved sizes (AC-S4-4)', async () => {

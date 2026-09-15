@@ -16,8 +16,11 @@ import {
   priceBadgeTypography,
 } from './price-badge';
 
-const LIST_ONLY = { variant: 'list_only' as const, showNett: true };
-const PROMO = { variant: 'promo' as const, showNett: true };
+// The two variants' own defaults (`defaultPriceBadgeProps`, B1): list_only
+// prints straight onto the tag's own background so it defaults to black;
+// promo is the white-on-red boxed callout so it defaults to white.
+const LIST_ONLY = { variant: 'list_only' as const, showNett: true, textColor: '#000000' };
+const PROMO = { variant: 'promo' as const, showNett: true, textColor: '#ffffff' };
 const ZERO = { top: 0, right: 0, bottom: 0, left: 0 };
 
 describe('formatTagPrice', () => {
@@ -114,7 +117,7 @@ describe('priceBadgeParts - promo', () => {
 
   it('drops NETT when the layer switches it off', () => {
     const parts = priceBadgeParts(
-      { variant: 'promo', showNett: false },
+      { variant: 'promo', showNett: false, textColor: '#ffffff' },
       { listPrice: 1599, offerPrice: 599 },
     );
 
@@ -148,6 +151,42 @@ describe('priceBadgeParts - promo', () => {
 
     expect(parts.struckText).toBeNull();
     expect(parts.plainText).toBe('SP RM 599 NETT');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// amountColor - resolved once, here, so the canvas and the print page can
+// never disagree (B1 blocker follow-up). The three UNBOXED cases: a genuine
+// `list_only` badge, a `promo` badge whose offer never resolved and so falls
+// through to the SAME unboxed branch (its own textColor default is white,
+// meant for the boxed callout it normally draws - honouring it here would be
+// invisible white-on-background), and the empty "no price" placeholder.
+// ---------------------------------------------------------------------------
+describe('priceBadgeParts - amountColor (unboxed cases)', () => {
+  it('a genuine list_only badge honours its own textColor', () => {
+    const parts = priceBadgeParts(
+      { ...LIST_ONLY, textColor: '#1a2b3c' },
+      { listPrice: 1599, offerPrice: null },
+    );
+
+    expect(parts.boxed).toBe(false);
+    expect(parts.amountColor).toBe('#1a2b3c');
+  });
+
+  it('a promo badge that fell through to the unboxed branch draws black, never its own white', () => {
+    const parts = priceBadgeParts(PROMO, { listPrice: 1599, offerPrice: null });
+
+    expect(parts.boxed).toBe(false);
+    expect(parts.amountColor).toBe('#000000');
+  });
+
+  it('the empty placeholder stays #999999 regardless of variant or textColor', () => {
+    expect(
+      priceBadgeParts(LIST_ONLY, { listPrice: null, offerPrice: null }).amountColor,
+    ).toBe('#999999');
+    expect(
+      priceBadgeParts(PROMO, { listPrice: null, offerPrice: null }).amountColor,
+    ).toBe('#999999');
   });
 });
 

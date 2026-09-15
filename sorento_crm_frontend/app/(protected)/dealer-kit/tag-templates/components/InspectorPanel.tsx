@@ -11,6 +11,7 @@ import { useCallback, useId, useMemo } from 'react';
 import {
   Bold,
   Braces,
+  Copy,
   Eye,
   Italic,
   LayoutTemplate,
@@ -20,6 +21,7 @@ import {
   Underline,
   X,
 } from 'lucide-react';
+import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
@@ -565,6 +567,29 @@ function TextInspector({
               <Braces className="size-3" />
               Draws from product data
             </span>
+          )}
+          {/* D21 (AC-S16-1/S16-2): the inline canvas edit still shows the
+              SOURCE (the token) - this read-only line is the only copy
+              surface for what will actually print. */}
+          {dynamic && resolvedText != null && (
+            <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/40 px-2 py-1">
+              <span className="truncate text-xs" title={resolvedText}>
+                {resolvedText}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-6 shrink-0 px-1.5 text-[10px]"
+                onClick={() => {
+                  void navigator.clipboard.writeText(resolvedText);
+                  toast.success('Copied');
+                }}
+              >
+                <Copy className="mr-1 size-3" />
+                Copy rendered text
+              </Button>
+            </div>
           )}
         </div>
         <TypographyControls

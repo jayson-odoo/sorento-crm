@@ -442,6 +442,11 @@ def test_portal_parts_refuse_a_non_uuid_candidate(db):
     """
     contact = _contact(db)
     cabinet = _product(db, "SRTBF11834", class_label="Bathroom Furniture")
+    # PLAN-price-tag-ai-extract-resolver.md D5: a line's `parts` are only
+    # even considered once the product carries at least one `ProductCombo` -
+    # without one, that guard would refuse this line before the non-uuid
+    # candidate this test is actually about is ever reached.
+    _combo(db, cabinet, "combo", [(_product(db, "SRTMR-FIXED"), None)])
     client = _portal_client(db, contact.id)
 
     response = client.post(
@@ -476,6 +481,10 @@ def test_portal_parts_refuse_an_unknown_and_a_foreign_candidate(db):
     _mocha(db)
     contact = _contact(db)
     cabinet = _product(db, "SRTBF11834", class_label="Bathroom Furniture")
+    # PLAN-price-tag-ai-extract-resolver.md D5: a combo has to exist before
+    # `parts` is even considered, or this line would be refused for that
+    # reason before the unknown/foreign candidate this test is about.
+    _combo(db, cabinet, "combo", [(_product(db, "SRTMR-FIXED"), None)])
     theirs = _product(db, "MOCHA-BASIN", company_id=MOCHA)
     client = _portal_client(db, contact.id)
 

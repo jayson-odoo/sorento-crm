@@ -27,7 +27,9 @@ from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import get_portal_token
+from app.api.v1.public.portal_price_tag import _resolve_company
 from app.database import get_db
+from app.models.base import company_scope
 from app.models.portal import PortalToken
 from app.services.ai_extract.extract_service import (
     AIExtractService,
@@ -131,11 +133,20 @@ def ai_extract(
 
     service = AIExtractService(db)
     try:
-        return service.extract(
-            form_key,
-            payload,
-            user_id=None,
-            portal_contact_id=token.contact_id,
-        )
+        # Browser check finding: the router-level `apply_company_scope`
+        # dependency scopes a portal token to the CONTACT'S companies
+        # (plural - `RespondContactCompany`), not the one company this
+        # request belongs to. A code that exists in two of them (the same
+        # product master shared across Sorento/Mocha-style setups) came back
+        # ambiguous under that wider scope and the extract read "Not found"
+        # for something that does exist. Narrowed here exactly like
+        # `portal_lookup_product_combos` narrows the sibling combos lookup.
+        with company_scope(db, frozenset({_resolve_company(db, token)})):
+            return service.extract(
+                form_key,
+                payload,
+                user_id=None,
+                portal_contact_id=token.contact_id,
+            )
     except KeyError:
         raise handle_validation_error(f"Unknown form_key: {form_key}")

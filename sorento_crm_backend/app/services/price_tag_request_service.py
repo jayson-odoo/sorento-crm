@@ -267,13 +267,54 @@ class PriceTagRequestService:
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
-            key = (line_data.get("product_id"), line_data.get("product_set_id"))
+            # Re-review finding: the line's own host id arrives from the
+            # portal exactly like a part id does, and was written straight
+            # through with no shape check - the very gap that made the D5
+            # combo guard (`_add_line_parts`) a cross-company existence
+            # oracle in the first place. Routed through the SAME `_part_uuid`
+            # the part ids already go through, so a non-UUID string is a 422
+            # naming the line here too, not a Postgres `DataError` once it
+            # reaches `Product.id.in_(...)` inside the visibility query below.
+            product_id = PriceTagRequestService._part_uuid(
+                line_data.get("product_id"), idx
+            )
+            product_set_id = PriceTagRequestService._part_uuid(
+                line_data.get("product_set_id"), idx
+            )
+            key = (product_id, product_set_id)
+            # Security review: the line's own host id must be visible to
+            # THIS request's company, the same reason `_add_line_parts`
+            # scopes a part - written straight through with no company check
+            # would answer "does this id exist anywhere" for a product in
+            # another company. Scoped lookup, 422 naming the line on a miss.
+            if product_id and product_id not in PriceTagRequestService._visible_product_ids(
+                db, {product_id}, request.company_id
+            ):
+                raise AppException(
+                    status_code=422,
+                    message="This line's product could not be found.",
+                    detail=f"line:{idx}",
+                    code="INVALID_PART",
+                )
+            if (
+                product_set_id
+                and product_set_id
+                not in PriceTagRequestService._visible_product_set_ids(
+                    db, {product_set_id}, request.company_id
+                )
+            ):
+                raise AppException(
+                    status_code=422,
+                    message="This line's set could not be found.",
+                    detail=f"line:{idx}",
+                    code="INVALID_PART",
+                )
             line = (
                 PriceTagRequestLine(
                     request_id=request.id,
                     line_type=line_data["line_type"],
-                    product_id=line_data.get("product_id"),
-                    product_set_id=line_data.get("product_set_id"),
+                    product_id=product_id,
+                    product_set_id=product_set_id,
                     show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
                     combo_id=PriceTagRequestService._resolve_combo_id(
@@ -371,6 +412,43 @@ class PriceTagRequestService:
         """
         from app.models.price_tag import PriceTagRequestLinePart
         from app.models.product import Product
+        from app.models.product_combo import ProductCombo
+
+        # D5: a part has nowhere to go without a package. A `product_set`
+        # line has no `product_id` and is already skipped by this check; a
+        # product line whose product carries zero `ProductCombo` rows must
+        # never accept a part, on save exactly like the FE hides "Add part"
+        # for it (D4) - the portal is not a trusted client.
+        #
+        # Security review: `ProductCombo` is not company-scoped on its own -
+        # it hangs off its host product, same as `_resolve_combo_id` below -
+        # so a bare `ProductCombo` query ignores `company_scope` entirely and
+        # this 422 would answer "does this id exist anywhere" for a product
+        # in another company. Joined to `Product` so the scope predicate has
+        # something to attach to, the same fix `_resolve_combo_id` already
+        # has for the combo-id path.
+        if parts and line.product_id:
+            def _has_combo() -> bool:
+                return (
+                    db.query(ProductCombo.id)
+                    .join(Product, Product.id == ProductCombo.host_product_id)
+                    .filter(ProductCombo.host_product_id == line.product_id)
+                    .first()
+                    is not None
+                )
+
+            if company_id:
+                with company_scope(db, frozenset({company_id})):
+                    has_combo = _has_combo()
+            else:
+                has_combo = _has_combo()
+            if not has_combo:
+                raise AppException(
+                    status_code=422,
+                    message="This product has no package to add a part to.",
+                    detail=f"line:{index}",
+                    code="PARTS_NEED_COMBO",
+                )
 
         cleaned: list[dict] = []
         wanted: set[str] = set()
@@ -429,6 +507,29 @@ class PriceTagRequestService:
             return {
                 pid
                 for (pid,) in db.query(Product.id).filter(Product.id.in_(wanted)).all()
+            }
+
+        if not company_id:
+            return _query()
+        with company_scope(db, frozenset({company_id})):
+            return _query()
+
+    @staticmethod
+    def _visible_product_set_ids(
+        db: Session, wanted: set[str], company_id: str | None
+    ) -> set[str]:
+        """Which of `wanted` sets this REQUEST's company can see.
+
+        `ProductSet` carries `CompanyScopedMixin` directly (unlike
+        `ProductCombo`, which is scoped only through its host product), so a
+        bare query already attaches the scope predicate.
+        """
+        from app.models.product_set import ProductSet
+
+        def _query() -> set[str]:
+            return {
+                sid
+                for (sid,) in db.query(ProductSet.id).filter(ProductSet.id.in_(wanted)).all()
             }
 
         if not company_id:

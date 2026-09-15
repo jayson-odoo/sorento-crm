@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 
+from app.config import settings
 from app.database import SessionLocal
 from app.models.dealer_kit import Page
 from app.services.company_scope import set_company_scope
@@ -37,8 +38,23 @@ READY_SELECTOR = "[data-dk-print-ready='true']"
 READY_TIMEOUT_MS = 60_000
 
 
+def _print_base() -> str:
+    """`DEALER_KIT_PRINT_BASE_URL` if set, else `FRONTEND_BASE_URL` (the same
+    setting portal links are built from - `portal_service.submission_link`),
+    else the localhost default. A dedicated env stays only as an override for
+    a stack where the worker must reach the frontend by an internal name; a
+    normal deploy needs no second setting pointed at the same place."""
+    override = os.environ.get(PRINT_BASE_ENV)
+    if override:
+        return override.rstrip("/")
+    frontend_base = (getattr(settings, "frontend_base_url", None) or "").strip()
+    if frontend_base:
+        return frontend_base.rstrip("/")
+    return DEFAULT_PRINT_BASE.rstrip("/")
+
+
 def _print_url(download_id: str) -> str:
-    base = os.environ.get(PRINT_BASE_ENV, DEFAULT_PRINT_BASE).rstrip("/")
+    base = _print_base()
     token = render_token.issue(download_id)
     return f"{base}/c/print/{download_id}?token={token}"
 
@@ -48,7 +64,7 @@ def _tag_sheet_print_url(
     sheet_ids: list[str] | None = None,
 ) -> str:
     """Build the print URL for a tag sheet page."""
-    base = os.environ.get(PRINT_BASE_ENV, DEFAULT_PRINT_BASE).rstrip("/")
+    base = _print_base()
     token = render_token.issue(download_id)
     url = f"{base}/c/print/tag-sheet/{download_id}?token={token}"
     if sheet_ids:

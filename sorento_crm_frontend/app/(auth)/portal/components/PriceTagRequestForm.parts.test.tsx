@@ -83,9 +83,11 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 import {
   createRequest,
+  getRequest,
   lookupDebtors,
   lookupProductCombos,
   lookupTagItems,
+  type ProductCombosLookup,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 import { selectOption } from '@/test-utils';
@@ -208,7 +210,8 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(screen.queryByText(BASIN_BLACK.code)).toBeNull();
     const open = screen.getByLabelText('Not sure, any of 2');
     expect(open).toBeInTheDocument();
-    expect(screen.getByText('Marketing will prepare one tag per option')).toBeInTheDocument();
+    // D18: the open-row explanation sentence is retired - the select with
+    // its placeholder and the role label is the whole row now.
 
     // No Package select: there is only one package to be in.
     expect(screen.queryByLabelText('Package')).toBeNull();
@@ -336,9 +339,9 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     fireEvent.change(screen.getByLabelText('Not sure, any of 2'), {
       target: { value: '' },
     });
-    expect(
-      await screen.findByText('Marketing will prepare one tag per option'),
-    ).toBeInTheDocument();
+    // D18: no explanation sentence anymore - the select itself, back to its
+    // own placeholder value, is what "open again" reads as on screen.
+    expect(screen.getByLabelText('Not sure, any of 2')).toHaveValue('');
 
     await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
@@ -379,23 +382,24 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     ).toEqual([null]);
   });
 
-  it('a part can be added by hand on a line whose product has NO package at all', async () => {
+  // PLAN-price-tag-ai-extract-resolver.md D4 (AC-S2-1): a line whose product
+  // has no package has nothing to add a part TO, so "Add part" no longer
+  // renders at all here - superseding the old "add by hand on any line"
+  // rule this test pinned.
+  it('no "Add part" search on a line whose product has NO package at all (AC-S2-1)', async () => {
     mockCombos.mockResolvedValue({ host_guarded: false, combos: [] });
     await startWithALine();
     await pickTheCabinet();
     await waitFor(() => expect(mockCombos).toHaveBeenCalled());
 
-    const picker = await screen.findByLabelText('Add part');
-    fireEvent.change(picker, { target: { value: `product:${MIRROR.product_id}` } });
+    expect(screen.queryByLabelText('Add part')).toBeNull();
 
     await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     const [line] = submittedLines();
     expect(line.combo_id).toBeNull();
-    expect(line.parts).toEqual([
-      { product_id: MIRROR.product_id, role: null, candidates: [] },
-    ]);
+    expect(line.parts).toEqual([]);
   });
 
   // -------------------------------------------------------------------------
@@ -455,5 +459,234 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     // The part and package rows span the whole line table rather than squeezing
     // into one column, which is what makes them readable at 375px.
     expect(wrapper).toHaveAttribute('colspan', '5');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PLAN-price-tag-ai-extract-resolver.md D4 / price-tag-ai-extract-resolver-
+// acceptance-criteria.md S2 (AC-S2-1..S2-3): "Add part" only when the
+// product actually has a combo. Supersedes the old "on any line, combo or
+// not" rule this same file pinned above.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', () => {
+  it('AC-S2-3: no "Add part" before the combos lookup answers (no flash)', async () => {
+    let resolveCombos: (value: ProductCombosLookup) => void = () => {};
+    mockCombos.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCombos = resolve;
+        }),
+    );
+    await startWithALine();
+    await pickTheCabinet();
+
+    expect(screen.queryByLabelText('Add part')).toBeNull();
+
+    resolveCombos({ host_guarded: false, combos: [] });
+    await waitFor(() => expect(mockCombos).toHaveBeenCalled());
+    expect(screen.queryByLabelText('Add part')).toBeNull();
+  });
+
+  it('AC-S2-2: shows "Add part" once the lookup returns one or more combos', async () => {
+    mockCombos.mockResolvedValue({
+      host_guarded: true,
+      combos: [COMBO_3_IN_1, COMBO_4_IN_1],
+    });
+    await startWithALine();
+    await pickTheCabinet();
+    await screen.findByLabelText('Package');
+
+    expect(screen.getByLabelText('Add part')).toBeInTheDocument();
+  });
+
+  it('AC-S2-1: no "Add part" when the lookup returns empty - existing part rows still render with Remove', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: false, combos: [] });
+    const draftRequest = {
+      id: 'req-1',
+      doc_number: 'PT-202609-0009',
+      debtor_code: 'ZZTD01',
+      debtor_name: 'ZZT Dealer Sdn Bhd',
+      promotion_id: null,
+      promotion_name: null,
+      price_mode: 'list',
+      needed_by_date: null,
+      notes: null,
+      status: 'new',
+      line_count: 1,
+      created_at: '2026-09-01T00:00:00Z',
+      portal_draft_at: '2026-09-01T00:00:00Z',
+      contact_id: 'contact-1',
+      has_completed_export: false,
+      is_editable: true,
+      revision_no: 0,
+      last_revised_at: null,
+      revision: null,
+      attachments: [],
+      lines: [
+        {
+          id: 'line-1',
+          line_type: 'product',
+          product_id: CABINET.id,
+          product_set_id: null,
+          name: CABINET.name,
+          code: CABINET.code,
+          show_promo_price: false,
+          quantity: 1,
+          included_accessories: null,
+          remarks: null,
+          sort_order: 0,
+          combo_id: null,
+          package_warning: null,
+          parts: [
+            {
+              id: 'part-existing',
+              product_id: MIRROR.product_id,
+              code: MIRROR.code,
+              name: MIRROR.name,
+              role: null,
+              candidates: [],
+              sort_order: 0,
+            },
+          ],
+          tags: [],
+        },
+      ],
+    };
+    (getRequest as ReturnType<typeof vi.fn>).mockResolvedValue(draftRequest);
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText(MIRROR.code);
+    await waitFor(() => expect(mockCombos).toHaveBeenCalledWith(CABINET.id));
+
+    expect(screen.queryByLabelText('Add part')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: `Remove part ${MIRROR.code} from line 1` }),
+    ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PLAN-price-tag-ai-extract-resolver.md D17/D18/D19 (S12/S13/S14): a single-
+// candidate choice group resolves like a fixed part, the open-row sentence is
+// retired, and a removed package part can be put back with one click.
+// ---------------------------------------------------------------------------
+
+const KITCHEN_TAP = { product_id: 'prod-tap', code: 'SRTTAP100', name: 'ZZT Kitchen Tap' };
+
+const COMBO_SINGLE_CANDIDATE = {
+  combo_id: 'combo-single',
+  name: 'Single candidate',
+  parts: [
+    { ...MIRROR, choice_group: null },
+    { ...KITCHEN_TAP, choice_group: 'Kitchen Tap' },
+  ],
+};
+
+const COMBO_ONE_FIXED = {
+  combo_id: 'combo-onefixed',
+  name: 'One fixed',
+  parts: [{ ...MIRROR, choice_group: null }],
+};
+
+const COMBO_TWO_FIXED_ONE_GROUP = {
+  combo_id: 'combo-restore',
+  name: 'Restore test',
+  parts: [
+    { ...MIRROR, choice_group: null },
+    { ...TOP, choice_group: null },
+    { ...BASIN_WHITE, choice_group: 'Basin' },
+    { ...BASIN_BLACK, choice_group: 'Basin' },
+  ],
+};
+
+describe('PriceTagRequestForm - one candidate is not a choice (S12)', () => {
+  it('AC-S12-1: a single-candidate group fills a resolved row, no "Not sure, any of 1" select', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_SINGLE_CANDIDATE] });
+    await startWithALine();
+    await pickTheCabinet();
+
+    expect(await screen.findByText(KITCHEN_TAP.code)).toBeInTheDocument();
+    expect(screen.getByText('Kitchen Tap')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Not sure, any of 1')).toBeNull();
+  });
+
+  it('AC-S12-2: a group with two candidates still yields the open row', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
+    await startWithALine();
+    await pickTheCabinet();
+
+    expect(await screen.findByLabelText('Not sure, any of 2')).toBeInTheDocument();
+  });
+});
+
+describe('PriceTagRequestForm - no open-row copy (S13)', () => {
+  it('AC-S13-1: "Marketing will prepare one tag per option" appears nowhere', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_3_IN_1] });
+    await startWithALine();
+    await pickTheCabinet();
+    await screen.findByLabelText('Not sure, any of 2');
+
+    expect(
+      screen.queryByText('Marketing will prepare one tag per option'),
+    ).toBeNull();
+  });
+});
+
+describe('PriceTagRequestForm - restore a removed package part (S14)', () => {
+  it('AC-S14-1: Restore puts back a removed fixed row and clears the warning', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_ONE_FIXED] });
+    await startWithALine();
+    await pickTheCabinet();
+    await screen.findByText(MIRROR.code);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: `Remove part ${MIRROR.code} from line 1` }),
+    );
+    await waitFor(() => expect(screen.queryByText(MIRROR.code)).toBeNull());
+
+    expect(await screen.findByText('Missing: SRTMR502-BL')).toBeInTheDocument();
+    const restore = screen.getByRole('button', { name: 'Restore' });
+
+    fireEvent.click(restore);
+
+    expect(await screen.findByText(MIRROR.code)).toBeInTheDocument();
+    expect(screen.queryByText(/Missing:/)).toBeNull();
+  });
+
+  it('AC-S14-2: Restore adds exactly the missing fixed part and group, leaving the kept row untouched', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: true, combos: [COMBO_TWO_FIXED_ONE_GROUP] });
+    await startWithALine();
+    await pickTheCabinet();
+    await screen.findByText(MIRROR.code);
+    await screen.findByText(TOP.code);
+    await screen.findByLabelText('Not sure, any of 2');
+
+    // Remove the fixed TOP row and the open Basin row; keep MIRROR.
+    fireEvent.click(
+      screen.getByRole('button', { name: `Remove part ${TOP.code} from line 1` }),
+    );
+    await waitFor(() => expect(screen.queryByText(TOP.code)).toBeNull());
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Remove part Basin from line 1' }),
+    );
+    await waitFor(() => expect(screen.queryByLabelText(/Not sure, any of/)).toBeNull());
+
+    expect(await screen.findByText('Missing: SRTTT800, Basin')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }));
+
+    expect(await screen.findByText(TOP.code)).toBeInTheDocument();
+    expect(await screen.findByLabelText('Not sure, any of 2')).toBeInTheDocument();
+    // MIRROR was never removed - exactly one row for it, not duplicated.
+    expect(screen.getAllByText(MIRROR.code)).toHaveLength(1);
+  });
+
+  it('AC-S14-3: no Restore button on a line with no combo_id (nothing missing to restore)', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: false, combos: [] });
+    await startWithALine();
+    await pickTheCabinet();
+    await waitFor(() => expect(mockCombos).toHaveBeenCalled());
+
+    expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull();
   });
 });

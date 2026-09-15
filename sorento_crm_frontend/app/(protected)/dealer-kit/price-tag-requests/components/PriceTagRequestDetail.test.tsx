@@ -256,7 +256,9 @@ describe('priceTagActions', () => {
     ['designing', 'user-1', 'Design tags'],
     ['changes_requested', 'user-1', 'Design tags'],
     ['proof_ready', 'user-1', 'View design'],
-    ['approved', 'user-1', 'Export PDF'],
+    // D14 (AC-S10-1, PLAN-price-tag-ai-extract-resolver.md): approved goes
+    // back to the designer to print and hand over - Open design leads.
+    ['approved', 'user-1', 'Open design'],
   ])('%s is led by %s', (status, assignee, label) => {
     expect(priceTagActions(status, assignee)[0].label).toBe(label);
   });
@@ -279,9 +281,12 @@ describe('priceTagActions', () => {
 
   it('never offers Void once a self print request is approved and therefore finished', () => {
     // r9 D8 retired `ready`: a self print request ENDS at `approved`, so the
-    // only thing left is the export. The office half of this matrix, and the
-    // `ready`-less status set, live in `priceTagRequestActions.test.ts`.
+    // only thing left is the design entry point and the export - no void.
+    // D14 (PLAN-price-tag-ai-extract-resolver.md) adds `design` leading it;
+    // the office half of this matrix, and the `ready`-less status set, live
+    // in `priceTagRequestActions.test.ts`.
     expect(priceTagActions('approved', 'user-1', 0, 'self').map((a) => a.action)).toEqual([
+      'design',
       'export',
     ]);
   });
@@ -589,10 +594,12 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    // Designed/No tag is a TAG fact since S3, so it is read off the tag row
-    // nested under each line, not off the line row.
-    const tag1Row = (await screen.findByText(tagLabelFor('line-1'))).closest('tr');
-    const tag2Row = screen.getByText(tagLabelFor('line-2')).closest('tr');
+    // Designed/No tag is a TAG fact since S3, so it is read off the tag's
+    // own row - here the folded line row itself (D7: one tag, no parts),
+    // found by the line's code rather than by the ordinal text a folded
+    // row no longer renders.
+    const tag1Row = (await screen.findByText('SRT-1')).closest('tr');
+    const tag2Row = screen.getByText('SRT-2').closest('tr');
     expect(tag1Row).not.toBeNull();
     expect(tag2Row).not.toBeNull();
     expect(within(tag1Row as HTMLElement).getByText('Designed')).toBeTruthy();
@@ -602,10 +609,13 @@ describe('PriceTagRequestDetail - tabs', () => {
   // Review: the row Design action was ungated - it rendered on every line
   // regardless of status, while the header CTA (and the deleted Proof-card
   // button) only ever offered Design when `priceTagActions` legalizes it.
-  // The row must use the exact same predicate.
+  // The row must use the exact same predicate. `collected` is the status to
+  // prove it with since D14 (PLAN-price-tag-ai-extract-resolver.md): design
+  // now leads at `approved` too, so that status no longer demonstrates the
+  // gate - `collected` still offers nothing but `export`.
   it('hides the Actions column entirely on a request Design is not legal for', async () => {
     mockGet.mockResolvedValue(
-      requestWith({ status: 'approved', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+      requestWith({ status: 'collected', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
     );
     renderDetail();
 
@@ -929,9 +939,176 @@ describe('PriceTagRequestDetail - Lines tab, parts and tags under the line (S3)'
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
+    // D7: one tag, no parts - the line folds to ONE row (no separate "1a"
+    // row, so no ordinal text), which by itself proves no part row either.
     expect(await screen.findByText('SRT-1')).toBeInTheDocument();
-    expect(screen.getByText(tagLabelFor('line-1'))).toBeInTheDocument();
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(screen.queryByText(tagLabelFor('line-1'))).toBeNull();
     expect(screen.queryByText('Package warning')).toBeNull();
     expect(screen.queryByText(/Open:/)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S3 (D7) - a line with exactly ONE tag and NO parts folds into ONE row.
+//
+// PLAN-price-tag-ai-extract-resolver.md D7 / price-tag-ai-extract-resolver-
+// acceptance-criteria.md S3 (AC-S3-1..S3-4). NOTE this supersedes two
+// assertions above in this same file that read a single-tag/no-parts line's
+// ordinal as separate, visible text ("shows each line's tag status...",
+// "a plain product line with no package shows its one tag..."): both will
+// need their `screen.getByText(tagLabelFor(...))` swapped for a scoped
+// `within(row)` read once D7 lands, since the ordinal text itself goes away
+// on a folded row (the aria-labels on Design/Review do not).
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestDetail - Lines tab, one row for a single-tag no-parts line (S3)', () => {
+  it('AC-S3-1: renders ONE row carrying the tag\'s price, status and actions - no ordinal text', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'designing',
+        assigned_to_id: 'user-1',
+        lines: [
+          lineWith({
+            id: 'line-1',
+            code: 'SRT-1',
+            name: 'Kitchen Sink',
+            show_promo_price: true,
+            tags: [tagWith('line-1', { list_price: 300, sell_price: 250 })],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+    await screen.findByText('SRT-1');
+
+    const rows = document.querySelectorAll('tbody tr');
+    // Today this is TWO rows (the line row, then the "1a" tag row) - D7 folds
+    // them into one, which is what this length assertion pins.
+    expect(rows).toHaveLength(1);
+    const row = rows[0] as HTMLElement;
+
+    expect(within(row).getByText('Product')).toBeInTheDocument();
+    expect(within(row).getByText('SRT-1')).toBeInTheDocument();
+    expect(within(row).getByText('Kitchen Sink')).toBeInTheDocument();
+    expect(within(row).getByText('RM 300.00')).toBeInTheDocument();
+    expect(within(row).getByText('RM 250.00')).toBeInTheDocument();
+    expect(within(row).getByText('No tag')).toBeInTheDocument();
+    expect(
+      within(row).getByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(tagLabelFor('line-1'))).toBeNull();
+  });
+
+  it('AC-S3-2: a line with two tags still renders the line row plus 1a and 1b tag rows', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          lineWith({
+            id: 'line-1',
+            code: 'SRT-1',
+            tags: [
+              tagWith('line-1'),
+              tagWith('line-1', { id: 'tag-1b', label: '1b', sort_order: 1 }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+    await screen.findByText('SRT-1');
+
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(screen.getByText('1a')).toBeInTheDocument();
+    expect(screen.getByText('1b')).toBeInTheDocument();
+  });
+
+  it('AC-S3-3: a line with one tag and a part keeps the line row, the part row and the 1a tag row', async () => {
+    const mirror: PriceTagRequestLinePart = {
+      id: 'part-mirror',
+      product_id: 'p-mirror',
+      code: 'SRTMR502-BL',
+      name: 'ZZT Mirror',
+      role: null,
+      candidates: [],
+      sort_order: 0,
+    };
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          lineWith({
+            id: 'line-1',
+            code: 'SRTBF11834',
+            name: 'ZZT Cabinet',
+            parts: [mirror],
+            tags: [tagWith('line-1')],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+    await screen.findByText('SRTBF11834');
+
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(3);
+    expect(screen.getByText('1a')).toBeInTheDocument();
+    expect(screen.getByText(/SRTMR502-BL/)).toBeInTheDocument();
+  });
+
+  it('AC-S3-4: Design on the folded row opens the designer for that tag', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'designing',
+        assigned_to_id: 'user-1',
+        lines: [lineWith({ id: 'line-1', code: 'SRT-1' })],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+    // Exactly one row - the fold - so this Design button IS the folded row's.
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
+    );
+    expect(push).toHaveBeenCalledWith(
+      '/dealer-kit/price-tag-requests/req-1/design?tag=line-1',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S10-2 (PLAN-price-tag-ai-extract-resolver.md D14): an approved request
+// goes back to the designer to print and hand over, not just to export.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestDetail - approved goes back to the designer (AC-S10-2)', () => {
+  it('the primary CTA reads "Open design" and the per-tag Design button is in the Actions column', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'approved',
+        assigned_to_id: 'user-1',
+        lines: [lineWith({ id: 'line-1', code: 'SRT-1' })],
+      }),
+    );
+    renderDetail();
+
+    const primary = await screen.findByTestId('price-tag-primary-cta');
+    expect(primary.textContent).toContain('Open design');
+
+    switchTab('Lines');
+    expect(
+      await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
+    ).toBeInTheDocument();
   });
 });
