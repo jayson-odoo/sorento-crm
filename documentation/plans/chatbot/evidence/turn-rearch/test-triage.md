@@ -145,3 +145,36 @@ above is left as-is (historical record) rather than rewritten in place.
   2 control tests (declared domain, ASCII hyphen) green. **Not the tester's fix to
   make** - flagged for the captain/coder. Original file retired (`git rm`), fully
   superseded by the port.
+
+- **`test_ascii_digit_semantics.py` - RETIRE, not PORT (verdict revised from the
+  original table's PORT).** Its whole premise (Python regex must match JS `\d`/`\b`
+  semantics so a full-width digit does not get misread as a roster pick) no longer
+  applies: `turn/apply.py` is explicitly forbidden from calling `re.` or reading
+  `.text` at all (`test_rearch_s2_apply_is_pure.py::
+  test_turn_package_never_calls_re_dot_or_reads_dot_text`, a grep guard) - digit/pick
+  detection moved from Python regex-on-raw-text to the PARSER's own structured
+  `answers_open_question`/`reference_positions` fields (any script, any language, no
+  regex needed - D16, "the LLM does language, code does everything else"). Grepped
+  the whole `app/services/chatbot/` tree for the file's own regex names
+  (`_BARE_NUMBER_RE`, `_DIGITS_ONLY_RE`, `_ISO_DATE_RE`, `_SHORT_DATE_RE`,
+  `_OPTION_ANY_RE`): none exist anywhere outside the deleted module. The replacement
+  mechanism already has its own coverage: `test_rearch_s2_number_answers.py` (34
+  tests, confirmed green this session) exercises "a number against a pending roster
+  resolves through apply()" via the parser's structured fields. No equivalent seam
+  to port to, by design, not by omission - retired, rule named here and in the
+  commit body.
+
+- **`test_r3_dual_read.py` - RETIRE, not PORT (verdict revised).** R3's whole
+  purpose was bridging TWO in-flight representations of "an escalation offer is
+  open" during the OLD engine's own migration: a frozen string match
+  (`"would you like me to escalate"`) from before S2, and a `pending.kind ==
+  "escalation_offer"` marker after it - both readable because the CRM and n8n wrote
+  sessions at different moments during that migration. Grepped for `offer_is_open`
+  and `escalation_offer` across `turn/` and `engine.py`: zero hits. The rearch's own
+  `State`/`Pending` contract (`turn/state.py`, `turn/pending.py`,
+  `_turn_helpers.PENDING_KINDS`) is now the SOLE source of truth for what is
+  pending - an open escalation question is one of three real `Pending.kind` values
+  (`team_pick`, `member_offer`, `company_pick`, all routed to `escalate_offer` by
+  `turn/route.py::_ASK_BRANCH`), never a string or a migration-era marker to dual-
+  read. Already covered by `test_rearch_s3_team_pick_and_866.py` (7/7 green per the
+  prior session's handoff) and the S2 pending-state suite. Retired.
