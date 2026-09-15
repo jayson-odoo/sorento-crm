@@ -21,6 +21,7 @@ from app.main import app  # noqa: E402
 
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_DB_TESTS") == "1",
@@ -533,7 +534,7 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
 
     @pytest.mark.parametrize(
         "target_status",
-        ["void", "approved", "ready"],
+        ["void", "approved", "ready_for_collection"],
     )
     def test_refuses_to_save_once_the_request_has_moved_past_designing(
         self, api, target_status
@@ -545,10 +546,24 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
         # Walk the real transition graph to the target status rather than
         # writing the column directly, so this exercises exactly the states a
         # request can actually be in.
+        #
+        # r9 D8 retired `ready`: the office hand-over replaces it, and it is
+        # only reachable when somebody has said the OFFICE prints.
+        if target_status == "ready_for_collection":
+            from app.models.price_tag import PriceTagRequest
+
+            db.query(PriceTagRequest).filter(
+                PriceTagRequest.id == request.id
+            ).update({"print_by": "office"})
+            db.flush()
         path = {
             "void": ["void"],
             "approved": ["proof_ready", "approved"],
-            "ready": ["proof_ready", "approved", "ready"],
+            "ready_for_collection": [
+                "proof_ready",
+                "approved",
+                "ready_for_collection",
+            ],
         }[target_status]
         for status in path:
             PriceTagRequestService.transition_status(db, request.id, status)
@@ -562,3 +577,14 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
 
         assert resp.status_code == 409, resp.text
         assert self._page_version_count(db, request.id) == before
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

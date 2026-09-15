@@ -49,6 +49,11 @@
  */
 
 import { extractApiError } from '@/lib/api-client';
+import type { PrintBy } from '@/lib/dealer-kit/print-collection';
+import type {
+  ChangeRequestPayload,
+  ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
 import {
   fetchPortalAttachmentBytes,
   portalFetch,
@@ -92,6 +97,20 @@ export interface PriceTagRequestLinePart {
   sort_order: number;
 }
 
+/**
+ * One printed tag under a line (D3), as the portal read view needs it.
+ *
+ * The portal neither splits nor prices a tag - marketing does both - so this
+ * carries only what a salesperson is shown: the label a pin's rail entry names
+ * ("1a"), and the id a pin anchors to.
+ */
+export interface PriceTagRequestTag {
+  id: string;
+  /** "1a", "1b" - the line's position plus a letter. Never an id. */
+  label: string;
+  quantity: number;
+}
+
 export interface PriceTagRequestLine {
   id: string;
   line_type: PriceTagLineType;
@@ -116,6 +135,8 @@ export interface PriceTagRequestLine {
   package_warning?: string | null;
   /** The parts under this line, in display order. */
   parts?: PriceTagRequestLinePart[];
+  /** What actually prints for this line: one tag by default, N after a split. */
+  tags?: PriceTagRequestTag[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -140,6 +161,14 @@ export interface PriceTagRequestSummary {
   created_at: string;
   /** Set while the request is a draft the salesperson has not submitted. */
   portal_draft_at?: string | null;
+  /** Who prints (r9 D7). Null until the salesperson says, and required at submit. */
+  print_by?: PrintBy | null;
+  /** Which review round the design is on (D4). Pins from an earlier round
+   *  render grey: they were about a proof that has since been redrawn. */
+  review_round?: number;
+  /** Set when the office marked the tags ready to pick up (D9). */
+  ready_for_collection_at?: string | null;
+  collected_at?: string | null;
   /** R3-1: the same revision fields the legacy kinds' own summaries carry. */
   revision_no?: number;
   last_revised_at?: string | null;
@@ -490,6 +519,12 @@ export interface CreatePriceTagRequestInput {
   needed_by_date: string | null;
   notes: string | null;
   price_mode: PriceMode;
+  /**
+   * Who prints (r9 D7). Null on a draft; `submit` refuses with 422
+   * `PRINT_BY_REQUIRED` while it is still null, because the answer decides
+   * whether the request ends at approved or waits for a collection.
+   */
+  print_by: PrintBy | null;
   // `show_promo_price` is NOT sent (D5, review fix): the service derives it
   // on every line save from the header's own `price_mode`, so a value the
   // client sent was always dead weight, immediately overridden either way.
@@ -522,6 +557,25 @@ export async function updateRequest(
   return unwrapNamingFields<PriceTagRequestDetail>(res, 'Failed to update request');
 }
 
+/**
+ * The salesperson confirming they have the tags (r9 D8).
+ *
+ * ```
+ * POST /api/v1/public/portal/submissions/price_tag_request/{id}/collect
+ *   200 { status: "collected" }
+ *   409 unless the request is `ready_for_collection`.
+ * ```
+ *
+ * The status and nothing else: the caller refetches the request, so a second
+ * copy of the timestamp here would be one more thing that can disagree.
+ */
+export async function collectRequest(id: string): Promise<{ status: string }> {
+  const res = await portalFetch(`${BASE}/${encodeURIComponent(id)}/collect`, {
+    method: 'POST',
+  });
+  return unwrap<{ status: string }>(res, 'Failed to mark this collected');
+}
+
 export async function submitRequest(id: string): Promise<{ status: string }> {
   const res = await portalFetch(
     `${BASE}/${encodeURIComponent(id)}/submit`,
@@ -547,19 +601,55 @@ export async function approveRequest(id: string): Promise<{ status: string }> {
   return unwrap<{ status: string }>(res, 'Failed to approve request');
 }
 
+/**
+ * Send the round's change requests (r9 S2/D5).
+ *
+ * ```
+ * POST /api/v1/public/portal/submissions/price_tag_request/{id}/request-changes
+ *   { comments: [{ line_id, x, y, w, h, body }], note? }
+ *   200 { status: "changes_requested", round, comments: ReviewComment[] }
+ * ```
+ *
+ * One call for the whole round: the pins are placed locally and nothing reaches
+ * the server until Send, so a salesperson can put five pins down, delete two,
+ * and the request changes state exactly once. The old text-only `{ note }` body
+ * stays accepted server-side for one release and lands as a general comment.
+ *
+ * Contract and the row shape: `lib/dealer-kit/review-comments.ts`.
+ *
+ */
 export async function requestChanges(
   id: string,
-  note: string,
-): Promise<{ status: string }> {
+  payload: ChangeRequestPayload,
+): Promise<{ status: string; round: number; comments: ReviewComment[] }> {
   const res = await portalFetch(
     `${BASE}/${encodeURIComponent(id)}/request-changes`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ note }),
+      body: JSON.stringify(payload),
     },
   );
-  return unwrap<{ status: string }>(res, 'Failed to request changes');
+  return unwrap<{ status: string; round: number; comments: ReviewComment[] }>(
+    res,
+    'Failed to send the change requests',
+  );
+}
+
+/**
+ * Every change request sent on this design, all rounds (D6).
+ *
+ * ```
+ * GET /api/v1/public/portal/submissions/price_tag_request/{id}/review-comments
+ *   200 ReviewComment[]
+ * ```
+ *
+ */
+export async function listReviewComments(id: string): Promise<ReviewComment[]> {
+  const res = await portalFetch(
+    `${BASE}/${encodeURIComponent(id)}/review-comments`,
+  );
+  return unwrap<ReviewComment[]>(res, 'Failed to load the change requests');
 }
 
 // ---------------------------------------------------------------------------

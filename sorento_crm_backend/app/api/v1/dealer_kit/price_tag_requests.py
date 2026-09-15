@@ -10,6 +10,7 @@ Permission gates:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Query, status
@@ -25,24 +26,37 @@ from app.models.price_tag import (
     PriceTagRequestLine,
     PriceTagRequestTag,
 )
+from app.models.user import User
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
+    LineDataChange,
+    PriceTagRequestOfficeUpdate,
+    RequestVersionSummary,
     ResolvedLineData,
+    ReviewCommentResolvePayload,
+    ReviewCommentResponse,
     PriceTagRequestTagResponse,
     PriceTagRequestTagSplit,
     PriceTagRequestTagUpdate,
+    TagDataChangeSet,
+    TagPinPayload,
+    TagPinResponse,
     PriceTagRequestListItem,
     PriceTagRequestResponse,
     TagSheetDocPayload,
+    TagSheetDesignResponse,
     TagSheetDocResponse,
     TagSheetExportIn,
     TagSheetExportOut,
     TransitionPayload,
 )
-from app.services.dealer_kit import tag_data_service
+from app.services import price_tag_review_service
+from app.services.uuid_path_param import validate_uuid_path
+from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
+    PRINT_BY_CHOICES,
     STATUS_DESIGNING,
     STATUS_PROOF_READY,
 )
@@ -53,6 +67,34 @@ router = APIRouter(prefix="/price-tag-requests", tags=["price-tag-requests"])
 
 _VIEW = require_permission_with_api_key("dealer_kit.price_tag_requests.view")
 _PROCESS = require_permission("dealer_kit.price_tag_requests.process")
+
+def _default_tag_sheet_doc() -> dict:
+    """A tag sheet nobody has drawn on yet, but one the designer can OPEN.
+
+    Written only when a version has to exist and there is no document to put
+    in it (R6) - what that version is FOR is the pins it carries, not the
+    empty page. The prior fallback (``{"kind": "tag_sheet", "sheets": []}``)
+    had no ``imposition`` key, and every reader of a tag_sheet doc
+    (``ScaledSheet``, ``TagSheetRenderer``) reads
+    ``doc.imposition.page_width_mm`` / ``page_height_mm`` unconditionally, so
+    a request whose FIRST design action was Update tag (not a CRM Claim,
+    which auto-creates the ``Page`` via ``ensure_tag_sheet_page`` but writes
+    no document at all until a save) left a document nothing could draw.
+    Values match the designer's own default (``IMPOSITION_PRESETS.auto``,
+    `lib/dealer-kit/tag-template-types.ts`), so the page this builds looks
+    exactly like the one a fresh claim opens on.
+    """
+    return {
+        "kind": "tag_sheet",
+        "imposition": {
+            "preset": "auto",
+            "page_width_mm": 210,
+            "page_height_mm": 297,
+            "bleed_mm": 3,
+            "gap_mm": 2,
+        },
+        "sheets": [],
+    }
 
 
 def _user_id(user: dict) -> str | None:
@@ -199,8 +241,24 @@ def transition_price_tag_request(
 ):
     """Apply a status transition with optional note."""
     result = PriceTagRequestService.transition_status(
-        db, request_id, payload.status, user_id=_user_id(user),
+        db,
+        request_id,
+        payload.status,
+        user_id=_user_id(user),
+        notify_ctx={"reason": payload.note} if payload.note else None,
     )
+    # D14: `TransitionPayload.note` has existed since r7 and this route threw it
+    # away, so a rejection reason was typed into a box that discarded it. It is
+    # a general review comment by the staffer now - the salesperson reads it
+    # beside their own pins, and the message quotes it.
+    if payload.note and payload.note.strip():
+        price_tag_review_service.create_comments(
+            db,
+            result,
+            comments=[],
+            note=payload.note,
+            author_user_id=_user_id(user),
+        )
     # Marking the proof ready is a deliberate act, so it promotes the autosaved
     # draft to a version the same way manual Save does (B1). The designer's own
     # button saves first and leaves nothing to promote, but the detail page's
@@ -216,6 +274,449 @@ def transition_price_tag_request(
             )
     db.commit()
     return _with_resolved_lines(db, result)
+
+
+# ---------------------------------------------------------------------------
+# Edit request (r9 S3/D7)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/{request_id}", response_model=PriceTagRequestResponse)
+def update_price_tag_request(
+    request_id: str,
+    payload: PriceTagRequestOfficeUpdate,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """The office fixing what the salesperson answered (D7).
+
+    Only the print choice today: everything else on a submitted request is the
+    salesperson's own, and changes through the revision engine. Refused once the
+    request is finished - the choice decides a journey that has already ended.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished and can no longer be changed.",
+            code="INVALID_STATE",
+        )
+    data = payload.model_dump(exclude_unset=True)
+    if "print_by" in data:
+        choice = data["print_by"]
+        if choice is not None and choice not in PRINT_BY_CHOICES:
+            raise AppException(
+                status_code=422,
+                message="Printing must be Office prints or I print myself.",
+                code="INVALID_PRINT_BY",
+            )
+        req.print_by = choice
+    db.flush()
+    db.commit()
+    return _with_resolved_lines(db, req)
+
+
+# ---------------------------------------------------------------------------
+# The product data gate and the request's own history (r9 S5/D18-D19)
+# ---------------------------------------------------------------------------
+
+
+def _change_sets(db: Session, req) -> list[TagDataChangeSet]:
+    """The resolver's diff, one entry per changed TAG.
+
+    Per tag since the combos slice: a line may print several tags and two of
+    them resolve different products, so rolling them up here would ask one
+    question about two different changes. The Lines tab rolls its own pill up
+    from these.
+    """
+    return [
+        TagDataChangeSet(
+            tag_id=row["tag_id"],
+            tag_label=row.get("tag_label") or "",
+            line_id=row["line_id"],
+            code=row.get("code") or "",
+            name=row.get("name") or "",
+            changes=row.get("data_changes") or [],
+        )
+        for row in tag_data_service.resolve_request_line_data(db, req)
+        if row.get("data_changes")
+    ]
+
+
+@router.get("/{request_id}/data-changes", response_model=list[TagDataChangeSet])
+def list_tag_data_changes(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """What master data has moved under this request's pinned tags (D17/D18).
+
+    The SAME diff the resolver computes - this route only reshapes it per tag
+    with the line's code, so the card and the Lines tab can name what changed
+    without resolving anything a second time. A terminal request answers an
+    empty list: nothing on it can be updated.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    return _change_sets(db, req)
+
+
+@router.post(
+    "/{request_id}/data-changes/recheck", response_model=list[TagDataChangeSet]
+)
+def recheck_tag_data_changes(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """Forget every Keep on this request and re-run the product-data gate
+    (owner test round finding 3).
+
+    Keep current silenced ONE drift by recording its hash as the ack, and
+    there was no way to ask again - so a red dot silenced once stayed silent
+    forever, even for a later, unrelated edit that would have tripped the
+    gate on its own. Clearing every tag's ack re-arms the comparison, then
+    answers the same shape ``GET .../data-changes`` does.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    for line in req.lines:
+        for tag in line.tags or []:
+            if tag.data_change_ack_hash is not None:
+                tag.data_change_ack_hash = None
+    db.commit()
+    return _change_sets(db, req)
+
+
+@router.post("/{request_id}/tags/{tag_id}/pin", response_model=TagPinResponse)
+def resolve_tag_pin(
+    request_id: str,
+    tag_id: str,
+    payload: TagPinPayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """Answer the product-data question for one TAG (D18).
+
+    ``update`` takes the new values, and keeps the design as it stood in a
+    version FIRST - so the tag is always one Restore away from what it was.
+    ``keep`` records the hash of what was looked at, so the same change stops
+    asking; a different change later asks again.
+
+    Per tag rather than per line since the combos slice: two tags split off one
+    line print two different basins, so a Keep on one must not silence the
+    other.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished; its tags can no longer change.",
+            code="INVALID_STATE",
+        )
+    tag = _tag_or_404(db, request_id, tag_id)
+
+    live_rows = {
+        row["tag_id"]: row
+        for row in tag_data_service.resolve_tags_live(db, req, [tag])
+    }
+    live = live_rows.get(tag.id)
+    if live is None:
+        raise AppException(
+            status_code=409,
+            message="This tag's product can no longer be resolved.",
+            code="INVALID_STATE",
+        )
+
+    if payload.action == "update":
+        # R6: a pin is never overwritten without a version to get back to, so
+        # a request that has no page yet gets one here. The version's own
+        # `pinned_line_data` is what Restore needs, and it is exactly what the
+        # next two lines are about to replace - an empty document is still a
+        # complete way back.
+        PriceTagRequestService.ensure_tag_sheet_page(db, req, _user_id(user))
+        page = db.query(Page).filter(Page.id == req.page_id).first()
+        if page is not None:
+            latest = _latest_version(db, page)
+            doc = (
+                page.draft_doc
+                or (latest.doc if latest else None)
+                or _default_tag_sheet_doc()
+            )
+            fields = ", ".join(
+                change["label"]
+                for change in (
+                    tag_data_service.diff_pin_against_live(
+                        db, req, tag.pinned_tag_data or {}, live, None
+                    )
+                )
+            )
+            after_message = f"Product update: {fields}" if fields else "Product update"
+            # "Update all" is N sequential calls to this same route, one per
+            # tag - PT-202609-0015 also found that a batch read as a
+            # before/after pair PER TAG, so the second tag's own "before"
+            # duplicated the first tag's "after" (both snapshot every tag's
+            # pins, not just the one being touched). Continuing a batch - the
+            # immediately preceding version is itself an unclosed "after" -
+            # skips a fresh "before" and folds this tag's change into that
+            # SAME after version instead of adding a new one.
+            continuing_batch = bool(
+                latest and (latest.commit_message or "").startswith("Product update")
+            )
+            if not continuing_batch:
+                _snapshot_draft(
+                    db,
+                    page,
+                    doc,
+                    _user_id(user),
+                    f"Before product update: {fields}" if fields else
+                    "Before product update",
+                )
+            tag.pinned_tag_data = tag_data_service.pin_payload(live)
+            tag.pinned_at = datetime.utcnow()
+            tag.data_change_ack_hash = None
+            # PT-202609-0015: Update only ever snapshotted the OLD pin - the
+            # new value it just wrote never landed in any version, so a later
+            # Restore to an earlier point could never bring it back. This is
+            # the AFTER half: the state the update above just produced.
+            if continuing_batch:
+                latest.doc = doc
+                latest.commit_message = after_message
+                latest.pinned_line_data = _pins_snapshot(db, page)
+            else:
+                _snapshot_draft(db, page, doc, _user_id(user), after_message)
+        else:
+            tag.pinned_tag_data = tag_data_service.pin_payload(live)
+            tag.pinned_at = datetime.utcnow()
+            tag.data_change_ack_hash = None
+    else:
+        # Keep: the TAG stays as it is. The hash of what was looked at is the
+        # ack, so this exact change stops asking and the next one does not.
+        tag.data_change_ack_hash = tag_data_service.data_hash(live)
+
+    db.flush()
+    db.commit()
+    return TagPinResponse(tag_id=tag.id, pinned_at=tag.pinned_at)
+
+
+@router.get("/{request_id}/versions", response_model=list[RequestVersionSummary])
+def list_request_versions(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The design's history, newest first (D19).
+
+    An empty history is a state the sheet draws, not an error: a request whose
+    design has never been saved answers `[]`.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req = PriceTagRequestService.get_request(db, request_id)
+    if not req or not req.page_id:
+        return []
+    rows = (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == req.page_id)
+        .order_by(PageVersion.version.desc())
+        .all()
+    )
+    authors = {
+        user.id: (user.name or user.email)
+        for user in db.query(User)
+        .filter(User.id.in_({row.created_by for row in rows if row.created_by}))
+        .all()
+    } if rows else {}
+    return [
+        RequestVersionSummary(
+            version=row.version,
+            commit_message=row.commit_message,
+            created_by_name=authors.get(row.created_by),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+@router.get("/{request_id}/versions/{version}", response_model=TagSheetDesignResponse)
+def get_request_version(
+    request_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """One version, as the shared lightbox draws it (D19).
+
+    The same payload shape a live design answers - a version IS a whole tag
+    sheet document, so it needs the same media maps to draw.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req, page = _require_request_page(db, request_id)
+    row = (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == page.id, PageVersion.version == version)
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404, message="That version no longer exists.", code="NOT_FOUND"
+        )
+    # S2: a version draws the pins it was WRITTEN with. Resolving its lines
+    # against today's pins shows last week's layout filled with this week's
+    # prices - a page that never existed, presented as history. A version from
+    # before the pins existed has none of its own and falls back to the live
+    # resolve, which is what it was drawn from anyway.
+    rows, media = tag_sheet_export_service.design_media(
+        db,
+        req,
+        row.doc,
+        rows=(
+            tag_data_service.resolve_version_line_data(db, req, row.pinned_line_data)
+            if row.pinned_line_data
+            else None
+        ),
+    )
+    return TagSheetDesignResponse(
+        page_id=str(page.id),
+        version=row.version,
+        doc=row.doc,
+        source="version",
+        lines=[ResolvedLineData.model_validate(line) for line in rows],
+        **media,
+    )
+
+
+@router.post(
+    "/{request_id}/versions/{version}/restore", response_model=RequestVersionSummary
+)
+def restore_request_version(
+    request_id: str,
+    version: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """Put a version's document AND its pins back (D19).
+
+    Adds a version rather than destroying one, so the way back is the list
+    itself - which is also why it asks nothing first.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    req, page = _require_request_page(db, request_id)
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished; its design can no longer change.",
+            code="INVALID_STATE",
+        )
+    row = (
+        db.query(PageVersion)
+        .filter(PageVersion.page_id == page.id, PageVersion.version == version)
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404, message="That version no longer exists.", code="NOT_FOUND"
+        )
+
+    # Snapshot the state being LEFT, before anything below overwrites it
+    # (PT-202609-0015): the old behaviour re-snapshotted the TARGET version a
+    # second time under "Restored vN" - v<n> already exists as history, so
+    # that duplicated it and threw away whatever the live doc/pins held
+    # instead (an Update nobody had proofed yet, for one). This is the only
+    # place that state is ever going to be found again.
+    latest = _latest_version(db, page)
+    current_doc = (
+        page.draft_doc
+        or (latest.doc if latest else None)
+        or _default_tag_sheet_doc()
+    )
+    created = _snapshot_draft(
+        db, page, current_doc, _user_id(user), f"Before restore to v{version}"
+    )
+
+    pins = row.pinned_line_data or {}
+    for line in req.lines:
+        for tag in line.tags or []:
+            if tag.id in pins:
+                tag.pinned_tag_data = pins[tag.id]
+                tag.data_change_ack_hash = None
+    # The restored document is the draft: the designer opens draft-first, and
+    # this is what marketing was last looking at. No version is written for
+    # this half - v<n> already IS that state, sitting right there in history.
+    page.draft_doc = row.doc
+    db.flush()
+    db.commit()
+    return RequestVersionSummary(
+        version=created.version,
+        commit_message=created.commit_message,
+        created_by_name=None,
+        created_at=created.created_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Pinned change requests (r9 S2/D6)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{request_id}/review-comments", response_model=list[ReviewCommentResponse]
+)
+def list_review_comments(
+    request_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """Every change request the salesperson pinned on this design (D6)."""
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    return price_tag_review_service.to_responses(
+        db, price_tag_review_service.list_comments(db, request_id)
+    )
+
+
+@router.patch(
+    "/{request_id}/review-comments/{comment_id}",
+    response_model=ReviewCommentResponse,
+)
+def resolve_review_comment(
+    request_id: str,
+    comment_id: str,
+    payload: ReviewCommentResolvePayload,
+    db: Session = Depends(get_db),
+    user: dict = Depends(_PROCESS),
+):
+    """Tick a change request Done, or put it back (D6).
+
+    Gated on the PROCESS permission, not view: the salesperson may read their
+    own comments and never close one - a change request is closed by whoever
+    did the work, and the row records which of them it was.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    row = price_tag_review_service.set_resolved(
+        db,
+        request_id,
+        comment_id,
+        resolved=payload.resolved,
+        user_id=_user_id(user),
+    )
+    return price_tag_review_service.to_responses(db, [row])[0]
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +791,13 @@ def update_price_tag_request_tag(
         # answers them one at a time.
         PriceTagRequestService.validate_choices(db, tag, data["choices"])
         tag.choices = {**dict(tag.choices or {}), **data["choices"]}
+        # Answering a choice changes WHICH products this tag prints, so the pin
+        # taken before it describes a different tag (r9 D16). Dropping it makes
+        # the next resolve re-pin, instead of reporting marketing's own decision
+        # back to marketing as "master data moved".
+        tag.pinned_tag_data = None
+        tag.pinned_at = None
+        tag.data_change_ack_hash = None
     # The body is built BEFORE the commit: it goes back through the resolver, and
     # a failure there used to leave the write applied and answer 500.
     db.flush()
@@ -320,6 +828,13 @@ def split_price_tag_request_tag(
     """
     tag = _tag_or_404(db, request_id, tag_id)
     tags = PriceTagRequestService.split_tag(db, tag, payload.role)
+    # Every tag of the split now resolves a different candidate, the original
+    # included, so none of their pins still describes what they print (r9 D16).
+    # Cleared here and re-taken by the resolve below.
+    for row in tags:
+        row.pinned_tag_data = None
+        row.pinned_at = None
+        row.data_change_ack_hash = None
     db.flush()
     resolved = _resolved_by_tag(db, request_id)
     bodies = [_tag_body(row, resolved) for row in tags]
@@ -441,6 +956,25 @@ def resolve_tag_sheet_design(db: Session, page: Page, *, prefer: str = "draft") 
     }
 
 
+def _pins_snapshot(db: Session, page: Page) -> dict:
+    """Every TAG's pinned data for the request this page belongs to (D19).
+
+    Keyed by tag id, which is what the document keys its placements on, so a
+    restore puts each pin back under the tag that was drawn from it.
+    """
+    request = (
+        db.query(PriceTagRequest).filter(PriceTagRequest.page_id == page.id).first()
+    )
+    if request is None:
+        return {}
+    return {
+        tag.id: tag.pinned_tag_data
+        for line in request.lines
+        for tag in line.tags or []
+        if tag.pinned_tag_data is not None
+    }
+
+
 def _snapshot_draft(
     db: Session, page: Page, doc: dict, user_id: str | None, commit_message: str | None
 ) -> PageVersion:
@@ -463,8 +997,19 @@ def _snapshot_draft(
         doc=doc,
         commit_message=commit_message,
         created_by=user_id,
+        # The pins are half the version (r9 D19): a doc restored over today's
+        # product data would show old artwork at new prices.
+        pinned_line_data=_pins_snapshot(db, page),
     )
     db.add(version)
+    # Live 500, PT-202609-0015: the app's own `SessionLocal` runs with
+    # `autoflush=False`, so a caller writing two versions in one request (an
+    # Update's before + after) had the SECOND call's `max()` query above miss
+    # this row entirely - both computed the same next version number, and the
+    # second INSERT hit `uq_dealer_kit_page_version`. Flushing here, not at
+    # the call site, is what makes `_snapshot_draft` safe to call twice in a
+    # row regardless of the session's own autoflush setting.
+    db.flush()
     # The draft has become history, so there is no work in progress left. Not
     # clearing it would make the NEXT open show the draft rather than the
     # version that was just saved from it - the same document today, but a
@@ -473,7 +1018,7 @@ def _snapshot_draft(
     return version
 
 
-@router.get("/{request_id}/design", response_model=TagSheetDocResponse)
+@router.get("/{request_id}/design", response_model=TagSheetDesignResponse)
 def get_tag_sheet_design(
     request_id: str,
     db: Session = Depends(get_db),
@@ -489,9 +1034,20 @@ def get_tag_sheet_design(
     ``version`` reports the latest immutable version either way, so a draft says
     which version it is sitting on top of; ``source`` says which of the two the
     ``doc`` actually is.
+
+    It answers the LINES and the three media maps too (r9 S1/D1), from the same
+    resolver the PDF reads, so the Design section draws real artwork in one
+    call instead of reaching for the library route marketing has no permission
+    for.
     """
-    _req, page = _require_request_page(db, request_id)
-    return TagSheetDocResponse(**resolve_tag_sheet_design(db, page))
+    req, page = _require_request_page(db, request_id)
+    doc_fields = resolve_tag_sheet_design(db, page)
+    rows, media = tag_sheet_export_service.design_media(db, req, doc_fields["doc"])
+    return TagSheetDesignResponse(
+        **doc_fields,
+        lines=[ResolvedLineData.model_validate(row) for row in rows],
+        **media,
+    )
 
 
 @router.put("/{request_id}/design/draft", response_model=TagSheetDocResponse)

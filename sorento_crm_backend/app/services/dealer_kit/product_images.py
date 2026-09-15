@@ -169,3 +169,37 @@ def gallery_images(
             }
         )
     return images
+
+
+def resign_images(db: Session, images: list[dict]) -> list[dict]:
+    """Fresh signed URLs for photos a PIN is carrying (r9 D16).
+
+    A signed URL expires in an hour, so the copy stored in
+    ``pinned_tag_data`` is dead almost immediately: the pin remembers WHICH
+    photos the tag was drawn with (by attachment id), and the URL is resolved
+    again on every read. A photo whose attachment has since gone is dropped,
+    the same rule ``gallery_images`` uses for one it cannot sign.
+    """
+    from app.models.resources import Attachment
+
+    ids = [image.get("attachment_id") for image in images or [] if image.get("attachment_id")]
+    if not ids:
+        return []
+    rows = {
+        attachment.id: attachment
+        for attachment in db.query(Attachment).filter(Attachment.id.in_(ids)).all()
+    }
+    fresh: list[dict] = []
+    for image in images:
+        attachment = rows.get(image.get("attachment_id"))
+        if attachment is None:
+            continue
+        signed = resolve_signed_url(
+            attachment.file_path,
+            provider=attachment.storage_provider,
+            strict=True,
+        )
+        if not signed:
+            continue
+        fresh.append({**image, "url": signed})
+    return fresh

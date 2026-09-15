@@ -5,7 +5,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +203,9 @@ class PriceTagRequestCreate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+    #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
+    #: longer value 500s on the flush instead of being refused with a 422.
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestUpdate(BaseModel):
@@ -221,6 +231,21 @@ class PriceTagRequestUpdate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+    #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
+    #: longer value 500s on the flush instead of being refused with a 422.
+    print_by: Optional[Literal["office", "self"]] = None
+
+
+class PriceTagRequestOfficeUpdate(BaseModel):
+    """What the office may change on a SUBMITTED request (r9 D7).
+
+    One field, deliberately: everything else belongs to the salesperson and
+    goes through the revision engine. A separate model from
+    ``PriceTagRequestUpdate`` so a draft edit and an office fix cannot drift
+    into each other's fields.
+    """
+
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -278,6 +303,19 @@ class PriceTagRequestResponse(BaseModel):
     # as `expected_revision_no`, and the header line reads it too.
     revision_no: int = 0
     last_revised_at: Optional[datetime] = None
+    # Who prints, and the hand-over that follows for an office print (r9 D7/D9).
+    # Declared here or `response_model` drops them without a word (LESSONS).
+    print_by: Optional[str] = None
+    ready_for_collection_at: Optional[datetime] = None
+    collected_at: Optional[datetime] = None
+    collected_auto: bool = False
+    #: WHO collected them: the staffer, the salesperson, or nobody when the
+    #: sweep closed it. A name, never an id.
+    collected_by_name: Optional[str] = None
+    #: Which review round the design is on (D4). The pin overlay greys the
+    #: earlier rounds against it, so it has to travel even when no comment from
+    #: the current round exists yet.
+    review_round: int = 0
     lines: list[PriceTagRequestLineResponse] = []
 
     # Resolved, not stored. Filled by
@@ -357,7 +395,9 @@ class PriceTagRequestListItem(BaseModel):
 
 class TransitionPayload(BaseModel):
     status: str
-    note: Optional[str] = None
+    #: A rejection reason, kept as a general review comment (r9 D14) - which is
+    #: why it is bounded the same way a pin's body is.
+    note: Optional[str] = Field(None, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -731,6 +771,31 @@ class TagSheetDocPayload(BaseModel):
     commit_message: Optional[str] = None
 
 
+class TagFont(BaseModel):
+    """A brand font the editor and the print page load through ``@font-face``."""
+
+    name: str
+    family: str
+    url: str
+
+
+class DesignMediaMixin(BaseModel):
+    """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
+
+    Declared once and inherited by both design responses, because
+    ``response_model`` drops an undeclared field without a word (LESSONS) and
+    the whole point of r9 S1 is that the two previews and the PDF read the same
+    three values.
+    """
+
+    #: assetId -> signed URL, for every library asset the document names.
+    assets: dict[str, str] = {}
+    #: attachmentId -> signed URL, for the bound products' own photos.
+    images: dict[str, str] = {}
+    #: Brand fonts, as same-origin paths (a signed CDN URL has no CORS header).
+    fonts: list[TagFont] = []
+
+
 class TagSheetDocResponse(BaseModel):
     """Response for getting/saving a tag sheet design."""
     page_id: str
@@ -744,6 +809,21 @@ class TagSheetDocResponse(BaseModel):
     # ``version`` above stays the number of the latest immutable version either
     # way, so a draft still reports the version it is sitting on top of.
     source: Literal["draft", "version"] = "version"
+
+
+class TagSheetDesignResponse(TagSheetDocResponse, DesignMediaMixin):
+    """What the CRM Design section reads (r9 S1/D1): the document, its resolved
+    lines and the three media maps, in ONE call.
+
+    Separate from ``TagSheetDocResponse`` because the two SAVE routes answer
+    that one and have no business resolving artwork; the read route answers
+    this. Before r9 the CRM section fetched the doc here and the artwork from
+    the asset library route, which is gated on ``dealer_kit.library.manage`` -
+    a permission marketing does not hold, so the section drew grey boxes for
+    the one role that needs it most.
+    """
+
+    lines: list[ResolvedLineData] = []
 
 
 # ---------------------------------------------------------------------------
@@ -927,6 +1007,36 @@ class ResolvePreviewOut(BaseModel):
     product_set: Optional[ProductSetTagData] = None
 
 
+class LineDataChange(BaseModel):
+    """One field master data has moved under a pinned tag (r9 D17)."""
+
+    field: str
+    label: str
+    old: Optional[str] = None
+    new: Optional[str] = None
+    old_image_url: Optional[str] = None
+    new_image_url: Optional[str] = None
+    #: Why the value moved, when that is not obvious ("Promotion ended").
+    note: Optional[str] = None
+
+
+class TagDataChangeSet(BaseModel):
+    """One TAG's worth of pending decision, named by its code not its id.
+
+    Per tag rather than per line since the combos slice: two tags split off one
+    line resolve different products, so they are drawn from different data and
+    a Keep on one must not silence the other. `line_id` and `tag_label` are
+    what the reader is shown ("1a" under the line's code), never the ids.
+    """
+
+    tag_id: str
+    tag_label: str = ""
+    line_id: str
+    code: str
+    name: str
+    changes: list[LineDataChange] = []
+
+
 class TagOpenGroupCandidate(BaseModel):
     product_id: str
     code: str
@@ -980,27 +1090,36 @@ class ResolvedLineData(BaseModel):
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
+    # What master data has moved under this line since it was pinned (r9 D17).
+    # Declared here or `response_model` drops it without a word, which is how
+    # the CRM designer's own red dot went missing while the detail page's did
+    # not: they read the same resolver through two different response models.
+    #
+    # Optional, and absent rather than empty when the resolver did not compute
+    # it: `[]` means "nothing has moved", and a terminal request runs no live
+    # resolve at all, so answering `[]` there would be a claim nobody checked.
+    data_changes: Optional[list[LineDataChange]] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_absent_data_changes(self, handler):
+        """No key at all when there is no diff to report (S10)."""
+        data = handler(self)
+        if data.get("data_changes") is None:
+            data.pop("data_changes", None)
+        return data
 
 
-class PortalTagSheetDesignResponse(BaseModel):
+class PortalTagSheetDesignResponse(DesignMediaMixin):
     """The portal's design preview (D11): the same doc `TagSheetDocResponse`
     carries, PLUS the resolved line data the CRM designer reads through a
     SEPARATE `/resolve-prices` call - the portal has no such second call, so
-    this route answers both in one response."""
+    this route answers both in one response, media included (r9 S1/D1)."""
 
     page_id: str
     version: int
     doc: Optional[dict] = None
     source: Literal["draft", "version"] = "version"
     lines: list[ResolvedLineData] = []
-
-
-class TagFont(BaseModel):
-    """A brand font the editor and the print page load through ``@font-face``."""
-
-    name: str
-    family: str
-    url: str
 
 
 class AssetResponse(BaseModel):
@@ -1016,3 +1135,113 @@ class AssetResponse(BaseModel):
     tags: list[str] = []
     url: Optional[str] = None
     mime_type: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Pinned change requests (r9 S2/D4-D6)
+# ---------------------------------------------------------------------------
+
+#: Long enough for anything a person types about one tag, short enough that a
+#: single request cannot post a novel into the column.
+REVIEW_COMMENT_MAX_LENGTH = 2000
+#: Pins in one round. A round is placed by hand, one click at a time.
+REVIEW_COMMENTS_MAX_PER_ROUND = 50
+
+
+class ReviewCommentPin(BaseModel):
+    """One pin as the portal sends it: an anchor on a TAG, and what to change.
+
+    ``allow_inf_nan=False`` is not a nicety: ``float("nan")`` passes every
+    comparison (``0 <= nan <= 1`` is False, but ``nan < 0`` is False too), so a
+    hand-rolled range check lets it through, ``numeric(6,4)`` stores it, and
+    every later read of that request 500s on serialisation - permanently.
+    """
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    #: The tag the pin was placed on. Absent = a general comment about the
+    #: whole design. A line prints one tag per option since the combos slice,
+    #: and each copy of a tag on the sheet is the SAME tag, so the anchor needs
+    #: no placed-copy id: the pin draws on every copy of its own tag.
+    tag_id: Optional[str] = None
+    #: Fractions of the tag box, 0..1. Absent on a general comment.
+    x: Optional[float] = Field(None, ge=0, le=1)
+    y: Optional[float] = Field(None, ge=0, le=1)
+    #: 0 for a point pin, > 0 for a box.
+    w: Optional[float] = Field(None, ge=0, le=1)
+    h: Optional[float] = Field(None, ge=0, le=1)
+    body: str = Field(..., max_length=REVIEW_COMMENT_MAX_LENGTH)
+
+
+class RequestChangesPayload(BaseModel):
+    """A whole round in one call (D5).
+
+    ``note`` alone is the legacy body, accepted for one release and stored as a
+    general comment, so a portal that has not reloaded still works.
+
+    Bounded on both axes: a round is a handful of pins somebody placed by hand,
+    so fifty is far past any real one and small enough that no single call can
+    write an unbounded number of rows.
+    """
+
+    comments: list[ReviewCommentPin] = Field(
+        default_factory=list, max_length=REVIEW_COMMENTS_MAX_PER_ROUND
+    )
+    note: Optional[str] = Field(None, max_length=REVIEW_COMMENT_MAX_LENGTH)
+
+
+class ReviewCommentResponse(BaseModel):
+    """One `price_tag_review_comments` row, as both surfaces read it."""
+
+    id: str
+    request_id: str
+    tag_id: Optional[str] = None
+    round: int
+    x: Optional[float] = None
+    y: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    body: str
+    author_name: Optional[str] = None
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolved_by_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RequestChangesResponse(BaseModel):
+    """What Send answers: where the request went, and what it wrote."""
+
+    status: str
+    round: int
+    comments: list[ReviewCommentResponse] = []
+
+
+class ReviewCommentResolvePayload(BaseModel):
+    resolved: bool
+
+
+# ---------------------------------------------------------------------------
+# The product data gate and the request's history (r9 S5/D18-D19)
+# ---------------------------------------------------------------------------
+
+
+class TagPinPayload(BaseModel):
+    """What to do about the change master data has made under a tag."""
+
+    action: Literal["update", "keep"]
+
+
+class TagPinResponse(BaseModel):
+    tag_id: str
+    pinned_at: Optional[datetime] = None
+
+
+class RequestVersionSummary(BaseModel):
+    """One row of the design's history. Names, never ids."""
+
+    version: int
+    commit_message: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime

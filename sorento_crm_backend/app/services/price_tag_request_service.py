@@ -15,6 +15,7 @@ The status graph:
 import copy
 import logging
 import uuid
+from typing import Optional
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import Integer, cast, func, or_
@@ -34,11 +35,22 @@ STATUS_DESIGNING = "designing"
 STATUS_PROOF_READY = "proof_ready"
 STATUS_CHANGES_REQUESTED = "changes_requested"
 STATUS_APPROVED = "approved"
+# r9 D8: `ready` is retired. It said a PDF existed and nothing about whether
+# anybody had the tags; the office print now records the hand-over instead.
+# The constant stays for the migration that maps the old rows over.
 STATUS_READY = "ready"
+STATUS_READY_FOR_COLLECTION = "ready_for_collection"
+STATUS_COLLECTED = "collected"
 STATUS_REJECTED = "rejected"
 STATUS_VOID = "void"
 
-_TERMINAL = frozenset({STATUS_READY, STATUS_REJECTED, STATUS_VOID})
+# Terminal for everyone. `approved` joins them for a SELF print only, which is
+# why `is_terminal` takes the request rather than the status (D8).
+_TERMINAL = frozenset({STATUS_COLLECTED, STATUS_REJECTED, STATUS_VOID})
+
+PRINT_BY_OFFICE = "office"
+PRINT_BY_SELF = "self"
+PRINT_BY_CHOICES = frozenset({PRINT_BY_OFFICE, PRINT_BY_SELF})
 
 # Valid transitions: current_status -> set of allowed next statuses.
 # ``rejected`` and ``void`` are reachable from any non-terminal status.
@@ -66,9 +78,17 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
         STATUS_REJECTED,
         STATUS_VOID,
     },
-    STATUS_APPROVED: {STATUS_READY, STATUS_REJECTED, STATUS_VOID},
-    # Terminal statuses have no outgoing edges.
-    STATUS_READY: set(),
+    # The office hand-over (D8). `ready_for_collection` is reachable only when
+    # somebody has said the office prints - `transition_status` checks that on
+    # top of this table, because the graph alone cannot see `print_by`.
+    STATUS_APPROVED: {STATUS_READY_FOR_COLLECTION, STATUS_REJECTED, STATUS_VOID},
+    # Its ONLY exit: the tags exist, they are on the counter, and the single
+    # remaining question is whether anybody has taken them.
+    STATUS_READY_FOR_COLLECTION: {STATUS_COLLECTED},
+    # Terminal statuses have no outgoing edges. `ready` is retired (D8) and has
+    # no entry at all: the migration maps every row that carried it to
+    # `approved`, so nothing can arrive at it again.
+    STATUS_COLLECTED: set(),
     STATUS_REJECTED: set(),
     STATUS_VOID: set(),
 }
@@ -164,6 +184,9 @@ class PriceTagRequestService:
                 needed_by_date=data.get("needed_by_date"),
                 notes=data.get("notes"),
                 price_mode=data.get("price_mode") or "list",
+                # Who prints (r9 D7). Null on a draft; `submit` refuses until
+                # the salesperson has answered.
+                print_by=data.get("print_by"),
                 doc_number=doc_number,
                 portal_draft_at=datetime.utcnow(),
             ),
@@ -572,6 +595,14 @@ Marketing's own work is not part of the form's payload, so it is captured
         # next access to re-query.
         db.expire(request, ["lines"])
 
+        # A line added to a design already in progress has its tags pinned on
+        # save (D16), so they enter the gate the same way the others did.
+        if request.status == STATUS_DESIGNING:
+            from app.services.dealer_kit import tag_data_service
+
+            tag_data_service.pin_tags(db, request, only_unpinned=True)
+            db.flush()
+
     @staticmethod
     def submit_request(
         db: Session,
@@ -690,10 +721,15 @@ Marketing's own work is not part of the form's payload, so it is captured
         request_id: str,
         new_status: str,
         user_id: str | None = None,
+        notify_ctx: dict | None = None,
     ) -> PriceTagRequest:
         """Validate and apply a status transition.
 
         Raises ``AppException`` (409) for invalid transitions.
+
+        ``notify_ctx`` carries whatever the message needs that the row cannot
+        say on its own - how many change requests were sent, the rejection
+        reason, the round for the assignee's bell.
         """
         request = db.query(PriceTagRequest).filter(
             PriceTagRequest.id == request_id,
@@ -716,8 +752,50 @@ Marketing's own work is not part of the form's payload, so it is captured
                 ),
                 code="INVALID_TRANSITION",
             )
+        if (
+            new_status == STATUS_READY_FOR_COLLECTION
+            and request.print_by != PRINT_BY_OFFICE
+        ):
+            # The graph cannot see `print_by`, and this edge exists only for an
+            # office print: a salesperson printing their own tags has nothing to
+            # collect, and a request nobody has answered the question for has
+            # nothing to promise (D7/D8).
+            raise AppException(
+                status_code=409,
+                message=(
+                    "Only an office print reaches collection. Set Printing to "
+                    "Office prints first."
+                ),
+                code="INVALID_TRANSITION",
+            )
 
         request.status = new_status
+        if new_status == STATUS_DESIGNING:
+            # r9 D16: the tags are drawn from what master data said when the
+            # design started, so that is the moment it is frozen. Only tags
+            # with no pin yet - re-pinning on the way back from
+            # `changes_requested` would swallow the very difference the gate
+            # exists to show.
+            from app.services.dealer_kit import tag_data_service
+
+            tag_data_service.pin_tags(db, request, only_unpinned=True)
+        if new_status == STATUS_PROOF_READY:
+            # The review round is COUNTED here, not derived from the version
+            # history (D4/R1): the "Marked proof ready" snapshot is only
+            # written when a draft exists, and the designer's own CTA saves
+            # first, so the snapshot was usually skipped and every round came
+            # back as 1 - which deduplicated the assignee's bell away from the
+            # second round onward.
+            request.review_round = (request.review_round or 0) + 1
+        # The hand-over's own timestamps (D9). `collected_by_*` is whoever did
+        # it: a user here, a contact on the portal's own route, neither when the
+        # sweep closes it.
+        if new_status == STATUS_READY_FOR_COLLECTION:
+            request.ready_for_collection_at = datetime.utcnow()
+        elif new_status == STATUS_COLLECTED:
+            request.collected_at = datetime.utcnow()
+            request.collected_by_user_id = user_id
+            request.collected_auto = False
         db.flush()
 
         # D12: an approve auto-queues one tag-sheet export, so the salesperson
@@ -743,7 +821,155 @@ Marketing's own work is not part of the form's payload, so it is captured
                     exc_info=True,
                 )
 
+        # A message is a promise about the database, so the promise is made
+        # only once the database has kept it (S6): a notifier that fires before
+        # the commit can report a transition a later rollback throws away. The
+        # caller's own `db.commit()` afterwards is then a no-op.
+        db.commit()
+
+        # D12/D13: EVERY transition reaches the salesperson, including the
+        # confirmations of their own actions - a message that says "you
+        # approved it" is how somebody knows the button worked. Through the
+        # MODULE, so a test can swap the function; wrapped inside the notifier
+        # itself, so a messaging outage can never undo the transition.
+        from app.services import price_tag_notify
+
+        ctx = dict(notify_ctx or {})
+        if new_status == STATUS_DESIGNING and not ctx.get("assignee"):
+            # R3: "is being designed by Aisyah", not "by the marketing team".
+            # Resolved here rather than at each caller because the two paths
+            # set the assignee at different moments - Claim writes it before
+            # the transition, the tracker's auto-assign after it - and both
+            # hand this the same user id.
+            ctx["assignee"] = PriceTagRequestService.user_display_name(
+                db, request.assigned_to_id or user_id
+            )
+        try:
+            price_tag_notify.notify_salesperson(db, request, new_status, **ctx)
+            price_tag_notify.ring_assignee(
+                db,
+                request,
+                new_status,
+                round_no=ctx.get("round") or request.review_round or 1,
+            )
+        except Exception:
+            # The notifier guards itself too; this is the belt for a caller
+            # that replaced it. A transition that happened has happened.
+            logger.warning(
+                "Notification failed for price_tag_request %s",
+                request_id,
+                exc_info=True,
+            )
+
         return request
+
+    @staticmethod
+    def user_display_name(db: Session, user_id: Optional[str]) -> Optional[str]:
+        """A staffer as a person reads them: their name, else their email."""
+        if not user_id:
+            return None
+        from app.models.user import User
+
+        user = db.query(User).filter(User.id == user_id).first()
+        return (user.name or user.email) if user else None
+
+    @staticmethod
+    def collected_by_name(db: Session, request: PriceTagRequest) -> Optional[str]:
+        """Who took the tags, as a person reads it (D9/S3).
+
+        The staffer who ticked it off, the salesperson who confirmed on the
+        portal, or nobody at all when the sweep closed it - which is a real
+        answer, not a missing one, and the card says so in its own words.
+        """
+        if request.collected_auto:
+            return None
+        if request.collected_by_user_id:
+            return PriceTagRequestService.user_display_name(
+                db, request.collected_by_user_id
+            )
+        if request.collected_by_contact_id:
+            from app.models.access import RespondContact
+
+            contact = (
+                db.query(RespondContact)
+                .filter(RespondContact.id == request.collected_by_contact_id)
+                .first()
+            )
+            return (contact.name or contact.phone_number) if contact else None
+        return None
+
+    @staticmethod
+    def is_terminal(request: PriceTagRequest) -> bool:
+        """Nothing left to do to this request (D8).
+
+        Request-aware, not status-aware: `approved` is the end of the line for
+        a salesperson who prints their own tags and the middle of it for an
+        office print, so the same status answers differently depending on the
+        one column.
+        """
+        if request.status in _TERMINAL:
+            return True
+        return (
+            request.status == STATUS_APPROVED and request.print_by == PRINT_BY_SELF
+        )
+
+    @staticmethod
+    def run_auto_collect(db: Session) -> int:
+        """Close a hand-over nobody came back for (D11).
+
+        Reads the configured days off the settings row: 0 turns the sweep off
+        entirely, which is a legitimate way to run a counter where somebody
+        always ticks it by hand. Only `ready_for_collection` rows are in scope -
+        an approved request has not been printed, so there is nothing on the
+        counter to go stale.
+
+        Returns how many it closed, which is what the scheduler logs.
+        """
+        from app.models.user import SystemSetting
+
+        settings_row = db.query(SystemSetting).first()
+        days = getattr(settings_row, "price_tag_auto_collect_days", 0) or 0
+        if days <= 0:
+            return 0
+
+        cutoff = datetime.utcnow() - timedelta(days=days)
+        stale = (
+            db.query(PriceTagRequest)
+            .filter(
+                PriceTagRequest.status == STATUS_READY_FOR_COLLECTION,
+                PriceTagRequest.ready_for_collection_at.isnot(None),
+                PriceTagRequest.ready_for_collection_at < cutoff,
+            )
+            .all()
+        )
+        for request in stale:
+            request.status = STATUS_COLLECTED
+            request.collected_at = datetime.utcnow()
+            request.collected_auto = True
+            # Nobody did this, so nobody is recorded as having done it.
+            request.collected_by_user_id = None
+            request.collected_by_contact_id = None
+        if not stale:
+            return 0
+
+        db.flush()
+        db.commit()
+
+        # The one transition nobody is present for is the one the salesperson
+        # most needs told: their tags were closed overnight (B3). Same copy
+        # table, with the context that makes its auto line read correctly.
+        from app.services import price_tag_notify
+
+        for request in stale:
+            try:
+                price_tag_notify.notify_salesperson(
+                    db, request, STATUS_COLLECTED, auto=True, days=days
+                )
+            except Exception:
+                logger.warning(
+                    "Auto-collect notification failed for %s", request.id, exc_info=True
+                )
+        return len(stale)
 
     @staticmethod
     def validate_submittable(
@@ -766,6 +992,18 @@ Marketing's own work is not part of the form's payload, so it is captured
         not touch it, so re-checking it here would refuse an edit over a field
         the edit never asked about.
         """
+        # Who prints is REQUIRED, and refused on its own rather than folded
+        # into the list below: it has its own code because the portal form
+        # names the gap under the control, and the answer decides whether the
+        # request ends at `approved` or waits for a collection (D7).
+        if request.print_by not in PRINT_BY_CHOICES:
+            raise AppException(
+                status_code=422,
+                message="Say who prints these tags before submitting.",
+                detail="print_by",
+                code="PRINT_BY_REQUIRED",
+            )
+
         # D-P2b: need by is optional - dropped from what "complete" requires.
         missing: list[tuple[str, str]] = []
         if require_debtor and not (request.debtor_name or "").strip():
@@ -788,6 +1026,26 @@ Marketing's own work is not part of the form's payload, so it is captured
 
         # D-P2 (owner ruling): Selling with no promotion is a valid end state
         # now - the PRICE_MODE_NEEDS_PROMOTION guard is retired.
+
+    @staticmethod
+    def notify_submitted(db: Session, request: PriceTagRequest) -> None:
+        """Tell the salesperson their request landed (D12's first line, S9).
+
+        Submit is not a status transition - a submitted request keeps `new`
+        until marketing claims it - so it is the one moment the transition
+        notifier cannot cover, and the moment somebody most wants to hear that
+        the form worked.
+        """
+        from app.services import price_tag_notify
+
+        try:
+            price_tag_notify.notify_salesperson(db, request, "submitted")
+        except Exception:
+            logger.warning(
+                "Submit notification failed for price_tag_request %s",
+                request.id,
+                exc_info=True,
+            )
 
     @staticmethod
     def validate_claimable(request: PriceTagRequest) -> None:
@@ -1340,6 +1598,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         from app.services.entity_attachment_service import list_attachments_for_entity
 
         response = PriceTagRequestResponse.model_validate(request)
+        response.collected_by_name = PriceTagRequestService.collected_by_name(
+            db, request
+        )
         # One resolver row per TAG since S3 (D3). The line's own code, name and
         # prices come off its FIRST tag - every tag on a line prints the same
         # host product, so those three are a line fact even though the rows are

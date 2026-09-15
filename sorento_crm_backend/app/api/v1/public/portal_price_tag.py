@@ -30,11 +30,15 @@ from app.schemas.price_tag import (
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
     PromotionLookupItem,
+    RequestChangesPayload,
+    RequestChangesResponse,
     ResolvedLineData,
+    ReviewCommentResponse,
     TagItemLookupItem,
 )
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException, handle_not_found
+from app.services import price_tag_review_service
 from app.services.portal_form_visibility_service import resolve_visible_form_types
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
@@ -42,7 +46,8 @@ from app.services.price_tag_request_service import (
     STATUS_CHANGES_REQUESTED,
     STATUS_NEW,
     STATUS_PROOF_READY,
-    STATUS_READY,
+    STATUS_READY_FOR_COLLECTION,
+    STATUS_COLLECTED,
 )
 from app.services.storage_router import get_backend
 from app.services.uuid_path_param import validate_uuid_path
@@ -149,7 +154,16 @@ def portal_get_price_tag_request(
 # designed, and still visible after approval so they can look at what they
 # approved (AC-S4-4).
 _DESIGN_VISIBLE_STATUSES = frozenset(
-    {STATUS_PROOF_READY, STATUS_CHANGES_REQUESTED, STATUS_APPROVED, STATUS_READY}
+    {
+        STATUS_PROOF_READY,
+        STATUS_CHANGES_REQUESTED,
+        STATUS_APPROVED,
+        # r9 D8: `ready` is retired and the office print's two closing steps
+        # take its place. The salesperson can still look at what they approved
+        # right up to the moment they collect it.
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_COLLECTED,
+    }
 )
 
 
@@ -201,23 +215,34 @@ def portal_get_price_tag_design(
     # different document for the same page (module-cycle-free the same way
     # the export import below is).
     from app.api.v1.dealer_kit.price_tag_requests import resolve_tag_sheet_design
-    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit import tag_sheet_export_service
 
     # prefer="version": the salesperson must see what was deliberately
     # SAVED (and sent to them for review), never marketing's live
     # in-progress autosave - the CRM designer stays draft-first (B1's own
     # reasoning), this screen does not (review D11 follow-up).
     doc_fields = resolve_tag_sheet_design(db, page, prefer="version")
+    if doc_fields["doc"] is None:
+        # A page whose only document is an autosaved draft has nothing this
+        # reader was ever meant to see (r9 S1).
+        raise AppException(
+            status_code=404,
+            message="No design exists for this request yet.",
+            code="NOT_FOUND",
+        )
     # L3: same company scope as the sibling lookups (portal_lookup_tag_items,
     # portal_lookup_promotions) - unscoped, a two-company contact's line
     # resolution could read the OTHER company's product row for a duplicated
     # code instead of the one this request actually points at.
     with company_scope(db, frozenset({_resolve_company(db, token)})):
-        lines = [
-            ResolvedLineData.model_validate(row)
-            for row in tag_data_service.resolve_request_line_data(db, req)
-        ]
-    return PortalTagSheetDesignResponse(**doc_fields, lines=lines)
+        # The SAME resolver the PDF reads, media included (r9 S1/D1): without
+        # `assets`/`images`/`fonts` every image layer here painted a grey box
+        # and every brand face fell back to a system sans.
+        rows, media = tag_sheet_export_service.design_media(
+            db, req, doc_fields["doc"]
+        )
+    lines = [ResolvedLineData.model_validate(row) for row in rows]
+    return PortalTagSheetDesignResponse(**doc_fields, lines=lines, **media)
 
 
 # ---------------------------------------------------------------------------
@@ -383,6 +408,15 @@ def portal_submit_price_tag_request(
     req.portal_draft_at = None
     req.status = STATUS_NEW
     db.flush()
+    db.commit()
+
+    # S9/D12: the copy table's first line. Submit is not a status transition -
+    # a submitted request keeps `new` until marketing claims it - so it is the
+    # one moment the transition notifier cannot cover, and the moment somebody
+    # most wants to hear that the form worked. After the commit, and before the
+    # auto-assign below can move the request on, so the salesperson reads the
+    # two messages in the order the events happened.
+    PriceTagRequestService.notify_submitted(db, req)
 
     # Fire form SLA.
     try:
@@ -461,35 +495,119 @@ def portal_approve_price_tag_request(
 # ---------------------------------------------------------------------------
 
 
-class RequestChangesPayload(BaseModel):
-    note: str = Field(..., min_length=1)
-
-
-@router.post("/submissions/price_tag_request/{request_id}/request-changes")
+@router.post(
+    "/submissions/price_tag_request/{request_id}/request-changes",
+    response_model=RequestChangesResponse,
+)
 def portal_request_changes(
     request_id: str,
     payload: RequestChangesPayload,
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Request changes on a proof-ready price tag request."""
+    """A whole round of pinned change requests, in one call (r9 D5).
+
+    The pins are placed locally and nothing reaches the server until Send, so
+    the salesperson can put five pins down, delete two, and the request changes
+    state exactly once.
+
+    The salesperson's own ``notes`` are no longer appended to: they are what
+    they asked for, not a log of what they later disliked. The comments are
+    rows now, each pointing at the part of the tag it is about.
+
+    ``note`` alone (no pins) is the legacy body, accepted for one release and
+    stored as one general comment.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
     _assert_visible(db, token.contact_id)
-    req = PriceTagRequestService.get_request(db, request_id)
-    if not req or req.contact_id != token.contact_id:
+    req = _require_own_request(db, token, request_id)
+    if req.status != STATUS_PROOF_READY:
+        # Checked BEFORE anything is written: a design still being drawn cannot
+        # be commented on, and a 409 that leaves rows behind is worse than no
+        # 409 at all.
         raise AppException(
-            status_code=404,
-            message="Price tag request not found.",
-            code="NOT_FOUND",
+            status_code=409,
+            message="This design is not waiting for your review.",
+            code="INVALID_TRANSITION",
         )
 
-    result = PriceTagRequestService.transition_status(
-        db, request_id, STATUS_CHANGES_REQUESTED,
+    created = price_tag_review_service.create_comments(
+        db,
+        req,
+        comments=[pin.model_dump() for pin in payload.comments],
+        note=payload.note,
+        author_contact_id=token.contact_id,
     )
-    # Store the note on the request (could be moved to a dedicated notes table later).
-    result.notes = (result.notes or "") + f"\n[Changes requested]: {payload.note}"
+    round_no = created[0].round if created else price_tag_review_service.current_round(
+        db, req
+    )
+    # S1: the round and the tally travel with the transition. Without them the
+    # bell dedups every later round against round 1 (so the assignee is told
+    # once, ever) and the salesperson's own confirmation cannot say how many
+    # change requests the one call carried.
+    PriceTagRequestService.transition_status(
+        db,
+        request_id,
+        STATUS_CHANGES_REQUESTED,
+        notify_ctx={"round": round_no, "count": len(created)},
+    )
+    db.commit()
+    return RequestChangesResponse(
+        status=STATUS_CHANGES_REQUESTED,
+        round=round_no,
+        comments=price_tag_review_service.to_responses(db, created),
+    )
+
+
+@router.get(
+    "/submissions/price_tag_request/{request_id}/review-comments",
+    response_model=list[ReviewCommentResponse],
+)
+def portal_list_review_comments(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """Every change request on this design, all rounds (D6).
+
+    Read-only for the salesperson: earlier rounds render grey beside the new
+    ones, and closing one is marketing's to do.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    return price_tag_review_service.to_responses(
+        db, price_tag_review_service.list_comments(db, req.id)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Collect (the office hand-over, r9 S3/D8)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/submissions/price_tag_request/{request_id}/collect")
+def portal_collect_price_tag_request(
+    request_id: str,
+    token: PortalToken = Depends(get_portal_token),
+    db: Session = Depends(get_db),
+):
+    """The salesperson confirming they have the tags (D8).
+
+    The same transition the office's own Mark collected makes, recorded against
+    the CONTACT rather than a user: whoever closed it is what the card says
+    afterwards, and the two are different people.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+
+    result = PriceTagRequestService.transition_status(db, req.id, STATUS_COLLECTED)
+    result.collected_by_contact_id = token.contact_id
+    result.collected_by_user_id = None
     db.flush()
     db.commit()
-    return PriceTagRequestResponse.model_validate(result)
+    return {"status": result.status}
 
 
 # ---------------------------------------------------------------------------

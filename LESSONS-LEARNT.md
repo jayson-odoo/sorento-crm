@@ -185,3 +185,11 @@ Exporting a plain helper (`productFallbackFor`) from `SalesOrderDetail.tsx` (242
 ## 108. Never keyboard-type into a native date input under agent-browser (13 Sep 2026)
 
 Typing into a native `<input type="date">` crashed the session's own headless Chromium twice in one walk. Set the value through the native setter (`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, 'YYYY-MM-DD')`) then dispatch `input` and `change`, never `fill` or a keystroke sequence. If a session's Chromium dies anyway, kill only that session's own Chrome PID pair (its `agent-browser-chrome-<uuid>` user-data-dir), never the shared daemon, then reopen under the same session name and log in again.
+
+## 109. Measure inside a Dialog with a callback ref, not useEffect + useRef (14 Sep 2026)
+
+The shared `DialogContent` mirrors Radix's open state into React state to gate its exit spring, so the content mounts one commit AFTER `open` flips. An effect keyed on `open` reads a null ref, the ResizeObserver never attaches, and the surface opens at the wrong size (the r9 design lightbox opened at 100% wearing a "Fit" label and overflowed at 375px). Attach observers through a callback ref that fires when the node actually exists.
+
+## 110. Switch a lane's pytest database with `${VAR:-default}` in the worktree .env (14 Sep 2026)
+
+`app/main.py` loads `.env` with `override=True`, so an exported `DATABASE_URL` is silently discarded and pytest runs against whatever the .env names, which on a lane is the shared prod copy. python-dotenv expands POSIX defaults, so write `DATABASE_URL=${PTAG9_DB_URL:-postgresql://...shared...}` (and the same for `DIRECT_URL`) in the lane .env: `PTAG9_DB_URL=... venv/bin/pytest` hits the private DB while the running uvicorn (no var) keeps the shared one. Verified: `import app.main; settings.database_url` answers each DB by the presence of the var alone.

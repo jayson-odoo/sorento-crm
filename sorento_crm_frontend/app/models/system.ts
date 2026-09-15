@@ -66,6 +66,12 @@ export interface SystemSetting {
   deferredActionSeconds?: number;
 
   /**
+   * How many days an untouched price tag collection waits before the sweep
+   * closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
+   */
+  priceTagAutoCollectDays?: number;
+
+  /**
    * SCM front planning: which grain new plans are DECIDED at (AC-F01).
    *
    * Admin policy, not a per-run selector. It is stamped onto each run when the run

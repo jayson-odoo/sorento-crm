@@ -180,6 +180,10 @@ class PageVersion(Base):
     doc = Column(JSONB, nullable=False)
     commit_message = Column(Text, nullable=True)
     created_by = Column(UUID(as_uuid=False), nullable=True)
+    #: The price tag pins as they stood when this version was written (r9 D19).
+    #: Half of what a version IS: a doc restored over today's product data
+    #: would show old artwork at new prices.
+    pinned_line_data = Column(JSONB, nullable=True)
     created_at = _created_at()
 
     page = relationship("Page", back_populates="versions")

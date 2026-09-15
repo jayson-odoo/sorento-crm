@@ -1642,3 +1642,32 @@ register(
         label="Delete view",
     )
 )
+
+
+def _void_price_tag_request(db: Session, payload: dict):
+    from app.services.price_tag_request_service import (
+        PriceTagRequestService,
+        STATUS_VOID,
+    )
+
+    return PriceTagRequestService.transition_status(
+        db,
+        _entity_id(payload),
+        STATUS_VOID,
+        user_id=str(payload.get("requested_by_id") or "") or None,
+    )
+
+
+register(
+    FormAction(
+        key="price_tag_request.void",
+        entity_types=("price_tag_request",),
+        execute=_void_price_tag_request,
+        # Destructive, and not a `.delete`: void is the end of the line for a
+        # request - no transition leaves it - so the grace window IS the way
+        # back, exactly as it is for a delete.
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.price_tag_requests.process",
+        label="Void request",
+    )
+)

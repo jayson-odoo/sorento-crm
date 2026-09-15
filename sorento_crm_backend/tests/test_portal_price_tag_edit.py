@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 # MUST be first app import - resolves the circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _BASE = "/api/v1/public/portal/submissions/price_tag_request"
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -149,7 +150,13 @@ def client():
 
 
 def _create_draft(c, product_id: str, **extra) -> dict:
-    payload = {"lines": [{"line_type": "product", "product_id": product_id}]}
+    payload = {
+        "lines": [{"line_type": "product", "product_id": product_id}],
+        # r9 D7: every draft here goes on to be submitted, and submit refuses
+        # without a print choice. A test about the print choice itself passes
+        # its own value through `extra`.
+        "print_by": "office",
+    }
     payload.update(extra)
     res = c.post(_BASE, json=payload)
     assert res.status_code == 201, res.text
@@ -301,6 +308,8 @@ class TestSubmitTwiceStillRefused:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -331,6 +340,8 @@ class TestSellingWithoutPromotionNowSubmits:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "price_mode": "selling",
                 "lines": [
@@ -369,6 +380,8 @@ class TestNeedByOptionalAtSubmit:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "price_mode": "list",
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -432,3 +445,14 @@ class TestDraftNeededByEmptyString:
 
         submit_res = c.post(f"{_BASE}/{created['id']}/submit")
         assert submit_res.status_code == 200, submit_res.text
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

@@ -34,7 +34,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -77,9 +77,18 @@ import {
   submitRequest,
   approveRequest,
   requestChanges,
+  listReviewComments,
+  collectRequest,
   downloadPriceTagPdf,
 } from '../lib/price-tag-request-service';
-import PriceTagProofViewer from './PriceTagProofViewer';
+import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
+import {
+  numberedPins,
+  type ChangeRequestPayload,
+  type DraftPin,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import {
@@ -94,8 +103,12 @@ import {
   type PortalAttachment,
   type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
-import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
-import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
+import {
+  printByLabel,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
 import { cn } from '@/lib/utils';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
@@ -306,14 +319,17 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
+const MISSING_PRINT_BY = 'Say who prints these tags.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
 
-/** Statuses the real design (D11) is visible at, once one exists to show. */
+/** Statuses the real design (D11) is visible at, once one exists to show.
+ *  `ready` is retired (r9 D8); the two collection statuses take its place. */
 const DESIGN_PREVIEW_STATUSES = new Set([
   'proof_ready',
   'changes_requested',
   'approved',
-  'ready',
+  'ready_for_collection',
+  'collected',
 ]);
 
 /**
@@ -420,9 +436,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const aiMatchesRef = useRef<Record<string, TagItemOption | null>>({});
   const normalizeAiCode = (raw: string | null | undefined) => (raw ?? '').trim().toLowerCase();
 
-  // ---- Proof review state ----
-  const [changesNote, setChangesNote] = useState('');
-  const [showChangesDialog, setShowChangesDialog] = useState(false);
 
   // ---- Delete draft ----
   const [deleting, setDeleting] = useState(false);
@@ -432,6 +445,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
   // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [collecting, setCollecting] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
   // ---- What Submit found wrong, where it found it (D48b) ----
@@ -441,6 +455,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     debtor?: string;
     neededBy?: string;
     lines?: string;
+    printBy?: string;
   }>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -455,6 +470,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ever turns on via the header gear's own Revise item (same hooks
   // `SubmissionForm` reads for the legacy kinds), never from status/draft
   // state directly, so Cancel puts the read view back with no round trip.
+  /** Who prints (r9 D7). No default: the salesperson has to answer. */
+  const [printBy, setPrintBy] = useState<PrintBy | null>(null);
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
@@ -604,6 +621,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
+    setPrintBy((data.print_by as PrintBy | null) ?? null);
     setLines(data.lines.map(lineToDraft));
     setAttachments(data.attachments ?? []);
   }, []);
@@ -687,6 +705,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setPriceModeChosen(true);
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
+        setPrintBy((data.print_by as PrintBy | null) ?? null);
         // A duplicate's lines are new, unsaved rows with no identity of
         // their own yet (nit, review round 2) - the source request's own
         // line ids have no business surviving as this draft's React keys.
@@ -1166,14 +1185,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the reader already closed by hand.
   const openSectionForProblems = useCallback(
     (
-      fields: { debtor?: string; neededBy?: string; lines?: string },
+      fields: {
+        debtor?: string;
+        neededBy?: string;
+        lines?: string;
+        printBy?: string;
+      },
       hasRowProblems: boolean,
     ) => {
       if (fields.debtor) {
         toggleSection('customer', true);
       } else if (fields.lines || hasRowProblems) {
         toggleSection('sales_order', true);
-      } else if (fields.neededBy) {
+      } else if (fields.printBy || fields.neededBy) {
         toggleSection('need_by', true);
       }
     },
@@ -1218,14 +1242,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  optional (D-P2b) - only a server refusal can still name it, until the
    *  backend rule drops too. */
   const collectProblems = useCallback(() => {
-    const next: { debtor?: string; neededBy?: string; lines?: string } = {};
+    const next: {
+      debtor?: string;
+      neededBy?: string;
+      lines?: string;
+      printBy?: string;
+    } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
     if (lines.length === 0) next.lines = MISSING_LINES;
+    // Required at submit, never at Save Draft (D7): a draft is whatever has
+    // been filled in so far.
+    if (!printBy) next.printBy = MISSING_PRINT_BY;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, lines]);
+  }, [debtorCode, lines, printBy]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -1236,14 +1268,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // is the same failure as not showing one at all.
   useEffect(() => {
     setFieldErrors((prev) => {
-      if (!prev.debtor && !prev.neededBy && !prev.lines) return prev;
+      if (!prev.debtor && !prev.neededBy && !prev.lines && !prev.printBy) return prev;
       const next = { ...prev };
       if (next.debtor && debtorCode) delete next.debtor;
       if (next.neededBy && neededByDate) delete next.neededBy;
       if (next.lines && lines.length > 0) delete next.lines;
+      if (next.printBy && printBy) delete next.printBy;
       return next;
     });
-  }, [debtorCode, neededByDate, lines.length]);
+  }, [debtorCode, neededByDate, lines.length, printBy]);
 
   // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
   // clearing the promotion no longer flips the mode back to List. Switching
@@ -1296,6 +1329,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
+        print_by: printBy,
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
@@ -1345,6 +1379,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           needed_by_date: neededByDate || null,
           notes: notes || null,
           price_mode: priceMode,
+          // Live finding, PT-202609-0013: Save Draft and Submit both carry the
+          // print choice and this payload did not, so revising a request
+          // silently dropped who prints it.
+          print_by: printBy,
         },
         products: payloadLines(),
       });
@@ -1439,6 +1477,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
+        print_by: printBy,
         lines: payloadLines(),
       };
       // Same reasoning as Save Draft: a retry after a create succeeded but the
@@ -1486,18 +1525,51 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, router, slug]);
 
-  // ---- Request changes ----
-  const handleRequestChanges = useCallback(async () => {
-    if (!requestId || !changesNote.trim()) return;
+  // ---- Mark collected (r9 D8): the salesperson has the tags ----
+  const handleCollect = useCallback(async () => {
+    if (!requestId) return;
+    setCollecting(true);
     try {
-      await requestChanges(requestId, changesNote.trim());
-      toast.success('Changes requested');
-      setShowChangesDialog(false);
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      await collectRequest(requestId);
+      toast.success('Marked collected');
+      const data = await getRequest(requestId);
+      if (data) setRequest(data);
     } catch {
-      toast.error('Failed to request changes');
+      toast.error('Failed to mark this collected');
+    } finally {
+      setCollecting(false);
     }
-  }, [requestId, changesNote, router, slug]);
+  }, [requestId]);
+
+  // ---- Request changes (r9 D5) ----
+  //
+  // No dialog and no free-text-only path any more: the pins ARE the change
+  // request, and Send posts the whole round in one call.
+  const handleSendChanges = useCallback(
+    async (payload: ChangeRequestPayload) => {
+      if (!requestId) return;
+      try {
+        await requestChanges(requestId, payload);
+        toast.success(
+          payload.comments.length === 1
+            ? 'Change request sent'
+            : `${payload.comments.length} change requests sent`,
+        );
+        router.push(`${portalBase(slug)}?type=price_tag_request`);
+      } catch (error) {
+        // Re-thrown, not swallowed: the Design section clears its pins on a
+        // resolved promise, so a refused Send used to take the whole round
+        // with it and leave the salesperson to place five pins again.
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to send the change requests',
+        );
+        throw error;
+      }
+    },
+    [requestId, router, slug],
+  );
 
   // ---- Download PDF (D19): the request's latest completed tag sheet export ----
   const handleDownloadPdf = useCallback(async () => {
@@ -1563,6 +1635,49 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             Created {new Date(request.created_at).toLocaleDateString()}
           </p>
         </div>
+
+        {/* Ready to pick up (r9 D8): the one thing the salesperson can do
+            here, said where the status is said. */}
+        {request.status === 'ready_for_collection' && (
+          <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm">
+              {request.ready_for_collection_at
+                ? `Ready to collect since ${new Date(request.ready_for_collection_at).toLocaleDateString()}`
+                : 'Ready to collect'}
+            </p>
+            <Button
+              size="sm"
+              disabled={collecting}
+              onClick={() => void handleCollect()}
+              data-testid="portal-mark-collected"
+            >
+              {collecting ? (
+                <Loader2 className="size-4 mr-1 animate-spin" />
+              ) : (
+                <Check className="size-4 mr-1" />
+              )}
+              Mark collected
+            </Button>
+          </div>
+        )}
+
+        {/* The design comes FIRST from `proof_ready` onward (r9 D3): it is what
+            the salesperson opened the request to look at, and their own
+            answers below it are the reference, not the headline. It shows for
+            longer than the review actions do (D11/AC-S4-4). */}
+        {showDesignPreview && (
+          <DesignSection
+            request={request}
+            reviewable={isProofReady}
+            onApprove={handleApprove}
+            onSend={handleSendChanges}
+            download={{
+              available: Boolean(request.has_completed_export),
+              pending: downloadingPdf,
+              onDownload: () => void handleDownloadPdf(),
+            }}
+          />
+        )}
 
         {/* Same four sections as the edit form, same order, all open by
             default (AC-P11) - headers still toggle, there is just no rule
@@ -1735,6 +1850,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           onOpenChange={(next) => toggleSection('need_by', next)}
         >
           <div className="space-y-1.5">
+            <Label>Printing</Label>
+            <p className="text-sm font-medium py-2">
+              {printByLabel(request.print_by)}
+            </p>
+          </div>
+          <div className="space-y-1.5">
             <Label>Need by</Label>
             <p className="text-sm font-medium py-2">
               {request.needed_by_date ?? '-'}
@@ -1750,84 +1871,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </div>
         </FormSection>
 
-        {/* Design preview appends beneath the same layout (AC-S2-2); nothing
-            below here renders for a plain read-only status. It shows for
-            longer than the review actions do (D11/AC-S4-4). */}
-        {showDesignPreview && <ProofPreviewSection request={request} />}
-
         {isProofReady && (
-          <>
-            {/* Same `attachments` state the Sales Order card above reads
-                (not `request.attachments`, which is only ever the snapshot
-                from the initial fetch) - one source, so the two can never
-                show a different file list for the same request. */}
-            <POCrossCheckViewer
-              attachments={attachments}
-              lines={request.lines.map((l) => ({
-                id: l.id,
-                code: l.code,
-                name: l.name,
-                line_type: l.line_type,
-                quantity: l.quantity,
-                list_price: null,
-                sell_price: null,
-                show_promo_price: l.show_promo_price,
-                marketing_price_override: null,
-              }))}
-            />
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Design Review</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button onClick={handleApprove} className="flex-1">
-                    <Check className="size-4 mr-1" />
-                    Approve
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowChangesDialog(true)}
-                    className="flex-1"
-                  >
-                    <MessageSquare className="size-4 mr-1" />
-                    Request Changes
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <AlertDialog
-              open={showChangesDialog}
-              onOpenChange={setShowChangesDialog}
-            >
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Request Changes</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Describe what needs to be changed. The marketing team will
-                    revise the design.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <Textarea
-                  value={changesNote}
-                  onChange={(e) => setChangesNote(e.target.value)}
-                  placeholder="Describe the changes needed..."
-                  rows={4}
-                />
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleRequestChanges}
-                    disabled={!changesNote.trim()}
-                  >
-                    Submit
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </>
+          /* Same `attachments` state the Sales Order card above reads (not
+             `request.attachments`, which is only ever the snapshot from the
+             initial fetch) - one source, so the two can never show a different
+             file list for the same request. */
+          <POCrossCheckViewer
+            attachments={attachments}
+            lines={request.lines.map((l) => ({
+              id: l.id,
+              code: l.code,
+              name: l.name,
+              line_type: l.line_type,
+              quantity: l.quantity,
+              list_price: null,
+              sell_price: null,
+              show_promo_price: l.show_promo_price,
+              marketing_price_override: null,
+            }))}
+          />
         )}
       </>
     );
@@ -2261,6 +2323,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       >
         <div
           className="space-y-1.5"
+          {...(fieldErrors.printBy ? { 'data-error-anchor': 'print_by' } : {})}
+        >
+          <Label id="print-by-label">Printing *</Label>
+          <PrintBySelect
+            aria-labelledby="print-by-label"
+            value={printBy}
+            onChange={setPrintBy}
+            error={fieldErrors.printBy ?? null}
+          />
+        </div>
+
+        <div
+          className="space-y-1.5"
           {...(fieldErrors.neededBy
             ? { 'data-error-anchor': 'needed_by' }
             : {})}
@@ -2682,45 +2757,55 @@ function AIMatchStatusLabel({ status }: { status: AIMatchStatus | undefined }) {
 }
 
 // ---------------------------------------------------------------------------
-// Design preview (D11)
+// Design (D11, r9 S1/D2-D3)
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches the request's real tag sheet design and renders it through
- * `PriceTagProofViewer` - the same `TagSheetRenderer` the CRM designer and the
- * PDF export use, so what the salesperson sees here is what gets printed.
+ * Fetches the request's real tag sheet design and renders it through the
+ * shared `DesignViewer` - the same `TagSheetRenderer` the CRM detail page and
+ * the PDF export draw with, now fed the artwork and brand fonts as well, so
+ * what the salesperson reviews here is what gets printed.
+ *
+ * First section on the page from `proof_ready` onward (D3): the design is what
+ * the salesperson opened the request to look at, and everything above it was
+ * scrolling past their own answers to reach it.
  */
-function ProofPreviewSection({
+function DesignSection({
   request,
+  reviewable,
+  onApprove,
+  onSend,
+  download,
 }: {
   request: PriceTagRequestDetail;
+  /** The design is waiting on this reader: pins can be placed and sent. */
+  reviewable: boolean;
+  onApprove: () => void;
+  onSend: (payload: ChangeRequestPayload) => Promise<void>;
+  download: DesignDownload;
 }) {
-  const [doc, setDoc] = useState<TagSheetDoc | null>(null);
-  const [resolvedData, setResolvedData] = useState<Record<string, ResolvedLineData>>({});
+  const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [notAvailable, setNotAvailable] = useState(false);
+  const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [drafts, setDrafts] = useState<DraftPin[]>([]);
+  const [generalNote, setGeneralNote] = useState('');
+  const [sending, setSending] = useState(false);
+  /** The footer rail: scrolled into view once, when the FIRST pin lands, so
+   *  the salesperson sees `Send N change requests` appear without hunting
+   *  for it - a later pin lands where they already are and must not yank
+   *  the page again. */
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const railScrolledRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setNotAvailable(false);
     getPriceTagDesign(request.id)
       .then((data) => {
-        if (cancelled) return;
-        if (!data) {
-          setNotAvailable(true);
-          setDoc(null);
-          return;
-        }
-        const nextResolved: Record<string, ResolvedLineData> = {};
-        for (const line of data.lines) {
-          nextResolved[line.line_id] = line;
-        }
-        setResolvedData(nextResolved);
-        setDoc(data.doc);
+        if (!cancelled) setPayload(data);
       })
       .catch(() => {
-        if (!cancelled) setNotAvailable(true);
+        if (!cancelled) setPayload(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -2730,34 +2815,207 @@ function ProofPreviewSection({
     };
   }, [request.id]);
 
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Design Preview</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <Skeleton className="h-64 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
+  useEffect(() => {
+    let cancelled = false;
+    listReviewComments(request.id)
+      .then((rows) => {
+        if (!cancelled) setComments(rows);
+      })
+      .catch(() => {
+        // A design that will not tell us its history still has to render.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
 
-  if (notAvailable || !doc) {
-    return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Design Preview</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <p className="text-sm text-muted-foreground text-center py-6">
-            Design not available yet.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+  useEffect(() => {
+    if (drafts.length > 0 && !railScrolledRef.current) {
+      railScrolledRef.current = true;
+      railRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [drafts.length]);
 
-  return <PriceTagProofViewer doc={doc} resolvedData={resolvedData} />;
+  const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
+  /**
+   * What a pin's rail entry calls the thing it points at, never an id.
+   *
+   * The line's code, plus the tag's own label when the line prints more than
+   * one ("SRT-1234 1b"): a line split into an option per basin shows two tags,
+   * and a pin on one of them has to say which.
+   */
+  const tagLabel = useCallback(
+    (tagId: string | null) => {
+      if (!tagId) return 'General';
+      for (const line of request.lines) {
+        const tags = line.tags ?? [];
+        const tag = tags.find((row) => row.id === tagId);
+        if (!tag) continue;
+        const code = line.code || line.name || 'Tag';
+        return tags.length > 1 ? `${code} ${tag.label}` : code;
+      }
+      return 'Tag';
+    },
+    [request.lines],
+  );
+
+  const send = useCallback(async () => {
+    if (drafts.length === 0 && !generalNote.trim()) return;
+    setSending(true);
+    try {
+      await onSend({
+        comments: drafts.map((draft) => ({
+          tag_id: draft.tag_id,
+          x: draft.x,
+          y: draft.y,
+          w: draft.w,
+          h: draft.h,
+          body: draft.body,
+        })),
+        note: generalNote.trim() || undefined,
+      });
+      // Only a round the server took is a round to forget.
+      setDrafts([]);
+      setGeneralNote('');
+    } catch {
+      // The caller has already said so; the pins stay exactly where they were.
+    } finally {
+      setSending(false);
+    }
+  }, [drafts, generalNote, onSend]);
+
+  // Earlier rounds stay on the design and render grey (D6/R2), so a second
+  // round is read against what the first one said without being mistaken for
+  // live work on this proof.
+  const review = {
+    comments,
+    drafts,
+    canPlace: reviewable,
+    currentRound: request.review_round,
+    onPlace: (pin: Omit<DraftPin, 'key'>) =>
+      setDrafts((current) => [
+        ...current,
+        { ...pin, key: `draft-${Date.now()}-${current.length}` },
+      ]),
+    onRemoveDraft: (key: string) =>
+      setDrafts((current) => current.filter((draft) => draft.key !== key)),
+  };
+
+  const sentThisDesign = comments.filter((comment) => comment.tag_id !== null);
+
+  const footer = reviewable ? (
+    <div ref={railRef} className="mt-3 space-y-3 border-t pt-3">
+      {drafts.length > 0 && (
+        <ul className="space-y-2">
+          {drafts.map((draft) => (
+            <li
+              key={draft.key}
+              className="flex items-start gap-2 rounded-md border p-2"
+            >
+              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-2xs font-semibold text-white">
+                {draftNumbers.get(draft.key)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
+                  {tagLabel(draft.tag_id)}
+                </p>
+                <p className="whitespace-pre-wrap text-xs">{draft.body}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Delete change request ${draftNumbers.get(draft.key)}`}
+                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  setDrafts((current) =>
+                    current.filter((row) => row.key !== draft.key),
+                  )
+                }
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="ptag-general-note" className="text-xs">
+          Anything else (optional)
+        </Label>
+        <Textarea
+          id="ptag-general-note"
+          rows={2}
+          value={generalNote}
+          onChange={(event) => setGeneralNote(event.target.value)}
+          placeholder="A note about the whole design"
+          className="text-sm"
+        />
+      </div>
+
+      {(drafts.length > 0 || generalNote.trim()) && (
+        <Button
+          className="w-full"
+          disabled={sending}
+          onClick={() => void send()}
+          data-testid="send-change-requests"
+        >
+          {sending ? (
+            <Loader2 className="size-4 mr-1 animate-spin" />
+          ) : (
+            <MessageSquare className="size-4 mr-1" />
+          )}
+          {drafts.length === 0
+            ? 'Send change request'
+            : drafts.length === 1
+              ? 'Send 1 change request'
+              : `Send ${drafts.length} change requests`}
+        </Button>
+      )}
+    </div>
+  ) : sentThisDesign.length > 0 ? (
+    <div className="mt-3 space-y-2 border-t pt-3">
+      {sentThisDesign.map((comment) => (
+        <div key={comment.id} className="flex items-start gap-2">
+          <span
+            className={cn(
+              'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-2xs font-semibold text-white',
+              comment.resolved_at ? 'bg-muted-foreground/60' : 'bg-primary',
+            )}
+          >
+            {commentNumbers.get(comment.id)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
+              {tagLabel(comment.tag_id)}
+              {comment.resolved_at ? ' / Done' : ''}
+            </p>
+            <p className="whitespace-pre-wrap text-xs">{comment.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
+  return (
+    <DesignViewer
+      docNumber={request.doc_number ?? 'Design'}
+      payload={payload}
+      loading={loading}
+      emptyMessage="Design not available yet"
+      emptyHint="Marketing is still working on it."
+      download={download}
+      review={review}
+      footer={footer}
+      headerActions={
+        reviewable ? (
+          <Button size="sm" onClick={onApprove}>
+            <Check className="size-4 mr-1" />
+            Approve
+          </Button>
+        ) : undefined
+      }
+    />
+  );
 }
 

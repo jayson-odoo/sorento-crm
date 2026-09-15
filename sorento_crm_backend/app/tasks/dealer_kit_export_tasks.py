@@ -214,6 +214,19 @@ def generate_tag_sheet_pdf(
             download_id,
             len(pdf_bytes),
         )
+        # r9 D12: the salesperson who prints their own tags is waiting for this
+        # file and has no other way to know it exists.
+        try:
+            export_request = export_service.get_request(db, download_id)
+            request_id = getattr(export_request, "request_id", None)
+            if request_id:
+                notify_price_tag_pdf_ready(db, str(request_id))
+        except Exception:
+            logger.warning(
+                "generate_tag_sheet_pdf: could not announce the PDF for %s",
+                download_id,
+                exc_info=True,
+            )
         return {"download_id": download_id, "status": "ready", "bytes": len(pdf_bytes)}
     except Exception as exc:  # noqa: BLE001 - mark failed, never poison the queue
         logger.exception("generate_tag_sheet_pdf failed for download %s", download_id)
@@ -227,3 +240,21 @@ def generate_tag_sheet_pdf(
         return {"download_id": download_id, "status": "failed", "error": str(exc)}
     finally:
         db.close()
+
+
+def notify_price_tag_pdf_ready(db, request_id: str) -> None:
+    """Tell the salesperson their PDF is downloadable (r9 D12/AC-S4-2).
+
+    Only for a SELF print. An office print's tags are collected at the counter -
+    the salesperson never downloads them, so a "your PDF is ready" there is a
+    message about something they are not going to do.
+    """
+    from app.models.price_tag import PriceTagRequest
+    from app.services import price_tag_notify
+
+    request = (
+        db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).first()
+    )
+    if request is None or request.print_by != "self":
+        return
+    price_tag_notify.notify_salesperson(db, request, "pdf_ready")

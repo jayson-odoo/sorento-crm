@@ -47,6 +47,13 @@ export const GeneralSettingsSchema = z.object({
    */
   deferredDeleteSeconds: z.coerce.number().int().min(1).max(600),
   deferredActionSeconds: z.coerce.number().int().min(1).max(600),
+  /**
+   * The auto-collect sweep for office-printed price tags (r9 D10). Zero is
+   * meaningful here, unlike the countdowns above: it turns the sweep off, and
+   * a hand-over then waits for a person forever, which is a legitimate way to
+   * run a counter.
+   */
+  priceTagAutoCollectDays: z.coerce.number().int().min(0).max(90),
   /** SCM front planning: the grain new plans are decided at (AC-F01). */
   planGrain: z.enum(['product', 'location']),
   /** Price tag packages (D2): the product classes a line is warned about when it

@@ -71,3 +71,4 @@ Click the **Log out** icon on the top-right of the dashboard. You'll be sent bac
 ## See also
 
 * [Submit via portal](submit-via-portal.md) - how to fill in and submit a complaint, stock inquiry, purchase request, sponsorship form, or price tag request.
+* [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md) - what happens to a price tag request after you submit it.
