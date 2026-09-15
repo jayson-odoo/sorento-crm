@@ -21,6 +21,7 @@ would rewrite a version somebody has already graded.
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -74,6 +75,9 @@ class ChatbotDomainBody(BaseModel):
 
 class ChatbotDomainResponse(ChatbotDomainBody):
     id: str
+    # AC-1510's "Updated" column: the row already carries the column
+    # (`ChatbotDomain.updated_at`), just not surfaced until the FE list needed it.
+    updated_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -136,6 +140,7 @@ def _domain_out(row: ChatbotDomain) -> ChatbotDomainResponse:
         supported=bool(row.supported),
         ladder=list(row.ladder or []),
         sort_order=int(row.sort_order or 0),
+        updated_at=row.updated_at,
     )
 
 
@@ -226,6 +231,7 @@ def create_domain(
     row = ChatbotDomain(**body.model_dump())
     db.add(row)
     db.flush()
+    db.refresh(row)  # server_default `updated_at`/`created_at` are not on `row` until reloaded
     return _domain_out(row)
 
 
@@ -242,6 +248,7 @@ def update_domain(
     for field, value in body.model_dump().items():
         setattr(row, field, value)
     db.flush()
+    db.refresh(row)  # `onupdate=func.now()` is server-side - reload it before responding
     return _domain_out(row)
 
 

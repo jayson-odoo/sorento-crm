@@ -2,7 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
-import { getContactChatbotProfile, saveContactChatbotProfile } from '../services/contactChatbotService';
+import {
+  getContactChatbotProfile,
+  saveContactChatbotProfile,
+  type ContactChatbotSaveInput,
+} from '../services/contactChatbotService';
 
 export const contactChatbotQueryKey = (contactId: string) => ['contact-chatbot', contactId];
 
@@ -18,8 +22,7 @@ export function useContactChatbotProfile(contactId: string) {
 export function useSaveContactChatbotProfile(contactId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (input: { recall_enabled: boolean; language: string | null }) =>
-      saveContactChatbotProfile(contactId, input),
+    mutationFn: (input: ContactChatbotSaveInput) => saveContactChatbotProfile(contactId, input),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: contactChatbotQueryKey(contactId) });
       toast.success('Chatbot settings saved');

@@ -18,31 +18,34 @@ import {
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
-import { useChatbotLanes, useChatbotSettings, useSaveChatbotSettings } from './hooks/useChatbotSettings';
+import { useChatbotSettings, useSaveChatbotSettings } from './hooks/useChatbotSettings';
 import type { ChatbotSettings } from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
 import TierOrderCard from './components/TierOrderCard';
 import CrossDomainLadderCard from './components/CrossDomainLadderCard';
 
 /**
- * Settings -> Chatbot (AC-809, AC-810; chatbot turn re-architecture S1, AC-1513).
+ * Settings -> Chatbot (AC-809, AC-810; chatbot turn re-architecture S1/S5, AC-1513,
+ * AC-1560).
  *
- * Which lanes the CRM finishes and the three switches that used to be environment
- * flags - read per turn by the engine, so a change here takes effect on the next
- * WhatsApp message with no deploy. The domains the bot refuses used to be a
- * free-text list here (AC-931); that box is retired - "Supported" now lives on
- * each domain's own row on the Chatbot Domains page, which is also where a
- * domain's tools, narrowing and escalation team live, so a refusal is no longer a
- * name typed twice.
+ * The three switches that used to be environment flags - read per turn by the engine,
+ * so a change here takes effect on the next WhatsApp message with no deploy. The
+ * domains the bot refuses used to be a free-text list here (AC-931); that box is
+ * retired - "Supported" now lives on each domain's own row on the Chatbot Domains page,
+ * which is also where a domain's tools, narrowing and escalation team live, so a
+ * refusal is no longer a name typed twice.
+ *
+ * The "Lanes the CRM answers" card is retired (S3 ruling, 16 Sep 2026):
+ * `chatbot_completed_lanes` no longer gates which turns the CRM finishes now that the
+ * turn engine itself decides, so a checkbox here would no longer change anything the
+ * next WhatsApp message does.
  */
 
 export default function ChatbotSettingsPage() {
-  const lanesQuery = useChatbotLanes();
   const settingsQuery = useChatbotSettings();
   const save = useSaveChatbotSettings();
 
@@ -56,7 +59,7 @@ export default function ChatbotSettingsPage() {
   // The failed load is checked FIRST. A load that fails leaves `draft` null, so a
   // loading check that also covered `!draft` would win every time and the operator
   // would wait on skeletons that never resolve.
-  if ((settingsQuery.isError || lanesQuery.isError) && !draft) {
+  if (settingsQuery.isError && !draft) {
     return (
       <Alert variant="mono" icon="destructive">
         <AlertIcon>
@@ -69,7 +72,7 @@ export default function ChatbotSettingsPage() {
     );
   }
 
-  if (settingsQuery.isLoading || lanesQuery.isLoading || !draft) {
+  if (settingsQuery.isLoading || !draft) {
     return (
       <div className="space-y-5">
         <Skeleton className="h-64 w-full" />
@@ -78,55 +81,11 @@ export default function ChatbotSettingsPage() {
     );
   }
 
-  const lanes = lanesQuery.data ?? [];
   const set = <K extends keyof ChatbotSettings>(key: K, value: ChatbotSettings[K]) =>
     setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
 
-  const toggleLane = (kind: string, checked: boolean) =>
-    set(
-      'chatbot_completed_lanes',
-      checked
-        ? [...draft.chatbot_completed_lanes, kind]
-        : draft.chatbot_completed_lanes.filter((k) => k !== kind),
-    );
-
   return (
     <div className="space-y-5">
-      <Card>
-        <CardHeader className="border-b border-border">
-          <CardTitle>Lanes the CRM answers</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 gap-4 py-5 sm:grid-cols-2">
-          {lanes.map((lane) => {
-            const checked = draft.chatbot_completed_lanes.includes(lane.kind);
-            return (
-              <div key={lane.kind} className="flex items-center gap-2.5">
-                <Checkbox
-                  id={`chatbot-lane-${lane.kind}`}
-                  checked={checked}
-                  // Unbuilt blocks turning one ON, never turning one OFF. A kind listed
-                  // while its switch was on and then stranded when it went off would
-                  // otherwise be a checkbox nobody can clear, which is a trap rather
-                  // than a guard.
-                  disabled={!lane.built && !checked}
-                  onCheckedChange={(next) => toggleLane(lane.kind, next === true)}
-                />
-                <Label
-                  htmlFor={`chatbot-lane-${lane.kind}`}
-                  className="font-normal cursor-pointer truncate"
-                  title={lane.kind}
-                >
-                  {lane.kind}
-                </Label>
-                {lane.built ? null : (
-                  <span className="text-xs text-muted-foreground shrink-0">Not built</span>
-                )}
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
-
       <Card>
         <CardHeader className="border-b border-border">
           <CardTitle>Switches</CardTitle>

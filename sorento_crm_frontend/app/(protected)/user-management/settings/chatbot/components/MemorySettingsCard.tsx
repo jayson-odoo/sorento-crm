@@ -12,8 +12,8 @@ import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect
 import {
   useChatbotMemorySettings,
   useSaveChatbotMemorySettings,
-} from '../hooks/useChatbotConfigMock';
-import type { ChatbotMemorySettings } from '../services/chatbotConfigMockService';
+} from '../hooks/useChatbotMemoryAndTierOrder';
+import type { ChatbotMemorySettings } from '../services/chatbotSettingsService';
 
 const RETENTION_OPTIONS = [30, 90, 180, 365].map((days) => ({
   value: String(days),
@@ -23,15 +23,21 @@ const RETENTION_OPTIONS = [30, 90, 180, 365].map((days) => ({
 const PROFILE_FIELD_OPTIONS = [
   { value: 'tier', label: 'Tier' },
   { value: 'language', label: 'Language' },
-  { value: 'ledgers', label: 'Default ledgers' },
+  { value: 'default_ledgers', label: 'Default ledgers' },
 ];
 
 const FOCUS_RESET_OPTIONS = [
-  { value: 'topic switch', label: 'Topic switch' },
-  { value: 'conversation close', label: 'Conversation close' },
+  { value: 'topic_switch', label: 'Topic switch' },
+  { value: 'conversation_close', label: 'Conversation close' },
 ];
 
-/** Settings > Chatbot > Memory card (S1, AC-1513, M5). */
+/**
+ * Settings > Chatbot > Memory card (chatbot turn re-architecture, AC-1513, AC-1561, S5).
+ *
+ * Backed by `system_settings.chatbot_memory` - one JSONB, four sub-keys - saved
+ * independently of the Switches card's Save button (its own PUT /settings/general call,
+ * a partial body).
+ */
 export default function MemorySettingsCard() {
   const query = useChatbotMemorySettings();
   const save = useSaveChatbotMemorySettings();

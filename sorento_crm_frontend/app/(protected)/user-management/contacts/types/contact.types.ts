@@ -20,6 +20,15 @@ export interface RespondContact {
   access_types?: RespondContactAccessType[];
   /** Outbound WhatsApp kill switch. Flipped via the shared outbound endpoints, not a contact update. */
   outbound_enabled?: boolean;
+  /** Chatbot turn re-architecture (AC-1503, AC-1515): tier/language/default_ledgers. */
+  chatbot_profile?: {
+    tier?: string | null;
+    language?: string | null;
+    default_ledgers?: string[] | null;
+    always_full_report?: boolean;
+  } | null;
+  /** Same-contact episode recall, D3: per-contact toggle, global default off. */
+  chatbot_recall_enabled?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

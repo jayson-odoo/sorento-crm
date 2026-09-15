@@ -30,15 +30,12 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
 }
 
 
-# AC-1317: the goals that mean "show me the next page of the set you just counted".
-# The PARSER's own word for it (`user_goal`), never a phrase test over the message -
-# a turn that names a continuation is the one signal the carry needs.
-CONTINUATION_GOALS: frozenset[str] = frozenset({"more", "next", "lagi", "show_more"})
-
-
 def _is_continuation(verdict: dict[str, Any]) -> bool:
-    goal = verdict.get("user_goal")
-    return isinstance(goal, str) and goal.strip().lower() in CONTINUATION_GOALS
+    """AC-1317: "show me the next page of the set you just counted". The parser's own
+    `continuation` schema key (bool), read as-is - matching free-text `user_goal`
+    against a word list was still a text rule wearing the parser's clothes; a
+    dedicated boolean is the deterministic signal (captain ruling, 16 Sep 2026)."""
+    return verdict.get("continuation") is True
 
 
 def _domain_of_document(document: list[str]) -> str | None:

@@ -6,13 +6,21 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import OrderableList from '@/components/common/OrderableList';
-import { useChatbotTierOrder, useSaveChatbotTierOrder } from '../hooks/useChatbotConfigMock';
+import { useChatbotTierOrder, useSaveChatbotTierOrder } from '../hooks/useChatbotMemoryAndTierOrder';
+
+const TIER_LABELS: Record<string, string> = {
+  dealer: 'Dealer',
+  office: 'Office',
+  end_user: 'End user',
+};
 
 /**
- * Settings > Chatbot > Tier order card (S1, AC-1513, M5).
+ * Settings > Chatbot > Tier order card (chatbot turn re-architecture, AC-1513, AC-1561, S5).
  *
- * One list. Today three copies of `TIER_ORDER` in code (AC-1594 deletes them once
- * this table is the only source).
+ * One list, backed by `system_settings.chatbot_tier_order` - today three copies of
+ * `TIER_ORDER` in code (AC-1594 deletes them once this is the only source). Saved
+ * independently of the Switches card's Save button (its own PUT /settings/general call,
+ * a partial body).
  */
 export default function TierOrderCard() {
   const query = useChatbotTierOrder();
@@ -48,7 +56,7 @@ export default function TierOrderCard() {
         <CardTitle>Tier order</CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 py-5">
-        <OrderableList items={draft} onChange={setDraft} />
+        <OrderableList items={draft} labelFor={(code) => TIER_LABELS[code] ?? code} onChange={setDraft} />
         <p className="text-xs text-muted-foreground">One list. Today three copies in code.</p>
         <div className="flex justify-end">
           <Button

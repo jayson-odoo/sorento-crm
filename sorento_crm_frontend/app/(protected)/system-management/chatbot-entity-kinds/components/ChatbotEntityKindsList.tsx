@@ -103,7 +103,10 @@ export default function ChatbotEntityKindsList() {
           <DataGridColumnHeader title="Base property words" column={column} />
         ),
         cell: ({ row }) => {
-          const text = row.original.base_property_words.join(', ') || '-';
+          const text =
+            Object.entries(row.original.base_property_words)
+              .map(([word, column]) => `${word} -> ${column}`)
+              .join(', ') || '-';
           return (
             <span className="truncate block text-muted-foreground" title={text}>
               {text}

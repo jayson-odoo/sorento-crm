@@ -1,11 +1,9 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useContactChatbotProfile, useSaveContactChatbotProfile } from '../hooks/useContactChatbot';
 
 const LANGUAGE_OPTIONS = [
@@ -14,13 +12,19 @@ const LANGUAGE_OPTIONS = [
   { value: 'zh', label: 'Chinese' },
 ];
 
+const TIER_OPTIONS = [
+  { value: 'dealer', label: 'Dealer' },
+  { value: 'office', label: 'Office' },
+  { value: 'end_user', label: 'End user' },
+];
+
 /**
- * Contact Details -> Access -> Chatbot (chatbot turn re-architecture, S1, AC-1515).
+ * Contact Details -> Access -> Chatbot (chatbot turn re-architecture, S5, AC-1515).
  *
- * Recall and language are edited here directly. Tier is read-only once a WhatsApp
- * pick has set it - the Profile shelf's writer is "explicit picks" (PLAN "Design >
- * State"), and a value the contact already picked in a conversation is not
- * overwritten from this card without knowing what that changes downstream.
+ * Recall, tier and language are all edited directly here. The mocked S1 idea of a
+ * read-only tier "once a pick set it" has no backend signal to key off (the contact's
+ * `chatbot_profile.tier` carries no record of who last set it), so tier is a plain
+ * field like language.
  */
 export default function ContactChatbotSection({ contactId }: { contactId: string }) {
   const { data: profile, isLoading, isError } = useContactChatbotProfile(contactId);
@@ -48,9 +52,7 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
           id="contact-chatbot-recall"
           checked={profile.recall_enabled}
           disabled={save.isPending}
-          onCheckedChange={(checked) =>
-            save.mutate({ recall_enabled: checked === true, language: profile.language })
-          }
+          onCheckedChange={(checked) => save.mutate({ ...profile, recall_enabled: checked === true })}
         />
       </div>
 
@@ -58,9 +60,7 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
         <Label>Language</Label>
         <SearchableSelect
           value={profile.language ?? ''}
-          onChange={(v) =>
-            save.mutate({ recall_enabled: profile.recall_enabled, language: v || null })
-          }
+          onChange={(v) => save.mutate({ ...profile, language: v || null })}
           clearable
           disabled={save.isPending}
           placeholder="(none)"
@@ -70,23 +70,14 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
 
       <div className="space-y-1.5">
         <Label>Tier</Label>
-        {profile.tier ? (
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary" appearance="light" size="sm">
-              {profile.tier}
-            </Badge>
-            <span className="text-xs text-muted-foreground">
-              Set by a pick{profile.tier_set_at ? `, ${formatDateTimeInMalaysia(profile.tier_set_at)}` : ''}
-            </span>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Not set yet - answered on the next pick.</p>
-        )}
-      </div>
-
-      <div className="space-y-1.5">
-        <Label>Ledgers</Label>
-        <p className="text-sm text-muted-foreground">{profile.ledgers_summary}</p>
+        <SearchableSelect
+          value={profile.tier ?? ''}
+          onChange={(v) => save.mutate({ ...profile, tier: v || null })}
+          clearable
+          disabled={save.isPending}
+          placeholder="(none) - answered on the next pick"
+          options={TIER_OPTIONS}
+        />
       </div>
     </div>
   );

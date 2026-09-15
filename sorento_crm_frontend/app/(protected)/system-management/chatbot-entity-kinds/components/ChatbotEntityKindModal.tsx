@@ -1,14 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { LoaderCircleIcon } from 'lucide-react';
+import { LoaderCircleIcon, Plus, X } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import StringChipInput from '@/components/common/StringChipInput';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import {
   NARROWING_POLICY_OPTIONS,
@@ -24,7 +23,7 @@ const BLANK: ChatbotEntityKindInput = {
   did_you_mean: true,
   default_narrowing: 'optional_filter',
   family_grouping: null,
-  base_property_words: [],
+  base_property_words: {},
 };
 
 export interface ChatbotEntityKindModalProps {
@@ -76,7 +75,7 @@ export default function ChatbotEntityKindModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-lg flex-col overflow-hidden p-0">
+      <DialogContent className="flex max-h-[90dvh] max-w-lg flex-col overflow-hidden p-0">
         <DialogHeader className="flex-row items-center justify-between gap-4 border-b px-6 py-4 pr-12">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-muted-foreground">Entity kinds</p>
@@ -155,10 +154,13 @@ export default function ChatbotEntityKindModal({
           </div>
           <div className="space-y-1.5">
             <Label>Base property words</Label>
-            <StringChipInput
+            <p className="text-xs text-muted-foreground">
+              A word the parser reads as asking about a property, not a domain, mapped to
+              the products column it answers from.
+            </p>
+            <BasePropertyWordsEditor
               value={draft.base_property_words}
               onChange={(v) => set('base_property_words', v)}
-              placeholder="price, discontinued, brand"
             />
           </div>
         </div>
@@ -178,5 +180,82 @@ export default function ChatbotEntityKindModal({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Word -> `products` column, e.g. `{ discontinued: "is_discontinued" }`. Simple enough
+ * (product-only, a handful of rows) that a dedicated shared component is not worth the
+ * indirection for its one caller. */
+function BasePropertyWordsEditor({
+  value,
+  onChange,
+}: {
+  value: Record<string, string>;
+  onChange: (next: Record<string, string>) => void;
+}) {
+  const entries = Object.entries(value);
+
+  const setEntry = (index: number, key: 'word' | 'column', next: string) => {
+    const rows = entries.map(([word, column]) => ({ word, column }));
+    rows[index] = { ...rows[index], [key]: next };
+    onChange(Object.fromEntries(rows.map((r) => [r.word, r.column])));
+  };
+
+  const removeEntry = (index: number) => {
+    const rows = entries.filter((_, i) => i !== index);
+    onChange(Object.fromEntries(rows));
+  };
+
+  const addEntry = () => {
+    // A blank key would collide with the next blank row added before it is named -
+    // spacer keys keep every row addressable until the reader types a real word.
+    let key = '';
+    let n = 0;
+    do {
+      key = n === 0 ? '' : `_new_${n}`;
+      n += 1;
+    } while (key in value);
+    onChange({ ...value, [key]: '' });
+  };
+
+  return (
+    <div className="space-y-2">
+      {entries.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No base property words yet.</p>
+      ) : (
+        entries.map(([word, column], index) => (
+          <div key={index} className="flex items-center gap-2">
+            <Input
+              value={word}
+              onChange={(e) => setEntry(index, 'word', e.target.value)}
+              placeholder="discontinued"
+              aria-label="Word"
+              className="flex-1"
+            />
+            <span className="text-xs text-muted-foreground">-&gt;</span>
+            <Input
+              value={column}
+              onChange={(e) => setEntry(index, 'column', e.target.value)}
+              placeholder="is_discontinued"
+              aria-label="Products column"
+              className="flex-1"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Remove ${word || 'row'}`}
+              onClick={() => removeEntry(index)}
+            >
+              <X className="size-4" />
+            </Button>
+          </div>
+        ))
+      )}
+      <Button type="button" variant="outline" size="sm" onClick={addEntry}>
+        <Plus className="size-4" />
+        Add word
+      </Button>
+    </div>
   );
 }

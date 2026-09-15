@@ -1,10 +1,19 @@
 """Publish the first re-architecture parser version, with the policy blocks in its body.
 
 Chatbot turn re-architecture S4 (AC-1550). One NEW version of
-``chatbot_semantic_parser``, UNLABELLED, whose body is the live production body with the
-domain and entity-kind blocks rendered from ``chatbot_domains`` /
+``chatbot_semantic_parser``, UNLABELLED, whose body is the ``SEMANTIC_PARSER_PROMPT``
+constant with the domain and entity-kind blocks rendered from ``chatbot_domains`` /
 ``chatbot_entity_kinds`` appended between two markers, and whose ``config_json`` carries
 the sha256 of exactly those blocks.
+
+Amended 16 Sep 2026 (AC-1317, D8 "one prompt lineage"): the base used to be whatever
+``production`` pointed at today, so a published version could drift from
+``SEMANTIC_PARSER_PROMPT`` - the constant itself gained an owner ruling that it is CRM
+content now, not a byte-fidelity-locked n8n import, which retired the reason for
+preferring the live DB row over it. The constant is now the ONE COPY of the output-keys
+declaration (edit it there, not here or in the schema's prose) - this migration derives
+its base FROM the constant every time, so publishing can never carry a stale OUTPUT
+block forward.
 
 The ``production`` label is NOT moved. That is the whole shape of this registry and the
 reason the blocks are rendered at publish time rather than per turn: deploying this
@@ -14,7 +23,10 @@ compares ``config_json["blocks_hash"]`` against the rows as they stand today, so
 saved after this publish reads as "domain block out of date" instead of silently
 rewriting a version somebody already graded.
 
-Idempotent: a version already carrying today's hash is left alone.
+Idempotent: a version whose FULL rendered template (constant plus policy blocks)
+already matches today's is left alone - not just a `blocks_hash` match, since the
+constant can change (a new output key, a wording fix) without the policy tables moving
+at all.
 
 Revision ID: chatbot_rearch_s4
 Revises: chatbot_rearch_s0
@@ -30,6 +42,7 @@ from app.services.ai_prompt_seed import seed_prompt_registry
 from app.services.chatbot_parser_prompt import (
     BLOCKS_BEGIN,
     BLOCKS_END,
+    SEMANTIC_PARSER_PROMPT,
     prompt_blocks_hash,
     render_prompt_blocks,
 )
@@ -45,25 +58,9 @@ PROMPT_NAME = "chatbot_semantic_parser"
 
 
 def _body(session: Session) -> tuple[str, str]:
-    """`(template, blocks_hash)` - the labelled body plus the rendered blocks.
-
-    The base is whatever ``production`` points at today, so this publish ADDS the policy
-    blocks to the prompt that is actually live rather than replacing it with a body
-    nobody has graded.
-    """
+    """`(template, blocks_hash)` - the constant plus the rendered policy blocks."""
     blocks = render_prompt_blocks(session)
-    label = (
-        session.query(AIPromptLabel)
-        .filter(AIPromptLabel.name == PROMPT_NAME, AIPromptLabel.label == "production")
-        .first()
-    )
-    base = ""
-    if label is not None:
-        current = (
-            session.query(AIPromptVersion).filter(AIPromptVersion.id == label.version_id).first()
-        )
-        base = (current.template or "") if current is not None else ""
-    template = f"{base.rstrip()}\n\n{BLOCKS_BEGIN}\n{blocks}{BLOCKS_END}\n"
+    template = f"{SEMANTIC_PARSER_PROMPT.rstrip()}\n\n{BLOCKS_BEGIN}\n{blocks}{BLOCKS_END}\n"
     return template, prompt_blocks_hash(session)
 
 
@@ -75,10 +72,14 @@ def upgrade() -> None:
     session = Session(bind=bind)
     try:
         template, blocks_hash = _body(session)
+        # `blocks_hash` alone under-counts: it covers the POLICY BLOCKS, not
+        # `SEMANTIC_PARSER_PROMPT` itself, so an edit to the constant with the policy
+        # tables untouched must still republish. Full-template equality is the correct
+        # "nothing would change" check for both.
         already = [
             row
             for row in session.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_NAME)
-            if (row.config_json or {}).get("blocks_hash") == blocks_hash
+            if (row.config_json or {}).get("blocks_hash") == blocks_hash and row.template == template
         ]
         if already:
             logger.info(

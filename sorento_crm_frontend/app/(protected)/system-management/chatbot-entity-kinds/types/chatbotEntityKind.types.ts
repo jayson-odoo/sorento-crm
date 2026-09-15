@@ -19,9 +19,9 @@ export interface ChatbotEntityKind {
   default_narrowing: NarrowingPolicy;
   /** How a family match groups rows, e.g. "by base code". Null when not applicable. */
   family_grouping: string | null;
-  /** Product-only: words the parser reads as asking about a property, not a domain. */
-  base_property_words: string[];
-  updated_at: string;
+  /** Product-only: word -> `products` column it reads as asking about, e.g.
+   * `{ "discontinued": "is_discontinued", "brand": "brand" }`. */
+  base_property_words: Record<string, string>;
 }
 
-export type ChatbotEntityKindInput = Omit<ChatbotEntityKind, 'updated_at'>;
+export type ChatbotEntityKindInput = ChatbotEntityKind;

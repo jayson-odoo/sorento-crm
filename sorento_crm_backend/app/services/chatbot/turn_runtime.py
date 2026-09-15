@@ -559,6 +559,11 @@ def envelope_of(
         # (#930's grammar, contract 102); this is what a tool with no rows to render -
         # a report, a refusal, a miss suggestion - has to say instead.
         "lane_text": fetched.get("response"),
+        # A counted-set answer's own header ("10 taps have certificates. Showing
+        # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
+        # instead of them: the composer still renders `figures` through its own
+        # per-row grammar, only the domain-generic header line is replaced.
+        "header_override": fetched.get("set_header"),
         "outcome": fragment.get("outcome"),
         "tool": (fetched.get("tool") or {}).get("name") if isinstance(fetched.get("tool"), dict) else None,
     }
