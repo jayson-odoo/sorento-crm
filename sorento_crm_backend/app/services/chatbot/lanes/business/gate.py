@@ -77,9 +77,15 @@ ALLOWED: dict[str, list[str]] = {
     # (`crm_resource_attachments_list`/`_catalogue`/`_current_stock_list`) takes a
     # `warehouse_ids` parameter at all (confirmed: `fetch.TYPE_TO_PARAM`'s own
     # `"warehouse"` comment names the four tools that DO, and none of these three is
-    # among them). `attachment_type` is the one entity kind these tools actually
-    # filter on (`fetch.NARROWING_PARAMS`/`ENTITY_FILTER_REQUIRED_TOOLS`).
-    "resource_attachment": ["attachment_type"],
+    # among them). `attachment_type` and `attachment` are the entity kinds these tools
+    # actually filter on (`fetch.TYPE_TO_PARAM` maps them to `attachment_type_ids` /
+    # `attachment_ids`, and `NARROWING_PARAMS` carries both). `attachment` was missing
+    # from the first cut of this row, and it is the kind the resolver returns for a file
+    # the customer NAMES ("catalog", "stock list"), so a named-file ask built no filter
+    # at all and `ENTITY_FILTER_REQUIRED_TOOLS` refused the whole turn as not_found -
+    # measured on replay case `console/case-024`, whose live call carried
+    # `attachment_ids` with two real uuids.
+    "resource_attachment": ["attachment_type", "attachment"],
 }
 
 #: PLAN-low-stock-report S6 (owner ruling, console round 2, 14 Sep 2026): INTENTS that
