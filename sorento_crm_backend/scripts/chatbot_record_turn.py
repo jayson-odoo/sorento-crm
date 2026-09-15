@@ -134,7 +134,22 @@ def _entity_uuids_from_tool_args(tool_events: list[dict[str, Any]]) -> set[str]:
 
 def _derive_resolutions(verdict: dict[str, Any], tool_events: list[dict[str, Any]]) -> dict[str, Any]:
     """Best-effort `resolve_entity` response, from the verdict's entities and the
-    UUIDs the recorded tool calls actually used (see module docstring)."""
+    UUIDs the recorded tool calls actually used (see module docstring).
+
+    Shape MUST match the real `resolve-entity` HTTP response `resolve_gate.py` (and
+    `gate.py`) consume: `{"resolutions": [{"token", "resolved", "matches": [{"uuid",
+    "entity_type", "canonical_code"}, ...]}], ...}` - ONE entry per token, each
+    carrying a LIST of matches, never a flat token->match record. Found this session
+    (tester, 16 Sep 2026): the prior shape (`{"token", "uuid", "entity_type",
+    "canonical_code"}` with no `matches` wrapper) fed straight through
+    `_install_stubs`'s `_fake_resolve_entity` stub made every recorded resolution
+    read back as ZERO matches (`resolve_gate.py:373`'s own `jsc.get(resolutions[0],
+    "matches")` finds nothing on a flat dict), so a turn that resolved a real
+    product live replayed as if nothing had resolved at all - the narrower asked to
+    narrow instead of fetching, and `route()`'s `_ASK_BRANCH.get(kind,
+    "clarify_menu")` catch-all turned that into a `branch_kind` divergence on
+    almost every case with a confident entity, corpus-wide.
+    """
     entity_uuids = sorted(_entity_uuids_from_tool_args(tool_events))
     entities = verdict.get("entities") or []
     resolutions: list[dict[str, Any]] = []
@@ -151,12 +166,18 @@ def _derive_resolutions(verdict: dict[str, Any], tool_events: list[dict[str, Any
             resolutions.append(
                 {
                     "token": token,
-                    "uuid": entity_uuids[idx],
-                    "entity_type": entity.get("hint"),
-                    "canonical_code": entity.get("canonical_code") or entity.get("raw"),
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": entity_uuids[idx],
+                            "entity_type": entity.get("hint"),
+                            "canonical_code": entity.get("canonical_code") or entity.get("raw"),
+                        }
+                    ],
                 }
             )
         elif token:
+            resolutions.append({"token": token, "resolved": False, "matches": []})
             unresolved.append(token)
     return {
         "tokens": [e.get("raw") for e in entities if isinstance(e, dict)],
@@ -415,6 +436,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.until:
                 clauses.append("created_at < :until")
                 params["until"] = args.until
+            if args.is_test is not None:
+                clauses.append("is_test = :is_test")
+                params["is_test"] = args.is_test == "true"
             where = " AND ".join(clauses)
             rows = conn.execute(
                 text(
