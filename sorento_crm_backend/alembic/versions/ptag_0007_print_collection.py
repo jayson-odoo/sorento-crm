@@ -11,7 +11,7 @@ testable by importing the revision and calling it (precedent:
 ``487_chatbot_warehouse_cue``).
 
 Revision ID: ptag_0007_print_collection
-Revises: ptag_0009_combos_tags
+Revises: 518_osr_last_receipt_spo
 """
 import uuid
 
@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 revision = "ptag_0007_print_collection"
-down_revision = "ptag_0009_combos_tags"
+down_revision = "518_osr_last_receipt_spo"
 branch_labels = None
 depends_on = None
 
