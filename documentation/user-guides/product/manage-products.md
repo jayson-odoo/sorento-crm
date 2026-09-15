@@ -58,7 +58,7 @@ Open a product, then **Edit** (or the **Edit** icon on the list row). The same t
 
 The detail page (`/master-data-management/products/{id}`) shows the product name as the title, a **Quick Info** sidebar (including **List Price**), and these tabs:
 
-* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, and **Tracking Flags** (including **Discontinued: Yes/No**).
+* **Overview** - **Basic Information**, **Pricing Summary** (List / Cost / Invoice price), **Specifications**, **Tracking Flags** (including **Discontinued: Yes/No**), then **Combos** (the catalogue packages this product is sold as) and **Sold with** (the packages it is a part of, read-only). See [Catalogue packages on price tags](../marketing/price-tag-packages.md).
 * **Stock** - on-hand / reserved / available by warehouse.
 * **Purchase History** - past purchases of this product.
 * **Attachments** - files linked to this product.

@@ -786,33 +786,39 @@ class TestPortalFormVisibility:
 
 
 # ---------------------------------------------------------------------------
-# 4. Set guard validation
+# 4. The package guard that replaced the set guard (S2, AC-S2-7)
+#
+# The hard refusal is retired: a guarded product with no package now SUBMITS
+# and carries a `package_warning` for marketing to read. The full warning
+# matrix lives in tests/test_price_tag_package_warning.py; what is pinned here
+# is that the two cases this file used to refuse no longer are, and that the
+# product_set path is untouched.
 # ---------------------------------------------------------------------------
 
 
 class TestSetGuard:
-    def test_bathroom_furniture_ala_carte_rejected(self, db: Session):
-        """Product with class 'Bathroom Furniture' submitted as ala carte is rejected."""
+    def test_bathroom_furniture_ala_carte_submits_with_a_warning(self, db: Session):
+        """Was a 422. Submit is never refused for a package reason again (AC-S2-7)."""
         product = _make_product(db, class_label="Bathroom Furniture")
         contact = _make_contact(db)
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.submit_request(
-                db,
-                contact_id=contact.id,
-                company_id=_SORENTO_COMPANY_ID,
-                data={
-                    "debtor_name": "Dealer",
-                    "needed_by_date": date.today() + timedelta(days=7),
-                    "lines": [
-                        {
-                            "line_type": "product",
-                            "product_id": product.id,
-                        },
-                    ],
-                },
-            )
-        assert exc_info.value.status_code == 422
+        req = PriceTagRequestService.submit_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product.id,
+                    },
+                ],
+            },
+        )
+        assert req.status == STATUS_NEW
+        assert req.lines[0].package_warning == "No package defined"
 
     def test_bathroom_furniture_as_set_allowed(self, db: Session):
         """Product with class 'Bathroom Furniture' submitted as product_set line is allowed."""
@@ -1368,12 +1374,19 @@ class TestSubmitCompleteness:
         # No exception is the assertion.
         PriceTagRequestService.validate_submittable(req)
 
-    def test_the_set_guard_names_the_line_it_refused(self, db: Session):
-        """The message goes on the ROW, so the refusal has to say which row."""
+    def test_the_warning_goes_on_the_row_that_earned_it(self, db: Session):
+        """Per-line, not per-request: the clean line beside it stores NULL.
+
+        This replaces `test_the_set_guard_names_the_line_it_refused`, which
+        pinned the retired `detail="line:1"` refusal. The reason it pinned a
+        ROW has not changed - marketing reads the warning on the line the
+        salesperson typed - only the mechanism has.
+        """
         contact = _make_contact(db)
-        ok_product = _make_product(db, class_label="Kitchen Sink")
+        ok_product = _make_product(db, class_label="Accessories")
         bad_product = _make_product(db, class_label="Bathroom Furniture")
-        req = PriceTagRequestService.create_request(
+
+        req = PriceTagRequestService.submit_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -1386,22 +1399,17 @@ class TestSubmitCompleteness:
                 ],
             },
         )
-        db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_set_guard(db, req)
+        by_order = sorted(req.lines, key=lambda l: (l.sort_order or 0, l.id))
+        assert [line.package_warning for line in by_order] == [None, "No package defined"]
 
-        err = exc_info.value
-        assert err.status_code == 422
-        assert err.detail["code"] == "SET_GUARD_VIOLATION"
-        assert err.detail["detail"] == "line:1"
-        assert bad_product.product_code in err.detail["message"]
-
-    def test_the_set_guard_names_every_line_it_refused(self, db: Session):
+    def test_every_guarded_line_gets_its_own_warning(self, db: Session):
+        """Replaces `test_the_set_guard_names_every_line_it_refused`."""
         contact = _make_contact(db)
         first = _make_product(db, class_label="Bathroom Furniture")
         second = _make_product(db, class_label="Bathroom Furniture")
-        req = PriceTagRequestService.create_request(
+
+        req = PriceTagRequestService.submit_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -1414,12 +1422,12 @@ class TestSubmitCompleteness:
                 ],
             },
         )
-        db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_set_guard(db, req)
-
-        assert exc_info.value.detail["detail"] == "line:0,line:1"
+        by_order = sorted(req.lines, key=lambda l: (l.sort_order or 0, l.id))
+        assert [line.package_warning for line in by_order] == [
+            "No package defined",
+            "No package defined",
+        ]
 
 
 @pytest.fixture(autouse=True)

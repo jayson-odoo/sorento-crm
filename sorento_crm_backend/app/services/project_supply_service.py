@@ -69,7 +69,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import func, nullslast, or_
+from sqlalchemy import case, func, null, nullslast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -215,6 +215,49 @@ PLAN_SORT_FIELDS: Tuple[str, ...] = (
 #: one, else the mirror's own. Free stock is read against the core product (`_facts_for`
 #: prefers it on a remap), so the hold must net out of that pile and not the mirror's.
 _hold_product = func.coalesce(SalesOrderLine.product_id, ProjectSalesOrderLine.product_id)
+
+
+def owed_qty_expr():
+    """`_open_of` as SQL, over the `SalesOrderLine` `_hold_query` already outer-joins.
+
+    The same three rules the Python primitive applies, in the same order: a CANCELLED line
+    owes nothing whatever its columns say (the book rarely reverses a delivered quantity
+    when it cancels one), what is owed is `ordered - delivered` floored at zero, and an
+    allocation with NO core line behind it is not a question this can answer - it returns
+    NULL there, and the caller decides what that means.
+
+    NULL rather than zero for the missing line is the whole reason for the leading branch.
+    Postgres `greatest()` IGNORES nulls, so `greatest(NULL - 0, 0)` is 0, not NULL: without
+    it, every allocation on an unreconciled mirror line would silently cap to zero and stop
+    holding stock it really is holding.
+    """
+    return case(
+        (SalesOrderLine.id.is_(None), null()),
+        (func.coalesce(SalesOrderLine.line_status, "open") == "cancelled", 0),
+        else_=func.greatest(
+            func.coalesce(SalesOrderLine.qty_ordered, 0)
+            - func.coalesce(SalesOrderLine.qty_delivered, 0),
+            0,
+        ),
+    )
+
+
+def held_qty_expr():
+    """What a confirmed allocation is ACTUALLY holding: `least(alloc.qty, still owed)`.
+
+    `so_line_allocations.qty` is frozen at confirm and delivery never shrinks it, while the
+    book has already taken the delivered units off `quantity_on_hand` - so a decided line
+    that has since shipped was subtracted twice, once by the warehouse and once by its own
+    hold, and the difference was stock the business had that no screen could see. Capping
+    here rather than at each reader is what makes the free-stock arithmetic, the Stock Debt
+    screen and the confirm-time refusal quote one figure (AC-S1-4).
+
+    An allocation with no core line keeps its raw quantity: there is nothing to cap against,
+    and guessing zero would release stock somebody is holding.
+    """
+    return func.least(
+        SOLineAllocation.qty, func.coalesce(owed_qty_expr(), SOLineAllocation.qty)
+    )
 
 
 def _pile_order(line: Dict[str, Any]) -> Tuple[Any, ...]:
@@ -386,6 +429,24 @@ def _open_of(core: Optional[SalesOrderLine]) -> Decimal:
     return max(_dec(core.qty_ordered) - _dec(core.qty_delivered), _ZERO)
 
 
+def plan_qty_of(core: Optional[SalesOrderLine]) -> Decimal:
+    """What the BOARD plans one line for: `coalesce(qty_required, qty_ordered)`.
+
+    The Python twin of `demand.plan_qty()`, and the 14 September 2026 ruling in one line:
+    NOT the still-owed figure `_open_of` states. A delivered unit nobody ever sourced is a
+    unit to put back, so the ladder is asked for the whole quantity and a Buy on it raises
+    the order-back row. A CANCELLED line plans nothing, exactly as it owes nothing.
+
+    `_open_of` keeps its own readers, all of which genuinely mean "what is still owed": the
+    hold cap (S1), `project_line_draft_service`'s saved snapshot and `sales_order_service
+    .is_stale`.
+    """
+    if core is None or (core.line_status or "open") == "cancelled":
+        return _ZERO
+    required = core.qty_required
+    return max(_dec(core.qty_ordered if required is None else required), _ZERO)
+
+
 class SupplyLinesRefused(AppException):
     """A refusal that names its lines (AC-C02).
 
@@ -403,6 +464,16 @@ class SupplyLinesRefused(AppException):
     ):
         super().__init__(status_code=status_code, message=message, code=code)
         self.detail["failing_lines"] = list(failing_lines)
+
+    @property
+    def failing_lines(self) -> List[Dict[str, Any]]:
+        """The refused lines under the name this class's own docstring gives them.
+
+        The wire shape is `detail["failing_lines"]` and stays that way - it is what the
+        frontend reads. This is the same list for a Python caller, so a test or a service
+        catching the refusal asks for it by name instead of reaching into the envelope.
+        """
+        return list(self.detail.get("failing_lines") or [])
 
 
 class ReserveOverHand(SupplyLinesRefused):
@@ -531,6 +602,14 @@ class _LineFacts:
     item_code: Optional[str] = None
     product_id: Optional[str] = None
     open_qty: Decimal = _ZERO
+    #: What is still owed the CUSTOMER on this line, floored at zero (`_open_of`).
+    #:
+    #: `open_qty` above is what the line ASKS FOR - the plan quantity since the 14 September
+    #: 2026 ruling - and the two differ on any line with a delivery. This one exists for the
+    #: arithmetic that has to agree with the NETTING engine, which counts `demand_qty()`:
+    #: see `_group_offer`, where un-netting the plan quantity would add back more than was
+    #: ever subtracted.
+    owed_qty: Decimal = _ZERO
     required_date: Optional[date] = None
     warehouse: Optional[Warehouse] = None
     pool: Optional[Warehouse] = None
@@ -606,9 +685,10 @@ class _LineFacts:
     #: while the IB group nets -15514, because those 7000 are already owed at `BRW-IB`.
     group_net: Decimal = _ZERO
     pools_net: Decimal = _ZERO
-    #: What the group's net leaves for THIS line: `max(group_net + its own open quantity,
-    #: 0)`. See `ProjectSupplyService._group_offer` for the rule and for the consequence it
-    #: carries: while a group cannot cover its own book, no line of it takes its stock.
+    #: What the group's net leaves for THIS line: `max(group_net + its own STILL-OWED
+    #: quantity, 0)`. See `ProjectSupplyService._group_offer` for the rule, for why the
+    #: un-net is `owed_qty` and not `open_qty`, and for the consequence it carries: while a
+    #: group cannot cover its own book, no line of it takes its stock.
     group_offer: Decimal = _ZERO
     #: Ladder v7.1: the CORE sales-order line ids of the planning UNIT this fact stands
     #: for. A unit of one is its own line; `_unit_fact` stamps every member's for a unit of
@@ -1814,12 +1894,17 @@ class ProjectSupplyService:
                 first.unit_core_line_ids = member_ids
             return first
         total = sum((max(_dec(fact.open_qty), _ZERO) for _key, fact in members), _ZERO)
+        # The unit's own STILL-OWED total, summed separately: `_group_offer` un-nets this
+        # one and not the ask, for the reason its docstring gives. On a unit whose members
+        # have no delivery the two are the same number, which is nearly every unit.
+        owed_total = sum((max(_dec(fact.owed_qty), _ZERO) for _key, fact in members), _ZERO)
         unit = dataclass_replace(
             first,
             open_qty=total,
+            owed_qty=owed_total,
             unit_core_line_ids=member_ids,
             group_offer=(
-                max(first.group_net + total, _ZERO)
+                max(first.group_net + owed_total, _ZERO)
                 if first.group_code
                 else first.group_offer
             ),
@@ -3473,6 +3558,10 @@ class ProjectSupplyService:
                 item_code=row.get("item_code"),
                 product_id=product_id,
                 open_qty=_dec(row.get("open_qty")),
+                # The still-owed figure `_group_offer` un-nets. Absent from the payload it
+                # defaulted to zero, which silently turned the offer into the raw group net
+                # for every board row (review round 2, N1).
+                owed_qty=_dec(row.get("owed_qty")),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
@@ -3563,7 +3652,7 @@ class ProjectSupplyService:
             )
 
     def _group_offer(self, fact: _LineFacts, group: Any) -> Decimal:
-        """What the group's net leaves for this line: `max(group_net + its own open
+        """What the group's net leaves for this line: `max(group_net + its own OWED
         quantity, 0)`.
 
         THE CAPTAIN'S RULE, 26 August 2026, stated in the plan and in AC-L7: a group that
@@ -3582,13 +3671,20 @@ class ProjectSupplyService:
         alone on exactly the stock it needs would read a net of zero and buy stock that is
         sitting there waiting for it. Every OTHER line's demand stays netted.
 
+        WHAT IS UN-NETTED IS `owed_qty`, NOT `open_qty`. The group net is the netting
+        engine's own figure and it counts `demand_qty()` - what is STILL OWED - so adding
+        back the plan quantity would return more than was ever subtracted: a line 3 ordered
+        and 3 delivered contributed nothing to the net and would have handed its group a
+        free 3, offering stock the group does not have. The two were the same number until
+        the 14 September 2026 ruling split them.
+
         THE CONSEQUENCE, named rather than buried: on a group whose book runs ahead of its
         stock, EVERY line of that group buys - the line at the front of the queue included.
         1,015 on hand against 9,080 owed proposes a Buy for the 80 at the front as well as
         for the 9,000 behind it. That is the rule as ruled: while the group is short, its
         stock is not promised to anybody in particular, and whoever ships first uses it.
         """
-        return max(group.net + max(_dec(fact.open_qty), _ZERO), _ZERO)
+        return max(group.net + max(_dec(fact.owed_qty), _ZERO), _ZERO)
 
     def _pool_allowances(self, fact: _LineFacts) -> Dict[str, str]:
         """`{warehouse_id: available_for_project}` for every site pool this line's own
@@ -4925,7 +5021,7 @@ class ProjectSupplyService:
                 SOLineAllocation.warehouse_id,
                 SalesOrder.so_number,
                 ProjectSalesOrderLine.line_no,
-                SOLineAllocation.qty,
+                held_qty_expr(),
             ),
         ).all()
         totals: Dict[Tuple[str, str], Dict[Tuple[Any, Any], Decimal]] = defaultdict(dict)
@@ -7363,7 +7459,8 @@ class ProjectSupplyService:
                 line_no=line.line_no,
                 item_code=codes.get(product_id or ""),
                 product_id=product_id,
-                open_qty=_open_of(core),
+                open_qty=plan_qty_of(core),
+                owed_qty=_open_of(core),
                 required_date=required_date,
                 warehouse=warehouse,
                 pool=pool,
@@ -7559,7 +7656,7 @@ class ProjectSupplyService:
                 exclude_line_ids=None,
                 entities=(
                     SOLineAllocation.warehouse_id,
-                    SOLineAllocation.qty,
+                    held_qty_expr(),
                     SalesOrder.so_number,
                     SalesOrderLine.required_date,
                     SalesOrderLine.warehouse_id,
@@ -7747,7 +7844,7 @@ class ProjectSupplyService:
                         _hold_product,
                         SOLineAllocation.warehouse_id,
                         ProjectSalesOrder.project_id,
-                        SOLineAllocation.qty,
+                        held_qty_expr(),
                     )
                 )
             )

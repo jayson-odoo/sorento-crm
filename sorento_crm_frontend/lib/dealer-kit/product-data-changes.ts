@@ -13,7 +13,7 @@
  *
  * Every resolver read (`POST .../resolve-prices`, the CRM and portal design
  * payloads, the print payload) answers PINNED values, and a non-terminal
- * request also carries, per line:
+ * request also carries, per TAG:
  *
  * ```
  * data_changes: [
@@ -35,9 +35,9 @@
  * running the live resolve to say so is work with no reader.
  *
  * ```
- * POST /api/v1/dealer-kit/price-tag-requests/{id}/lines/{lineId}/pin
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/tags/{tagId}/pin
  *   { action: "update" | "keep" }
- *   200 { line_id, pinned_at }
+ *   200 { tag_id, pinned_at }
  *   update = snapshot the draft as "Before product update: <fields>", then
  *            overwrite the pin and clear the ack hash
  *   keep   = store the live hash as the ack, so the same change stops asking
@@ -63,8 +63,18 @@ export interface LineDataChange {
   note?: string | null;
 }
 
-/** One line's worth of pending decision, as a page reads it. */
-export interface LineDataChangeSet {
+/**
+ * One TAG's worth of pending decision, as a page reads it.
+ *
+ * Per tag rather than per line since the combos slice: a line may print several
+ * tags and two of them resolve different products, so they change apart and a
+ * Keep on one must not silence the other. `line_id` and `tag_label` are what
+ * the reader is shown ("1a" under the line's code), never the ids.
+ */
+export interface TagDataChangeSet {
+  tag_id: string;
+  /** "1a", "1b" - the line's position plus a letter. Never an id. */
+  tag_label: string;
   line_id: string;
   /** The line's code, so no id reaches a screen. */
   code: string;
@@ -79,8 +89,8 @@ export interface RequestVersionSummary {
   created_at: string;
 }
 
-/** How many lines are waiting on a decision. What the card pill counts. */
-export function changedLineCount(sets: LineDataChangeSet[]): number {
+/** How many tags are waiting on a decision. What the card pill counts. */
+export function changedTagCount(sets: TagDataChangeSet[]): number {
   return sets.filter((set) => set.changes.length > 0).length;
 }
 

@@ -26,7 +26,7 @@
  * designer, one click away through the same primary CTA.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
@@ -101,14 +101,14 @@ import {
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import {
-  listLineDataChanges,
-  recheckLineDataChanges,
-  resolveLinePin,
-  updateAllLinePins,
+  listTagDataChanges,
+  recheckTagDataChanges,
+  resolveTagPin,
+  updateAllTagPins,
 } from '../../services/priceTagDataService';
 import {
-  changedLineCount,
-  type LineDataChangeSet,
+  changedTagCount,
+  type TagDataChangeSet,
 } from '@/lib/dealer-kit/product-data-changes';
 import RequestDesignSection from './RequestDesignSection';
 import {
@@ -149,8 +149,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
   const [editOpen, setEditOpen] = useState(false);
   /** What master data has changed under the pinned tags (r9 S5/D18). */
-  const [dataChanges, setDataChanges] = useState<LineDataChangeSet[]>([]);
-  const [reviewLineId, setReviewLineId] = useState<string | null>(null);
+  const [dataChanges, setDataChanges] = useState<TagDataChangeSet[]>([]);
+  const [reviewTagId, setReviewTagId] = useState<string | null>(null);
   const [pinBusy, setPinBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -158,7 +158,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // Which lines already have a tag drawn, so the Lines tab can say so per row
   // without a second page of clicking (D25/AC-S10-2). Fetched once, off the
   // same tag-sheet doc the designer itself reads and writes.
-  const [designedLineIds, setDesignedLineIds] = useState<Set<string>>(new Set());
+  const [designedTagIds, setDesignedTagIds] = useState<Set<string>>(new Set());
   // The salesperson's pinned change requests, held here because the record
   // card's primary CTA counts the open ones (r9 D6) and the Design section is
   // what fetches them.
@@ -185,7 +185,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     getTagSheetDoc(requestId)
       .then((doc) => {
         if (cancelled) return;
-        setDesignedLineIds(new Set(tagsFromDoc(doc).keys()));
+        // Keyed by REQUEST TAG id since S3 (D3): `tagsFromDoc` reads the
+        // document's own key, which is what a "Designed" cell asks about.
+        setDesignedTagIds(new Set(tagsFromDoc(doc).keys()));
       })
       .catch(() => {
         // No design yet, or the fetch failed - every line reads "No tag",
@@ -197,7 +199,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   }, [requestId]);
 
   const loadDataChanges = useCallback(() => {
-    listLineDataChanges(requestId)
+    listTagDataChanges(requestId)
       .then(setDataChanges)
       .catch(() => {
         // A diff that will not load leaves the page saying nothing changed,
@@ -209,11 +211,11 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     loadDataChanges();
   }, [loadDataChanges]);
 
-  const decideLinePin = useCallback(
-    async (lineId: string, action: 'update' | 'keep') => {
+  const decideTagPin = useCallback(
+    async (tagId: string, action: 'update' | 'keep') => {
       setPinBusy(true);
       try {
-        await resolveLinePin(requestId, lineId, action);
+        await resolveTagPin(requestId, tagId, action);
         loadDataChanges();
         toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
       } catch {
@@ -233,12 +235,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
    */
   const recheckDataChanges = useCallback(async () => {
     try {
-      const rows = await recheckLineDataChanges(requestId);
+      const rows = await recheckTagDataChanges(requestId);
       setDataChanges(rows);
       const changed = rows.filter((set) => set.changes.length > 0).length;
       toast.success(
         changed > 0
-          ? `${changed} line${changed === 1 ? '' : 's'} changed`
+          ? `${changed} tag${changed === 1 ? '' : 's'} changed`
           : 'Product data is up to date',
       );
     } catch {
@@ -249,10 +251,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const updateAllPins = useCallback(async () => {
     const ids = dataChanges
       .filter((set) => set.changes.length > 0)
-      .map((set) => set.line_id);
+      .map((set) => set.tag_id);
     setPinBusy(true);
     try {
-      await updateAllLinePins(requestId, ids);
+      await updateAllTagPins(requestId, ids);
       loadDataChanges();
       toast.success(`${ids.length} tags updated`);
     } catch {
@@ -377,12 +379,14 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     router.push(`/dealer-kit/price-tag-requests/${requestId}/design`);
   }, [requestId, router]);
 
-  // A row's own Design action (AC-S10-2): the same designer, opened with THAT
-  // line pre-selected rather than whichever line the designer defaults to.
-  const openDesignerForLine = useCallback(
-    (lineId: string) => {
+  // A tag row's own Design action (AC-S10-2, AC-S3-2): the same designer,
+  // opened with THAT tag pre-selected rather than whichever one the designer
+  // defaults to. `?tag=` since S3; the designer still honours `?line=` for a
+  // link written before it.
+  const openDesignerForTag = useCallback(
+    (tagId: string) => {
       router.push(
-        `/dealer-kit/price-tag-requests/${requestId}/design?line=${encodeURIComponent(lineId)}`,
+        `/dealer-kit/price-tag-requests/${requestId}/design?tag=${encodeURIComponent(tagId)}`,
       );
     },
     [requestId, router],
@@ -486,15 +490,15 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       ? appConfig.price_tag_auto_collect_days
       : AUTO_COLLECT_DAYS_DEFAULT;
 
-  const changedCount = useMemo(() => changedLineCount(dataChanges), [dataChanges]);
-  const changesByLine = useMemo(() => {
-    const map = new Map<string, LineDataChangeSet>();
+  const changedCount = useMemo(() => changedTagCount(dataChanges), [dataChanges]);
+  const changesByTag = useMemo(() => {
+    const map = new Map<string, TagDataChangeSet>();
     for (const set of dataChanges) {
-      if (set.changes.length > 0) map.set(set.line_id, set);
+      if (set.changes.length > 0) map.set(set.tag_id, set);
     }
     return map;
   }, [dataChanges]);
-  const reviewSet = reviewLineId ? (changesByLine.get(reviewLineId) ?? null) : null;
+  const reviewSet = reviewTagId ? (changesByTag.get(reviewTagId) ?? null) : null;
 
   /** The office may fix the print choice until the request is finished (D7). */
   const canEditRequest =
@@ -807,6 +811,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                 </p>
               ) : (
                 <div className="overflow-x-auto">
+                  {/* Line, then the parts it asked for, then the tags that get
+                      printed for it (D3). One line is one row; a split line has
+                      several tag rows under it, labelled 1a / 1b. */}
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
@@ -822,108 +829,185 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         </th>
                         <th className="py-2 pr-3 font-medium">Remarks</th>
                         <th className="py-2 pr-3 font-medium">Tag</th>
-                        {(canDesign || changesByLine.size > 0) && (
+                        {(canDesign || changesByTag.size > 0) && (
                           <th className="py-2 font-medium text-right">Actions</th>
                         )}
                       </tr>
                     </thead>
                     <tbody>
                       {request.lines.map((line) => {
-                        const designed = designedLineIds.has(line.id);
+                        const showActions = canDesign || changesByTag.size > 0;
+                        const columns = showActions ? 9 : 8;
+                        const lineChanged = (line.tags ?? []).some((tag) =>
+                          changesByTag.has(tag.id),
+                        );
                         return (
-                          <tr key={line.id} className="border-b last:border-b-0">
-                            <td className="py-2 pr-3">
-                              <Badge variant="secondary" className="text-xs">
-                                {line.line_type === 'product' ? 'Product' : 'Set'}
-                              </Badge>
-                            </td>
-                            <td className="py-2 pr-3 font-mono text-xs">
-                              {line.code}
-                            </td>
-                            <td className="py-2 pr-3">
-                              <span
-                                className="truncate block max-w-[200px]"
-                                title={line.name}
-                              >
-                                {line.name}
-                              </span>
-                            </td>
-                            <td className="py-2 pr-3 text-right">{line.quantity}</td>
-                            <td className="py-2 pr-3 text-right">
-                              {line.list_price != null
-                                ? `RM ${line.list_price.toFixed(2)}`
-                                : '-'}
-                            </td>
-                            <td className="py-2 pr-3 text-right">
-                              {line.show_promo_price && line.sell_price != null ? (
-                                <span className="text-green-700 font-medium">
-                                  RM {line.sell_price.toFixed(2)}
-                                </span>
-                              ) : (
-                                '-'
-                              )}
-                              {line.marketing_price_override != null && (
-                                <span className="block text-xs text-amber-600">
-                                  Override: RM{' '}
-                                  {line.marketing_price_override.toFixed(2)}
-                                </span>
-                              )}
-                            </td>
-                            <td
-                              className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
-                              title={line.remarks ?? undefined}
-                            >
-                              {line.remarks || '-'}
-                            </td>
-                            <td className="py-2 pr-3">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                {designed ? (
-                                  <span className="text-xs text-emerald-700 font-medium">
-                                    Designed
-                                  </span>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">
-                                    No tag
-                                  </span>
-                                )}
-                                {changesByLine.has(line.id) && (
-                                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-2xs font-semibold text-amber-800">
-                                    Changed
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            {(canDesign || changesByLine.size > 0) && (
-                              <td className="py-2 text-right">
-                                <div className="flex items-center justify-end gap-1">
-                                  {changesByLine.has(line.id) && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="gap-1.5"
-                                      onClick={() => setReviewLineId(line.id)}
-                                      aria-label={`Review changes on ${line.code || line.name}`}
-                                    >
-                                      <RefreshCw className="size-3.5" />
-                                      Review
-                                    </Button>
-                                  )}
-                                  {canDesign && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="gap-1.5"
-                                      onClick={() => openDesignerForLine(line.id)}
-                                      aria-label={`Design ${line.code || line.name}`}
-                                    >
-                                      <Palette className="size-3.5" />
-                                      Design
-                                    </Button>
-                                  )}
-                                </div>
+                          <Fragment key={line.id}>
+                            <tr className="border-b last:border-b-0">
+                              <td className="py-2 pr-3">
+                                <Badge variant="secondary" className="text-xs">
+                                  {line.line_type === 'product' ? 'Product' : 'Set'}
+                                </Badge>
                               </td>
-                            )}
-                          </tr>
+                              <td className="py-2 pr-3 font-mono text-xs">
+                                {line.code}
+                              </td>
+                              <td className="py-2 pr-3">
+                                <span
+                                  className="truncate block max-w-[200px]"
+                                  title={line.name}
+                                >
+                                  {line.name}
+                                </span>
+                                {line.package_warning && (
+                                  <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <Badge
+                                      variant="warning"
+                                      appearance="light"
+                                      size="sm"
+                                    >
+                                      Package warning
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      {line.package_warning}
+                                    </span>
+                                  </span>
+                                )}
+                                {/* Rolled up from the tags below (r9 D18): the
+                                    line says THAT something moved, the tag row
+                                    says which one and offers the decision. */}
+                                {lineChanged && (
+                                  <span className="mt-1 flex">
+                                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-2xs font-semibold text-amber-800">
+                                      Changed
+                                    </span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 pr-3 text-right">{line.quantity}</td>
+                              {/* Price is a TAG fact since D4 - the host plus that
+                                  tag's own resolved parts - so the line leaves both
+                                  money columns empty rather than repeating one
+                                  tag's figure as if it were the line's. */}
+                              <td className="py-2 pr-3" />
+                              <td className="py-2 pr-3" />
+                              <td
+                                className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
+                                title={line.remarks ?? undefined}
+                              >
+                                {line.remarks || '-'}
+                              </td>
+                              <td className="py-2 pr-3" />
+                              {showActions && <td className="py-2" />}
+                            </tr>
+                            {/* What the salesperson asked to come with it (S2). */}
+                            {(line.parts ?? []).map((part) => (
+                              <tr key={part.id} className="border-b last:border-b-0">
+                                <td className="py-1.5 pr-3" />
+                                <td
+                                  className="py-1.5 pr-3 pl-4 font-mono text-xs text-muted-foreground"
+                                  colSpan={columns - 1}
+                                >
+                                  {part.product_id
+                                    ? `${part.code ?? ''}${part.name ? ` - ${part.name}` : ''}${part.role ? ` (${part.role})` : ''}`
+                                    : `${part.role ?? 'Open'}: ${part.candidates
+                                        .map((candidate) => candidate.code)
+                                        .join(' / ')}`}
+                                </td>
+                              </tr>
+                            ))}
+                            {/* What actually prints (D3). */}
+                            {(line.tags ?? []).map((tag) => (
+                              <tr key={tag.id} className="border-b last:border-b-0">
+                                <td className="py-1.5 pr-3" />
+                                <td className="py-1.5 pr-3 pl-4 font-mono text-xs">
+                                  {tag.label}
+                                </td>
+                                <td className="py-1.5 pr-3 text-xs text-muted-foreground">
+                                  {tag.open_groups.length > 0
+                                    ? tag.open_groups
+                                        .map(
+                                          (group) =>
+                                            `Open: ${group.role} (${group.candidates.length})`,
+                                        )
+                                        .join(', ')
+                                    : tag.choices_display
+                                        .map((choice) => choice.code)
+                                        .join(', ') || '-'}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">{tag.quantity}</td>
+                                <td className="py-1.5 pr-3 text-right">
+                                  {tag.list_price != null
+                                    ? `RM ${tag.list_price.toFixed(2)}`
+                                    : '-'}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">
+                                  {line.show_promo_price && tag.sell_price != null ? (
+                                    <span className="text-green-700 font-medium">
+                                      RM {tag.sell_price.toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    '-'
+                                  )}
+                                  {tag.marketing_price_override != null && (
+                                    <span className="block text-xs text-amber-600">
+                                      Override: RM{' '}
+                                      {tag.marketing_price_override.toFixed(2)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 pr-3" />
+                                <td className="py-1.5 pr-3">
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {designedTagIds.has(tag.id) ? (
+                                      <span className="text-xs text-emerald-700 font-medium">
+                                        Designed
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">
+                                        No tag
+                                      </span>
+                                    )}
+                                    {changesByTag.has(tag.id) && (
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-2xs font-semibold text-amber-800">
+                                        Changed
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+                                {showActions && (
+                                  <td className="py-1.5 text-right">
+                                    <div className="flex items-center justify-end gap-1">
+                                      {changesByTag.has(tag.id) && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="gap-1.5"
+                                          onClick={() => setReviewTagId(tag.id)}
+                                          aria-label={`Review changes on ${line.code || line.name} ${tag.label}`}
+                                        >
+                                          <RefreshCw className="size-3.5" />
+                                          Review
+                                        </Button>
+                                      )}
+                                      {canDesign && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="gap-1.5"
+                                          onClick={() => openDesignerForTag(tag.id)}
+                                          aria-label={`Design tag ${tag.label}`}
+                                        >
+                                          <Palette className="size-3.5" />
+                                          Design
+                                        </Button>
+                                      )}
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </Fragment>
                         );
                       })}
                     </tbody>
@@ -986,12 +1070,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       <ProductDataReviewDialog
         open={reviewSet !== null}
         onOpenChange={(next) => {
-          if (!next) setReviewLineId(null);
+          if (!next) setReviewTagId(null);
         }}
         changeSet={reviewSet}
         onDecide={(action) =>
-          reviewLineId
-            ? decideLinePin(reviewLineId, action)
+          reviewTagId
+            ? decideTagPin(reviewTagId, action)
             : Promise.resolve()
         }
       />

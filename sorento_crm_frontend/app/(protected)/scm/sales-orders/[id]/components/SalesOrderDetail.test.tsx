@@ -1186,6 +1186,50 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
   });
 
+  /**
+   * AC-S4-7. The Planned chip is read-only metadata about the whole record, so it lives in the
+   * header beside Status - not in a tab body - and there is nothing to change about it in an
+   * edit session. View and edit therefore show the SAME chip, which is the layout rule this
+   * describe block exists for.
+   */
+  it('shows the same Planned chip beside Status in view and in edit', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ planned_lines: 2, plannable_lines: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText('Partly 2/3')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+
+    expect(screen.getByText('Partly 2/3')).toBeInTheDocument();
+    // Read-only: editing swaps a value for an input, and this one has no input to swap to.
+    expect(screen.queryByRole('combobox', { name: 'Planned' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Planned')).not.toBeInTheDocument();
+  });
+
+  it('reads Planned when every plannable line is decided, and a dash when there is none', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ planned_lines: 3, plannable_lines: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+    const planned = renderDetail();
+    expect(screen.getByText('Planned')).toBeInTheDocument();
+    planned.unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ planned_lines: 0, plannable_lines: 0 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.queryByText('Planned')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not planned')).not.toBeInTheDocument();
+  });
+
   it('Cancel discards the session and returns to the read values, unsaved', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();

@@ -285,6 +285,21 @@ class SalesOrder(BaseModel):
     #: book moved one of its planned lines and nobody has applied the change yet. Present
     #: on the LIST, which is where the Changed badge is; `None` on nearly every order.
     planning_change_batch_id: Optional[str] = None
+    #: How much of this order anybody has DECIDED, on BOTH the list and the single read.
+    #:
+    #: `plannable_lines` is how many of its lines the fulfilment board would admit - not
+    #: cancelled, not marked no purchase needed, asking for something - and `planned_lines`
+    #: how many of those an active supply decision or a live order inquiry row already
+    #: settles. Counted by the board's own predicates, so the pill on the list and the board
+    #: the reader opens next cannot disagree.
+    #:
+    #: NOT the delivery question. A Completed order whose stock shipped with nothing behind
+    #: it reads 0 of 3, which is the whole point: it is the order nobody planned.
+    #:
+    #: Declared here because `response_model` silently drops what it does not declare - a
+    #: field the service computes and the schema forgets reaches the screen as `undefined`.
+    planned_lines: int = 0
+    plannable_lines: int = 0
     created_at: str
 
 

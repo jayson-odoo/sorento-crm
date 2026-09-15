@@ -59,6 +59,7 @@ import type {
   BoardContribution,
   BoardDecision,
   BoardLineDecision,
+  BoardLineOrderInquiry,
 } from '../types/fulfilmentPlanning.types';
 
 /**
@@ -823,6 +824,25 @@ export function contributionDecision(
     return decisionParts(contribution, contribution.decision);
   }
   return null;
+}
+
+/**
+ * The ORDER INQUIRY that decides this line, when that is what decides it.
+ *
+ * The 14 September 2026 ruling: a line carrying a live inquiry row from the migrated book is
+ * decided on the buying side, so the board holds it read-only and proposes nothing for it. It
+ * has no composition - purchasing was told about it before any board existed - so `covered` is
+ * true while `decision` is null, and the composition slot would otherwise read "Not decided"
+ * over a line somebody has already been told to buy.
+ *
+ * `null` on every other row, decided or not, so the two kinds of decided line are told apart
+ * in ONE place rather than by each screen re-testing the same three fields.
+ */
+export function contributionInquiryDecision(
+  contribution: Pick<BoardContribution, 'covered' | 'decision' | 'order_inquiry'>,
+): BoardLineOrderInquiry | null {
+  if (!contribution.covered || contribution.decision) return null;
+  return contribution.order_inquiry ?? null;
 }
 
 /**

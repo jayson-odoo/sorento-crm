@@ -30,6 +30,7 @@ vi.mock('../lib/price-tag-request-service', () => ({
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   updateRequest: vi.fn(),

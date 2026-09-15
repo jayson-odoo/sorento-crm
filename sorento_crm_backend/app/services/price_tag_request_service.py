@@ -12,13 +12,16 @@ The status graph:
 ``void`` and ``rejected`` are reachable from any non-terminal status.
 ``ready`` is terminal - once exported, no further transitions.
 """
+import copy
 import logging
+import uuid
 from typing import Optional
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import Integer, cast, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.base import company_scope
 from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
@@ -95,9 +98,12 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 # point is that the loop terminates rather than spins.
 _DOC_NUMBER_ATTEMPTS = 5
 
-# The product class label that triggers the set guard. A product with this
-# class cannot be submitted ala carte - it must come as a product_set line.
-_BATHROOM_FURNITURE_CLASS = "Bathroom Furniture"
+# The classes the package guard warns about when `system_settings` has no row at
+# all. Repeats `SystemSetting.price_tag_guarded_classes`' own server default
+# (app/models/user.py), which is the source of truth; this copy only covers a
+# database with no settings row, which is every fresh install and every test that
+# does not seed one.
+_DEFAULT_GUARDED_CLASSES = ("Bathroom Furniture", "Kitchen Sink")
 
 
 class PriceTagRequestService:
@@ -233,7 +239,7 @@ class PriceTagRequestService:
         request: PriceTagRequest,
         lines: list[dict],
         *,
-        carry_overrides: dict[tuple, tuple] | None = None,
+        carry_tags: dict[tuple, list[dict]] | None = None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
 
@@ -243,11 +249,12 @@ class PriceTagRequestService:
         from whatever the header says right now, so a header flip never leaves
         a stale line behind.
 
-        ``carry_overrides`` (review round 2): ``replace_lines`` passes the old
-        table's ``(product_id, product_set_id) -> (marketing_price_override,
-        marketing_override_reason)`` map here, since the form payload has no
-        field for either - a re-save with just a new remark used to silently
-        wipe a marketing-set override on the same product/set.
+        Every line gets its TAGS here too (D3): exactly one, carrying the line's
+        quantity and an empty `choices`, unless ``carry_tags`` hands over the set
+        a surviving line already had. ``replace_lines`` passes that map, keyed by
+        ``(product_id, product_set_id)``, since the form payload has no field for
+        any of it - a re-save with just a new remark used to silently wipe a
+        marketing-set override, and would now silently un-split the line.
 
         Raises 422 ``DUPLICATE_LINE`` (round 3, R3-7/AC-R4) naming the code
         the FIRST time the same product or set repeats within ``lines`` -
@@ -257,12 +264,11 @@ class PriceTagRequestService:
         """
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
         show_promo_price = request.price_mode == "selling"
-        carry_overrides = carry_overrides or {}
+        carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
             key = (line_data.get("product_id"), line_data.get("product_set_id"))
-            override_price, override_reason = carry_overrides.get(key, (None, None))
-            db.add(
+            line = (
                 PriceTagRequestLine(
                     request_id=request.id,
                     line_type=line_data["line_type"],
@@ -270,14 +276,233 @@ class PriceTagRequestService:
                     product_set_id=line_data.get("product_set_id"),
                     show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
-                    alternatives=line_data.get("alternatives", []),
+                    combo_id=PriceTagRequestService._resolve_combo_id(
+                        db, line_data, request.company_id
+                    ),
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
-                    marketing_price_override=override_price,
-                    marketing_override_reason=override_reason,
                 )
             )
+            db.add(line)
+            db.flush()
+            PriceTagRequestService._add_line_parts(
+                db,
+                line,
+                line_data.get("parts") or [],
+                index=idx,
+                company_id=request.company_id,
+            )
+            PriceTagRequestService._add_line_tags(db, line, carry_tags.get(key))
+
+    @staticmethod
+    def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:
+        """The tags that will be printed for this line (D3, AC-S3-1).
+
+        Exactly ONE at submit, carrying the line's quantity and an empty
+        `choices`: not zero (the designer would have nothing to key its document
+        on) and not one per candidate (auto-split was rejected by the owner -
+        marketing decides in the designer).
+
+        `carried` is a surviving line's existing tag set, handed over by
+        `replace_lines`, so a revision that changes a remark keeps the split
+        marketing already made.
+        """
+        from app.models.price_tag import PriceTagRequestTag
+
+        rows = carried if carried else [
+            {"sort_order": 0, "quantity": line.quantity or 1, "choices": {}}
+        ]
+        # A line that was never split has exactly one tag, and that tag's
+        # quantity is not marketing's - it is the salesperson's number, seeded
+        # from the line. Without this, a draft saved at 1, changed to 5 and
+        # submitted (or revised to 9) kept a tag at 1 and printed one tile
+        # instead of five (review round 2, B1). A SPLIT line keeps its per-tag
+        # quantities: once marketing has divided the line up, those numbers are
+        # decisions, not a copy of anything.
+        if carried and len(rows) == 1:
+            rows = [{**rows[0], "quantity": line.quantity or 1}]
+        for index, row in enumerate(rows):
+            db.add(
+                PriceTagRequestTag(
+                    line_id=line.id,
+                    sort_order=row.get("sort_order", index),
+                    quantity=row.get("quantity") or 1,
+                    choices=row.get("choices") or {},
+                    marketing_price_override=row.get("marketing_price_override"),
+                    marketing_override_reason=row.get("marketing_override_reason"),
+                )
+            )
+
+    @staticmethod
+    def _add_line_parts(
+        db: Session,
+        line,
+        parts: list[dict],
+        *,
+        index: int = 0,
+        company_id: str | None = None,
+    ) -> None:
+        """The package under a line, written in the order the form sent it (AC-S2-8).
+
+        Order is display order on the request, in the tag's parts text (D4) and in
+        the designer's rail, so the position is stored rather than left to the
+        primary key.
+
+        Two shapes, and the table's own CHECK keeps them apart: a RESOLVED row
+        names a product and carries no candidates; an OPEN row names the choice
+        group and the candidates it is still choosing between. A row that is
+        neither - no product and no candidates - is dropped rather than written,
+        because the constraint would refuse it with a 500 the salesperson cannot
+        act on and an empty row means nothing anyway.
+
+        EVERY id here comes from the portal, so every id is validated before it
+        is stored (security review B1). Two separate failures were reachable by
+        any portal contact:
+
+        * a non-UUID candidate is accepted by JSONB and then blows up
+          `Product.id.in_(...)` on EVERY later read of that request - a stored
+          denial of service on the request, the designer and the PDF alike;
+        * an id belonging to another company would be stored and then resolved,
+          leaking that product onto this company's tag.
+
+        One scoped query answers both: anything the caller cannot see simply is
+        not returned, and a 422 naming the row is what the form can act on.
+        """
+        from app.models.price_tag import PriceTagRequestLinePart
+        from app.models.product import Product
+
+        cleaned: list[dict] = []
+        wanted: set[str] = set()
+        for part in parts:
+            product_id = PriceTagRequestService._part_uuid(part.get("product_id"), index)
+            candidates = [
+                PriceTagRequestService._part_uuid(candidate, index)
+                for candidate in (part.get("candidates") or [])
+                if candidate
+            ]
+            if product_id:
+                candidates = []
+            elif not candidates:
+                continue
+            cleaned.append(
+                {"product_id": product_id, "role": part.get("role"), "candidates": candidates}
+            )
+            if product_id:
+                wanted.add(product_id)
+            wanted.update(candidates)
+
+        if wanted:
+            # Scoped to the REQUEST's own company, not to whatever scope happens
+            # to be ambient: `submit_request` is TOLD which company it is
+            # creating for, and a portal contact resolving to another company
+            # would otherwise have every one of its own products refused here.
+            # Another company's product still reads exactly like one that does
+            # not exist, which is the answer that matters.
+            found = PriceTagRequestService._visible_product_ids(db, wanted, company_id)
+            missing = wanted - found
+            if missing:
+                raise AppException(
+                    status_code=422,
+                    message="A product on this line's package could not be found.",
+                    detail=f"line:{index}",
+                    code="INVALID_PART",
+                )
+
+        for position, part in enumerate(cleaned):
+            db.add(
+                PriceTagRequestLinePart(
+                    line_id=line.id,
+                    product_id=part["product_id"],
+                    role=part["role"],
+                    candidates=part["candidates"],
+                    sort_order=position,
+                )
+            )
+
+    @staticmethod
+    def _visible_product_ids(db: Session, wanted: set[str], company_id: str | None) -> set[str]:
+        """Which of `wanted` this REQUEST's company can see."""
+        from app.models.product import Product
+
+        def _query() -> set[str]:
+            return {
+                pid
+                for (pid,) in db.query(Product.id).filter(Product.id.in_(wanted)).all()
+            }
+
+        if not company_id:
+            return _query()
+        with company_scope(db, frozenset({company_id})):
+            return _query()
+
+    @staticmethod
+    def _part_uuid(value, index: int) -> str | None:
+        """A portal-supplied id, or a 422 naming the row it came from.
+
+        JSONB will store any string at all, and `candidates` is read back into
+        `Product.id.in_(...)`, where a non-UUID is a Postgres error rather than
+        an empty result - so the check has to happen on the way IN.
+        """
+        if value in (None, ""):
+            return None
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, AttributeError, TypeError):
+            raise AppException(
+                status_code=422,
+                message="A product on this line's package is not a valid reference.",
+                detail=f"line:{index}",
+                code="INVALID_PART",
+            ) from None
+
+    @staticmethod
+    def _resolve_combo_id(db: Session, line_data: dict, company_id: str | None) -> str | None:
+        """The package this line is asked for as, or None.
+
+        Validated rather than trusted, same reason as the part ids: `combo_id`
+        arrives from the portal. It must be a real combo, visible to the caller
+        (the query is scoped through the host product), and it must belong to
+        THIS line's product - a combo id from another cabinet would price and
+        print somebody else's package on this one.
+
+        A combo that fails any of those is stored as None rather than refused:
+        the S2 guard then says "No package chosen" on the row, which is the
+        warn-and-allow rule the whole slice is built on (AC-S2-5).
+        """
+        from app.models.product import Product
+        from app.models.product_combo import ProductCombo
+
+        raw = line_data.get("combo_id")
+        if not raw:
+            return None
+        try:
+            combo_id = str(uuid.UUID(str(raw)))
+        except (ValueError, AttributeError, TypeError):
+            return None
+        product_id = line_data.get("product_id")
+        if not product_id:
+            return None
+        # Joined to `Product` so the company predicate has something to attach
+        # to - `ProductCombo` is scoped only THROUGH its host - and scoped to the
+        # request's own company for the same reason the part ids are.
+        def _lookup():
+            return (
+                db.query(ProductCombo)
+                .join(Product, Product.id == ProductCombo.host_product_id)
+                .filter(
+                    ProductCombo.id == combo_id,
+                    ProductCombo.host_product_id == product_id,
+                )
+                .first()
+            )
+
+        if company_id:
+            with company_scope(db, frozenset({company_id})):
+                combo = _lookup()
+        else:
+            combo = _lookup()
+        return combo.id if combo is not None else None
 
     @staticmethod
     def _raise_on_duplicate_line(db: Session, lines: list[dict]) -> None:
@@ -334,23 +559,32 @@ class PriceTagRequestService:
         the relationship keeps ``delete-orphan`` in charge, so nothing is left
         pointing at the request.
 
-        Marketing's own per-line override (review round 2) is not part of the
-        form's payload, so it is captured from the OLD rows, keyed by product /
-        set, before they are cleared, and carried onto whichever new row keeps
-        the same product or set.
+Marketing's own work is not part of the form's payload, so it is captured
+        from the OLD rows before they are cleared and carried onto whichever new
+        row keeps the same product or set. Since S3 that work lives on the TAGS
+        (D3), so what is carried is the tag set itself - its split, its choices,
+        its quantities and its overrides - rather than one override per line: a
+        salesperson fixing a typo in a remark must not un-split a line marketing
+        already turned into four tags.
         """
-        carry_overrides = {
-            (old.product_id, old.product_set_id): (
-                old.marketing_price_override,
-                old.marketing_override_reason,
-            )
+        carry_tags = {
+            (old.product_id, old.product_set_id): [
+                {
+                    "sort_order": tag.sort_order,
+                    "quantity": tag.quantity,
+                    "choices": dict(tag.choices or {}),
+                    "marketing_price_override": tag.marketing_price_override,
+                    "marketing_override_reason": tag.marketing_override_reason,
+                }
+                for tag in sorted(
+                    old.tags or [], key=lambda t: (t.sort_order or 0, t.id)
+                )
+            ]
             for old in request.lines
-            if old.marketing_price_override is not None
-            or old.marketing_override_reason is not None
         }
         request.lines.clear()
         db.flush()
-        PriceTagRequestService._add_lines(db, request, lines, carry_overrides=carry_overrides)
+        PriceTagRequestService._add_lines(db, request, lines, carry_tags=carry_tags)
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not
         # `request.lines.append(...)`, so the in-memory collection is left
@@ -361,12 +595,12 @@ class PriceTagRequestService:
         # next access to re-query.
         db.expire(request, ["lines"])
 
-        # A line added to a design already in progress is pinned on save
-        # (D16), so it enters the gate the same way the others did.
+        # A line added to a design already in progress has its tags pinned on
+        # save (D16), so they enter the gate the same way the others did.
         if request.status == STATUS_DESIGNING:
             from app.services.dealer_kit import tag_data_service
 
-            tag_data_service.pin_lines(db, request, only_unpinned=True)
+            tag_data_service.pin_tags(db, request, only_unpinned=True)
             db.flush()
 
     @staticmethod
@@ -376,27 +610,25 @@ class PriceTagRequestService:
         company_id: str,
         data: dict,
     ) -> PriceTagRequest:
-        """Create and validate a price tag request for submission.
+        """Create a price tag request and stamp its package warnings (D2).
 
-        Runs the set guard on submit: products with class ``Bathroom Furniture``
-        cannot be submitted ala carte (must come as a product_set line).
-        Raises ``AppException`` (422) on guard violation.
+        Submit is NEVER refused for a package reason (AC-S2-5, AC-S2-7). The set
+        guard that used to 422 an ala-carte Bathroom Furniture line is retired;
+        a guarded product that arrives with no package, or with parts taken off,
+        carries a `package_warning` marketing reads instead. `DUPLICATE_LINE` and
+        the completeness rules are untouched.
+
+        The warnings are stamped AFTER the lines exist, not from the payload:
+        the rule reads what was actually stored, so a revision and a submit
+        cannot answer differently for the same request.
         """
-        offenders: list[tuple[int, str]] = []
-        for index, line_data in enumerate(data.get("lines") or []):
-            code = PriceTagRequestService._ala_carte_offender(
-                db, line_data.get("line_type"), line_data.get("product_id")
-            )
-            if code:
-                offenders.append((index, code))
-        if offenders:
-            raise PriceTagRequestService._set_guard_refusal(offenders)
-
         request = PriceTagRequestService.create_request(
             db, contact_id, company_id, data
         )
         # Clear the draft timestamp to indicate submission.
         request.portal_draft_at = None
+        db.flush()
+        PriceTagRequestService.apply_package_warnings(db, request)
         db.flush()
         return request
 
@@ -540,13 +772,13 @@ class PriceTagRequestService:
         request.status = new_status
         if new_status == STATUS_DESIGNING:
             # r9 D16: the tags are drawn from what master data said when the
-            # design started, so that is the moment it is frozen. Only lines
+            # design started, so that is the moment it is frozen. Only tags
             # with no pin yet - re-pinning on the way back from
             # `changes_requested` would swallow the very difference the gate
             # exists to show.
             from app.services.dealer_kit import tag_data_service
 
-            tag_data_service.pin_lines(db, request, only_unpinned=True)
+            tag_data_service.pin_tags(db, request, only_unpinned=True)
         if new_status == STATUS_PROOF_READY:
             # The review round is COUNTED here, not derived from the version
             # history (D4/R1): the "Marked proof ready" snapshot is only
@@ -874,64 +1106,384 @@ class PriceTagRequestService:
             )
 
     @staticmethod
-    def validate_set_guard(db: Session, request: PriceTagRequest) -> None:
-        """Validate the set guard on an existing request's lines.
+    def _fill_line_parts(db: Session, request: PriceTagRequest, response) -> None:
+        """Resolve every part row on every line to codes and names (D2).
 
-        Products with class ``Bathroom Furniture`` cannot be submitted ala carte.
-        Raises ``AppException`` (422) on violation, naming EVERY line it refused:
-        the message belongs on the row, and a refusal that named only the first
-        offender would send the salesperson round the loop once per bad line.
+        One query for every product any part mentions - the resolved rows AND
+        the candidates of the open ones - rather than one per row: a request
+        with four packaged lines carries twenty part products, and the portal
+        read view is not the place to spend twenty round trips.
         """
-        offenders: list[tuple[int, str]] = []
-        for index, line in enumerate(request.lines):
-            code = PriceTagRequestService._ala_carte_offender(
-                db, line.line_type, line.product_id
-            )
-            if code:
-                offenders.append((index, code))
-        if offenders:
-            raise PriceTagRequestService._set_guard_refusal(offenders)
+        from app.models.product import Product
+        from app.schemas.price_tag import (
+            LinePartCandidateResponse,
+            PriceTagRequestLinePartResponse,
+        )
+
+        parts_by_line: dict[str, list] = {}
+        wanted: set[str] = set()
+        for line in request.lines:
+            rows = sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id))
+            parts_by_line[line.id] = rows
+            for row in rows:
+                if row.product_id:
+                    wanted.add(row.product_id)
+                for candidate in row.candidates or []:
+                    wanted.add(str(candidate))
+        if not wanted:
+            return
+
+        products = {
+            product.id: product
+            for product in db.query(Product).filter(Product.id.in_(wanted)).all()
+        }
+
+        def _code(product_id):
+            product = products.get(product_id)
+            return product.product_code if product else None
+
+        def _name(product_id):
+            product = products.get(product_id)
+            return product.product_name if product else None
+
+        for line in response.lines:
+            rows = parts_by_line.get(line.id) or []
+            line.parts = [
+                PriceTagRequestLinePartResponse(
+                    id=row.id,
+                    product_id=row.product_id,
+                    code=_code(row.product_id),
+                    name=_name(row.product_id),
+                    role=row.role,
+                    candidates=[
+                        LinePartCandidateResponse(
+                            product_id=str(candidate),
+                            code=_code(str(candidate)) or "",
+                            name=_name(str(candidate)) or "",
+                        )
+                        for candidate in (row.candidates or [])
+                    ],
+                    sort_order=row.sort_order or 0,
+                )
+                for row in rows
+            ]
+
+    # ------------------------------------------------------------------- tags
 
     @staticmethod
-    def _ala_carte_offender(
-        db: Session, line_type: str | None, product_id: str | None
-    ) -> str | None:
-        """The product code, if this line is a Bathroom Furniture product on its own."""
-        from app.models.product import Product, ProductCategory
+    def tag_body(tag, resolved: dict | None) -> dict:
+        """One tag in the shape every surface reads (D3).
 
-        if line_type != "product" or not product_id:
+        `choices_display` resolves the stored `{role: product_id}` map to codes -
+        the raw map is never rendered (AC-X-2) - and the prices come off the ONE
+        resolver, so the rail, the Lines tab and the PDF cannot disagree.
+        """
+        chosen = dict(tag.choices or {})
+        by_id = {}
+        for group in (resolved or {}).get("open_groups") or []:
+            for candidate in group.get("candidates") or []:
+                by_id[candidate["product_id"]] = candidate["code"]
+        # A resolved choice is no longer an open group, so its code comes off the
+        # tag's own resolved parts, matched by id.
+        for part in (resolved or {}).get("parts") or []:
+            if part.get("product_id"):
+                by_id.setdefault(str(part["product_id"]), part.get("code", ""))
+        return {
+            "id": tag.id,
+            "line_id": tag.line_id,
+            "sort_order": tag.sort_order or 0,
+            "label": (resolved or {}).get("tag_label", ""),
+            "quantity": tag.quantity,
+            "choices": chosen,
+            "choices_display": [
+                {"role": role, "code": by_id.get(str(product_id), "")}
+                for role, product_id in chosen.items()
+            ],
+            "open_groups": (resolved or {}).get("open_groups") or [],
+            "marketing_price_override": (
+                None
+                if tag.marketing_price_override is None
+                else float(tag.marketing_price_override)
+            ),
+            "marketing_override_reason": tag.marketing_override_reason,
+            "list_price": (resolved or {}).get("list_price"),
+            "sell_price": (resolved or {}).get("sell_price"),
+        }
+
+    @staticmethod
+    def validate_choices(db: Session, tag, choices: dict) -> None:
+        """"Pick one" may only pick from what the line actually left open.
+
+        Unvalidated, `choices` was a free `{anything: anything}` write from a
+        marketing user: a role the line never opened, or a product id from
+        another company, would be stored and then resolved onto the tag - which
+        is how a cabinet ends up printing a basin nobody offered.
+
+        Both halves are checked against the LINE's own part rows, which is the
+        only place that says what was asked for.
+        """
+        open_groups = {}
+        for part in tag.line.parts or []:
+            if part.product_id or not part.role:
+                continue
+            open_groups[part.role] = {str(c) for c in (part.candidates or [])}
+
+        for role, product_id in (choices or {}).items():
+            if role not in open_groups:
+                raise AppException(
+                    status_code=422,
+                    message=f"This line has no open {role} to choose.",
+                    code="INVALID_CHOICE",
+                )
+            if str(product_id) not in open_groups[role]:
+                raise AppException(
+                    status_code=422,
+                    message=f"That product is not one of the {role} options on this line.",
+                    code="INVALID_CHOICE",
+                )
+
+    @staticmethod
+    def split_tag(db: Session, tag, role: str) -> list:
+        """"Split into N tags" (AC-S3-4).
+
+        The tag that is there resolves to candidate 1 and KEEPS ITS ID, so its
+        placed geometry and its review pins survive; N-1 siblings are inserted
+        after it, one per remaining candidate in combo order, and the draft
+        document gets a copy of the original's placement for each.
+        """
+        from app.models.price_tag import PriceTagRequestTag
+
+        line = tag.line
+        candidates: list[str] = []
+        for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+            if part.product_id or (part.role or "") != role:
+                continue
+            candidates = [str(c) for c in (part.candidates or [])]
+            break
+        if not candidates:
+            raise AppException(
+                status_code=422,
+                message=f"This line has no open {role} to split.",
+                code="NO_OPEN_GROUP",
+            )
+
+        siblings = sorted(line.tags or [], key=lambda t: (t.sort_order or 0, t.id))
+        after = [row for row in siblings if (row.sort_order or 0) > (tag.sort_order or 0)]
+        shift = len(candidates) - 1
+        for row in after:
+            row.sort_order = (row.sort_order or 0) + shift
+
+        tag.choices = {**dict(tag.choices or {}), role: candidates[0]}
+        created = []
+        for offset, candidate in enumerate(candidates[1:], start=1):
+            sibling = PriceTagRequestTag(
+                line_id=line.id,
+                sort_order=(tag.sort_order or 0) + offset,
+                quantity=tag.quantity,
+                choices={**dict(tag.choices or {}), role: candidate},
+                marketing_price_override=tag.marketing_price_override,
+                marketing_override_reason=tag.marketing_override_reason,
+            )
+            db.add(sibling)
+            created.append(sibling)
+        db.flush()
+
+        PriceTagRequestService._copy_placements_in_draft(
+            db, line.request_id, tag.id, [row.id for row in created]
+        )
+        db.flush()
+        db.expire(line, ["tags"])
+        return sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))
+
+    @staticmethod
+    def delete_tag(db: Session, tag) -> None:
+        """Remove one tag and its placements. Never the line's last (AC-S3-6)."""
+        line = tag.line
+        if len(line.tags or []) <= 1:
+            raise AppException(
+                status_code=422,
+                message="A line must keep at least one tag.",
+                code="LAST_TAG",
+            )
+        request_id, tag_id = line.request_id, tag.id
+        db.delete(tag)
+        db.flush()
+        PriceTagRequestService._drop_placements_in_draft(db, request_id, tag_id)
+        db.flush()
+
+    @staticmethod
+    def _tag_sheet_page(db: Session, request_id: str):
+        from app.models.dealer_kit import Page
+
+        return (
+            db.query(Page)
+            .filter(Page.request_id == request_id, Page.kind == "tag_sheet")
+            .first()
+        )
+
+    @staticmethod
+    def _copy_placements_in_draft(
+        db: Session, request_id: str, source_tag_id: str, new_tag_ids: list[str]
+    ) -> None:
+        """Give every new sibling the split tag's own geometry (AC-S3-4).
+
+        Marketing drew ONE tag and asked for four; landing three of them
+        unplaced would make the sheet look broken at the moment of the split.
+        The copies keep their own `-cN` suffix, which is how `tagsFromDoc` tells
+        copy 0 (the master, whose layers are the design) from the rest.
+        """
+        page = PriceTagRequestService._tag_sheet_page(db, request_id)
+        if page is None or not page.draft_doc or not new_tag_ids:
+            return
+        doc = copy.deepcopy(page.draft_doc)
+        changed = False
+        for sheet in doc.get("sheets") or []:
+            placed = sheet.get("tags") or []
+            sources = [p for p in placed if p.get("request_tag_id") == source_tag_id]
+            for source in sources:
+                suffix = str(source.get("id") or "")
+                copy_index = suffix.rsplit("-c", 1)[-1] if "-c" in suffix else "0"
+                for new_tag_id in new_tag_ids:
+                    clone = copy.deepcopy(source)
+                    clone["request_tag_id"] = new_tag_id
+                    clone["id"] = f"{new_tag_id}-c{copy_index}"
+                    placed.append(clone)
+                    changed = True
+            sheet["tags"] = placed
+        if changed:
+            page.draft_doc = doc
+            flag_modified(page, "draft_doc")
+
+    @staticmethod
+    def _drop_placements_in_draft(db: Session, request_id: str, tag_id: str) -> None:
+        """A deleted tag leaves no placement behind (AC-S3-6)."""
+        page = PriceTagRequestService._tag_sheet_page(db, request_id)
+        if page is None or not page.draft_doc:
+            return
+        doc = copy.deepcopy(page.draft_doc)
+        changed = False
+        for sheet in doc.get("sheets") or []:
+            kept = [p for p in (sheet.get("tags") or []) if p.get("request_tag_id") != tag_id]
+            if len(kept) != len(sheet.get("tags") or []):
+                changed = True
+            sheet["tags"] = kept
+        if changed:
+            page.draft_doc = doc
+            flag_modified(page, "draft_doc")
+
+    @staticmethod
+    def guarded_classes(db: Session) -> set[str]:
+        """The product classes a missing package is worth warning about (D2).
+
+        Read from `system_settings`, never a literal, or the settings control is
+        decorative and the tenant that packages shower trays has no way to say
+        so. No settings row at all (a fresh install, most tests) falls back to
+        the column's own default.
+        """
+        from app.models.user import SystemSetting
+
+        row = db.query(SystemSetting).first()
+        if row is None:
+            return set(_DEFAULT_GUARDED_CLASSES)
+        configured = getattr(row, "price_tag_guarded_classes", None)
+        if configured is None:
+            return set(_DEFAULT_GUARDED_CLASSES)
+        # An empty list is a legitimate answer - warn about nothing.
+        return {str(label) for label in configured}
+
+    @staticmethod
+    def apply_package_warnings(db: Session, request: PriceTagRequest) -> None:
+        """Stamp `package_warning` on every line of `request` (D2, AC-S2-5).
+
+        Replaces `validate_set_guard`, which raised 422. Runs wherever that one
+        ran - `submit_request` and the portal revision path - so a salesperson
+        can never submit a bare cabinet and then be blocked from correcting it.
+
+        A product_set line is skipped entirely: parts are a combo fact on a
+        PRODUCT line, and nothing about a set is a package question.
+        """
+        guarded = PriceTagRequestService.guarded_classes(db)
+        for line in request.lines:
+            line.package_warning = PriceTagRequestService._package_warning_for(
+                db, line, guarded
+            )
+
+    @staticmethod
+    def _package_warning_for(db: Session, line, guarded: set[str]) -> str | None:
+        """The D2 rule, in the order it reads on the plan.
+
+        `None` for anything that is not a guarded product line, then the two
+        "no package" cases, then whatever the chosen combo asks for that no part
+        row answers. A choice group left OPEN is an ANSWER, not an omission: the
+        whole point of the open row is that the salesperson may not know which
+        basin, and marketing splits it into one tag per candidate later (S3).
+        """
+        from app.models.product import Product, ProductCategory
+        from app.models.product_combo import ProductCombo, ProductComboPart
+
+        if line.line_type != "product" or not line.product_id:
             return None
-        product = db.query(Product).filter(Product.id == product_id).first()
-        if not product:
+
+        product = db.query(Product).filter(Product.id == line.product_id).first()
+        if product is None:
             return None
         category = (
             db.query(ProductCategory)
             .filter(ProductCategory.id == product.category_id)
             .first()
         )
-        if category and category.class_label == _BATHROOM_FURNITURE_CLASS:
-            return product.product_code
-        return None
+        if category is None or category.class_label not in guarded:
+            return None
 
-    @staticmethod
-    def _set_guard_refusal(offenders: list[tuple[int, str]]) -> AppException:
-        """One refusal for every ala carte line, addressed to the rows by position.
+        if not line.combo_id:
+            has_combos = (
+                db.query(ProductCombo)
+                .filter(ProductCombo.host_product_id == line.product_id)
+                .first()
+                is not None
+            )
+            return "No package chosen" if has_combos else "No package defined"
 
-        ``detail`` is ``line:<sort_order>`` per offender, which is how the portal
-        form finds the row to put the message on.
-        """
-        codes = ", ".join(f"'{code}'" for _, code in offenders)
-        plural = "s" if len(offenders) > 1 else ""
-        return AppException(
-            status_code=422,
-            message=(
-                f"Product{plural} {codes} {'are' if plural else 'is'} classified as "
-                f"'{_BATHROOM_FURNITURE_CLASS}' and cannot be submitted as an "
-                f"individual product. Please submit as part of a product set."
-            ),
-            detail=",".join(f"line:{index}" for index, _ in offenders),
-            code="SET_GUARD_VIOLATION",
+        combo_parts = (
+            db.query(ProductComboPart)
+            .filter(ProductComboPart.combo_id == line.combo_id)
+            .order_by(ProductComboPart.sort_order)
+            .all()
         )
+        if not combo_parts:
+            return None
+
+        rows = list(line.parts or [])
+        answered_products = {row.product_id for row in rows if row.product_id}
+        answered_roles = {row.role for row in rows if row.role}
+
+        missing: list[str] = []
+        seen_groups: list[str] = []
+        for part in combo_parts:
+            if part.choice_group:
+                if part.choice_group not in seen_groups:
+                    seen_groups.append(part.choice_group)
+                continue
+            if part.part_product_id not in answered_products:
+                # Never the raw id as a fallback: this text is rendered on the
+                # portal row and in the CRM Lines tab, and no UUID reaches a
+                # screen (AC-X-2). A part whose product will not resolve is
+                # named by nothing rather than by its id.
+                code = (
+                    part.part_product.product_code
+                    if part.part_product is not None
+                    else ""
+                )
+                if code:
+                    missing.append(code)
+        for group in seen_groups:
+            # Neither a resolved nor an open row answers this group. A row
+            # RESOLVED from the group keeps its `role`, which is why one check
+            # covers both shapes.
+            if group not in answered_roles:
+                missing.append(group)
+
+        return f"Missing: {', '.join(missing)}" if missing else None
 
     @staticmethod
     def get_request(db: Session, request_id: str) -> PriceTagRequest | None:
@@ -1037,7 +1589,11 @@ class PriceTagRequestService:
         ever disagreeing about what this request's PO files look like
         (PLAN-price-tag-feedback-r2 S1).
         """
-        from app.schemas.price_tag import PriceTagRequestAttachment, PriceTagRequestResponse
+        from app.schemas.price_tag import (
+            PriceTagRequestAttachment,
+            PriceTagRequestResponse,
+            PriceTagRequestTagResponse,
+        )
         from app.services.dealer_kit import tag_data_service
         from app.services.entity_attachment_service import list_attachments_for_entity
 
@@ -1045,12 +1601,29 @@ class PriceTagRequestService:
         response.collected_by_name = PriceTagRequestService.collected_by_name(
             db, request
         )
-        resolved = {
-            row["line_id"]: row
-            for row in tag_data_service.resolve_request_line_data(db, request)
-        }
+        # One resolver row per TAG since S3 (D3). The line's own code, name and
+        # prices come off its FIRST tag - every tag on a line prints the same
+        # host product, so those three are a line fact even though the rows are
+        # per tag.
+        rows = tag_data_service.resolve_request_line_data(db, request)
+        by_tag = {row["tag_id"]: row for row in rows}
+        first_by_line: dict[str, dict] = {}
+        for row in rows:
+            first_by_line.setdefault(row["line_id"], row)
+        tags_by_line: dict[str, list] = {}
+        for line in request.lines:
+            tags_by_line[line.id] = sorted(
+                line.tags or [], key=lambda t: (t.sort_order or 0, t.id)
+            )
+
         for line in response.lines:
-            row = resolved.get(line.id)
+            line.tags = [
+                PriceTagRequestTagResponse(
+                    **PriceTagRequestService.tag_body(tag, by_tag.get(tag.id))
+                )
+                for tag in tags_by_line.get(line.id, [])
+            ]
+            row = first_by_line.get(line.id)
             if not row:
                 continue
             line.code = row["code"]
@@ -1060,6 +1633,8 @@ class PriceTagRequestService:
             # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+
+        PriceTagRequestService._fill_line_parts(db, request, response)
 
         response.attachments = [
             PriceTagRequestAttachment(**row)

@@ -1307,13 +1307,27 @@ def test_adopt_for_migration_mirrors_every_line_and_keeps_one_refusal():
 
 
 def test_an_existing_record_gains_only_the_lines_the_sheet_names():
-    """AC-S1-26, second half (review finding 4, 14 Sep).
+    """AC-S1-26, second half (review finding 4, 14 Sep), restated for AC-S2-15.
 
-    A planning record the BOARD already owns is somebody's working sheet, and
-    `_authored_line_totals` sums its mirror `qty` with no status filter - so a mirror line
-    nobody asked for moves that record's reconciliation figures. The upload therefore adds
-    the line it NAMED and nothing else: not the order's other delivered line, not every
-    closed line it happens to carry.
+    THE PURPOSE IS UNCHANGED: the upload adds nothing beyond what it names. What changed is
+    what the record already holds when it arrives.
+
+    The original reading was that `adopt` mirrored only `is_open_demand()` lines, so a
+    delivered one had no mirror and the sheet's own row created it. Since the 14 September
+    2026 ruling `adopt` mirrors every UNDECIDED line, delivered or not - the board has to be
+    able to confirm a line nobody sourced, and `confirm` names a line by its mirror - so all
+    three lines below are already mirrored before the sheet is read.
+
+    That also retires the premise the old docstring rested on. `_authored_line_totals` used
+    to sum mirror `qty` with no status filter, which was safe only while every mirror line
+    was a still-owed one by construction; it now filters explicitly, so a delivered mirror
+    line does not move the record's reconciliation figures and there is nothing to protect
+    the record FROM on that score.
+
+    What the upload must still not do is invent a mirror. It raises its one row against the
+    mirror that is already there - the SAME row, by id - and leaves the record's line count
+    exactly as adoption left it. A second mirror for a line that already has one would give
+    the board two rows for one piece of demand.
     """
     with world() as w:
         order = w.order()
@@ -1327,9 +1341,16 @@ def test_an_existing_record_gains_only_the_lines_the_sheet_names():
             order, product=w.product_row(), qty_ordered="7", qty_delivered="7",
             line_status="closed",
         )
-        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        record = ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        record_id = record["project_sales_order_id"]
+
+        # AC-S2-15: delivery is not a decision, so every one of the three is mirrored.
         assert w.mirror_of(open_line) is not None, "the board mirrored the owed line"
-        assert w.mirror_of(delivered) is None
+        assert w.mirror_of(delivered) is not None, "and the delivered undecided one"
+        assert w.mirror_of(unnamed) is not None, "and the one the sheet will not name"
+        before = str(w.mirror_of(delivered).id)
+        lines_before = _mirror_count(w, record_id)
+        assert lines_before == 3
 
         data = sheet([
             (order.so_number, named.product_code, 10, D_OCT,
@@ -1338,9 +1359,22 @@ def test_an_existing_record_gains_only_the_lines_the_sheet_names():
         result = w.apply(data)
 
         assert result["rows_raised"] == 1, result
-        assert w.mirror_of(delivered) is not None, "the named line has nothing to address"
-        assert str(w.one_row().so_line_id) == str(w.mirror_of(delivered).id)
-        assert w.mirror_of(unnamed) is None, "a delivered line nobody named is not mirrored"
+        # ON THE EXISTING MIRROR, not on one the upload made for itself.
+        assert str(w.one_row().so_line_id) == before
+        assert str(w.mirror_of(delivered).id) == before
+        assert _mirror_count(w, record_id) == 3, (
+            "the upload added a mirror line nobody asked for"
+        )
+
+
+def _mirror_count(w, project_sales_order_id: str) -> int:
+    return (
+        w.db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == str(project_sales_order_id)
+        )
+        .count()
+    )
 
 
 def test_closed_received_po_line_links():

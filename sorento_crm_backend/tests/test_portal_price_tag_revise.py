@@ -361,19 +361,25 @@ class TestReviseValidatesLines:
         assert fresh.revision_no == 0
         assert len(fresh.lines) == 1  # the original line survives untouched
 
-    def test_set_guarded_line_refuses_422(self, db):
+    def test_set_guarded_line_now_revises_and_carries_a_warning(self, db):
+        """Was a 422 (AC-S2-7): a revision is refused for package reasons no more.
+
+        The revision path ran the same guard as submit, so retiring it has to be
+        proved on both or a salesperson could submit a bare cabinet and then be
+        blocked from correcting the request that holds it.
+        """
         contact, product_id, row = _setup(db)
         guarded_product = _seed_product(db, class_label="Bathroom Furniture")
         token = _seed_token(contact)
 
-        with pytest.raises(HTTPException) as exc:
-            PortalRevisionService(db).revise(
-                token, "price_tag_request", str(row.id),
-                {"products": [{"product_id": guarded_product, "quantity": 1}]}, "Reason", 0,
-            )
-        assert exc.value.status_code == 422
+        PortalRevisionService(db).revise(
+            token, "price_tag_request", str(row.id),
+            {"products": [{"product_id": guarded_product, "quantity": 1}]}, "Reason", 0,
+        )
         db.expire_all()
-        assert PriceTagRequestService.get_request(db, str(row.id)).revision_no == 0
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.revision_no == 1
+        assert [line.package_warning for line in fresh.lines] == ["No package defined"]
 
     def test_duplicate_product_refuses_422_duplicate_line(self, db):
         contact, product_id, row = _setup(db)
@@ -407,12 +413,21 @@ class TestReviseValidatesLines:
         assert fresh.lines[0].product_id == product_id
 
     def test_override_survives_when_the_same_product_is_revised(self, db):
+        """Marketing's own work is not in the form's payload, so a re-save must not wipe it.
+
+        The override lives on the line's TAG since S3 (D3), and `replace_lines`
+        carries the whole tag set onto whichever new row keeps the same product.
+        The rule being pinned has not moved: a salesperson changing a quantity
+        must not silently reset a price marketing set by hand.
+        """
         from app.models.price_tag import PriceTagRequestLine
 
         contact, product_id, row = _setup(db)
         line = db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
-        line.marketing_price_override = 42.50
-        line.marketing_override_reason = "Marketing override ZZT"
+        # One tag per line exists from creation (`_add_lines`).
+        tag = line.tags[0]
+        tag.marketing_price_override = 42.50
+        tag.marketing_override_reason = "Marketing override ZZT"
         db.commit()
         token = _seed_token(contact)
 
@@ -425,8 +440,10 @@ class TestReviseValidatesLines:
         fresh_line = (
             db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
         )
-        assert float(fresh_line.marketing_price_override or 0) == pytest.approx(42.50)
-        assert fresh_line.marketing_override_reason == "Marketing override ZZT"
+        assert len(fresh_line.tags) == 1, "a surviving line keeps its tag set, not a fresh one"
+        fresh_tag = fresh_line.tags[0]
+        assert float(fresh_tag.marketing_price_override or 0) == pytest.approx(42.50)
+        assert fresh_tag.marketing_override_reason == "Marketing override ZZT"
 
 
 # =========================================================================== #
@@ -954,23 +971,26 @@ class TestAttachmentGateRechecksPolicy:
         assert delete_res.status_code == 409, delete_res.text
 
 
-class TestReviseCarriesAlternativesAndAccessories:
+class TestReviseCarriesAccessories:
     """Gap D: ``_convert_ptag_revise_line`` only reads ``product_id`` /
     ``product_set_id`` / ``quantity`` / ``remarks`` off a revise payload
     line, so ``replace_lines`` -> ``_add_lines`` writes every revised line's
-    ``alternatives`` back as ``[]`` and ``included_accessories`` as ``None``
-    - the same "silently wipes a per-line detail on re-save" bug the
-    marketing-override carry-over already fixed, left open for these two
-    fields."""
+    ``included_accessories`` back as ``None`` - the same "silently wipes a
+    per-line detail on re-save" bug the marketing-override carry-over already
+    fixed, left open for this field.
 
-    def test_revise_carries_alternatives_and_accessories(self, db):
+    It used to cover ``alternatives`` beside it. S2 drops that column
+    (AC-S2-8), and what replaced it - the line's parts - carries over through
+    its own rows rather than through this one scalar, so only the accessories
+    half survives here."""
+
+    def test_revise_carries_accessories(self, db):
         from app.models.price_tag import PriceTagRequestLine
 
         contact, product_id, row = _setup(db)
         line = db.query(PriceTagRequestLine).filter(
             PriceTagRequestLine.request_id == row.id
         ).one()
-        line.alternatives = ["ALT-CODE-1", "ALT-CODE-2"]
         line.included_accessories = "Tap + waste kit"
         db.commit()
         token = _seed_token(contact)
@@ -988,7 +1008,6 @@ class TestReviseCarriesAlternativesAndAccessories:
         fresh_line = (
             db.query(PriceTagRequestLine).filter(PriceTagRequestLine.request_id == row.id).one()
         )
-        assert fresh_line.alternatives == ["ALT-CODE-1", "ALT-CODE-2"]
         assert fresh_line.included_accessories == "Tap + waste kit"
 
 

@@ -7,10 +7,15 @@
  * exists.
  *
  * Sheet arrangement is a consequence of the tags rather than a thing the user
- * has to do: every line's tag is laid out in line order, quantity times, on a
- * grid auto-fit off the tag's own size and the page (S6, D8) - nothing to
- * choose. A copy somebody dragged in the Arrange view is PINNED by line and
- * copy index, so re-arranging keeps it and flows the rest around it.
+ * has to do: every tag is laid out in line order, quantity times, on a grid
+ * auto-fit off the tag's own size and the page (S6, D8) - nothing to choose. A
+ * copy somebody dragged in the Arrange view is PINNED by tag and copy index, so
+ * re-arranging keeps it and flows the rest around it.
+ *
+ * Since S3 (D3) a LINE may carry several TAGS: an open choice group is split
+ * into one tag per candidate, each with its own design and price. Everything
+ * here therefore keys on the request TAG; the line is still what says which
+ * product a tag binds to, which is why every helper takes the pair.
  */
 
 import {
@@ -46,6 +51,19 @@ export interface TagRequestLine {
   product_id: string | null;
   product_set_id: string | null;
   quantity: number;
+}
+
+/**
+ * The part of a request TAG these helpers read, with the line it prints (D3).
+ *
+ * The line comes along because binding is still a LINE fact - a tag prints its
+ * line's product, whichever candidate it resolved - while identity, quantity
+ * and geometry are the tag's.
+ */
+export interface TagRequestTag {
+  id: string;
+  quantity: number;
+  line: TagRequestLine;
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +116,7 @@ export const STARTER_TEMPLATE_ID = 'starter';
  *
  * `buildProductBlock`/`buildSetStarterBlock` do not know the line, so
  * whatever binding they seed their group with is provisional; `bindTemplateLayers`
- * below re-binds it to `bindingForLine(line)` the same way `tagForLine` binds
+ * below re-binds it to `bindingForLine(line)` the same way `tagForTag` binds
  * a real template's clone, so the starter's binding is never a stand-in id
  * (e.g. the line's own id) masquerading as a product/set id.
  */
@@ -162,23 +180,27 @@ export function starterTemplateFor(
 // ---------------------------------------------------------------------------
 
 /**
- * A fresh tag for this line, cloned from `template`.
+ * A fresh placement for this request tag, cloned from `template`.
  *
  * The clone is deep: an edit on the tag must never reach the template, which is
  * shared by every future request in that family. The size is the template's
  * PRINT size rather than its document size, because that is what gets cut.
+ *
+ * Binding comes from the tag's LINE - two tags split off the same line print
+ * the same host product and differ only in the candidate they resolved.
  */
-export function tagForLine(
-  line: TagRequestLine,
+export function tagForTag(
+  requestTag: TagRequestTag,
   template: TagTemplate,
   newId: string,
   position: { x_mm: number; y_mm: number } = { x_mm: 0, y_mm: 0 },
 ): PlacedTag {
   const layers = structuredClone(template.doc.layers) as TagLayer[];
+  const line = requestTag.line;
   return {
     id: newId,
     template_id: template.id,
-    request_line_id: line.id,
+    request_tag_id: requestTag.id,
     x_mm: position.x_mm,
     y_mm: position.y_mm,
     width_mm: template.print_size.width_mm,
@@ -384,14 +406,14 @@ export function resolveTagSize(
 // ---------------------------------------------------------------------------
 
 /**
- * "Apply this design to all lines" (AC-S5-1/2/5): the SELECTED line's tag,
- * cloned onto every other line - and for the "Use template..." picker's
- * "Apply to all lines" checkbox, `tags[sourceLineId]` is a pristine
- * `tagForLine` clone the caller already stashed under the source line, so
- * this one function covers both surfaces (D3).
+ * "Apply this design to all lines" (AC-S5-1/2/5): the SELECTED tag's design,
+ * cloned onto every other tag on the request - and for the "Use template..."
+ * picker's "Apply to all lines" checkbox, `tags[sourceTagId]` is a pristine
+ * `tagForTag` clone the caller already stashed under the source tag, so this
+ * one function covers both surfaces (D3).
  *
  * Every clone gets FRESH layer ids (group `children` remapped alongside), so
- * no two lines' tags ever share an id - the same reason `templateFromTag`
+ * no two tags ever share an id - the same reason `templateFromTag`
  * remaps ids, just fanned out to N lines instead of one template. Unlike
  * `templateFromTag`, `text_override` is copied VERBATIM (D3): this is one
  * line's tag becoming every line's tag, not a tag becoming a reusable
@@ -399,20 +421,20 @@ export function resolveTagSize(
  * is supposed to spread.
  *
  * `bindTemplateLayers` re-points each clone's group binding at the TARGET
- * line's own product/set - a straight copy would leave every other line's
- * tag pointing at the source line's item - and clears a stale barcode
- * override the same way a fresh clone from a template does.
+ * tag's own line's product/set - a straight copy would leave every other tag
+ * pointing at the source line's item - and clears a stale barcode override the
+ * same way a fresh clone from a template does.
  *
- * A line that already had a tag keeps its position/pin (AC-S5-2): those live
- * on the `PlacedTag` a caller may be carrying position/pin state on, and
- * losing them here would silently un-arrange whatever was dragged. A line
- * with no tag yet gets one too (AC-S5-5), so it never later clones from the
+ * A tag that already had a placement keeps its position/pin (AC-S5-2): those
+ * live on the `PlacedTag` a caller may be carrying position/pin state on, and
+ * losing them here would silently un-arrange whatever was dragged. A tag with
+ * no placement yet gets one too (AC-S5-5), so it never later clones from the
  * request's default template and quietly undoes the bulk apply.
  */
 /**
  * A layer array, fresh ids throughout (group `children` remapped alongside)
- * so no two lines' tags ever share one - the cloning step both
- * `applyDesignToAllLines` and `applyDesignToSiblings` (S6) need, pulled out
+ * so no two tags ever share one - the cloning step both
+ * `applyDesignToAllTags` and `applyDesignToSiblings` (S6) need, pulled out
  * once they were the same nine lines twice.
  */
 function cloneLayersWithFreshIds(layers: TagLayer[], newId: () => string): TagLayer[] {
@@ -435,30 +457,30 @@ function cloneLayersWithFreshIds(layers: TagLayer[], newId: () => string): TagLa
   });
 }
 
-export function applyDesignToAllLines(
+export function applyDesignToAllTags(
   tags: Record<string, PlacedTag>,
-  lines: TagRequestLine[],
-  sourceLineId: string,
+  requestTags: TagRequestTag[],
+  sourceTagId: string,
   newId: () => string,
 ): Record<string, PlacedTag> {
-  const source = tags[sourceLineId];
+  const source = tags[sourceTagId];
   if (!source) return tags;
 
   const next: Record<string, PlacedTag> = { ...tags };
-  for (const line of lines) {
-    if (line.id === sourceLineId) continue;
+  for (const requestTag of requestTags) {
+    if (requestTag.id === sourceTagId) continue;
 
     const layers = cloneLayersWithFreshIds(source.layers, newId);
-    const existing = next[line.id];
-    next[line.id] = {
+    const existing = next[requestTag.id];
+    next[requestTag.id] = {
       id: newId(),
       template_id: source.template_id,
-      request_line_id: line.id,
+      request_tag_id: requestTag.id,
       x_mm: existing?.x_mm ?? 0,
       y_mm: existing?.y_mm ?? 0,
       width_mm: source.width_mm,
       height_mm: source.height_mm,
-      layers: bindTemplateLayers(layers, bindingForLine(line)),
+      layers: bindTemplateLayers(layers, bindingForLine(requestTag.line)),
       pinned: existing?.pinned,
     };
   }
@@ -467,40 +489,40 @@ export function applyDesignToAllLines(
 
 /**
  * "Update <template>" with its sibling checkbox on (S6, AC-S6-4): the
- * SOURCE line's current tag - design AND size - cloned onto every OTHER
- * line whose CURRENT tag's `template_id` matches the same template. Unlike
- * `applyDesignToAllLines`, a line NOT already on this template (a different
- * template, or no tag at all) is left untouched rather than switched onto
- * it - Update republishes T for whoever is already using it, it does not
- * make more lines use it.
+ * SOURCE tag's current design - layout AND size - cloned onto every OTHER
+ * tag on the request whose CURRENT placement's `template_id` matches the same
+ * template. Unlike `applyDesignToAllTags`, a tag NOT already on this template
+ * (a different template, or no placement at all) is left untouched rather than
+ * switched onto it - Update republishes T for whoever is already using it, it
+ * does not make more tags use it.
  */
 export function applyDesignToSiblings(
   tags: Record<string, PlacedTag>,
-  lines: TagRequestLine[],
-  sourceLineId: string,
+  requestTags: TagRequestTag[],
+  sourceTagId: string,
   templateId: string,
   newId: () => string,
 ): Record<string, PlacedTag> {
-  const source = tags[sourceLineId];
+  const source = tags[sourceTagId];
   if (!source) return tags;
 
   const next: Record<string, PlacedTag> = { ...tags };
-  for (const line of lines) {
-    if (line.id === sourceLineId) continue;
-    const existing = next[line.id];
+  for (const requestTag of requestTags) {
+    if (requestTag.id === sourceTagId) continue;
+    const existing = next[requestTag.id];
     if (!existing || existing.template_id !== templateId) continue;
 
-    next[line.id] = {
+    next[requestTag.id] = {
       id: newId(),
       template_id: source.template_id,
-      request_line_id: line.id,
+      request_tag_id: requestTag.id,
       x_mm: existing.x_mm,
       y_mm: existing.y_mm,
       width_mm: source.width_mm,
       height_mm: source.height_mm,
       layers: bindTemplateLayers(
         cloneLayersWithFreshIds(source.layers, newId),
-        bindingForLine(line),
+        bindingForLine(requestTag.line),
       ),
       pinned: existing.pinned,
     };
@@ -637,7 +659,7 @@ export function impositionSlots(
 // Arranging the copies
 // ---------------------------------------------------------------------------
 
-/** One line's tag and how many of it the request asked for. */
+/** One request tag's placement and how many copies of it to print. */
 export interface ArrangeItem {
   tag: PlacedTag;
   quantity: number;
@@ -653,12 +675,14 @@ export interface PinnedPlacement {
 /**
  * The identity of one printed copy.
  *
- * Keyed on the LINE rather than on the tag, so a pin survives the tag being
- * re-cloned from another template, and so a document written before copy ids
- * existed still pins its first copy.
+ * Keyed on the REQUEST TAG rather than on the placement, so a pin survives the
+ * tag being re-cloned from another template, and so a document written before
+ * copy ids existed still pins its first copy. (It was keyed on the line until
+ * S3; a line now carries several tags, and two split siblings dragged to
+ * different slots must not share one pin.)
  */
-export function placementKey(lineId: string, copyIndex: number): string {
-  return `${lineId}#${copyIndex}`;
+export function placementKey(tagId: string, copyIndex: number): string {
+  return `${tagId}#${copyIndex}`;
 }
 
 /** The placement id a copy carries in the saved document. */
@@ -680,7 +704,7 @@ export function copiesOf(items: ArrangeItem[]): Copy[] {
     for (let index = 0; index < count; index += 1) {
       copies.push({
         id: copyId(item.tag.id, index),
-        key: placementKey(item.tag.request_line_id, index),
+        key: placementKey(item.tag.request_tag_id, index),
         tag: item.tag,
       });
     }
@@ -758,9 +782,9 @@ function copyIndexOf(placementId: string): number {
 
 /** The pin key one placed copy answers to, wherever it came from. */
 export function pinKeyForPlacement(
-  tag: Pick<PlacedTag, 'id' | 'request_line_id'>,
+  tag: Pick<PlacedTag, 'id' | 'request_tag_id'>,
 ): string {
-  return placementKey(tag.request_line_id, copyIndexOf(tag.id));
+  return placementKey(tag.request_tag_id, copyIndexOf(tag.id));
 }
 
 /**
@@ -779,7 +803,7 @@ export function pinnedFromDoc(doc: TagSheetDoc | null): Record<string, PinnedPla
   doc.sheets.forEach((sheet, sheetIndex) => {
     for (const tag of sheet.tags) {
       if (tag.pinned !== true) continue;
-      pinned[placementKey(tag.request_line_id, copyIndexOf(tag.id))] = {
+      pinned[placementKey(tag.request_tag_id, copyIndexOf(tag.id))] = {
         sheet: sheetIndex,
         x_mm: tag.x_mm,
         y_mm: tag.y_mm,
@@ -790,19 +814,19 @@ export function pinnedFromDoc(doc: TagSheetDoc | null): Record<string, PinnedPla
 }
 
 /**
- * The per-line tags a saved document is carrying.
+ * The per-TAG placements a saved document is carrying, keyed by request tag id.
  *
- * The first copy of each line is the master: every copy holds the same layers,
- * so re-opening a saved design finds each line's tag exactly as it was drawn.
+ * The first copy of each tag is the master: every copy holds the same layers,
+ * so re-opening a saved design finds each tag exactly as it was drawn.
  */
 export function tagsFromDoc(doc: TagSheetDoc | null): Map<string, PlacedTag> {
   const masters = new Map<string, PlacedTag>();
   if (!doc) return masters;
   for (const sheet of doc.sheets) {
     for (const tag of sheet.tags) {
-      const existing = masters.get(tag.request_line_id);
+      const existing = masters.get(tag.request_tag_id);
       if (existing && copyIndexOf(existing.id) <= copyIndexOf(tag.id)) continue;
-      masters.set(tag.request_line_id, {
+      masters.set(tag.request_tag_id, {
         ...tag,
         id: tag.id.replace(/-c\d+$/, ''),
         x_mm: 0,

@@ -20,13 +20,31 @@ from pydantic import (
 # ---------------------------------------------------------------------------
 
 
+class LinePartIn(BaseModel):
+    """One part on the way in (D2, AC-S2-8).
+
+    RESOLVED: `product_id` set. OPEN: `product_id` null and `candidates` holding
+    the group's product ids, which is the salesperson saying "any of these, you
+    choose". `role` is the choice group's label on both, so a resolved row still
+    says which group it answered.
+    """
+
+    product_id: Optional[str] = None
+    role: Optional[str] = None
+    candidates: list[str] = Field(default_factory=list)
+
+
 class PriceTagRequestLineCreate(BaseModel):
     line_type: str = Field(..., pattern=r"^(product|product_set)$")
     product_id: Optional[str] = None
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
     quantity: int = Field(default=1, ge=1)
-    alternatives: list[dict] = Field(default_factory=list)
+    # The catalogue package this line is asked for as, and the parts under it, in
+    # display order (D2). `alternatives` is gone - the OR-choices field it carried
+    # is what the open part row replaced.
+    combo_id: Optional[str] = None
+    parts: list[LinePartIn] = Field(default_factory=list)
     included_accessories: Optional[str] = None
     # Free-text note on the line (D6, r7).
     remarks: Optional[str] = None
@@ -37,9 +55,68 @@ class PriceTagRequestLineCreate(BaseModel):
     sort_order: Optional[int] = None
 
 
-class PriceTagRequestLineUpdate(BaseModel):
+class PriceTagRequestTagUpdate(BaseModel):
+    """PATCH one tag (D3). Replaces the retired line-level update.
+
+    `choices` is `{role: product_id}` - what "Pick one" writes.
+    """
+
+    quantity: Optional[int] = Field(default=None, ge=1)
     marketing_price_override: Optional[Decimal] = None
     marketing_override_reason: Optional[str] = None
+    choices: Optional[dict[str, str]] = None
+
+
+class PriceTagRequestTagSplit(BaseModel):
+    role: str
+
+
+class PriceTagRequestTagResponse(BaseModel):
+    """One tag, as every surface reads it.
+
+    `choices_display` is the stored `{role: product_id}` map resolved to codes,
+    which is what the rail and the Lines tab show; the raw map is never
+    rendered. `list_price` / `sell_price` ride along because price is a TAG fact
+    since D4.
+    """
+
+    id: str
+    line_id: str
+    sort_order: int
+    #: "1a", "1b" - the line's position plus a letter. Never an id.
+    label: str = ""
+    quantity: int
+    choices: dict[str, str] = {}
+    choices_display: list[dict] = []
+    open_groups: list[TagOpenGroup] = []
+    marketing_price_override: Optional[float] = None
+    marketing_override_reason: Optional[str] = None
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
+
+
+class LinePartCandidateResponse(BaseModel):
+    product_id: str
+    code: str
+    name: str
+
+
+class PriceTagRequestLinePartResponse(BaseModel):
+    """One part under a line, RESOLVED (D2).
+
+    Codes and names, never bare ids: the portal read view and the CRM Lines tab
+    both render this, and no id reaches a screen (AC-X-2). Filled by
+    `response_with_resolved_lines`, not by `from_attributes` - the model row
+    holds product ids and this holds what a person reads.
+    """
+
+    id: str
+    product_id: Optional[str] = None
+    code: Optional[str] = None
+    name: Optional[str] = None
+    role: Optional[str] = None
+    candidates: list[LinePartCandidateResponse] = []
+    sort_order: int
 
 
 class PriceTagRequestLineResponse(BaseModel):
@@ -52,17 +129,34 @@ class PriceTagRequestLineResponse(BaseModel):
     product_set_id: Optional[str] = None
     show_promo_price: bool
     quantity: int
-    alternatives: list[Any] = []
+    combo_id: Optional[str] = None
+    # What the package guard found at submit, for marketing to read (D2). NULL =
+    # clean; submit is never refused for a package reason.
+    package_warning: Optional[str] = None
     included_accessories: Optional[str] = None
     remarks: Optional[str] = None
     sort_order: int
-    # float, not Decimal, on every money field a CLIENT reads. Pydantic
-    # serialises a Decimal as a JSON string, and the detail page does
-    # `marketing_price_override.toFixed(2)` - which on a string is not a
-    # function, so the page threw the moment a line carried an override.
-    # ``ResolvedLineData`` already answers in float; these now agree with it.
-    marketing_price_override: Optional[float] = None
-    marketing_override_reason: Optional[str] = None
+    # What gets printed for this line: one tag by default, N after a split (D3).
+    # The marketing override moved onto the TAG in S3 and its columns are dropped
+    # by the migration's step 4, so this model no longer carries either.
+    tags: list[PriceTagRequestTagResponse] = Field(
+        default_factory=list, validation_alias="__resolved_tags__"
+    )
+    # The package under this line, in display order. Default empty rather than
+    # omitted: the portal form and the CRM tab both read the key unconditionally.
+    #
+    # `validation_alias` is load-bearing, not decoration. This model validates
+    # FROM the ORM row, which has its own `parts` relationship holding
+    # `PriceTagRequestLinePart` objects whose `candidates` is a list of product
+    # id STRINGS - and this field wants resolved objects, so reading the
+    # attribute by name raised a validation error and every create 500'd
+    # (measured on the lane). Pointing validation at a name the ORM row does not
+    # carry leaves the default in place for `_fill_line_parts` to overwrite with
+    # the resolved rows. Serialisation is unaffected: the wire key is still
+    # `parts`.
+    parts: list[PriceTagRequestLinePartResponse] = Field(
+        default_factory=list, validation_alias="__resolved_parts__"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -926,18 +1020,61 @@ class LineDataChange(BaseModel):
     note: Optional[str] = None
 
 
-class LineDataChangeSet(BaseModel):
-    """One line's worth of pending decision, named by its code not its id."""
+class TagDataChangeSet(BaseModel):
+    """One TAG's worth of pending decision, named by its code not its id.
 
+    Per tag rather than per line since the combos slice: two tags split off one
+    line resolve different products, so they are drawn from different data and
+    a Keep on one must not silence the other. `line_id` and `tag_label` are
+    what the reader is shown ("1a" under the line's code), never the ids.
+    """
+
+    tag_id: str
+    tag_label: str = ""
     line_id: str
     code: str
     name: str
     changes: list[LineDataChange] = []
 
 
-class ResolvedLineData(BaseModel):
-    """Display data for one request line, for the designer and the print page."""
+class TagOpenGroupCandidate(BaseModel):
+    product_id: str
+    code: str
 
+
+class TagOpenGroup(BaseModel):
+    """A choice group this tag has not resolved (D3).
+
+    The candidate carries its id beside its code because "Pick one" has to name
+    it back to `PATCH .../tags/{tag_id}`, whose `choices` is `{role: product_id}`.
+    Only the code is ever rendered (AC-X-2).
+    """
+
+    role: str
+    candidates: list[TagOpenGroupCandidate] = []
+
+
+class TagPartData(BaseModel):
+    #: Carried so a caller can match a part back to the choice that produced it.
+    #: Never rendered - the code is what a reader sees (AC-X-2).
+    product_id: Optional[str] = None
+    code: str
+    name: str
+    dimensions: str = ""
+
+
+class ResolvedLineData(BaseModel):
+    """Display data for one TAG, for the designer and the print page (D3).
+
+    One row per tag since S3, not per line: `line_id` says which line asked for
+    it and `tag_id` is what the document, the rail and the resolved-data map key
+    on.
+    """
+
+    tag_id: str
+    tag_label: str = ""
+    open_groups: list[TagOpenGroup] = []
+    parts: list[TagPartData] = []
     line_id: str
     code: str
     name: str
@@ -1022,10 +1159,11 @@ class ReviewCommentPin(BaseModel):
 
     model_config = ConfigDict(allow_inf_nan=False)
 
-    line_id: Optional[str] = None
-    #: The ONE placed copy of the tag that was clicked, when the sheet prints
-    #: this line more than once. Absent falls back to every copy of the line.
-    placed_tag_id: Optional[str] = Field(None, max_length=64)
+    #: The tag the pin was placed on. Absent = a general comment about the
+    #: whole design. A line prints one tag per option since the combos slice,
+    #: and each copy of a tag on the sheet is the SAME tag, so the anchor needs
+    #: no placed-copy id: the pin draws on every copy of its own tag.
+    tag_id: Optional[str] = None
     #: Fractions of the tag box, 0..1. Absent on a general comment.
     x: Optional[float] = Field(None, ge=0, le=1)
     y: Optional[float] = Field(None, ge=0, le=1)
@@ -1057,8 +1195,7 @@ class ReviewCommentResponse(BaseModel):
 
     id: str
     request_id: str
-    line_id: Optional[str] = None
-    placed_tag_id: Optional[str] = None
+    tag_id: Optional[str] = None
     round: int
     x: Optional[float] = None
     y: Optional[float] = None
@@ -1090,14 +1227,14 @@ class ReviewCommentResolvePayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class LinePinPayload(BaseModel):
+class TagPinPayload(BaseModel):
     """What to do about the change master data has made under a tag."""
 
     action: Literal["update", "keep"]
 
 
-class LinePinResponse(BaseModel):
-    line_id: str
+class TagPinResponse(BaseModel):
+    tag_id: str
     pinned_at: Optional[datetime] = None
 
 

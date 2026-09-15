@@ -391,8 +391,14 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
     resolved_data: dict[str, dict] = {}
 
     for row in rows:
-        resolved_data[row["line_id"]] = {
+        # Keyed by REQUEST TAG since the combos slice (D3) - a line may print
+        # several tags, so a line id could no longer name one tile's data.
+        resolved_data[row["tag_id"]] = {
+            "tag_id": row["tag_id"],
             "line_id": row["line_id"],
+            "tag_label": row["tag_label"],
+            "open_groups": row["open_groups"],
+            "parts": row["parts"],
             "code": row["code"],
             "name": row["name"],
             "dimensions": row["dimensions"],

@@ -448,20 +448,358 @@ def _set_member_text(members: Sequence[dict]) -> str:
     return "\n".join(lines)
 
 
+#: What a money figure is rounded to before it leaves the resolver. The engine
+#: already works in Decimal; this is only so a SUM of four products cannot print
+#: a third decimal place the customer would have to squint at.
+_MONEY = Decimal("0.01")
+
+
+def _sum_prices(values: list) -> Optional[Decimal]:
+    """The package's price: the host plus its resolved parts (D4).
+
+    None when nothing in the list has a price at all, so a product with no list
+    price still prints an empty slot rather than a hard zero. An individual part
+    the engine cannot price contributes nothing rather than aborting the sum -
+    the rest of the package is still worth showing.
+    """
+    present = [Decimal(str(value)) for value in values if value is not None]
+    if not present:
+        return None
+    return sum(present, Decimal("0")).quantize(_MONEY)
+
+
+def _offer_or_list(price) -> Optional[Decimal]:
+    """What one part contributes to the SELLING sum.
+
+    The engine's offer when it has one, the list price when it does not. A part
+    with no promotion line is not free and is not discounted; it is simply
+    itself.
+    """
+    if price is None:
+        return None
+    return price.offer_price if price.offer_price is not None else price.list_price
+
+
+def _tag_label(line_index: int, tag_index: int) -> str:
+    """"1a", "1b", ... - the line's position plus a letter (D3).
+
+    An ordinal, never an id (AC-X-2). Past 26 tags on one line the letter wraps
+    and a number follows it ("1a1"), which nobody will ever see but which keeps
+    the labels unique rather than silently repeating.
+    """
+    letter = chr(ord("a") + (tag_index % 26))
+    wrap = tag_index // 26
+    return f"{line_index + 1}{letter}{wrap if wrap else ''}"
+
+
+def _open_groups_for(db: Session, line, tag) -> list[dict]:
+    """The choice groups this TAG has not resolved yet (D3).
+
+    A group is open when the line left it open (a part row with candidates and
+    no product) AND this tag has made no choice for it. Split and Pick one both
+    write `tag.choices`, so a tag that has answered simply reports nothing.
+
+    Candidates carry the product id beside the code: "Pick one" has to NAME the
+    candidate back to `PATCH .../tags/{tag_id}`, whose `choices` is
+    `{role: product_id}`, and only the code is ever rendered.
+    """
+    from app.models.product import Product
+
+    chosen = dict(tag.choices or {})
+    groups: list[dict] = []
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        if part.product_id or not part.candidates:
+            continue
+        role = part.role or ""
+        if role in chosen:
+            continue
+        products = {
+            product.id: product
+            for product in db.query(Product)
+            .filter(Product.id.in_([str(c) for c in part.candidates]))
+            .all()
+        }
+        groups.append(
+            {
+                "role": role,
+                "candidates": [
+                    {
+                        "product_id": str(candidate),
+                        "code": (
+                            products[str(candidate)].product_code
+                            if str(candidate) in products
+                            else ""
+                        ),
+                    }
+                    for candidate in part.candidates
+                ],
+            }
+        )
+    return groups
+
+
+def _resolved_part_products(db: Session, line, tag) -> list:
+    """The PRODUCTS printed under the host on this tag, in part order (D3/D4).
+
+    The line's resolved part rows, plus whatever this tag chose for a group the
+    line left open - so two tags split off one line list the same fixed parts
+    and a different basin. The product rows rather than a rendered dict, because
+    D4 needs to price them as well as print them, and asking the database twice
+    for the same four products would be two round trips for one answer.
+    """
+    from app.models.product import Product
+
+    chosen = dict(tag.choices or {})
+    wanted: list[str] = []
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        if part.product_id:
+            wanted.append(str(part.product_id))
+        elif (part.role or "") in chosen:
+            wanted.append(str(chosen[part.role or ""]))
+    if not wanted:
+        return []
+
+    products = {
+        product.id: product
+        for product in db.query(Product).filter(Product.id.in_(wanted)).all()
+    }
+    return [products[pid] for pid in wanted if pid in products]
+
+
+def _part_row(db: Session, product) -> dict:
+    """One part as the rail, the Lines tab and the tag text read it."""
+    return {
+        # The id rides along so a caller can match a part back to the choice that
+        # produced it (`tag_body`'s `choices_display`). Never rendered - the code
+        # is what a reader sees (AC-X-2).
+        "product_id": product.id,
+        "code": product.product_code,
+        "name": product.product_name,
+        "dimensions": dimensions_text(product),
+    }
+
+
+def _package_text(parts: list[dict], open_groups: list[dict]) -> str:
+    """The `set_members` slot text for a product tag with a package (AC-S4-1).
+
+    `set_members` on purpose: every template already carries that slot, so a
+    cabinet's package prints with no template touched (D4).
+
+    Two shapes, deliberately different. A resolved part is a thing that is IN the
+    box, so it leads with `+`; an open group is a choice the reader makes, so it
+    leads with its own label and lists the candidates. A tag with neither prints
+    nothing at all - most tags carry no package and must not grow a stray line.
+    """
+    lines = [
+        " ".join(
+            piece
+            for piece in (f"+ {part['code']}", part["name"], part["dimensions"])
+            if piece
+        )
+        for part in parts
+    ]
+    lines += [
+        f"{group['role']}: " + " / ".join(c["code"] for c in group["candidates"])
+        for group in open_groups
+    ]
+    return "\n".join(lines)
+
+
+def ordered_tags(request) -> list[tuple[int, int, object, object]]:
+    """Every tag of the request in print order: (line index, tag index, line, tag).
+
+    The line's position and the tag's position under it are what the LABEL is
+    made of ("1a", "1b"), so they are produced by the same walk that produces
+    the tags - a caller that numbered a subset on its own would call the second
+    tag of line 3 "1a".
+    """
+    out: list[tuple[int, int, object, object]] = []
+    for line_index, line in enumerate(
+        sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id))
+    ):
+        for tag_index, tag in enumerate(
+            sorted(line.tags or [], key=lambda t: (t.sort_order or 0, t.id))
+        ):
+            out.append((line_index, tag_index, line, tag))
+    return out
+
+
+def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
+    """What master data says about these tags RIGHT NOW (D3, S3).
+
+    One row per TAG, not per line: a line whose package left a choice group
+    open is split by marketing into one tag per candidate, and each of those
+    prints its own basin at its own price. `line_id` still says which line
+    asked for it.
+
+    ``tags`` is the subset to answer for; the walk is still over the whole
+    request so the labels are the positions they actually are. None means every
+    tag.
+
+    The marketing override wins over the resolved offer (D9) - it is a decision
+    somebody made and logged a reason for, and the engine has no way to know
+    about it. Since the combos slice that override is a TAG fact.
+    """
+    viewer = staff_viewer()
+    promotion_id = getattr(request, "promotion_id", None)
+    wanted = None if tags is None else {tag.id for tag in tags}
+    rows: list[dict] = []
+
+    line_data: dict = {}
+    for line_index, tag_index, line, tag in ordered_tags(request):
+        if wanted is not None and tag.id not in wanted:
+            continue
+
+        if line.id not in line_data:
+            line_data[line.id] = _line_product_data(db, line, viewer, promotion_id)
+        data = line_data[line.id]
+        if data is None:
+            continue
+        code = data["code"]
+        name = data["name"]
+        dimensions = data["dimensions"]
+        specs = data["spec_lines_text"]
+        spec_values = data["specs"]
+        images = data["images"]
+        barcode = data["barcode"]
+        set_members = data["set_members"]
+
+        open_groups = _open_groups_for(db, line, tag)
+        part_products = _resolved_part_products(db, line, tag)
+        part_rows = [_part_row(db, product) for product in part_products]
+
+        # D4. A tag with no parts is exactly today's product tag: the sums below
+        # are over an empty list, so both prices and the slot text are the ones
+        # this line has always answered with.
+        list_price = data["list_price"]
+        sell_price = data["offer_price"]
+        if part_products:
+            part_prices = resolve_prices(db, part_products, viewer, promotion_id)
+            list_price = _sum_prices(
+                [list_price]
+                + [
+                    (
+                        part_prices.get(product.id).list_price
+                        if part_prices.get(product.id)
+                        else None
+                    )
+                    for product in part_products
+                ]
+            )
+            # The selling side takes the engine's offer where it HAS one and the
+            # list price where it does not: an offer the engine cannot answer for
+            # is not a discount, it is simply the price.
+            sell_price = _sum_prices(
+                [sell_price if sell_price is not None else data["list_price"]]
+                + [
+                    _offer_or_list(part_prices.get(product.id))
+                    for product in part_products
+                ]
+            )
+            package_text = _package_text(part_rows, open_groups)
+            if package_text:
+                set_members = package_text
+        elif open_groups:
+            set_members = _package_text([], open_groups)
+
+        # The override is a SELLING price and wins over the engine's sum. It
+        # never rewrites what the package LISTS at - the tag still shows what the
+        # customer is saving against.
+        if tag.marketing_price_override is not None:
+            sell_price = Decimal(str(tag.marketing_price_override))
+
+        rows.append(
+            {
+                "tag_id": tag.id,
+                "line_id": line.id,
+                "tag_label": _tag_label(line_index, tag_index),
+                "open_groups": open_groups,
+                "parts": part_rows,
+                "code": code,
+                "name": name,
+                "dimensions": dimensions,
+                "spec_lines": specs,
+                "specs": spec_values,
+                "set_members": set_members,
+                "images": images,
+                "list_price": list_price,
+                "sell_price": sell_price,
+                "show_promo_price": line.show_promo_price,
+                "included_accessories": line.included_accessories or "",
+                # The TAG's own quantity, seeded from the line's at submit and
+                # marketing's to change afterwards.
+                "quantity": tag.quantity,
+                "barcode": barcode,
+            }
+        )
+
+    return rows
+
+
+def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict]:
+    """The line's own product or set, resolved ONCE for all of its tags.
+
+    Two tags split off one line share a host product; asking master data for it
+    per tag would double every read a split costs.
+    """
+    if line.product_set_id:
+        product_set = get_product_set(db, line.product_set_id)
+        if product_set is None:
+            return None
+        data = product_set_tag_data(db, product_set, viewer, promotion_id)
+        return {
+            "code": data["set_code"],
+            "name": data["name"],
+            # A set has no spec row of its own: the specs belong to its members,
+            # and a set tag lists the members rather than their materials. Same
+            # for barcode - a set has no single EAN either (S7).
+            "dimensions": "",
+            "spec_lines_text": "",
+            "specs": [],
+            "images": [],
+            "barcode": None,
+            "set_members": _set_member_text(data["members"]),
+            "list_price": data["list_price"],
+            "offer_price": data["offer_price"],
+        }
+    if line.product_id:
+        product = get_product(db, line.product_id)
+        if product is None:
+            return None
+        data = product_tag_data(db, product, viewer, promotion_id)
+        return {
+            "code": data["code"],
+            "name": data["name"],
+            "dimensions": data["dimensions"],
+            "spec_lines_text": "\n".join(data["spec_lines"]),
+            "specs": data["specs"],
+            "images": data["images"],
+            "barcode": data["barcode"],
+            "set_members": "",
+            "list_price": data["list_price"],
+            "offer_price": data["offer_price"],
+        }
+    return None
+
+
 def resolve_request_line_data(db: Session, request) -> list[dict]:
-    """Display data for every line of a price tag request.
+    """Display data for every TAG of a price tag request.
 
     The one resolver behind the designer's left panel, both design previews and
     the print payload, so what marketing approves on screen and what the PDF
     prints are the same numbers from the same call.
 
-    Since r9 (D17) it answers the PINNED data when a line has a pin: master data
+    Since r9 (D17) it answers the PINNED data when a tag has a pin: master data
     resolved live on every render meant a price edited on Tuesday silently
     rewrote the proof approved on Monday. The live resolve still runs beside it
     for a request somebody can still act on, and the difference comes back as
     ``data_changes`` for a person to decide. A terminal request skips the live
     resolve entirely - nothing can be updated, so asking master data to say so
     is work with no reader.
+
+    The gate is per TAG since the combos slice: two tags split off one line
+    resolve two different basins, so they are drawn from different data and a
+    Keep on one must not silence the other.
 
     The marketing override wins over the pinned offer (D9/AC-S5-7) - it is a
     decision somebody made and logged a reason for.
@@ -470,29 +808,31 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
 
     terminal = PriceTagRequestService.is_terminal(request)
 
-    # Live finding: a line claimed through a backend that predated the pin (or
+    # Live finding: a tag claimed through a backend that predated the pin (or
     # otherwise left unpinned) stayed exposed to master data forever - reading
-    # it again and again is not a decision. An in-flight request pins any line
+    # it again and again is not a decision. An in-flight request pins any tag
     # still missing one on the first read that reaches it, the same way
-    # `pin_lines` pins a line added while designing; a terminal request is
+    # `pin_tags` pins a line added while designing; a terminal request is
     # untouched, since it can decide nothing either way (the sibling guard
     # `TestATerminalRequestNeverRunsTheLiveResolve` holds for the same reason).
     if not terminal:
-        pin_lines(db, request, only_unpinned=True)
+        pin_tags(db, request, only_unpinned=True)
 
-    lines = sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id))
+    walk = ordered_tags(request)
     rows: list[dict] = []
 
     # ONE live resolve for the whole request, and one promotion read (S11).
-    # Per line, a twenty-line sheet asked master data twenty times over - and
-    # the promotion once per line on top - for a page that draws once.
-    # A terminal request resolves only the lines with no pin at all: it can
+    # Per tag, a twenty-tag sheet asked master data twenty times over - and the
+    # promotion once per tag on top - for a page that draws once.
+    # A terminal request resolves only the tags with no pin at all: it can
     # decide nothing, so diffing the pinned ones is work with no reader.
-    needed = lines if not terminal else [
-        line for line in lines if not line.pinned_tag_data
-    ]
+    needed = (
+        [tag for _, _, _, tag in walk]
+        if not terminal
+        else [tag for _, _, _, tag in walk if not tag.pinned_tag_data]
+    )
     live_rows: dict = (
-        {row["line_id"]: row for row in resolve_lines_live(db, request, needed)}
+        {row["tag_id"]: row for row in resolve_tags_live(db, request, needed)}
         if needed
         else {}
     )
@@ -502,22 +842,22 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
         else _promotion_is_live(db, getattr(request, "promotion_id", None))
     )
 
-    for line in lines:
-        pinned = line.pinned_tag_data
+    for line_index, tag_index, line, tag in walk:
+        pinned = tag.pinned_tag_data
         if pinned:
-            row = _row_from_pin(db, line, pinned)
+            row = _row_from_pin(db, line, tag, pinned, _tag_label(line_index, tag_index))
             if not terminal:
-                live = live_rows.get(line.id)
+                live = live_rows.get(tag.id)
                 if live is not None:
                     # The PIN AS READ, not as stored: the marketing override is
-                    # applied to both sides, so the office's own decision is
-                    # not read back to it as "master data moved" (S4).
+                    # applied to both sides, so the office's own decision is not
+                    # read back to it as "master data moved" (S4).
                     row["data_changes"] = diff_pin_against_live(
                         db,
                         request,
                         row,
                         live,
-                        line.data_change_ack_hash,
+                        tag.data_change_ack_hash,
                         promotion_live=promotion_live,
                     )
                 else:
@@ -525,7 +865,7 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             rows.append(row)
             continue
 
-        live = live_rows.get(line.id)
+        live = live_rows.get(tag.id)
         if live is not None:
             if not terminal:
                 live["data_changes"] = []
@@ -535,116 +875,52 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
 
 
 def resolve_version_line_data(db: Session, request, pinned_line_data: dict) -> list[dict]:
-    """The lines as ONE VERSION carries them (D19/S2).
+    """The tags as ONE VERSION carries them (D19/S2).
 
     A version holds two things: the document, and the product data pinned when
     it was written. Drawing the document against today's pins shows last week's
-    layout filled with this week's prices - a page that never existed,
-    presented as history, and exactly what somebody opens History to check.
+    layout filled with this week's prices - a page that never existed, presented
+    as history, and exactly what somebody opens History to check.
 
-    A version written before the pins existed has nothing of its own, so those
-    lines fall back to the live resolve rather than drawing blank.
+    The map is keyed by TAG id, which is what the document keys its placements
+    on. A version written before the pins existed has nothing of its own, so
+    those tags fall back to the live resolve rather than drawing blank.
     """
     pins = pinned_line_data or {}
     rows: list[dict] = []
-    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
-        pinned = pins.get(line.id) or pins.get(str(line.id))
+    for line_index, tag_index, line, tag in ordered_tags(request):
+        label = _tag_label(line_index, tag_index)
+        pinned = pins.get(tag.id) or pins.get(str(tag.id))
         if pinned:
-            rows.append(_row_from_pin(db, line, pinned))
+            rows.append(_row_from_pin(db, line, tag, pinned, label))
             continue
-        live = _live_line_data(db, request, line)
-        if live is not None:
-            rows.append(live)
+        live = resolve_tags_live(db, request, [tag])
+        if live:
+            rows.append(live[0])
     return rows
 
 
-def _row_from_pin(db: Session, line, pinned: dict) -> dict:
+def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     """The pin, as the resolver's own row shape.
 
-    Two things are read fresh rather than from the pin: the photo URLs (a
-    signed link expires within the hour) and the marketing override (a decision
-    that must survive whatever the pin says).
+    Four things are read fresh rather than from the pin: the photo URLs (a
+    signed link expires within the hour), the marketing override (a decision
+    that must survive whatever the pin says), the tag's quantity, and the
+    label, which is a POSITION - deleting the line above must renumber it.
     """
     from app.services.dealer_kit.product_images import resign_images
 
     row = dict(pinned)
+    row["tag_id"] = tag.id
     row["line_id"] = line.id
+    row["tag_label"] = tag_label
     row["images"] = resign_images(db, pinned.get("images") or [])
-    row["quantity"] = line.quantity
+    row["quantity"] = tag.quantity
     row["show_promo_price"] = line.show_promo_price
     row["included_accessories"] = line.included_accessories or ""
-    if line.marketing_price_override is not None:
-        row["sell_price"] = Decimal(str(line.marketing_price_override))
+    if tag.marketing_price_override is not None:
+        row["sell_price"] = Decimal(str(tag.marketing_price_override))
     return row
-
-
-def _live_line_data(db: Session, request, line) -> Optional[dict]:
-    """What master data says about this line RIGHT NOW."""
-    rows = resolve_lines_live(db, request, [line])
-    return rows[0] if rows else None
-
-
-def resolve_lines_live(db: Session, request, lines) -> list[dict]:
-    """The pre-r9 resolver, unchanged, over the lines it is given."""
-    viewer = staff_viewer()
-    promotion_id = getattr(request, "promotion_id", None)
-    rows: list[dict] = []
-
-    for line in lines:
-        data: dict
-        set_members = ""
-
-        if line.product_set_id:
-            product_set = get_product_set(db, line.product_set_id)
-            if product_set is None:
-                continue
-            data = product_set_tag_data(db, product_set, viewer, promotion_id)
-            set_members = _set_member_text(data["members"])
-            code, name = data["set_code"], data["name"]
-            # A set has no spec row of its own: the specs belong to its members,
-            # and a set tag lists the members rather than their materials. Same
-            # for barcode - a set has no single EAN either (S7).
-            dimensions, specs, images, spec_values = "", "", [], []
-            barcode = None
-        elif line.product_id:
-            product = get_product(db, line.product_id)
-            if product is None:
-                continue
-            data = product_tag_data(db, product, viewer, promotion_id)
-            code, name = data["code"], data["name"]
-            dimensions = data["dimensions"]
-            specs = "\n".join(data["spec_lines"])
-            images = data["images"]
-            spec_values = data["specs"]
-            barcode = data["barcode"]
-        else:
-            continue
-
-        sell_price = data["offer_price"]
-        if line.marketing_price_override is not None:
-            sell_price = Decimal(str(line.marketing_price_override))
-
-        rows.append(
-            {
-                "line_id": line.id,
-                "code": code,
-                "name": name,
-                "dimensions": dimensions,
-                "spec_lines": specs,
-                "specs": spec_values,
-                "set_members": set_members,
-                "images": images,
-                "list_price": data["list_price"],
-                "sell_price": sell_price,
-                "show_promo_price": line.show_promo_price,
-                "included_accessories": line.included_accessories or "",
-                "quantity": line.quantity,
-                "barcode": barcode,
-            }
-        )
-
-    return rows
-
 
 
 # ---------------------------------------------------------------------------
@@ -664,7 +940,7 @@ def _plain(value):
 
 
 def pin_payload(row: dict) -> dict:
-    """What gets stored on the line: the resolved row, JSON-safe.
+    """What gets stored on the tag: the resolved row, JSON-safe.
 
     Photos keep their ``attachment_id``/``is_primary``; the URL travels too but
     is re-signed on every read (`_row_from_pin`), because a signed link is dead
@@ -852,33 +1128,33 @@ def _promotion_is_live(db: Session, promotion_id) -> bool:
     return True
 
 
-def pin_lines(db: Session, request, *, only_unpinned: bool = True) -> int:
+def pin_tags(db: Session, request, *, only_unpinned: bool = True) -> int:
     """Freeze what the tags are drawn from (D16).
 
-    Called when a request starts being designed and when a line is added to one
-    already in progress. ``only_unpinned`` is the default and the reason the
-    gate works at all: re-pinning on the way back from ``changes_requested``
-    would swallow the very difference it exists to show.
+    Called when a request starts being designed, when a line is added to one
+    already in progress, and when marketing resolves a tag's open choice (which
+    changes what the tag resolves to, so the old pin describes a different
+    product). ``only_unpinned`` is the default and the reason the gate works at
+    all: re-pinning on the way back from ``changes_requested`` would swallow the
+    very difference it exists to show.
     """
-    pinned = 0
-    lines = [
-        line
-        for line in request.lines
-        if not (only_unpinned and line.pinned_tag_data is not None)
+    tags = [
+        tag
+        for _, _, _, tag in ordered_tags(request)
+        if not (only_unpinned and tag.pinned_tag_data is not None)
     ]
-    if not lines:
+    if not tags:
         return 0
-    rows = {
-        row["line_id"]: row for row in resolve_lines_live(db, request, lines)
-    }
+    rows = {row["tag_id"]: row for row in resolve_tags_live(db, request, tags)}
     now = datetime.utcnow()
-    for line in lines:
-        row = rows.get(line.id)
+    pinned = 0
+    for tag in tags:
+        row = rows.get(tag.id)
         if row is None:
             continue
-        line.pinned_tag_data = pin_payload(row)
-        line.pinned_at = now
-        line.data_change_ack_hash = None
+        tag.pinned_tag_data = pin_payload(row)
+        tag.pinned_at = now
+        tag.data_change_ack_hash = None
         pinned += 1
     if pinned:
         db.flush()
@@ -889,9 +1165,10 @@ __all__ = [
     "STAFF_VIEWER",
     "data_hash",
     "diff_pin_against_live",
-    "resolve_lines_live",
+    "ordered_tags",
+    "resolve_tags_live",
     "resolve_version_line_data",
-    "pin_lines",
+    "pin_tags",
     "pin_payload",
     "dimensions_text",
     "format_dimensions_mm",

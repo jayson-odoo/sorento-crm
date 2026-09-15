@@ -1135,7 +1135,18 @@ export interface BoardContribution {
   project_key?: string | null;
   line_no: number;
   item_code: string;
-  /** The still-owed quantity. `qty_outstanding` is the same number under its own name. */
+  /**
+   * What this line ASKS FOR: the PLAN quantity, `coalesce(qty_required, qty_ordered)`.
+   *
+   * NOT the still-owed figure, and no longer an alias of `qty_outstanding` below (14 Sep
+   * 2026 ruling). The board asks who decided where a line's stock comes from rather than
+   * whether delivery is outstanding, so a delivered unit nobody sourced is a unit to put
+   * back and the ladder is asked for the whole quantity.
+   *
+   * This is the number every composition must sum to: the server's balance check validates
+   * against it (`_LineFacts.open_qty`), so the editor, `lineFor` and the cell total all
+   * read this one and never `qty_outstanding`.
+   */
   qty: string;
   /**
    * What the sales order ORDERED on this line, as a fact off the server.
@@ -1145,7 +1156,14 @@ export interface BoardContribution {
    * moved one of them. Absent renders as a stated absence, never as a guess.
    */
   qty_ordered?: string | null;
-  /** The owed quantity under its own name. `qty` is kept as an alias of it. */
+  /**
+   * What is still owed the CUSTOMER: ordered less delivered, floored at zero.
+   *
+   * A FACT ABOUT DELIVERY, and nothing composes against it. It was an alias of `qty` until
+   * the 14 September 2026 ruling and the two now differ on every line with a delivery -
+   * printing one under the other's name would make the screen state a delivery that never
+   * happened, or ask a planner to balance against a figure the server will refuse.
+   */
   qty_outstanding?: string | null;
   /** What has already been delivered against the line. Ordered - delivered = outstanding. */
   qty_delivered?: string | null;

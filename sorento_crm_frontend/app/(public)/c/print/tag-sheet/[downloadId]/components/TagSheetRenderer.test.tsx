@@ -14,10 +14,12 @@ import type { TagLayer, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types'
 import { defaultPriceBadgeProps } from '@/lib/dealer-kit/tag-template-types';
 import TagSheetRenderer, { type ResolvedLineData } from './TagSheetRenderer';
 
+const TAG_ID = 'tag-1';
 const LINE_ID = 'line-1';
 
 function resolved(overrides: Partial<ResolvedLineData> = {}): ResolvedLineData {
   return {
+    tag_id: TAG_ID,
     line_id: LINE_ID,
     code: 'SK-1234',
     name: 'Kitchen Sink',
@@ -67,7 +69,7 @@ function docWith(layers: TagLayer[]): TagSheetDoc {
           {
             id: 't1',
             template_id: 'tpl-1',
-            request_line_id: LINE_ID,
+            request_tag_id: TAG_ID,
             x_mm: 5,
             y_mm: 5,
             width_mm: 95,
@@ -87,7 +89,7 @@ describe('price_badge on the print page', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -101,7 +103,7 @@ describe('price_badge on the print page', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -119,7 +121,7 @@ describe('price_badge on the print page', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -138,7 +140,7 @@ describe('price_badge on the print page', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved({ show_promo_price: false }) }}
+        resolvedData={{ [TAG_ID]: resolved({ show_promo_price: false }) }}
       />,
     );
 
@@ -154,7 +156,7 @@ describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -179,7 +181,7 @@ describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -216,7 +218,7 @@ describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -231,7 +233,7 @@ describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -259,7 +261,7 @@ describe('the price badge figure typography on the print page (r4b, AC-S6-4/5)',
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -282,7 +284,7 @@ describe('the price badge figure typography on the print page (r4b, AC-S6-4/5)',
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -300,7 +302,7 @@ describe('the price badge figure typography on the print page (r4b, AC-S6-4/5)',
             props: { ...defaultPriceBadgeProps('promo'), fontSize: 32 },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -332,7 +334,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -362,7 +364,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -392,7 +394,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -421,7 +423,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -451,7 +453,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -481,7 +483,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -504,7 +506,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/a1.png' }}
       />,
     );
@@ -529,7 +531,7 @@ describe('bound text and pictures on the print page', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         images={{ 'att-1': 'https://cdn.test/photo.jpg' }}
       />,
     );
@@ -552,7 +554,7 @@ describe('bound text and pictures on the print page', () => {
           }),
         ])}
         resolvedData={{
-          [LINE_ID]: resolved({
+          [TAG_ID]: resolved({
             images: [
               { attachment_id: 'att-1', url: 'https://cdn.test/other.jpg', is_primary: false },
               { attachment_id: 'att-2', url: 'https://cdn.test/primary.jpg', is_primary: true },
@@ -583,7 +585,7 @@ describe('bound text and pictures on the print page', () => {
           }),
         ])}
         resolvedData={{
-          [LINE_ID]: resolved({
+          [TAG_ID]: resolved({
             images: [
               { attachment_id: 'att-2', url: 'https://cdn.test/primary.jpg', is_primary: true },
             ],
@@ -610,7 +612,7 @@ describe('bound text and pictures on the print page', () => {
             props: { kind: 'image', source: null, assetId: 'a1', fit: 'contain' },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/legacy.png' }}
       />,
     );
@@ -641,7 +643,7 @@ describe('image fit on the print page (S3b, AC-3/5)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -659,7 +661,7 @@ describe('image fit on the print page (S3b, AC-3/5)', () => {
             props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'cover' },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -674,7 +676,7 @@ describe('image fit on the print page (S3b, AC-3/5)', () => {
             props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'contain' },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -715,7 +717,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -742,7 +744,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -781,7 +783,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -821,7 +823,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -855,7 +857,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -884,7 +886,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -909,7 +911,7 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
             props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'contain' },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{ a1: 'https://cdn.test/photo.png' }}
       />,
     );
@@ -946,7 +948,7 @@ describe('barcode on the print page', () => {
     render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -963,7 +965,7 @@ describe('barcode on the print page', () => {
     const { container } = render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -981,7 +983,7 @@ describe('barcode on the print page', () => {
     render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer(false)])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -995,7 +997,7 @@ describe('barcode on the print page', () => {
     render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: 'SKU-NOT-EAN' }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: 'SKU-NOT-EAN' }) }}
         assets={{}}
         images={{}}
       />,
@@ -1008,7 +1010,7 @@ describe('barcode on the print page', () => {
     const { container } = render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: null }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: null }) }}
         assets={{}}
         images={{}}
       />,
@@ -1024,7 +1026,7 @@ describe('barcode on the print page', () => {
     const { container } = render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: '' }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: '' }) }}
         assets={{}}
         images={{}}
       />,
@@ -1043,7 +1045,7 @@ describe('barcode on the print page', () => {
     render(
       <TagSheetRenderer
         doc={docWith([{ ...barcodeLayer(), text_override: '111222333' }])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -1058,7 +1060,7 @@ describe('barcode on the print page', () => {
     render(
       <TagSheetRenderer
         doc={docWith([{ ...barcodeLayer(), text_override: VALID_EAN13 }])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: null }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: null }) }}
         assets={{}}
         images={{}}
       />,
@@ -1071,7 +1073,7 @@ describe('barcode on the print page', () => {
     const { container } = render(
       <TagSheetRenderer
         doc={docWith([{ ...barcodeLayer(), text_override: '' }])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -1090,7 +1092,7 @@ describe('barcode on the print page', () => {
     render(
       <TagSheetRenderer
         doc={docWith([barcodeLayer()])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -1121,7 +1123,7 @@ describe('barcode on the print page', () => {
             props: { kind: 'barcode', show_code: true },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        resolvedData={{ [TAG_ID]: resolved({ barcode: VALID_EAN13 }) }}
         assets={{}}
         images={{}}
       />,
@@ -1159,7 +1161,7 @@ describe('polygon shape on the print page (S4, AC-S4-6)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{}}
         images={{}}
       />,
@@ -1196,7 +1198,7 @@ describe('polygon shape on the print page (S4, AC-S4-6)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
         assets={{}}
         images={{}}
       />,
@@ -1229,7 +1231,7 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1260,7 +1262,7 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1286,7 +1288,7 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1324,7 +1326,7 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1350,7 +1352,7 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1372,7 +1374,7 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1404,7 +1406,7 @@ describe('price badge margin on the print page (S3b, AC-7/8)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1438,7 +1440,7 @@ describe('price badge margin on the print page (S3b, AC-7/8)', () => {
             },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1463,7 +1465,7 @@ describe('price badge currency on the print page (S3c, AC-14/15)', () => {
         doc={docWith([
           layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1479,7 +1481,7 @@ describe('price badge currency on the print page (S3c, AC-14/15)', () => {
             props: { ...defaultPriceBadgeProps('list_only'), showCurrency: false },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 
@@ -1496,7 +1498,7 @@ describe('price badge currency on the print page (S3c, AC-14/15)', () => {
             props: { ...defaultPriceBadgeProps('promo'), showCurrency: false },
           }),
         ])}
-        resolvedData={{ [LINE_ID]: resolved() }}
+        resolvedData={{ [TAG_ID]: resolved() }}
       />,
     );
 

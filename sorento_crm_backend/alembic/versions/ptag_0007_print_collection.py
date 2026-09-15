@@ -11,7 +11,7 @@ testable by importing the revision and calling it (precedent:
 ``487_chatbot_warehouse_cue``).
 
 Revision ID: ptag_0007_print_collection
-Revises: 517_chatbot_low_stock_vocab
+Revises: ptag_0009_combos_tags
 """
 import uuid
 
@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 revision = "ptag_0007_print_collection"
-down_revision = "517_chatbot_low_stock_vocab"
+down_revision = "ptag_0009_combos_tags"
 branch_labels = None
 depends_on = None
 
@@ -131,17 +131,19 @@ def upgrade() -> None:
             sa.ForeignKey("price_tag_requests.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        # The TAG this pin points at; NULL = a general comment about the whole
+        # design. A tag, not a line, because a line prints one tag per open
+        # option since `ptag_0009_combos_tags` and two of them show different
+        # products - a pin is about the one that was clicked. The sheet's own
+        # copies of a tag are the SAME tag, so the pin draws on every copy and
+        # needs no placed-copy id of its own.
         sa.Column(
-            "line_id",
+            "tag_id",
             postgresql.UUID(as_uuid=False),
-            sa.ForeignKey("price_tag_request_lines.id", ondelete="CASCADE"),
+            sa.ForeignKey("price_tag_request_tags.id", ondelete="CASCADE"),
             nullable=True,
         ),
         sa.Column("round", sa.Integer(), nullable=False, server_default="1"),
-        # The ONE placed copy of the tag this pin was clicked on, when a sheet
-        # prints the same line more than once. Null falls back to drawing on
-        # every copy of the line (owner test round finding 1).
-        sa.Column("placed_tag_id", sa.String(64), nullable=True),
         # Fractions of the TAG box, never page millimetres.
         sa.Column("x", sa.Numeric(6, 4), nullable=True),
         sa.Column("y", sa.Numeric(6, 4), nullable=True),
@@ -188,7 +190,7 @@ def upgrade() -> None:
         ["request_id"],
     )
     op.create_index(
-        "ix_ptag_review_comments_line_id", "price_tag_review_comments", ["line_id"]
+        "ix_ptag_review_comments_tag_id", "price_tag_review_comments", ["tag_id"]
     )
     op.create_index(
         "ix_price_tag_review_comments_company_id",
@@ -282,7 +284,7 @@ def downgrade() -> None:
         table_name="price_tag_review_comments",
     )
     op.drop_index(
-        "ix_ptag_review_comments_line_id", table_name="price_tag_review_comments"
+        "ix_ptag_review_comments_tag_id", table_name="price_tag_review_comments"
     )
     op.drop_index(
         "ix_ptag_review_comments_request_id", table_name="price_tag_review_comments"

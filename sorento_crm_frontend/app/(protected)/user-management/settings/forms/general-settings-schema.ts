@@ -56,6 +56,10 @@ export const GeneralSettingsSchema = z.object({
   priceTagAutoCollectDays: z.coerce.number().int().min(0).max(90),
   /** SCM front planning: the grain new plans are decided at (AC-F01). */
   planGrain: z.enum(['product', 'location']),
+  /** Price tag packages (D2): the product classes a line is warned about when it
+   *  reaches marketing without its catalogue package. Empty warns nobody, which
+   *  is a legitimate answer, so there is no minimum. */
+  priceTagGuardedClasses: z.array(z.string()),
   purchaseRequestDefaultApproverUserId: z.string(),
   sponsorshipFormDefaultApproverUserId: z.string(),
 });

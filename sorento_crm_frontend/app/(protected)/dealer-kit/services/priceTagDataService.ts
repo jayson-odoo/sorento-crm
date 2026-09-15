@@ -5,20 +5,20 @@
  *
  * ```
  * GET  /api/v1/dealer-kit/price-tag-requests/{id}/data-changes
- *   200 [{ line_id, code, name, changes: LineDataChange[] }]
- *   The same diff the resolver computes per line; a terminal request answers
+ *   200 [{ tag_id, tag_label, line_id, code, name, changes: LineDataChange[] }]
+ *   The same diff the resolver computes per TAG; a terminal request answers
  *   an empty list, because nothing on it can be updated.
  *
- * POST /api/v1/dealer-kit/price-tag-requests/{id}/lines/{lineId}/pin
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/tags/{tagId}/pin
  *   { action: "update" | "keep" }
- *   200 { line_id, pinned_at }
+ *   200 { tag_id, pinned_at }
  *   update = snapshot the draft as "Before product update: <fields>", then
  *            overwrite the pin and clear the ack
  *   keep   = store the live hash as the ack, so the same change stops asking
  *
  * POST /api/v1/dealer-kit/price-tag-requests/{id}/data-changes/recheck
- *   200 [{ line_id, code, name, changes: LineDataChange[] }]
- *   Clears every line's Keep ack and answers the same shape the GET does -
+ *   200 [{ tag_id, tag_label, line_id, code, name, changes: LineDataChange[] }]
+ *   Clears every tag's Keep ack and answers the same shape the GET does -
  *   "Check product data" re-arms a gate a Keep silenced (owner round finding 3).
  *
  * GET  /api/v1/dealer-kit/price-tag-requests/{id}/versions
@@ -39,11 +39,11 @@ import {
   type TagSheetDesignPayload,
 } from '@/lib/dealer-kit/design-payload';
 import type {
-  LineDataChangeSet,
+  TagDataChangeSet,
   RequestVersionSummary,
 } from '@/lib/dealer-kit/product-data-changes';
 
-export type { LineDataChangeSet, RequestVersionSummary };
+export type { TagDataChangeSet, RequestVersionSummary };
 
 const BASE = '/api/v1/dealer-kit/price-tag-requests';
 
@@ -54,14 +54,14 @@ async function unwrap<T>(response: Response, fallback: string): Promise<T> {
   return response.json();
 }
 
-/** What has changed under this request since its data was pinned. */
-export async function listLineDataChanges(
+/** What has changed under this request since its tags' data was pinned. */
+export async function listTagDataChanges(
   requestId: string,
-): Promise<LineDataChangeSet[]> {
+): Promise<TagDataChangeSet[]> {
   const response = await apiFetch(
     `${BASE}/${encodeURIComponent(requestId)}/data-changes`,
   );
-  return unwrap<LineDataChangeSet[]>(
+  return unwrap<TagDataChangeSet[]>(
     response,
     'Failed to load the product changes',
   );
@@ -72,33 +72,33 @@ export async function listLineDataChanges(
  * request and re-runs the comparison, so a red dot silenced once is not
  * silenced forever - a later, unrelated edit trips the gate again.
  */
-export async function recheckLineDataChanges(
+export async function recheckTagDataChanges(
   requestId: string,
-): Promise<LineDataChangeSet[]> {
+): Promise<TagDataChangeSet[]> {
   const response = await apiFetch(
     `${BASE}/${encodeURIComponent(requestId)}/data-changes/recheck`,
     { method: 'POST' },
   );
-  return unwrap<LineDataChangeSet[]>(
+  return unwrap<TagDataChangeSet[]>(
     response,
     'Failed to recheck the product data',
   );
 }
 
 /**
- * Answer one line's question (D18).
+ * Answer one TAG's question (D18).
  *
  * `update` snapshots the design as it stands BEFORE it takes the new values,
  * so the tag is always one Restore away from what it was; `keep` records the
  * ack so the same change stops asking.
  */
-export async function resolveLinePin(
+export async function resolveTagPin(
   requestId: string,
-  lineId: string,
+  tagId: string,
   action: 'update' | 'keep',
 ): Promise<void> {
   const response = await apiFetch(
-    `${BASE}/${encodeURIComponent(requestId)}/lines/${encodeURIComponent(lineId)}/pin`,
+    `${BASE}/${encodeURIComponent(requestId)}/tags/${encodeURIComponent(tagId)}/pin`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -108,13 +108,13 @@ export async function resolveLinePin(
   await unwrap<unknown>(response, 'Failed to apply that decision');
 }
 
-/** "Update all" (D18): the same call per changed line, in order. */
-export async function updateAllLinePins(
+/** "Update all" (D18): the same call per changed tag, in order. */
+export async function updateAllTagPins(
   requestId: string,
-  lineIds: string[],
+  tagIds: string[],
 ): Promise<void> {
-  for (const lineId of lineIds) {
-    await resolveLinePin(requestId, lineId, 'update');
+  for (const tagId of tagIds) {
+    await resolveTagPin(requestId, tagId, 'update');
   }
 }
 

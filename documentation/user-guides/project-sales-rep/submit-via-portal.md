@@ -79,6 +79,18 @@ A section you collapse stays collapsed - it only reopens automatically the first
 
 Click **Save Draft** or **Submit** as usual once you're done (see above).
 
+### Packages and parts on a line
+
+Some products are sold as a catalogue package: a cabinet that goes out with a table top, a mirror, a tap and a pop-up waste, and a basin the customer picks a colour of. You don't have to know the package or type the extra codes - ask for the product you know and the rest fills itself in.
+
+* **Picking the product fills its parts in.** Each part appears as its own row under the line, showing the name and the code.
+* **When the product is sold in more than one package**, a **Package** select appears on the line with the catalogue's own names (*2 in 1*, *3 in 1*). Choose one and its parts fill in; change it and they're replaced. Clear it and the line has no parts.
+* **A part the customer chooses from a list** arrives as an open row with its own select, placeholder *"Not sure, any of 4"*. Pick the code if you know it. If you don't, leave it alone - *"Marketing will prepare one tag per option"*, which is exactly what the line under the row says.
+* **Fix the package by hand where you need to.** Remove any part row with its trash icon, and add a part the package didn't cover with **Add part** under the line. **Add part** is on every product line, package or not.
+* **Nothing here blocks Submit.** On a bathroom furniture or kitchen sink line, if the product has no package recorded, or you left the **Package** select empty, or parts are missing, the row shows a **Package warning** pill with a short note (*"No package defined"*, *"No package chosen"*, *"Missing: SRTMR502-BL"*). Submit works anyway and marketing sees the same note on their copy, so they can fill the gap.
+* **Quantity and Remarks stay per line**, not per part - marketing prints one tag per line, and one per option when you leave a choice open.
+* **Save Draft keeps all of it**: the package you chose, the parts, and the rows you left open. Once submitted, the read-only view lists the parts under each line and the warning, exactly as sent.
+
 ### Viewing a submitted price tag request
 
 Once submitted, the request shows the same four sections read-only, all open, with the Sales Order thumbnails still tappable to preview. From the moment marketing marks the design ready, a **Design** card sits above them all - reading it, asking for changes on it, approving and collecting are covered in [Review a price tag design, ask for changes, approve and collect](price-tag-request-review-and-collection.md). **A submitted price tag request can't be edited directly** - the same rule as a stock inquiry. Draft requests are the exception: a draft stays fully editable until you submit it.

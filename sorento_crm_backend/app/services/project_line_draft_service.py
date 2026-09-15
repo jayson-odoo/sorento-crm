@@ -34,8 +34,8 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
-from app.services.project_supply_service import _open_of
-from app.services.scm.demand import is_open_demand
+from app.services.project_supply_service import plan_qty_of
+from app.services.scm.demand import is_undecided_demand
 from app.services.scm.front_planning_engine import qty_text
 
 #: `${sales_order_id}|${line_no}|${item_code}|${bucket_key}` - `_Row.key` in
@@ -123,18 +123,24 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
     handed out and a key resolved here name the same line. Where a mirror line exists for
     EVERY line of the order and numbers them distinctly, its numbers win.
 
-    The SET of lines numbered is the board's own `_demand_rows` set - `SalesOrder.status ==
-    "open"`, `SalesOrder.demand_class == "project"`, `is_open_demand()` on the line - never
-    every line the order has ever carried. A save against SO391698 line 10 read back
-    "line not found" without this: the order carries lines this board never counted (closed,
-    non-project, or already covered), so numbering ALL of them landed line 10 on a different
-    row than the one the board's own ordinal gave the same product its date.
+    The SET of lines numbered is the board's own `_demand_rows` set - `SalesOrder.status in
+    (open, closed)`, `SalesOrder.demand_class == "project"`, `is_undecided_demand()` on the
+    line - never every line the order has ever carried. A save against SO391698 line 10 read
+    back "line not found" without this: the order carries lines this board never counted
+    (non-project, cancelled, or already marked no purchase needed), so numbering ALL of them
+    landed line 10 on a different row than the one the board's own ordinal gave the same
+    product its date.
+
+    IT HAS TO MOVE WITH THE BOARD, and on 14 September 2026 the board moved (AC-S2-16). Left
+    on `is_open_demand()` it refused every draft on a delivered or closed line the board had
+    just started showing - PUT and DELETE both 422'd, so Confirm never left 0 on exactly the
+    order this lane exists for.
     """
     order = (
         db.query(SalesOrder.id)
         .filter(
             SalesOrder.id == sales_order_id,
-            SalesOrder.status == "open",
+            SalesOrder.status.in_(["open", "closed"]),
             SalesOrder.demand_class == "project",
         )
         .one_or_none()
@@ -145,7 +151,7 @@ def _resolve_core_line(db: Session, sales_order_id: str, line_no: int, item_code
     lines = (
         db.query(SalesOrderLine, Product.product_code)
         .join(Product, Product.id == SalesOrderLine.product_id)
-        .filter(SalesOrderLine.sales_order_id == sales_order_id, is_open_demand())
+        .filter(SalesOrderLine.sales_order_id == sales_order_id, is_undecided_demand())
         .all()
     )
     if not lines:
@@ -201,9 +207,16 @@ def _line_snapshot(line: SalesOrderLine) -> Dict[str, Any]:
     `open_qty` and `required_date` - never the proposal: the proposal depends on which
     orders share the board, its granularity and its window, so a snapshot of it flipped
     stale falsely the moment a planner opened a different view of the same line.
+
+    `open_qty` IS THE PLAN QUANTITY (AC-S2-17), the figure the board shows and the figure a
+    composition is balanced against. Frozen as `_open_of` it read 0 on a 3-ordered,
+    3-delivered line while the board compared it against 3, so a draft was stale the instant
+    it was saved: the pill read "Suggestion changed" and `lineFor` dropped the line, leaving
+    Confirm at 0 on the order this lane exists for. What makes a draft stale is the line's
+    ASK moving, not a delivery against it.
     """
     return {
-        "open_qty": qty_text(_open_of(line)),
+        "open_qty": qty_text(plan_qty_of(line)),
         "required_date": line.required_date.isoformat() if line.required_date else None,
     }
 

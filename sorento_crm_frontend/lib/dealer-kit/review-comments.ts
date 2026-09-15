@@ -12,13 +12,13 @@
  * ```
  * POST /api/v1/public/portal/submissions/price_tag_request/{id}/request-changes
  *   {
- *     comments: [{ line_id: string | null, x: number, y: number,
+ *     comments: [{ tag_id: string | null, x: number, y: number,
  *                  w: number, h: number, body: string }],   // fractions 0..1
  *     note?: string          // the general comment, optional
  *   }
  *   200 { status: "changes_requested", round: number, comments: ReviewComment[] }
  *   The legacy body `{ note }` alone stays accepted for one release and lands
- *   as one general comment (line_id null, no fractions).
+ *   as one general comment (tag_id null, no fractions).
  *
  * GET /api/v1/public/portal/submissions/price_tag_request/{id}/review-comments
  *   200 ReviewComment[]      // every round, oldest first; the salesperson's
@@ -42,17 +42,15 @@ import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 export interface ReviewComment {
   id: string;
   request_id: string;
-  /** Null for a general comment - it points at no tag. */
-  line_id: string | null;
   /**
-   * The ONE placed copy of the tag this pin was clicked on, when a sheet
-   * prints the same line more than once (a quantity > 1, or "Apply to all
-   * lines"). Null on a general comment, a legacy pin sent before this field
-   * existed, or a copy the sheet no longer carries - any of those falls back
-   * to drawing on every copy of the line. Optional (not just nullable) so a
-   * pre-r9 caller that has not been told about it yet still type-checks.
+   * The TAG this pin points at; null for a general comment.
+   *
+   * A tag, not a line: a line prints one tag per open option since the combos
+   * slice, and two of those show different products. The sheet's own copies of
+   * ONE tag (quantity > 1) all draw the same artwork, so a pin on any of them
+   * is a pin on the tag and renders on all of them.
    */
-  placed_tag_id?: string | null;
+  tag_id: string | null;
   round: number;
   /** Fractions of the tag box, 0..1. Null on a general comment. */
   x: number | null;
@@ -71,9 +69,7 @@ export interface ReviewComment {
 export interface DraftPin {
   /** Client-side key, never an id the server knows. */
   key: string;
-  line_id: string;
-  /** The placed copy that was clicked, or null when the line has only one. */
-  placed_tag_id?: string | null;
+  tag_id: string;
   x: number;
   y: number;
   w: number;
@@ -84,8 +80,7 @@ export interface DraftPin {
 /** What `POST .../request-changes` carries. */
 export interface ChangeRequestPayload {
   comments: {
-    line_id: string | null;
-    placed_tag_id?: string | null;
+    tag_id: string | null;
     x: number | null;
     y: number | null;
     w: number | null;
@@ -104,8 +99,10 @@ const PX_PER_MM = 96 / 25.4;
 
 /** One placed tag's box on screen, in scaled pixels from the sheet's corner. */
 export interface TagRect {
+  /** The PLACEMENT id in the document (`<tagId>-cN` for a quantity copy). */
   tagId: string;
-  lineId: string;
+  /** The request tag this copy draws. Several copies share one. */
+  requestTagId: string;
   left: number;
   top: number;
   width: number;
@@ -122,7 +119,7 @@ export function tagRectsForSheet(
   if (!sheet) return [];
   return sheet.tags.map((tag) => ({
     tagId: tag.id,
-    lineId: tag.request_line_id,
+    requestTagId: tag.request_tag_id,
     left: tag.x_mm * PX_PER_MM * scale,
     top: tag.y_mm * PX_PER_MM * scale,
     width: tag.width_mm * PX_PER_MM * scale,
@@ -151,7 +148,7 @@ export function numberedPins(
   const draftNumbers = new Map<string, number>();
   let next = 1;
   for (const comment of comments) {
-    if (comment.line_id === null) continue; // general comments carry no marker
+    if (comment.tag_id === null) continue; // general comments carry no marker
     commentNumbers.set(comment.id, next);
     next += 1;
   }
@@ -167,12 +164,12 @@ export function openComments(comments: ReviewComment[]): ReviewComment[] {
   return comments.filter((comment) => comment.resolved_at === null);
 }
 
-/** Open pin count per line, for the designer's LINES rail badge (D6). */
-export function openCountByLine(comments: ReviewComment[]): Map<string, number> {
+/** Open pin count per TAG, for the designer's LINES rail badge (D6). */
+export function openCountByTag(comments: ReviewComment[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const comment of openComments(comments)) {
-    if (!comment.line_id) continue;
-    counts.set(comment.line_id, (counts.get(comment.line_id) ?? 0) + 1);
+    if (!comment.tag_id) continue;
+    counts.set(comment.tag_id, (counts.get(comment.tag_id) ?? 0) + 1);
   }
   return counts;
 }
@@ -180,8 +177,8 @@ export function openCountByLine(comments: ReviewComment[]): Map<string, number> 
 /**
  * One marker the designer canvas draws over the artboard (D6).
  *
- * The canvas edits ONE line's tag, and the artboard IS that tag's box, so a
- * comment's fractions map straight onto it with no sheet geometry in between.
+ * The canvas edits ONE tag, and the artboard IS that tag's box, so a comment's
+ * fractions map straight onto it with no sheet geometry in between.
  */
 export interface CanvasReviewPin {
   id: string;
@@ -196,31 +193,23 @@ export interface CanvasReviewPin {
 }
 
 /**
- * This line's pinned comments, numbered the same way every other surface
+ * This TAG's pinned comments, numbered the same way every other surface
  * numbers them.
  *
- * `placedTagId` is the ONE copy the canvas has open (the artboard IS that
- * `PlacedTag`, owner round finding 1): when given, a pin anchored to a
- * DIFFERENT copy of this line is left out, and a pin with no copy of its own
- * (null - a general fallback or a legacy pin) still comes back, the same
- * fallback `DesignPinLayer` draws on the sheet.
+ * The canvas edits ONE tag, and every copy of that tag on the sheet draws the
+ * same artwork, so there is no copy to disambiguate: a pin on the tag is a pin
+ * on what the canvas has open.
  */
-export function canvasPinsForLine(
+export function canvasPinsForTag(
   comments: ReviewComment[],
-  lineId: string | null,
-  placedTagId?: string | null,
+  tagId: string | null,
 ): CanvasReviewPin[] {
-  if (!lineId) return [];
+  if (!tagId) return [];
   const { commentNumbers } = numberedPins(comments, []);
   return comments
     .filter(
       (comment) =>
-        comment.line_id === lineId &&
-        comment.x !== null &&
-        comment.y !== null &&
-        (!placedTagId ||
-          !comment.placed_tag_id ||
-          comment.placed_tag_id === placedTagId),
+        comment.tag_id === tagId && comment.x !== null && comment.y !== null,
     )
     .map((comment) => ({
       id: comment.id,

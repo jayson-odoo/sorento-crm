@@ -27,6 +27,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
@@ -45,6 +46,7 @@ import {
   getUsersForApproverSelect,
   type UserForSelect,
 } from '@/app/(protected)/procurement-management/purchase-requests/services/purchaseRequestService';
+import { getProductClassLabels } from '@/app/(protected)/master-data-management/product-categories/services/categoryService';
 
 type SupplierSelectRow = {
   id: string;
@@ -129,6 +131,16 @@ export default function Page() {
   // The units master is eight rows, so the shared static select is the right shape here -
   // no server search, no paging, and it is the same list every other UoM picker reads.
   const { data: uomOptions = [] } = useUOMSelectQuery();
+
+  // The distinct class labels categories are grouped by - a short, closed list,
+  // so a static picker is the right shape (D2). A saved value that has since
+  // disappeared from the list is kept by SearchableMultiSelect's own `value`,
+  // so unsetting it stays possible.
+  const { data: classLabels = [], isError: classLabelsFailed } = useQuery({
+    queryKey: ['product-class-labels'],
+    queryFn: () => getProductClassLabels(),
+    staleTime: 5 * 60 * 1000,
+  });
 
   const savedSupplierId = settings?.defaultProductSupplierId ?? null;
   const savedSupplierMissingFromList =
@@ -249,6 +261,7 @@ export default function Page() {
       settings?.priceTagAutoCollectDays ?? AUTO_COLLECT_DAYS_DEFAULT,
     // The rollout default (plan 5.1) when the blob carries no value yet.
     planGrain: settings?.planGrain ?? 'product',
+    priceTagGuardedClasses: settings?.priceTagGuardedClasses ?? [],
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
       settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -310,6 +323,7 @@ export default function Page() {
       priceTagAutoCollectDays:
         settings.priceTagAutoCollectDays ?? AUTO_COLLECT_DAYS_DEFAULT,
       planGrain: settings.planGrain ?? 'product',
+      priceTagGuardedClasses: settings.priceTagGuardedClasses ?? [],
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
         settings.purchaseRequestDefaultApproverUserId.length > 0
@@ -354,6 +368,7 @@ export default function Page() {
         // r9 D10.
         price_tag_auto_collect_days: values.priceTagAutoCollectDays,
         plan_grain: values.planGrain,
+        price_tag_guarded_classes: values.priceTagGuardedClasses,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId ===
           NO_DEFAULT_APPROVER_VALUE
@@ -1066,6 +1081,38 @@ export default function Page() {
                     </FormControl>
                     <FormDescription>
                       Applies to runs created afterwards.
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="priceTagGuardedClasses"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Price tag guarded classes</FormLabel>
+                    <FormControl>
+                      <SearchableMultiSelect
+                        value={field.value ?? []}
+                        onChange={field.onChange}
+                        options={classLabels.map((label) => ({
+                          value: label,
+                          label,
+                        }))}
+                        placeholder="None"
+                        emptyMessage="No class labels found."
+                      />
+                    </FormControl>
+                    {classLabelsFailed ? (
+                      <p className="text-sm text-destructive">
+                        Could not load the class list. Try reloading the page.
+                      </p>
+                    ) : null}
+                    <FormDescription>
+                      A line in one of these classes is flagged to marketing when
+                      its package is missing.
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

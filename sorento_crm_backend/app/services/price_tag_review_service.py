@@ -96,10 +96,10 @@ def create_comments(
 
     round_no = current_round(db, request)
     created: list[PriceTagReviewComment] = []
-    # A pin points at a line of THIS request. A foreign id is either a typo or
+    # A pin points at a TAG of THIS request. A foreign id is either a typo or
     # somebody reaching across requests; either way it is refused rather than
     # stored (or left to blow up on the FK at commit).
-    own_lines = {line.id for line in request.lines}
+    own_tags = {tag.id for line in request.lines for tag in line.tags or []}
 
     for pin in pins:
         body = (pin.get("body") or "").strip()
@@ -109,29 +109,24 @@ def create_comments(
                 message="A pin with no comment says nothing.",
                 code="EMPTY_CHANGE_REQUEST",
             )
-        line_id = pin.get("line_id")
-        if line_id is not None and line_id not in own_lines:
+        tag_id = pin.get("tag_id")
+        if tag_id is not None and tag_id not in own_tags:
             raise AppException(
                 status_code=422,
-                message="That pin does not point at a line of this request.",
+                message="That pin does not point at a tag of this request.",
                 code="INVALID_PIN",
             )
         created.append(
             PriceTagReviewComment(
                 id=str(uuid.uuid4()),
                 request_id=request.id,
-                line_id=line_id,
+                tag_id=tag_id,
                 round=round_no,
                 x=_fraction(pin.get("x"), "x"),
                 y=_fraction(pin.get("y"), "y"),
                 w=_fraction(pin.get("w"), "w"),
                 h=_fraction(pin.get("h"), "h"),
                 body=body,
-                # The ONE placed copy this pin was pointed at (owner round
-                # finding 1); null on a general comment or a pre-r9 client
-                # that has not reloaded, which falls back to every copy of
-                # the line (D5/D6).
-                placed_tag_id=pin.get("placed_tag_id"),
                 author_contact_id=author_contact_id,
                 author_user_id=author_user_id,
                 company_id=request.company_id,
@@ -143,7 +138,7 @@ def create_comments(
             PriceTagReviewComment(
                 id=str(uuid.uuid4()),
                 request_id=request.id,
-                line_id=None,
+                tag_id=None,
                 round=round_no,
                 body=note,
                 author_contact_id=author_contact_id,
@@ -252,8 +247,7 @@ def to_responses(db: Session, rows: Iterable[PriceTagReviewComment]) -> list[dic
         {
             "id": row.id,
             "request_id": row.request_id,
-            "line_id": row.line_id,
-            "placed_tag_id": row.placed_tag_id,
+            "tag_id": row.tag_id,
             "round": row.round,
             "x": None if row.x is None else float(row.x),
             "y": None if row.y is None else float(row.y),
