@@ -1351,7 +1351,7 @@ def _cover_promotion(db: Session, promotion_id: str, product_id: str) -> None:
             promotion_id=promotion_id,
             promotion_group_id=str(group.id),
             product_id=product_id,
-            promo_selling_price=Decimal("400.00"),
+            promo_selling_price=Decimal("80.00"),
         )
     )
     db.flush()

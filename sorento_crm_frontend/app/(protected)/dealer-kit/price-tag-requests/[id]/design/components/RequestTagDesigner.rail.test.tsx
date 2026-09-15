@@ -127,7 +127,6 @@ vi.mock('../../../../services/tagTemplateService', () => ({
 vi.mock('../../../../services/priceTagRequestService', () => ({
   resolveRequestTags: vi.fn(),
   getPriceTagRequest: vi.fn(),
-  splitRequestTag: vi.fn(),
   updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
@@ -150,7 +149,6 @@ import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
   getPriceTagRequest,
   resolveRequestTags,
-  splitRequestTag,
   updateRequestTag,
 } from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
@@ -164,7 +162,6 @@ const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolve = vi.mocked(resolveRequestTags);
 const mockComments = vi.mocked(listReviewComments);
 const mockGetRequest = vi.mocked(getPriceTagRequest);
-const mockSplit = vi.mocked(splitRequestTag);
 const mockUpdateTag = vi.mocked(updateRequestTag);
 
 // ---------------------------------------------------------------------------
@@ -184,7 +181,6 @@ function tag(overrides: Partial<PriceTagRequestTag> = {}): PriceTagRequestTag {
     sort_order: 0,
     label: '1a',
     quantity: 1,
-    choices: {},
     choices_display: [],
     open_groups: [],
     marketing_price_override: null,
@@ -223,8 +219,6 @@ function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagReques
     doc_number: 'PT-000001',
     debtor_code: null,
     debtor_name: null,
-    promotion_id: null,
-    promotion_name: null,
     needed_by_date: null,
     notes: null,
     status: 'designing',
@@ -348,7 +342,6 @@ describe('RequestTagDesigner rail (S12-2)', () => {
     const splitTag = tag({
       id: 'tag-1a',
       label: '1a',
-      choices: { Basin: 'p-basin-wh' },
       choices_display: [{ role: 'Basin', code: 'SRTBS900-WH' }],
       open_groups: [],
     });
