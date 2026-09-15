@@ -299,7 +299,11 @@ _GATE_DERIVED_KEYS = (
     "routing_brand_source",
     "routing_roster_plan",
     "picker_last_result_set",
-    "picker_families",
+    # `picker_families` is GONE (R-F, 15 Sep 2026): the key, its two writers and the
+    # gate's unread output of it were deleted when the account family moved onto the
+    # roster row and the picked entity (`family_uuids`). A world skipped for "the
+    # capture carries a gate-derived key this replay has no gate for" over a key no
+    # body writes any more would be a permanent skip with nothing behind it.
 )
 
 
