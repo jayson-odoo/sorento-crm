@@ -848,9 +848,19 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                       {request.lines.map((line) => {
                         const showActions = canDesign || changesByTag.size > 0;
                         const columns = showActions ? 9 : 8;
-                        const lineChanged = (line.tags ?? []).some((tag) =>
+                        const tags = line.tags ?? [];
+                        const parts = line.parts ?? [];
+                        const lineChanged = tags.some((tag) =>
                           changesByTag.has(tag.id),
                         );
+                        // D7: a line with exactly ONE tag and NO parts folds
+                        // that tag's price / status / actions into the line
+                        // row - no separate "1a" row underneath it. A line
+                        // with parts, or two or more tags, keeps today's shape.
+                        const foldedTag =
+                          tags.length === 1 && parts.length === 0
+                            ? tags[0]
+                            : null;
                         return (
                           <Fragment key={line.id}>
                             <tr className="border-b last:border-b-0">
@@ -885,8 +895,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 )}
                                 {/* Rolled up from the tags below (r9 D18): the
                                     line says THAT something moved, the tag row
-                                    says which one and offers the decision. */}
-                                {lineChanged && (
+                                    says which one and offers the decision.
+                                    Redundant on a folded row (D7) - that one
+                                    tag's own Changed pill is on this same row. */}
+                                {!foldedTag && lineChanged && (
                                   <span className="mt-1 flex">
                                     <span className="rounded-full bg-amber-100 px-2 py-0.5 text-2xs font-semibold text-amber-800">
                                       Changed
@@ -895,23 +907,104 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 )}
                               </td>
                               <td className="py-2 pr-3 text-right">{line.quantity}</td>
-                              {/* Price is a TAG fact since D4 - the host plus that
-                                  tag's own resolved parts - so the line leaves both
-                                  money columns empty rather than repeating one
-                                  tag's figure as if it were the line's. */}
-                              <td className="py-2 pr-3" />
-                              <td className="py-2 pr-3" />
+                              {foldedTag ? (
+                                <>
+                                  <td className="py-2 pr-3 text-right">
+                                    {foldedTag.list_price != null
+                                      ? `RM ${foldedTag.list_price.toFixed(2)}`
+                                      : '-'}
+                                  </td>
+                                  <td className="py-2 pr-3 text-right">
+                                    {line.show_promo_price &&
+                                    foldedTag.sell_price != null ? (
+                                      <span className="text-green-700 font-medium">
+                                        RM {foldedTag.sell_price.toFixed(2)}
+                                      </span>
+                                    ) : (
+                                      '-'
+                                    )}
+                                    {foldedTag.marketing_price_override != null && (
+                                      <span className="block text-xs text-amber-600">
+                                        Override: RM{' '}
+                                        {foldedTag.marketing_price_override.toFixed(2)}
+                                      </span>
+                                    )}
+                                  </td>
+                                </>
+                              ) : (
+                                <>
+                                  {/* Price is a TAG fact since D4 - the host plus
+                                      that tag's own resolved parts - so an
+                                      un-folded line leaves both money columns
+                                      empty rather than repeating one tag's
+                                      figure as if it were the line's. */}
+                                  <td className="py-2 pr-3" />
+                                  <td className="py-2 pr-3" />
+                                </>
+                              )}
                               <td
                                 className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
                                 title={line.remarks ?? undefined}
                               >
                                 {line.remarks || '-'}
                               </td>
-                              <td className="py-2 pr-3" />
-                              {showActions && <td className="py-2" />}
+                              <td className="py-2 pr-3">
+                                {foldedTag && (
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    {designedTagIds.has(foldedTag.id) ? (
+                                      <span className="text-xs text-emerald-700 font-medium">
+                                        Designed
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-muted-foreground">
+                                        No tag
+                                      </span>
+                                    )}
+                                    {changesByTag.has(foldedTag.id) && (
+                                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-2xs font-semibold text-amber-800">
+                                        Changed
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                              {showActions && (
+                                <td className="py-2 text-right">
+                                  {foldedTag && (
+                                    <div className="flex items-center justify-end gap-1">
+                                      {changesByTag.has(foldedTag.id) && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="gap-1.5"
+                                          onClick={() => setReviewTagId(foldedTag.id)}
+                                          aria-label={`Review changes on ${line.code || line.name} ${foldedTag.label}`}
+                                        >
+                                          <RefreshCw className="size-3.5" />
+                                          Review
+                                        </Button>
+                                      )}
+                                      {canDesign && (
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          className="gap-1.5"
+                                          onClick={() => openDesignerForTag(foldedTag.id)}
+                                          aria-label={`Design tag ${foldedTag.label}`}
+                                        >
+                                          <Palette className="size-3.5" />
+                                          Design
+                                        </Button>
+                                      )}
+                                    </div>
+                                  )}
+                                </td>
+                              )}
                             </tr>
+                            {foldedTag ? null : (
+                              <>
                             {/* What the salesperson asked to come with it (S2). */}
-                            {(line.parts ?? []).map((part) => (
+                            {parts.map((part) => (
                               <tr key={part.id} className="border-b last:border-b-0">
                                 <td className="py-1.5 pr-3" />
                                 <td
@@ -927,7 +1020,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                               </tr>
                             ))}
                             {/* What actually prints (D3). */}
-                            {(line.tags ?? []).map((tag) => (
+                            {tags.map((tag) => (
                               <tr key={tag.id} className="border-b last:border-b-0">
                                 <td className="py-1.5 pr-3" />
                                 <td className="py-1.5 pr-3 pl-4 font-mono text-xs">
@@ -1017,6 +1110,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 )}
                               </tr>
                             ))}
+                              </>
+                            )}
                           </Fragment>
                         );
                       })}

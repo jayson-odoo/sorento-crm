@@ -37,6 +37,22 @@ talked about.
   scrolls, drag pans, **+ - 0** zoom and reset to Fit, arrow keys change sheet.
 * **History** opens the request's own versions - see [Design history](#design-history).
 
+## In the designer
+
+* The **Lines** rail lists each line with its tags nested underneath. A line with exactly one tag,
+  no parts and no open choice group is drawn as a single block instead - click the block itself to
+  select that tag, no separate `1a` row underneath.
+* The **Tag Size** panel is collapsed by default, showing the current size beside its heading (for
+  example *95 x 44.5 mm*). Click the heading to open the preset, width/height and **Apply to all
+  lines** controls. It remembers whether you left it open the next time you design.
+* A spec merge field such as `{{spec.dim_length}}` now prints the number on its own, with no unit -
+  type the unit into the layer text yourself, for example `L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm`.
+* On a layer whose **Content** holds a merge field, the Inspector shows the rendered text under the
+  box with a **Copy rendered text** button, so you can copy exactly what will print without reading
+  it off the canvas.
+* On a price badge, the amount now follows the layer's own **Text Colour** setting (it used to stay
+  black regardless); the empty placeholder still shows muted grey until a price resolves.
+
 ## Working off change requests
 
 The salesperson does not type a paragraph any more; they click on the tag and leave a numbered pin
@@ -48,10 +64,11 @@ Press **Done** when you have fixed it; the pin and the text go grey. **Reopen** 
 
 **In the designer.** Numbered markers sit over the matching tag on the canvas, everywhere that tag
 appears on the sheet. Clicking a marker opens its comment and never selects a layer, so you can read
-a comment without disturbing the design. The trailing toolbar button reads
-**Hide change requests (N open)** / **Show change requests (N open)** and only appears when the
-request has comments. In the **LINES** rail an orange count sits on every line that still has open
-pins.
+a comment without disturbing the design. The comment carries the same **Done** / **Reopen** button
+the request page has, so you can close a pin right there without going back to the page. The
+trailing toolbar button reads **Hide change requests (N open)** / **Show change requests (N open)**
+and only appears when the request has comments. In the **LINES** rail an orange count sits on every
+line that still has open pins.
 
 While pins are open, the main button reads **Mark design ready (2 open)**. The count is a reminder,
 not a block: press it anyway when a comment does not apply, and say so on the request instead.
@@ -69,11 +86,15 @@ the same list.
 is wrong or missing, use the gear then **Edit request** and set it; you can do that any time the
 request is still open.
 
-What happens after the salesperson approves depends on it:
+Once the salesperson approves, the record's primary action is **Open design** - it takes you back
+into the designer, and the per-tag **Design** buttons on the **Lines** tab come back too. Printing
+and hand-over happen from the designer's own bar, in the slot **Mark design ready** occupied while
+designing:
 
-* **I print myself** - the request is finished at **Approved**. The PDF export runs on its own and
-  the salesperson downloads it from the portal. **Export PDF** is the only action left.
-* **Office prints** - print the tags, then press **Mark ready for collection**. The status becomes
+* **I print myself** - the designer's bar shows **Export PDF** only. The PDF export runs on its own
+  and the salesperson downloads it from the portal.
+* **Office prints** - the designer's bar shows **Export PDF** and, as the primary button,
+  **Mark ready for collection**. Print the tags, then press it. The status becomes
   **Ready for collection**, the salesperson gets a WhatsApp, and the header shows
   *"Ready since <date> · auto-collects <date>"*.
 * When the tags are handed over, press **Mark collected** (the salesperson can also do it from the
@@ -140,7 +161,7 @@ Versions are written when the design is saved, when the design is marked ready, 
 
 ## Admin setup
 
-Two settings sit behind this flow, and both are an admin job, not a per-request one:
+Three settings sit behind this flow, and all of them are an admin job, not a per-request one:
 
 * **[SLA Management → Form SLA Configuration](/sla-management/form-sla-config)** needs a
   **Price Tag Request** stage row for new requests to be assigned automatically and tracked. Without
@@ -149,6 +170,12 @@ Two settings sit behind this flow, and both are an admin job, not a per-request 
 * **[User Management → Settings → General](/user-management/settings)** carries
   **Auto-mark price tags collected after (days)**: *"An office-printed request waiting to be picked
   up closes itself after this many days. 0 leaves it open."* Default 7, accepted range 0 to 90.
+* **[System Management → WhatsApp Templates](/integration-management/whatsapp-templates)**,
+  under **Default templates for auto-send**, carries a **Price Tag Request - Update** row. Set a
+  template there so the salesperson still gets their status update when their 24 hour WhatsApp
+  window is closed - without it, that update is silently skipped for anyone outside the window. Map
+  a parameter to **Full update message** at minimum; add **Entity number** and **Portal URL** if the
+  approved template carries them.
 
 ## See also
 

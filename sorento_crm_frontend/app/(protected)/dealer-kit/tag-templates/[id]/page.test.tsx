@@ -190,6 +190,10 @@ function templateFixture(overrides: Partial<Awaited<ReturnType<typeof getTemplat
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // D9: TagSizeControl's open/closed state persists in localStorage across
+  // mounts by design - cleared per test so one test opening the panel does
+  // not leave it open (or a later click's toggle closing it) for the next.
+  window.localStorage.clear();
 });
 
 // ---------------------------------------------------------------------------
@@ -698,6 +702,9 @@ describe('Tag Size control on the template editor (S1, AC-S1-1)', () => {
     await screen.findByTestId('canvas-editor');
 
     const rail = within(screen.getByTestId('left-rail'));
+    // D9 (PLAN-price-tag-ai-extract-resolver.md): the Tag Size panel is
+    // collapsed by default - open it before reading its dropdown.
+    fireEvent.click(rail.getByRole('button', { name: /Tag Size/ }));
     fireEvent.click(rail.getByRole('combobox'));
 
     expect(await screen.findByText('Template sizes')).toBeInTheDocument();
@@ -727,6 +734,9 @@ describe('Tag Size control on the template editor (S1, AC-S1-1)', () => {
     await screen.findByTestId('canvas-editor');
 
     const rail = within(screen.getByTestId('left-rail'));
+    // D9 (PLAN-price-tag-ai-extract-resolver.md): the Tag Size panel is
+    // collapsed by default - open it before reading its dropdown.
+    fireEvent.click(rail.getByRole('button', { name: /Tag Size/ }));
     fireEvent.click(rail.getByRole('combobox'));
 
     expect(await screen.findByText('Saved sizes')).toBeInTheDocument();

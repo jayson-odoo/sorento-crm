@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -53,6 +53,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     value: string;
     onChange?: (v: string) => void;
     placeholder?: string;
+    // S1 (code review): the Item picker's own selected-value label - the
+    // only surface this mock exposes for asserting what NAME a picked line
+    // reads, since the mock otherwise renders no text for it.
+    selectedOption?: { value: string; label: string };
   }) => (
     <select
       aria-label={props.id === 'debtor' ? 'Customer' : (props.placeholder ?? '')}
@@ -60,6 +64,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       onChange={(e) => props.onChange?.(e.target.value)}
     >
       <option value="" />
+      {props.selectedOption && (
+        <option value={props.selectedOption.value}>{props.selectedOption.label}</option>
+      )}
     </select>
   ),
 }));
@@ -87,6 +94,7 @@ type CapturedProps = {
     alsoAttach?: boolean;
     values?: Record<string, unknown>;
   }) => void;
+  renderRowStatus?: (p: Record<string, unknown>) => React.ReactNode;
 };
 let captured: CapturedProps = {};
 vi.mock('./AIExtractDialog', () => ({
@@ -135,16 +143,34 @@ function openSalesOrderSection() {
   fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
 }
 
-/** Runs the extraction resolve pass (per-code lookup) and waits for every
- *  code's match to settle before Apply reads them off the ref. */
+/**
+ * One matcher (D1/D3, PLAN-price-tag-ai-extract-resolver.md): the extract
+ * already resolved every code through the shared entity resolver
+ * server-side, so a fixture builds the SAME `match` / `product_id` /
+ * `product_set_id` fields the real payload always carries now, instead of
+ * leaving the form to look the code up itself - there is no lookup left to
+ * wait for.
+ */
+function withMatch(product: Record<string, unknown>): Record<string, unknown> {
+  const code = String(product.product_code ?? '');
+  if (code === MATCHED_PRODUCT.code) {
+    return { ...product, match: 'product', product_id: MATCHED_PRODUCT.id, product_set_id: null };
+  }
+  if (code === MATCHED_SET.code) {
+    return {
+      ...product,
+      match: 'product_set',
+      product_id: null,
+      product_set_id: MATCHED_SET.id,
+    };
+  }
+  return { ...product, match: null, product_id: null, product_set_id: null };
+}
+
+/** Runs the extraction resolve pass and flushes the state update it makes. */
 async function extractAndSettle(products: Record<string, unknown>[]) {
   await act(async () => {
     captured.onExtracted?.(products);
-  });
-  await waitFor(() => expect(lookupTagItems).toHaveBeenCalledTimes(products.length));
-  // Flush the resolved lookup promises' `.then` state updates.
-  await act(async () => {
-    await Promise.resolve();
   });
 }
 
@@ -162,7 +188,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
         unit_price: 199.5,
         notes: 'For the showroom display',
       },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -186,7 +212,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
         quantity: 3.7,
         notes: null,
       },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -201,7 +227,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
-    const products = [{ product_code: MATCHED_SET.code, quantity: 1, notes: 'set note' }];
+    const products = [{ product_code: MATCHED_SET.code, quantity: 1, notes: 'set note' }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
 
     await act(async () => {
@@ -216,7 +244,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    const products = [{ product_code: 'NOT-REAL-CODE', quantity: 2, notes: 'anything' }];
+    const products = [{ product_code: 'NOT-REAL-CODE', quantity: 2, notes: 'anything' }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
 
     await act(async () => {
@@ -240,7 +270,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first' },
       { product_code: 'GHOST-CODE', quantity: 1, notes: 'second' },
       { product_code: MATCHED_SET.code, quantity: 1, notes: 'third' },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -262,7 +292,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
-    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
+    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
     const file = new File(['zzt'], 'ZZT-so.pdf', { type: 'application/pdf' });
 
@@ -277,7 +309,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
+    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
     const file = new File(['zzt'], 'ZZT-so.pdf', { type: 'application/pdf' });
 
@@ -310,7 +344,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       { product_code: MATCHED_PRODUCT.code, quantity: 1, notes: 'first' },
       { product_code: 'GHOST-CODE', quantity: 1, notes: 'not found' },
       { product_code: MATCHED_SET.code, quantity: 5, notes: 'set of five' },
-    ];
+    ].map(withMatch);
     await extractAndSettle(extracted);
 
     // The dialog removes row 2 (GHOST-CODE, an "x" per D-P4) locally, then
@@ -337,7 +371,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     const products = [
       { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first mention' },
       { product_code: MATCHED_PRODUCT.code, quantity: 3, notes: 'second mention' },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -346,5 +380,155 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
 
     expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(5);
     expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
+  });
+});
+
+/**
+ * AC-S1-6, AC-S1-7 (PLAN-price-tag-ai-extract-resolver, D3): the extract now
+ * arrives already resolved - `match` / `product_id` / `product_set_id` ride
+ * on each extracted row - so the form reads the payload directly instead of
+ * calling `lookupTagItems` per code and comparing codes itself.
+ */
+describe('PriceTagRequestForm - AI extract reads match fields off the payload (AC-S1-6, AC-S1-7)', () => {
+  it('AC-S1-6: statuses render from match/product_id/product_set_id alone; lookupTagItems is never called', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+
+    const products = [
+      {
+        product_code: MATCHED_PRODUCT.code,
+        product_name: MATCHED_PRODUCT.name,
+        match: 'product',
+        product_id: MATCHED_PRODUCT.id,
+        product_set_id: null,
+        quantity: 1,
+        notes: null,
+      },
+      {
+        product_code: MATCHED_SET.code,
+        product_name: MATCHED_SET.name,
+        match: 'product_set',
+        product_id: null,
+        product_set_id: MATCHED_SET.id,
+        quantity: 1,
+        notes: null,
+      },
+      {
+        product_code: 'GHOST-CODE',
+        product_name: null,
+        match: null,
+        product_id: null,
+        product_set_id: null,
+        quantity: 1,
+        notes: null,
+      },
+    ];
+
+    await act(async () => {
+      captured.onExtracted?.(products);
+    });
+
+    // The whole point of D3: no per-code round trip during extract.
+    expect(lookupTagItems).not.toHaveBeenCalled();
+
+    const { getByTestId } = render(
+      <div>
+        <div data-testid="row-0">{captured.renderRowStatus?.(products[0])}</div>
+        <div data-testid="row-1">{captured.renderRowStatus?.(products[1])}</div>
+        <div data-testid="row-2">{captured.renderRowStatus?.(products[2])}</div>
+      </div>,
+    );
+
+    expect(within(getByTestId('row-0')).getByText('Matched product')).toBeTruthy();
+    expect(within(getByTestId('row-1')).getByText('Matched set')).toBeTruthy();
+    expect(within(getByTestId('row-2')).getByText('Not found')).toBeTruthy();
+  });
+
+  it('AC-S1-7: Apply adds a line for every matched row and toasts the rest, with no wait for a lookup', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const products = [
+      {
+        product_code: MATCHED_PRODUCT.code,
+        product_name: MATCHED_PRODUCT.name,
+        match: 'product',
+        product_id: MATCHED_PRODUCT.id,
+        product_set_id: null,
+        quantity: 2,
+        notes: 'first',
+      },
+      {
+        product_code: 'GHOST-CODE',
+        product_name: null,
+        match: null,
+        product_id: null,
+        product_set_id: null,
+        quantity: 1,
+        notes: 'second',
+      },
+      {
+        product_code: MATCHED_SET.code,
+        product_name: MATCHED_SET.name,
+        match: 'product_set',
+        product_id: null,
+        product_set_id: MATCHED_SET.id,
+        quantity: 1,
+        notes: 'third',
+      },
+    ];
+
+    await act(async () => {
+      captured.onExtracted?.(products);
+    });
+    // Matches must already be available synchronously off the payload -
+    // Apply is called with no `extractAndSettle`/lookup wait in between.
+    expect(lookupTagItems).not.toHaveBeenCalled();
+
+    await act(async () => {
+      captured.onApply?.({ productLines: products });
+    });
+
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(2);
+    expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
+    expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(1);
+    expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('third');
+    expect(screen.queryByLabelText('Quantity for line 3')).toBeNull();
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('GHOST-CODE')),
+    );
+  });
+
+  // S1 (code review): a resolved match's product_name is the CRM's own name
+  // (the backend now overrides it there, ai_extract_resolver_match.py pins
+  // that half), never the sales order's freeform description - the applied
+  // line's Item is what marketing/the salesperson read back.
+  it("S1: the applied line's Item reads the CRM name from a resolved match", async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const products = [
+      {
+        product_code: MATCHED_PRODUCT.code,
+        product_name: MATCHED_PRODUCT.name,
+        match: 'product',
+        product_id: MATCHED_PRODUCT.id,
+        product_set_id: null,
+        quantity: 1,
+        notes: null,
+      },
+    ];
+
+    await act(async () => {
+      captured.onExtracted?.(products);
+    });
+    await act(async () => {
+      captured.onApply?.({ productLines: products });
+    });
+
+    await screen.findByLabelText('Quantity for line 1');
+    expect(screen.getByText(MATCHED_PRODUCT.name)).toBeInTheDocument();
   });
 });

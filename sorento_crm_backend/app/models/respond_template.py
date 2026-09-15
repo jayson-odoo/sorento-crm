@@ -93,6 +93,12 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # (PLAN-ticket-resolved-closing-message). Sent to the CONTACT. Map params to
     # ``contact_name`` + ``message`` (the enquiry excerpt) at minimum.
     "ticket_resolved",
+    # Price tag request status update (PLAN-price-tag-ai-extract-resolver). Sent to
+    # the salesperson when their price tag request moves (received, design ready,
+    # changes requested, approved, PDF ready, ready for collection, collected,
+    # rejected) and their 24h window is closed. Map params to ``message`` at
+    # minimum; ``entity_number`` / ``portal_url`` when the template carries them.
+    "price_tag_update",
     # Chat reply templates (PLAN-unified-conversation-composer-smart-send). Sent when
     # an admin types a free message in an entity's chat composer while the contact's
     # 24h window is CLOSED - the typed text is wrapped into these per-form templates

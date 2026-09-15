@@ -74,6 +74,12 @@ export function priceTagActions(
   } else if (current === 'proof_ready') {
     // The proof is with the salesperson; marketing can still look at what was sent.
     actions.push({ action: 'design', label: 'View design' });
+  } else if (current === 'approved' || current === 'ready_for_collection') {
+    // D14 (AC-S10-1): once approved, the CTA is "go to the design" - the PDF
+    // is exported from the designer and "ready for collection" is marked
+    // there too, in the slot "Mark design ready" occupies while designing.
+    // Every other action at these statuses is unchanged and pushed below.
+    actions.push({ action: 'design', label: 'Open design' });
   }
 
   if (current === 'designing' || current === 'changes_requested') {

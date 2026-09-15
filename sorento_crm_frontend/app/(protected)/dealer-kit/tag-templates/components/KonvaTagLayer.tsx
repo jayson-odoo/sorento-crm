@@ -780,7 +780,11 @@ function PriceBadgeContent({
         textDecoration={badgeTextDecoration(typo)}
         lineHeight={typo.lineHeight ?? undefined}
         letterSpacing={typo.letterSpacing * scale * 0.1}
-        fill={parts.amountText ? '#000000' : '#999999'}
+        // D22 (AC-S17-1) / blocker follow-up: `priceBadgeParts` resolves the
+        // colour once, since a `promo` badge that fell through to this same
+        // unboxed branch must NOT honour its own (white, boxed-callout)
+        // `textColor` here - see `amountColor`'s own doc.
+        fill={parts.amountColor}
       />
     );
   }

@@ -62,12 +62,14 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     leftRail,
     toolbarTrailing,
     reviewPins,
+    onReviewPinResolve,
   }: {
     doc: TagTemplateDoc;
     onLayersChange?: (layers: TagLayer[]) => void;
     leftRail?: React.ReactNode;
     toolbarTrailing?: ToolbarTrailingAction[];
     reviewPins?: CanvasReviewPin[];
+    onReviewPinResolve?: (pinId: string, resolved: boolean) => void | Promise<void>;
   }) => {
     pinRenders.push(reviewPins ?? []);
     React.useEffect(() => {
@@ -105,6 +107,19 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
           {(reviewPins ?? []).map((pin) => (
             <li key={pin.id} data-testid={`canvas-pin-${pin.number}`}>
               {pin.body} / {pin.caption}
+              {/* AC-S9-2/S9-3: the mock's stand-in for the real popover's
+                  Done button (RequestTagDesigner.tags.test.tsx and
+                  TagCanvasEditor.test.tsx pin the popover UI itself) - what
+                  belongs HERE is that the designer wires the callback and
+                  reacts to it correctly. */}
+              {onReviewPinResolve && !pin.resolved && (
+                <button
+                  type="button"
+                  onClick={() => void onReviewPinResolve(pin.id, true)}
+                >
+                  Done
+                </button>
+              )}
             </li>
           ))}
         </ul>
@@ -191,7 +206,10 @@ vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
 }));
 
 import { resolveRequestTags } from '../../../../services/priceTagRequestService';
-import { listReviewComments } from '../../../../services/priceTagReviewService';
+import {
+  listReviewComments,
+  setReviewCommentResolved,
+} from '../../../../services/priceTagReviewService';
 import {
   listTagDataChanges,
   listRequestVersions,
@@ -208,6 +226,7 @@ import type {
 
 const mockResolveTags = vi.mocked(resolveRequestTags);
 const mockComments = vi.mocked(listReviewComments);
+const mockSetResolved = vi.mocked(setReviewCommentResolved);
 const mockChanges = vi.mocked(listTagDataChanges);
 const mockDecide = vi.mocked(resolveTagPin);
 const mockListVersions = vi.mocked(listRequestVersions);
@@ -452,7 +471,13 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
       expect(screen.getByTestId('canvas-pin-1')).toHaveTextContent(/Done/),
     );
     expect(screen.getByTestId('canvas-pin-2')).toHaveTextContent('Still open');
-    expect(screen.getByTestId('canvas-pin-2')).not.toHaveTextContent(/Done/);
+    // D13 (PLAN-price-tag-ai-extract-resolver.md): every OPEN pin now offers
+    // its own "Done" button (AC-S9-1), so the whole row legitimately carries
+    // that word - what this pins is the CAPTION: an unresolved pin reads
+    // "Round 1", never "Round 1 / Done".
+    expect(screen.getByTestId('canvas-pin-2').textContent).not.toMatch(
+      /Round \d+ \/ Done/,
+    );
   });
 
   it('the LINES rail badges the tags that have open pins', async () => {
@@ -681,5 +706,77 @@ describe('History View draws the version, not the live doc (owner round finding 
 
     const lightbox = await screen.findByTestId('version-lightbox');
     expect(within(lightbox).getByTestId('version-price')).toHaveTextContent('1260');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S9-2/S9-3 (PLAN-price-tag-ai-extract-resolver.md D13) - Done from the
+// pin, wired through to a re-fetch: the rail count and the CTA both read off
+// the SAME `reviewComments` state the markers do, so resolving one has to
+// move all three together.
+// ---------------------------------------------------------------------------
+
+describe('Done from the designer pin popover (AC-S9-2, AC-S9-3)', () => {
+  it('AC-S9-2: clicking Done calls setReviewCommentResolved, then the rail count and CTA drop', async () => {
+    // `vi.clearAllMocks()` in the file's `beforeEach` does NOT drain a
+    // queued `mockResolvedValueOnce` - reset explicitly so a value queued
+    // here can never leak into the next test.
+    mockComments.mockReset();
+    mockSetResolved.mockReset();
+    mockComments.mockResolvedValueOnce([comment({ id: 'c1', tag_id: 'line-1' })]);
+    mockSetResolved.mockResolvedValue(
+      comment({ id: 'c1', tag_id: 'line-1', resolved_at: '2026-09-15T00:00:00Z' }) as never,
+    );
+    await renderDesigner();
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Mark design ready \(1 open\)/ }),
+      ).toBeInTheDocument(),
+    );
+
+    // The re-fetch after Done answers with the comment now resolved.
+    mockComments.mockResolvedValueOnce([
+      comment({ id: 'c1', tag_id: 'line-1', resolved_at: '2026-09-15T00:00:00Z' }),
+    ]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    await waitFor(() =>
+      expect(mockSetResolved).toHaveBeenCalledWith('req-1', 'c1', true),
+    );
+    await waitFor(() => expect(mockComments).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Mark design ready' }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole('button', { name: /Mark design ready \(1 open\)/ }),
+    ).toBeNull();
+  });
+
+  it('AC-S9-3: a rejected PATCH toasts and the pin stays open', async () => {
+    mockComments.mockReset();
+    mockSetResolved.mockReset();
+    mockComments.mockResolvedValue([comment({ id: 'c1', tag_id: 'line-1' })]);
+    mockSetResolved.mockRejectedValue(new Error('boom'));
+    await renderDesigner();
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Mark design ready \(1 open\)/ }),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+
+    await waitFor(() => expect(mockSetResolved).toHaveBeenCalled());
+    const { toast } = await import('@/lib/toast');
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith('Could not update the change request'),
+    );
+    expect(
+      screen.getByRole('button', { name: /Mark design ready \(1 open\)/ }),
+    ).toBeInTheDocument();
   });
 });

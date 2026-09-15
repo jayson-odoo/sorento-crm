@@ -252,6 +252,32 @@ describe('Save Draft validates nothing (D48a)', () => {
     expect(updateRequest).toHaveBeenCalledTimes(1);
     expect(asMock(updateRequest).mock.calls[0][0]).toBe('req-1');
   });
+
+  // S4 (code review): PARTS_NEED_COMBO and INVALID_PART are both 422s naming
+  // `line:<index>` (`price_tag_request_service.py`) - a reopened draft whose
+  // product lost its combo, or whose line points at a product this company
+  // can no longer see, lands on the row AND toasts "Line N: <message>" so the
+  // failure is visible even before the scroll lands. Both codes go through
+  // the same `line:<index>` vocabulary, so one case each pins that they map
+  // identically.
+  it.each([
+    ['PARTS_NEED_COMBO', 'This product has no package to add a part to.'],
+    ['INVALID_PART', "This line's product could not be found."],
+  ])('toasts "Line 1: <message>" on a %s save 422', async (code, message) => {
+    asMock(createRequest).mockRejectedValue(
+      Object.assign(new Error(message), { code, fields: ['line:0'] }),
+    );
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+    openSalesOrderSection();
+    await addLineWithAProduct();
+
+    fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
+
+    await waitFor(() => expect(createRequest).toHaveBeenCalled());
+    expect(toasts.error).toHaveBeenCalledWith(`Line 1: ${message}`);
+    expect(await screen.findByText(message)).toBeInTheDocument();
+  });
 });
 
 describe('Submit says what is missing (D48b)', () => {

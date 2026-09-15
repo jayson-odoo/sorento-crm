@@ -42,6 +42,7 @@ import {
   ChevronLeft,
   Check,
   Copy,
+  Download,
   History,
   LayoutTemplate,
   Loader2,
@@ -49,6 +50,7 @@ import {
   Eye,
   Maximize2,
   Minimize2,
+  Package,
   Save,
   RefreshCw,
   Trash2,
@@ -109,11 +111,15 @@ import {
   transitionPriceTagRequest,
   updateRequestTag,
   exportTagSheet,
+  markReadyForCollection,
   type PriceTagRequestDetail,
   type PriceTagRequestLine,
   type PriceTagRequestTag,
 } from '../../../../services/priceTagRequestService';
-import { listReviewComments } from '../../../../services/priceTagReviewService';
+import {
+  listReviewComments,
+  setReviewCommentResolved,
+} from '../../../../services/priceTagReviewService';
 import {
   listTagDataChanges,
   listRequestVersions,
@@ -343,6 +349,28 @@ export function RequestTagDesigner({
       cancelled = true;
     };
   }, [request.id]);
+
+  /**
+   * D13 (AC-S9-2/S9-3): Done/Reopen from the canvas pin popover itself -
+   * the request detail page's `RequestDesignSection` already has this
+   * decision, the designer is where the fix is made so it belongs here too.
+   * No new endpoint: the same PATCH review-comments call, then a re-fetch so
+   * the marker greys, the rail's per-tag count drops and the "Mark design
+   * ready (N open)" CTA updates together, off the SAME `reviewComments`
+   * state the markers read.
+   */
+  const handleReviewPinResolve = useCallback(
+    async (pinId: string, resolved: boolean) => {
+      try {
+        await setReviewCommentResolved(request.id, pinId, resolved);
+        const rows = await listReviewComments(request.id);
+        setReviewComments(rows);
+      } catch {
+        toast.error('Could not update the change request');
+      }
+    },
+    [request.id],
+  );
 
   // The r4 refresh-on-focus is GONE (r9 S5/D18).
   //
@@ -932,6 +960,14 @@ export function RequestTagDesigner({
   const canMarkProofReady =
     request.status === 'designing' || request.status === 'changes_requested';
 
+  /**
+   * D15 (AC-S10-3/S10-4): once approved, this bar is where print and
+   * hand-over happen - the "go to the design" CTA from the detail page
+   * (D14) lands here. Rendered in the exact slot `Mark design ready`
+   * occupies, so the bar still holds one primary.
+   */
+  const isApproved = request.status === 'approved';
+
   /** Switching a line never LOSES a committed change (AC-S8-3) - flush the
    *  autosave's own pending value before the switch, rather than leaving it
    *  to the ~1s debounce that might not have fired yet. */
@@ -972,6 +1008,39 @@ export function RequestTagDesigner({
     if (fresh) setRequest(fresh);
     if (rows) setResolvedRows(rows);
   }, [request.id]);
+
+  /** D15: the whole-request export, no sheet filter - the same call and
+   *  toast the detail page's `handleExport` makes. */
+  const handleExportApproved = useCallback(async () => {
+    setPrinting(true);
+    try {
+      const result = await exportTagSheet(request.id);
+      toast.success(
+        result?.filename
+          ? `PDF export queued. Check My Downloads for "${result.filename}".`
+          : 'PDF export queued. Check My Downloads.',
+      );
+    } catch {
+      toast.error('Failed to export the sheet');
+    } finally {
+      setPrinting(false);
+    }
+  }, [request.id]);
+
+  const handleMarkReadyForCollection = useCallback(async () => {
+    setTransitioning(true);
+    try {
+      await markReadyForCollection(request.id);
+      toast.success('Marked ready for collection');
+      await reloadRequest();
+    } catch (e) {
+      toast.error(
+        e instanceof Error ? e.message : 'Failed to mark ready for collection',
+      );
+    } finally {
+      setTransitioning(false);
+    }
+  }, [request.id, reloadRequest]);
 
   const handleSplitTag = useCallback(
     async (tagId: string, role: string) => {
@@ -1403,6 +1472,45 @@ export function RequestTagDesigner({
               : 'Mark design ready'}
           </Button>
         )}
+
+        {/* D15 (AC-S10-3/S10-4): approved is where print and hand-over
+            happen now, in the exact slot Mark design ready occupied. Export
+            for either print choice; Mark ready for collection is the
+            primary, and only for an office print - self printing ends here. */}
+        {isApproved && (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={handleExportApproved}
+              disabled={printing}
+            >
+              {printing ? (
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
+              ) : (
+                <Download className="mr-1 size-3.5" />
+              )}
+              Export PDF
+            </Button>
+            {request.print_by === 'office' && (
+              <Button
+                variant="primary"
+                size="sm"
+                className="h-7 text-xs"
+                onClick={handleMarkReadyForCollection}
+                disabled={transitioning}
+              >
+                {transitioning ? (
+                  <Loader2 className="mr-1 size-3.5 animate-spin" />
+                ) : (
+                  <Package className="mr-1 size-3.5" />
+                )}
+                Mark ready for collection
+              </Button>
+            )}
+          </>
+        )}
       </div>
 
       <div className="flex-1 overflow-hidden">
@@ -1443,6 +1551,7 @@ export function RequestTagDesigner({
               docId={selectedTag.id}
               toolbarTrailing={toolbarTrailing}
               reviewPins={canvasPins}
+              onReviewPinResolve={handleReviewPinResolve}
             />
           ) : (
             <CanvasMessage text="Preparing this line..." />
@@ -1668,6 +1777,37 @@ function LinesRail({
               const showName =
                 name !== '' && name.trim().toLowerCase() !== code.trim().toLowerCase();
               const family = familyLabel(lineFamily(line, code));
+              // D8: a line with exactly ONE tag, NO parts and NO open group
+              // renders as ONE selectable block - the line block IS the tag
+              // row, with no separate "1a" underneath it. A line with parts,
+              // two or more tags, or an open group keeps today's shape.
+              const soleTag = lineTags.length === 1 ? lineTags[0] : null;
+              const folded =
+                soleTag !== null &&
+                (line.parts ?? []).length === 0 &&
+                (soleTag.open_groups ?? []).length === 0;
+              if (folded && soleTag) {
+                return (
+                  <FoldedLineBlock
+                    key={line.id}
+                    line={line}
+                    tag={soleTag}
+                    data={row}
+                    code={code}
+                    name={name}
+                    showName={showName}
+                    family={family}
+                    notFound={notFound}
+                    designed={Boolean(tags[soleTag.id])}
+                    selected={selectedRequestTagId === soleTag.id}
+                    openPins={openPinsByTag.get(soleTag.id) ?? 0}
+                    changed={changedTagIds.has(soleTag.id)}
+                    onReview={onReviewTag}
+                    onSelect={onSelect}
+                    onUseTemplate={onUseTemplate}
+                  />
+                );
+              }
               return (
                 <div key={line.id}>
                   <div className="px-3 py-2">
@@ -1757,6 +1897,146 @@ function LinesRail({
 }
 
 /**
+ * D8 (AC-S4-1/S4-2): a line with exactly one tag, no parts and no open group
+ * is one selectable block on the rail - the line's own identity (type, code,
+ * name, warning, remarks) plus that one tag's price, designed check and
+ * action group folded into it, with no "1a" underneath. Everything else
+ * (Split / Pick one on an open group, a second tag, a part) keeps
+ * `TagRailRow`'s separate row instead.
+ */
+function FoldedLineBlock({
+  line,
+  tag,
+  data,
+  code,
+  name,
+  showName,
+  family,
+  notFound,
+  designed,
+  selected,
+  openPins,
+  changed,
+  onReview,
+  onSelect,
+  onUseTemplate,
+}: {
+  line: PriceTagRequestLine;
+  tag: PriceTagRequestTag;
+  data: LineTagData | undefined;
+  code: string;
+  name: string;
+  showName: boolean;
+  family: string;
+  notFound: boolean;
+  designed: boolean;
+  selected: boolean;
+  openPins: number;
+  changed: boolean;
+  onReview: (tagId: string) => void;
+  onSelect: (tagId: string) => void;
+  onUseTemplate: (tagId: string) => void;
+}) {
+  const priceSuffix =
+    data && data.show_promo_price && data.sell_price != null
+      ? ` / SP ${formatTagPrice(data.sell_price)}`
+      : data && data.list_price != null
+        ? ` / LP ${formatTagPrice(data.list_price)}`
+        : '';
+  const overrideSuffix =
+    tag.marketing_price_override != null
+      ? ` / Override ${formatTagPrice(tag.marketing_price_override)}`
+      : '';
+  return (
+    <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
+      <button
+        type="button"
+        className="w-full px-3 py-2 pr-20 text-left transition-colors hover:bg-muted/50"
+        onClick={() => onSelect(tag.id)}
+      >
+        <div className="flex items-center gap-1.5">
+          <Badge variant="secondary" className="shrink-0 px-1 py-0 text-2xs">
+            {line.line_type === 'product' ? 'P' : 'Set'}
+          </Badge>
+          <span className="truncate font-mono text-xs text-muted-foreground" title={code}>
+            {code || (notFound ? 'Not found' : 'Resolving...')}
+          </span>
+          {designed && <Check className="size-3 shrink-0 text-emerald-600" />}
+        </div>
+        {notFound ? (
+          <Badge
+            variant="destructive"
+            appearance="light"
+            className="mt-1 px-1.5 py-0 text-2xs font-normal"
+          >
+            Product not found in this company
+          </Badge>
+        ) : (
+          <>
+            {showName && (
+              <p className="mt-0.5 truncate text-xs" title={name}>
+                {name}
+              </p>
+            )}
+            <p className="mt-0.5 truncate text-2xs text-muted-foreground">
+              Qty {line.quantity} / {family}
+              {priceSuffix}
+              {overrideSuffix}
+            </p>
+            {line.package_warning && (
+              <Badge
+                variant="warning"
+                appearance="light"
+                className="mt-1 px-1.5 py-0 text-2xs font-normal"
+              >
+                {line.package_warning}
+              </Badge>
+            )}
+            {line.remarks && (
+              <p className="mt-0.5 truncate text-2xs text-muted-foreground" title={line.remarks}>
+                {line.remarks}
+              </p>
+            )}
+          </>
+        )}
+      </button>
+      {/* Same action group `TagRailRow` uses (D12): pins first, then the
+          Changed dot, then Use template. No Remove here - a folded line's
+          only tag is already un-removable (`canRemove` is false when a line
+          has one tag), so the button never showed for it anyway. */}
+      <div className="absolute right-1 top-1 flex items-center gap-0.5">
+        {openPins > 0 && (
+          <span
+            className="flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-2xs font-semibold text-white"
+            title={`${openPins} open change request${openPins === 1 ? '' : 's'}`}
+          >
+            {openPins}
+          </span>
+        )}
+        {changed && (
+          <button
+            type="button"
+            className="size-2.5 rounded-full bg-destructive"
+            title="Product data changed - review"
+            aria-label={`Review product data changes on ${data?.code || 'this tag'} ${tag.label}`}
+            onClick={() => onReview(tag.id)}
+          />
+        )}
+        <button
+          type="button"
+          className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          title="Use template..."
+          aria-label={`Use template for tag ${tag.label}`}
+          onClick={() => onUseTemplate(tag.id)}
+        >
+          <LayoutTemplate className="size-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
  * One tag under a line in the rail (D3, AC-S3-3/4).
  *
  * Shown as "1a"/"1b" - the line's position plus a letter - never an id
@@ -1808,7 +2088,7 @@ function TagRailRow({
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
       <button
         type="button"
-        className="w-full py-1.5 pl-6 pr-8 text-left transition-colors hover:bg-muted/50"
+        className="w-full py-1.5 pl-6 pr-20 text-left transition-colors hover:bg-muted/50"
         onClick={() => onSelect(tag.id)}
       >
         <div className="flex items-center gap-1.5">
@@ -1829,14 +2109,6 @@ function TagRailRow({
             </span>
           ) : null}
           {designed && <Check className="size-3 shrink-0 text-emerald-600" />}
-          {openPins > 0 && (
-            <span
-              className="ml-auto flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-2xs font-semibold text-white"
-              title={`${openPins} open change request${openPins === 1 ? '' : 's'}`}
-            >
-              {openPins}
-            </span>
-          )}
         </div>
         <p className="mt-0.5 truncate text-2xs text-muted-foreground">
           Qty {tag.quantity}
@@ -1884,7 +2156,19 @@ function TagRailRow({
           </div>
         </div>
       )}
-      <div className="absolute right-1 top-1 flex items-center">
+      <div className="absolute right-1 top-1 flex items-center gap-0.5">
+        {/* D12: the open-pins count is a SIBLING of the row button, first in
+            this group, so it never overlaps Use template / Remove at any
+            count - it used to sit `ml-auto` INSIDE the row button, which
+            crowded whatever came after it as the number grew. */}
+        {openPins > 0 && (
+          <span
+            className="flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-2xs font-semibold text-white"
+            title={`${openPins} open change request${openPins === 1 ? '' : 's'}`}
+          >
+            {openPins}
+          </span>
+        )}
         {/* Outside the row button, like Use template beside it: a button inside
             a button is invalid HTML, and React says so in the console. */}
         {changed && (

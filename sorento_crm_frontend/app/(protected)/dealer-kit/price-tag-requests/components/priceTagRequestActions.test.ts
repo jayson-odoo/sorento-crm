@@ -40,23 +40,31 @@ describe('the open change-request count (AC-S2-7)', () => {
 });
 
 describe('approved, by who prints (AC-S3-4, AC-S3-5)', () => {
-  it('a self print is finished: Export PDF and nothing else', () => {
-    expect(kinds('approved', 'user-1', 0, 'self')).toEqual(['export']);
+  // AC-S10-1 (PLAN-price-tag-ai-extract-resolver.md D14): approved now leads
+  // with `design`/"Open design", for BOTH print choices, ahead of whatever
+  // the print choice itself adds.
+  it('a self print is finished: Open design leads, then Export PDF, nothing else', () => {
+    const actions = priceTagActions('approved', 'user-1', 0, 'self');
+
+    expect(actions[0]).toMatchObject({ action: 'design', label: 'Open design' });
+    expect(actions.map((action) => action.action)).toEqual(['design', 'export']);
   });
 
-  it('an office print leads with Mark ready for collection', () => {
+  it('an office print leads with Open design, then Mark ready for collection', () => {
     const actions = priceTagActions('approved', 'user-1', 0, 'office');
 
-    expect(actions[0]).toMatchObject({
+    expect(actions[0]).toMatchObject({ action: 'design', label: 'Open design' });
+    expect(actions[1]).toMatchObject({
       action: 'mark_ready_for_collection',
       label: 'Mark ready for collection',
     });
     expect(actions.map((action) => action.action)).toContain('export');
   });
 
-  it('a row with no print choice offers neither hand-over step', () => {
+  it('a row with no print choice still leads with Open design, offers neither hand-over step', () => {
     const actions = kinds('approved', 'user-1', 0, null);
 
+    expect(actions[0]).toBe('design');
     expect(actions).not.toContain('mark_ready_for_collection');
     expect(actions).not.toContain('mark_collected');
     expect(actions).toContain('export');
@@ -64,10 +72,11 @@ describe('approved, by who prints (AC-S3-4, AC-S3-5)', () => {
 });
 
 describe('the hand-over (AC-S3-6)', () => {
-  it('ready_for_collection leads with Mark collected', () => {
+  it('AC-S10-1: ready_for_collection leads with Open design, then Mark collected', () => {
     const actions = priceTagActions('ready_for_collection', 'user-1', 0, 'office');
 
-    expect(actions[0]).toMatchObject({
+    expect(actions[0]).toMatchObject({ action: 'design', label: 'Open design' });
+    expect(actions[1]).toMatchObject({
       action: 'mark_collected',
       label: 'Mark collected',
     });
