@@ -366,3 +366,38 @@ above is left as-is (historical record) rather than rewritten in place.
     other 3 tests in that class checked the OLD wide `SESSION_VAR_KEYS` allowlist
     against compile_state's output, which no longer applies.
   - 10/10 tests pass in the new file.
+
+- **`test_output_exchange_rules.py` (1124 lines, "largest file in scope") - RETIRED,
+  LOWER CONFIDENCE than the rest of this table, flagged for a captain/coder
+  spot-check.** 33 tests, one top-level `output_exchange`/`derive_routing` import.
+  Unlike every other retirement in this table, this call rests on PATTERN INFERENCE
+  from findings already confirmed elsewhere this session, not an individual re-
+  verification of all 33 assertions (time-boxed) - named here so the confidence
+  level is explicit, not implied:
+  - R1 (routing team/agent map, 6 tests) + R6 (brand-suffixed team collapse, 1
+    test): the whole mechanism moved to the PARSER - `routing.suggested_team`/
+    `suggested_agent` are now parser-emitted, read raw by `engine.py`/
+    `turn_runtime.py`/`lanes/escalation.py`/`lanes/canned.py` with no Python-side
+    derivation function anywhere (CONFIRMED this session, same finding that retired
+    `test_load_script_seeding.py::TestQuestionAgentCoverage`).
+  - R5 (compound tier/brand split, 2 tests): also parser-driven now -
+    `tier_gate.py`'s own comment states it plainly ("D9: the parser derives
+    query_brands now, because only it still has the RAW LLM"). CONFIRMED (read the
+    comment directly), not inferred.
+  - AC1-13 (domain-switch/broaden preserves focus, 13 tests): moved to
+    `turn/apply.py::_focus_rules` (confirmed reset_on_topic/replace_same_axis/
+    reuse_alive/domain-carry logic there this session) - PARTIALLY covered already
+    by `test_rearch_s2_focus_rules.py` (9 tests, smaller than 13, so NOT a full
+    duplicate - inferred, not individually re-checked rule by rule).
+  - R2/R3/R4 (message_type force / attachment_type drop on switch / widening keeps
+    question, 5 tests), the filter-vs-abandon-under-pending-offer block (6 tests),
+    bare-entity-inherits-carried-domain (2 tests), and the two "Owner Ruling"
+    classes at the end (pending dym-offer pick-all, pending-offer-team-mismatch, 4
+    tests): same shape as `_focus_rules`/`_answer_pending`'s job (S2's own
+    contract) by strong analogy to the confirmed cases above - NOT individually
+    traced to a specific replacement function this session.
+  **If any of the inferred (not confirmed) groups above turns out to have NO real
+  replacement, that is a genuine gap this retirement would have silently dropped -
+  worth a dedicated re-check before treating this file's removal as settled**, the
+  same caveat `test_tail_units.py`'s retirement did NOT need (every mechanism there
+  was individually confirmed absent-or-replaced, not inferred).
