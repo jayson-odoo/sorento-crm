@@ -40,8 +40,11 @@ from app.services.chatbot_parser_prompt import (
     LAST_COST_ADDENDUM,
     LOW_STOCK_ADDENDUM,
     SEMANTIC_PARSER_PROMPT,
-    SEMANTIC_PARSER_PROMPT_SLIM,
 )
+
+# AC-1592/D8: SEMANTIC_PARSER_PROMPT_SLIM is retired ("one prompt lineage (v3 shape).
+# v1 and SLIM retired") - every `for body in (SEMANTIC_PARSER_PROMPT,
+# SEMANTIC_PARSER_PROMPT_SLIM)` loop below now iterates the one real body only.
 
 #: The corpus lives INSIDE the test package, and that is not tidiness (CI, 8 Sep 2026).
 #: The backend image's build context is `./sorento_crm_backend` only, so nothing under the
@@ -150,19 +153,19 @@ class TestBothPublishedBodiesCarryTheVocabulary:
         AFTER `GROWTH_R1_ADDENDUM` on both bodies, the same way this addendum itself
         stacked after the live text, so `GROWTH_R1_ADDENDUM` is still exactly the tail
         once the later ones are off."""
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert body.removesuffix(LOW_STOCK_ADDENDUM).removesuffix(
                 LAST_COST_ADDENDUM
             ).endswith(GROWTH_R1_ADDENDUM)
 
     @pytest.mark.parametrize("key", ["group_by", "top_n"])
     def test_the_output_block_declares_each_new_key(self, key: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert f'"{key}"' in body
 
     @pytest.mark.parametrize("value", ["so_outstanding", "purchase_order", "check_po"])
     def test_the_new_enum_values_are_named(self, value: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert value in body
 
     @pytest.mark.parametrize("sample", _phrases(), ids=lambda s: s["phrase"])
@@ -210,7 +213,7 @@ class TestBothPublishedBodiesCarryTheVocabulary:
 class TestTheOutstandingVocabularyIsTaught:
     @pytest.mark.parametrize("value", ["do_outstanding", "outstanding_both"])
     def test_both_bodies_name_the_two_new_buckets(self, value: str) -> None:
-        for body in (SEMANTIC_PARSER_PROMPT, SEMANTIC_PARSER_PROMPT_SLIM):
+        for body in (SEMANTIC_PARSER_PROMPT,):
             assert value in body, (
                 f"{value} is a bucket the report lane reads, and the model can only emit "
                 "what the published prompt teaches"
