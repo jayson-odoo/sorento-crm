@@ -64,13 +64,16 @@ S6 regressions.
 
 ## Found during owner merge test (15 Sep 2026)
 
-Six defects the owner's console pass on the MERGED head (`d4ae8203b`, prompt v16 on
-`sorento_ai_automation_focus_full`) surfaced, diagnosed together because five of them meet
-at one seam: what survives a roster pick. Four are lane-introduced by the five-key session
-(D8) replacing main's wholesale `entities` carry with per-axis focus slots plus
-`payload.keep`; one is pre-existing and byte-identical on `origin/main`. Each was
-reproduced under prompt v20 as well as v16 except where noted, so the cause is code and
-not the unpromoted prompt.
+Seven defects the owner's console passes on the MERGED head (`d4ae8203b`, prompts v16 and
+v20 on `sorento_ai_automation_focus_full`) surfaced, diagnosed together because five of
+them meet at one seam: what survives a roster pick. Four are lane-introduced by the
+five-key session (D8) replacing main's wholesale `entities` carry with per-axis focus slots
+plus `payload.keep`; two (R-B, R-H) are pre-existing and byte-identical on `origin/main`,
+and both are the same shape - a rule keyed on whether the model happened to stamp
+`domain_hint` on a turn. Each was reproduced under prompt v20 as well as v16 except where
+noted, so the cause is code and not the unpromoted prompt. Three further reports from the
+same batch closed with no code change and are recorded below the table, so a later reader
+does not re-open them.
 
 | what | root cause | where fixed |
 |---|---|---|
@@ -80,6 +83,16 @@ not the unpromoted prompt.
 | R-D: `delivery for chin chun product wc286` then `1` answered with "Product: all products" and four DOs, none of them WC286 (owner) | LANE-INTRODUCED, the same seam. The ambiguous-customer arm also narrows `compatible_entities` to its candidates, and `_customer_pick` read no `payload` at all, so the pick emitted `entity_op: replace` with the customer alone. Main kept both (capture `b56-pick-turn`: the picked customer AND `srtwc286`). | the customer arm keeps the other axes; `_customer_pick` applies `payload.keep` as `_product_pick` already did, and routes a kept product to `focus.products` |
 | R-E: the scope header read `Customer: 300-C043` (and `Customer: 300-G013`) while the miss copy two lines below named the company correctly | LANE-INTRODUCED. `_entity_of` built `raw` from the row's CODE, and `raw` is what the header's second fallback prints; a customer row's code is a synthetic debtor id. `gate.py`'s own pin re-seat already documents the rule ("the entity's raw IS the roster label we showed; products keep their canonical code") and main's spine emitted it (`b56-pick-turn`: `raw` the name, `canonical_code` the code). | `_entity_of` puts the label in `raw` and the code in `canonical_code` for customer rows; product rows untouched, where the code IS the name the customer reads |
 | R-F: a roster line naming two ledgers - `CHIN CHUN HARDWARE SDN BHD (MCH, SRT)` - fetched ONE ledger when picked (`customer_ids` carried a single uuid) | LANE-INTRODUCED. The candidate-to-family map rode a `picker_families` session key, and `compile_state` writes it immediately before the five-key projection drops it, every turn - so the gate that read it back never found one, and its `_cust_base` re-key was broken anyway (fed a debtor code against a map keyed on family names). Kept on the ENTITY rather than on `open_question.payload` because of the captain's 2026-08-24 ruling that the family OUTLIVES the roster: the pin does, and binding it to the question would lose it the moment the detail ask replaces the roster one turn later. | the roster row and the picked entity carry `family_uuids` (`gate.run_gate`, `open_question._entity_of`), `entity_ids_transformer` expands it under the same uuid guard as any other id, and the map, its two dead writers and the gate's unread `picker_families` output are deleted |
+| R-H: `only BRW` over an open outstanding question re-armed the scope question instead of narrowing the report already on screen (owner, turn 94639ef2-cdf7-4540-a78e-93b411ba2e84) | PRE-EXISTING, byte-identical on `origin/main`. `_outstanding_keeps_subject` vetoes a refinement whose emission is `message_type: business_query` with a non-null `domain_hint` (R24, 13 Sep), and its own docstring states the premise: "'only BRW' is `business_query` with NO domain". The live v20 model stamped `domain_hint: "order"`, so the turn fell to the new-ask arm (`outstanding_pending_dropped: true`, `outstanding_refined: null`). Same class as R-B: a rule keyed on whether the model happened to stamp a domain word. The question it was asked over was armed correctly (`outstanding_detail`, `expects: pick`, three frozen options). | the veto goes; a refinement is a turn that PICKED NOTHING and names only entities on axes that can never be this report's SUBJECT (a location, a date), which is what R24 was reaching for - a customer named under a product-subject offer ("delivery status for hanlim") is still a new ask, now because a customer CAN be the subject rather than because the model wrote a domain word |
+
+Closed WITHOUT a code change, same console batch (the owner's outstanding re-run after the
+`sales_orders.outstanding` grant landed on the console DB):
+
+| what | verdict |
+|---|---|
+| Every `pending_kind:` assertion in the console case files graded as a failure | HARNESS ARTIFACT. `scripts/chatbot_console_check.py::_pending_of` reads `variables["pending"]["kind"]`, the marker D8 deleted (AC-1019), so it answers `None` for every turn on this lane. The arming is correct: turn 1bd12a11's `remembered` stage carries `open_question {kind: outstanding_scope, expects: pick, options 1/2/3 frozen, payload.filters.customer_ids = the six HANLIM accounts}`. Ported on the tester's branch to read `open_question.kind` from the same two sources, falling back to `pending.kind` for a non-five-key backend. |
+| "the scope offer does not resolve, and the next `1` lands out_of_scope" | REFUTED BY THE ROWS. `dd5839a2` ("3" over an open `outstanding_scope`) carries `reference_positions: [3]` and `outstanding_answer_applied: true`. The later `1` (`05eeac36`) arrived when the open question was a `member_offer`, armed by the escalation on the turn before it, so it picked a CS member and branched `out_of_scope` - coherent. `9a23ec02` ("SRTWT7445 outstanding in 2026") dropped its pending correctly: a turn naming its own product is a new ask by design. |
+| R20 turn 3 (`36aaf33a`) answered zero rows where the case expects Outstanding 5 | DATA DRIFT on the clone, confirmed by query: SRTKT39SS has 402 sales order lines and 79 delivery order lines overall, and 0 for customer 060f4eaf (CHIN CHUN HARDWARE [A/C I]) inside 2026. The pick resolved and the stored filters carried faithfully - the reply's own header prints the product, the customer and the 2026 window. No action. |
 
 Replay: 8 captures move and the tester registers both classes rather than the coder
 (captain's ruling (b), 15 Sep) - 3 by the additive `family_uuids` key alone
