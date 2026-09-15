@@ -53,7 +53,7 @@ tell them.
   footer rail and the `Send 1 change request` button. Rail lists pins with line code, text and
   Delete; an optional general note textarea sits under them.
 - AC-S2-3 Send posts all pins in one call; status becomes `changes_requested`; the portal
-  returns to the list with a toast. `pytest`: rows carry request_id, line_id, round, fractions
+  returns to the list with a toast. `pytest`: rows carry request_id, tag_id, round, fractions
   in 0..1, author_contact_id; the request `notes` column is NOT modified.
 - AC-S2-4 Pins are anchored to the tag: after zooming, paging sheets and re-arranging tags in
   Arrange, each pin sits on the same spot of its tag.

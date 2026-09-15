@@ -1,6 +1,6 @@
 # PLAN - Price Tag Round 9: data gate, review pins, notifications, collection
 
-Status: Implemented 14 Sep 2026, browser-verified, PR open (awaiting owner test on :3082 and merge go)
+Status: Implemented 14 Sep 2026, browser-verified, PR open (awaiting owner test on :3082 and merge go). Reconciled onto the combos model 15 Sep 2026: `origin/main` merged PR #913 (PLAN-price-tag-combos.md) FIRST, so a line now prints many tags and this lane adapts to it. Everything r9 does per LINE is done per TAG - the pin and its ack, the review comment anchor, the diff, the rail badges, the versions' `pinned_line_data` map. `ptag_0007` / `ptag_0008` are re-parented onto `ptag_0009_combos_tags` and CREATE the tag-keyed shapes directly, so `ptag_0009`'s `_remap_r9_pins` stays the documented no-op it was written to be. Single head `ptag_0008_pins_versions`; D4, D6, D16-D19 below carry the change.
 UAC: `documentation/plans/dealer-kit/price-tag-r9-review-loop-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r7-request-ux.md` (merged #758), portal r8 (#861)
 Grill artifact: `.lavish/ptag-r9/price-tag-r9-plan.html`
@@ -120,8 +120,10 @@ All line refs are `origin/main` at ae0831776.
 
 ### S2 Pinned change requests
 
-- D4 Table `price_tag_review_comments`: id, request_id FK, line_id FK nullable (null =
-  general), round int, x/y/w/h numeric(6,4) nullable (fractions of the tag box), body text,
+- D4 Table `price_tag_review_comments`: id, request_id FK, **`tag_id` FK
+  `price_tag_request_tags` CASCADE, nullable (null = general)** (combos reconciliation,
+  15 Sep: a line prints one tag per open option and two of them show different products,
+  so a pin is about the one that was clicked), round int, x/y/w/h numeric(6,4) nullable (fractions of the tag box), body text,
   author_contact_id nullable, author_user_id nullable, created_at, resolved_at, resolved_by_id
   nullable, company_id (CompanyScopedMixin). `round` = `price_tag_requests.review_round`, a
   counter incremented on every entry into `proof_ready` and stored on the comment at send time
@@ -142,9 +144,13 @@ All line refs are `origin/main` at ae0831776.
   markers as a DOM overlay in the editor's existing pan/zoom coordinate space (the same
   space as the inline text editor and the whole-tag eye; a Konva node would sit inside stage
   hit-testing, which D6 then has to fight) using the same fractions, drawn on every copy of
-  the line on the sheet, toggled by a `Comments` trailing toolbar button (default on while open pins
+  THAT TAG on the sheet, toggled by a `Comments` trailing toolbar button (default on while open pins
   exist); clicking a marker opens the comment popover, never selects a layer. LINES rail:
-  orange count badge on lines with open pins. `Mark design ready` label becomes
+  orange count badge on the TAG rows with open pins.
+  (Combos reconciliation, 15 Sep: the never-deployed `placed_tag_id` column is dropped.
+  It existed so a pin would not spread across copies that differ; the thing that differs
+  is a different TAG now, and every copy of one tag draws the same artwork, so the anchor
+  answers it without a copy id.) `Mark design ready` label becomes
   `Mark design ready (2 open)` while pins are open; not blocked (D2).
 
 ### S3 Print choice + collection
@@ -226,30 +232,39 @@ All line refs are `origin/main` at ae0831776.
 importing the revision file by glob and calling a named function (precedent
 `487_chatbot_warehouse_cue`). Required names, each called from its own `upgrade()`:
 `ptag_0007_print_collection.py`: `map_ready_rows_to_approved(bind) -> int`,
-`seed_auto_collect_task(bind)`; `ptag_0008_pins_versions.py`: `backfill_pins(bind) -> int`.
+`seed_auto_collect_task(bind)`; `ptag_0008_pins_versions.py`: `backfill_pins(bind) -> int` (pinning every TAG of an
+in-flight request since the combos reconciliation).
 
 ### S5 Product data pin + versions
 
-- D16 `price_tag_request_lines.pinned_tag_data JSONB NULL`, `pinned_at timestamptz NULL`,
-  `data_change_ack_hash VARCHAR(64) NULL`. Pin content = the `LineTagData` the resolver
+- D16 `price_tag_request_tags.pinned_tag_data JSONB NULL`, `pinned_at timestamptz NULL`,
+  `data_change_ack_hash VARCHAR(64) NULL` (combos reconciliation, 15 Sep: per TAG, not per
+  line - two tags split off one line resolve different products, so they are drawn from
+  different data and a Keep on one must not silence the other; answering a tag's open
+  choice drops its pin, because the tag now prints something else). Pin content = the `LineTagData` the resolver
   returns (images as `{attachment_id, is_primary}`; URLs re-signed at read). Pinned when the
   request transitions to `designing` (claim, auto-assign, or changes_requested -> designing
-  only if the line has no pin yet) and when a line is added to a request already in designing.
-  Migration backfills pins for every line of every non-terminal request at upgrade.
+  only if the tag has no pin yet) and when a line is added to a request already in designing.
+  Migration backfills pins for every TAG of every non-terminal request at upgrade.
 - D17 Read path: `resolve_request_line_data` returns pinned data when present; the live
-  resolve runs alongside for non-terminal requests and each line gets
+  resolve runs alongside for non-terminal requests and each TAG gets
   `data_changes: [{field, label, old, new}]` (fields: name, dimensions, spec_lines, specs by
   key, images by attachment id, list_price, offer_price with "promotion ended" wording when
   offer goes null, barcode; set members and set price for sets). Change = live hash differs
   from pin hash AND from `data_change_ack_hash`. Terminal requests skip the live resolve.
   Marketing override still wins over the pinned offer.
-- D18 CRM: record card pill `Product data changed · N` while N > 0; Lines tab row pill
-  `Changed` + `Review`; Review dialog = table old / new per field with image thumbnails, footer
-  `Keep current` / `Update tag`; header `Update all` when N > 1. `POST .../lines/{id}/pin`
+- D18 CRM: record card pill `Product data changed · N` while N > 0 (N counts TAGS); Lines
+  tab TAG row pill `Changed` + `Review`, with a rolled-up `Changed` pill on the line above it;
+  Review dialog = table old / new per field with image thumbnails, naming the tag beside the
+  code, footer `Keep current` / `Update tag`; header `Update all` when N > 1.
+  `POST .../tags/{tagId}/pin`
   with `{action: update | keep}`: update = `_snapshot_draft(commit_message="Before product
   update: <fields>")` then overwrite pin, clear ack; keep = set ack hash. Designer LINES rail:
-  red dot on changed lines opening the same dialog; refresh-on-focus removed.
-- D19 `page_versions.pinned_line_data JSONB NULL` (snapshot of all pins at write). Every
+  red dot on the changed TAG row opening the same dialog; refresh-on-focus removed.
+- D19 `page_versions.pinned_line_data JSONB NULL` (snapshot of all pins at write, keyed by
+  TAG id since the combos reconciliation - which is what the document keys its placements on,
+  so a Restore puts each pin back under the tag that was drawn from it. The column keeps its
+  cut name, which is what `ptag_0009` re-keys in place on a database that already had it). Every
   `_snapshot_draft` call fills it. Request Versions: `GET .../versions`, `GET .../versions/{n}`,
   `POST .../versions/{n}/restore` (writes draft_doc + pins from the version, then snapshots
   "Restored v<n>"). UI = `RequestVersionsSheet` lifted from `TemplateVersionsSheet` (newest
