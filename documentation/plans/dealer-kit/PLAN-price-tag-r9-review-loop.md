@@ -261,13 +261,16 @@ in-flight request since the combos reconciliation).
   with `{action: update | keep}`: update = `_snapshot_draft(commit_message="Before product
   update: <fields>")` then overwrite pin, clear ack; keep = set ack hash. Designer LINES rail:
   red dot on the changed TAG row opening the same dialog; refresh-on-focus removed.
+  Versioning rule (owner finding 15 Sep, PT-202609-0015): Update writes TWO versions, "Before
+  product update: <fields>" (old pin) and "Product update: <fields>" (new pin), so the state after
+  an update is itself restorable; Update all writes one before + one after for the batch.
 - D19 `page_versions.pinned_line_data JSONB NULL` (snapshot of all pins at write, keyed by
   TAG id since the combos reconciliation - which is what the document keys its placements on,
   so a Restore puts each pin back under the tag that was drawn from it. The column keeps its
   cut name, which is what `ptag_0009` re-keys in place on a database that already had it). Every
   `_snapshot_draft` call fills it. Request Versions: `GET .../versions`, `GET .../versions/{n}`,
-  `POST .../versions/{n}/restore` (writes draft_doc + pins from the version, then snapshots
-  "Restored v<n>"). UI = `RequestVersionsSheet` lifted from `TemplateVersionsSheet` (newest
+  `POST .../versions/{n}/restore` (snapshots the current doc + pins as "Before restore to
+  v<n>", then writes draft_doc + pins from the version). UI = `RequestVersionsSheet` lifted from `TemplateVersionsSheet` (newest
   first, View opens the version's own doc + pins in the shared `DesignLightbox` since a
   request version is a whole `TagSheetDoc`, Restore adds a version and asks nothing), opened from the CRM Design section
   `History` button and the designer trailing toolbar `History` entry.
