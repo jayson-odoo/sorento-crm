@@ -27,6 +27,12 @@ class Focus:
     document: list[str] = field(default_factory=list)
     status: str | None = None
     date_window: dict[str, Any] | None = None
+    # The twelfth slot (AC-1534, contract 115): where a counted-set answer got to.
+    # `{"set_key": ..., "offset": n}` - the set the last answer described and how many of
+    # it the customer has already been shown, so "more" pages the SAME set instead of
+    # re-counting it. Its own slot rather than a bag entry: a page position is a focus
+    # axis like any other, and it has to be cleared by a topic reset with the rest.
+    set_page: dict[str, Any] | None = None
     extra: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
@@ -63,6 +69,7 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
     wire: dict[str, Any] = {name: list(getattr(focus, name)) for name in FOCUS_LIST_FIELDS}
     wire["status"] = focus.status
     wire["date_window"] = focus.date_window
+    wire["set_page"] = focus.set_page
     wire["extra"] = {k: list(v) for k, v in (focus.extra or {}).items()}
     return wire
 
@@ -90,6 +97,8 @@ def focus_from_wire(raw: Any) -> Focus:
     focus.status = status if isinstance(status, str) else None
     window = raw.get("date_window")
     focus.date_window = window if isinstance(window, dict) else None
+    page = raw.get("set_page")
+    focus.set_page = page if isinstance(page, dict) else None
     extra = raw.get("extra")
     if isinstance(extra, dict):
         focus.extra = {

@@ -282,6 +282,13 @@ def make_tool_runner(
     from app.services.chatbot.lanes.business import services as business_services
 
     def runner(domain: str, spec: FetchSpec) -> dict[str, Any]:
+        page_predicate: dict[str, Any] | None = None
+        page_ids: list[str] = []
+        carry = spec.filters.get("set_page")
+        if isinstance(carry, dict):
+            page_predicate, page_ids = page_the_set(
+                db, carry, access_levels=list(verdict.get("access_levels") or [])
+            )
         lane_ctx = {
             **ctx,
             "parse": {
@@ -289,10 +296,18 @@ def make_tool_runner(
                 "output": lane_parse_output(verdict, focus=focus, domain=domain),
             },
         }
-        entities = _entities_for(spec, compatible_entities)
+        entities = (
+            [
+                {"uuid": pid, "entity_type": "product", "canonical_code": None}
+                for pid in page_ids
+            ]
+            if page_predicate is not None
+            else _entities_for(spec, compatible_entities)
+        )
         gate: dict[str, Any] = {"compatible_entities": entities}
-        if predicate is not None:
-            gate["predicate"] = predicate
+        block = page_predicate if page_predicate is not None else predicate
+        if block is not None:
+            gate["predicate"] = block
         payload = {"gate": gate, "tier_gate": _tier_gate(spec), "ctx": lane_ctx}
         fragment = business.run_fetch(
             payload,
@@ -305,6 +320,85 @@ def make_tool_runner(
         return envelope_of(fragment, spec, entities)
 
     return runner
+
+
+SET_PAGE_SIZE = 5
+
+
+def set_page_carry(
+    predicate: dict[str, Any] | None, spec: FetchSpec, scope_terms: list[str]
+) -> dict[str, Any] | None:
+    """Where a counted-set answer got to, for `focus.set_page` (AC-1317).
+
+    `{set_key, offset}` and nothing more: the set is RE-DESCRIBED next turn from
+    `set_key` rather than carried as a list of ids, so a session never holds two hundred
+    uuids and a "more" three turns later still answers over live data.
+    """
+    if not predicate:
+        return None
+    total = int(predicate.get("qualifying_total") or 0)
+    if total <= 0:
+        return None
+    labels = [c for c in (predicate.get("class_labels") or []) if isinstance(c, str)]
+    from app.services.chatbot.lanes.business.answer import set_noun_for
+
+    return {
+        "set_key": {
+            "require": predicate.get("require") or {},
+            "scope_terms": list(scope_terms),
+            "domain": spec.domain,
+            "set_noun": set_noun_for(labels),
+        },
+        "offset": min(SET_PAGE_SIZE, total),
+    }
+
+
+def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: list[str]):
+    """The next page of a carried set: `(predicate, product_ids)`.
+
+    The set is re-counted from its own description, which is what makes the carry two
+    small values instead of a list - and what makes a page honest when the catalogue
+    moved between the two turns.
+    """
+    from app.services.chatbot.lanes.business.answer import SET_PAGE_ID_CAP
+    from app.services.product_predicate_service import resolve_product_set
+
+    key = carry.get("set_key") or {}
+    offset = int(carry.get("offset") or 0)
+    outcome = resolve_product_set(
+        db,
+        require=key.get("require") or {},
+        specs=[],
+        free_terms=None,
+        scope_terms=list(key.get("scope_terms") or []),
+        limit=SET_PAGE_ID_CAP,
+        product_ids=None,
+        brand=None,
+        access_levels=access_levels,
+    )
+    total = int(outcome.get("qualifying_total") or 0)
+    ids = [
+        c.get("product_id") or c.get("id")
+        for c in (outcome.get("candidates") or [])
+        if isinstance(c, dict)
+    ]
+    ids = [i for i in ids if i]
+    page_ids = ids[offset : offset + SET_PAGE_SIZE]
+    end = offset + len(page_ids)
+    predicate = {
+        "require": outcome.get("require") or key.get("require") or {},
+        "qualifying_total": total,
+        "truncated": bool(outcome.get("truncated")),
+        "unrecognized_terms": [],
+        "class_labels": [],
+        "page": {
+            "start": offset + 1,
+            "end": end,
+            "new_offset": end,
+            "set_noun": key.get("set_noun") or "products",
+        },
+    }
+    return predicate, page_ids
 
 
 def _tier_gate(spec: FetchSpec) -> dict[str, Any] | None:
