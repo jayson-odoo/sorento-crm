@@ -275,6 +275,203 @@ class TestTheRouteThatServesTheRequest:
 
 
 # ---------------------------------------------------------------------------
+# R1 (Phase 3 browser finding): D6 auto-split through the REAL portal route,
+# not the service directly (test_price_tag_auto_split.py drives
+# `PriceTagRequestService.submit_request`, which is not the seam the portal
+# create+submit routes use - `create_request` then `portal_submit_price_tag_request`
+# flip `portal_draft_at`/`status` without rebuilding lines at all).
+# ---------------------------------------------------------------------------
+
+
+def _combo_with_open_basin(db, cabinet_id: str) -> tuple[str, str]:
+    """A combo on `cabinet_id` with ONE open 2-candidate Basin group."""
+    from app.models.product_combo import ProductCombo, ProductComboPart
+
+    white = _seed_product(db)
+    black = _seed_product(db)
+    combo = ProductCombo(id=str(uuid.uuid4()), host_product_id=cabinet_id, name="2 in 1", sort_order=0)
+    db.add(combo)
+    db.flush()
+    for index, candidate_id in enumerate((white, black)):
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=candidate_id,
+                choice_group="Basin",
+                sort_order=index,
+            )
+        )
+    db.flush()
+    return combo.id, white, black
+
+
+class TestAutoSplitThroughThePortalRoute:
+    def test_create_then_submit_auto_splits_the_open_group(self, client):
+        c, db, _ = client
+        cabinet_id = _seed_product(db)
+        combo_id, white, black = _combo_with_open_basin(db, cabinet_id)
+
+        created = c.post(
+            _BASE,
+            json={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": str(date.today() + timedelta(days=7)),
+                "print_by": "office",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": cabinet_id,
+                        "combo_id": combo_id,
+                        "parts": [{"role": "Basin", "candidates": [white, black]}],
+                    }
+                ],
+            },
+        )
+        assert created.status_code == 201, created.text
+        request_id = created.json()["id"]
+
+        submitted = c.post(f"{_BASE}/{request_id}/submit")
+        assert submitted.status_code == 200, submitted.text
+
+        detail = c.get(f"{_BASE}/{request_id}").json()
+        tags = detail["lines"][0]["tags"]
+        assert len(tags) == 2, "D6: one tag per Basin candidate, through the route"
+        assert all(tag["choices"] for tag in tags), "no tag is left with empty choices"
+
+    def test_put_updating_the_drafts_lines_still_auto_splits(self, client):
+        c, db, _ = client
+        cabinet_id = _seed_product(db)
+        combo_id, white, black = _combo_with_open_basin(db, cabinet_id)
+
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": cabinet_id}]},
+        ).json()
+
+        updated = c.put(
+            f"{_BASE}/{created['id']}",
+            json={
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": cabinet_id,
+                        "combo_id": combo_id,
+                        "parts": [{"role": "Basin", "candidates": [white, black]}],
+                    }
+                ],
+            },
+        )
+        assert updated.status_code == 200, updated.text
+
+        detail = c.get(f"{_BASE}/{created['id']}").json()
+        tags = detail["lines"][0]["tags"]
+        assert len(tags) == 2, "D6: one tag per Basin candidate, through PUT"
+        assert all(tag["choices"] for tag in tags)
+
+
+# ---------------------------------------------------------------------------
+# R2 (Phase 3 security H1 / reviewer S1): `_add_lines` gates promotion
+# validation and pricing behind `if product_id:` - a `product_set` line
+# (product_id null, product_set_id set) skips that whole block outright, so
+# a promotion outside the contact's audience is never refused, and a covering
+# one never prices the set as SP.
+# ---------------------------------------------------------------------------
+
+
+def _seed_product_set(db: Session) -> tuple[str, str]:
+    """Returns (product_set_id, member_product_id)."""
+    from app.models.product_set import ProductSet, ProductSetMember
+
+    member_id = _seed_product(db)
+    product_set = ProductSet(
+        id=str(uuid.uuid4()), set_code=unique_code("set"), name=unique_code("ZZT Set"),
+    )
+    db.add(product_set)
+    db.flush()
+    db.add(
+        ProductSetMember(
+            id=str(uuid.uuid4()), product_set_id=product_set.id, product_id=member_id,
+            quantity=1, contributes_to_price=True, sort_order=0,
+        )
+    )
+    db.flush()
+    return product_set.id, member_id
+
+
+def _seed_promotion_for(db: Session, product_id: str, *, access_levels: list[str]) -> str:
+    from decimal import Decimal
+
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    promotion = Promotion(
+        id=str(uuid.uuid4()), description=unique_code("ZZT promo"), is_active=True,
+        access_levels=access_levels, company_id=_SORENTO_COMPANY_ID,
+    )
+    db.add(promotion)
+    db.flush()
+    group = PromotionGroup(promotion_id=promotion.id, group_name="ZZT group", sort_order=0)
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()), promotion_id=promotion.id, promotion_group_id=str(group.id),
+            product_id=product_id, promo_selling_price=Decimal("80.00"),
+            company_id=_SORENTO_COMPANY_ID,
+        )
+    )
+    db.flush()
+    return promotion.id
+
+
+class TestSetLinePromotionGate:
+    def test_create_refuses_a_set_lines_promotion_outside_the_audience(self, client):
+        c, db, contact_id = client
+        set_id, member_id = _seed_product_set(db)
+        promotion_id = _seed_promotion_for(db, member_id, access_levels=["some-other-audience"])
+
+        res = c.post(
+            _BASE,
+            json={
+                "price_mode": "selling",
+                "lines": [
+                    {
+                        "line_type": "product_set",
+                        "product_set_id": set_id,
+                        "promotion_id": promotion_id,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 422, res.text
+        assert res.json().get("detail") == "line:0", res.text
+
+    def test_a_covered_set_line_in_selling_mode_prices_as_promotion(self, client):
+        c, db, contact_id = client
+        set_id, member_id = _seed_product_set(db)
+        _grant_promotion_audience_code(db, contact_id, "dealer")
+        promotion_id = _seed_promotion_for(db, member_id, access_levels=["dealer"])
+
+        res = c.post(
+            _BASE,
+            json={
+                "price_mode": "selling",
+                "lines": [
+                    {
+                        "line_type": "product_set",
+                        "product_set_id": set_id,
+                        "promotion_id": promotion_id,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 201, res.text
+        line = res.json()["lines"][0]
+        assert line["sell_price_basis"] == "promotion", line
+        assert line["show_promo_price"] is True, line
+
+
+# ---------------------------------------------------------------------------
 # Submit is where completeness is enforced (D48a / D48b)
 # ---------------------------------------------------------------------------
 

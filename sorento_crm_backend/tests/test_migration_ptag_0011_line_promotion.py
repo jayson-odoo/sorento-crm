@@ -279,11 +279,14 @@ def test_downgrade_restores_header_from_first_line(db):
 def test_upgrade_splits_existing_open_tags(db):
     """A migration-time data step: every open group is split by the D6 builder.
 
-    Seeds exactly what the combos slice leaves behind pre-D6 - a line with one
-    open choice group and ONE tag with empty `choices` - and expects the
-    migration to leave TWO tags behind, each answering the group, so no "Open"
-    tag survives into the new world where the designer never splits one by
-    hand.
+    R3 (Phase 3 security H2 / reviewer B3): the split must not throw away
+    what already points at the open tag - a review comment anchored to it
+    (`price_tag_review_comments.tag_id`) and a placement in the request's
+    saved draft doc (keyed `{tag_id}-cN`). Both survive ONLY if the ORIGINAL
+    tag id is kept for the FIRST candidate combination and the new siblings'
+    placements are copied from the original's geometry - not "the open one
+    gone", which is what `_split_open_tags` does today (`DELETE FROM
+    price_tag_request_tags WHERE id = :id` before minting N fresh rows).
     """
     _rewind_to_pre_migration(db)
     request_id, line_ids = _request_with_lines(db, line_count=1)
@@ -299,12 +302,41 @@ def test_upgrade_splits_existing_open_tags(db):
         ),
         {"i": _uid(), "l": line_id, "c": f'["{white_id}", "{black_id}"]'},
     )
+    original_tag_id = _uid()
     db.execute(
         text(
             "INSERT INTO price_tag_request_tags (id, line_id, sort_order, quantity, choices) "
             "VALUES (:i, :l, 0, 1, '{}'::jsonb)"
         ),
-        {"i": _uid(), "l": line_id},
+        {"i": original_tag_id, "l": line_id},
+    )
+    comment_id = _uid()
+    db.execute(
+        text(
+            "INSERT INTO price_tag_review_comments (id, request_id, tag_id, round, body) "
+            "VALUES (:i, :r, :t, 1, 'ZZT make the basin bigger')"
+        ),
+        {"i": comment_id, "r": request_id, "t": original_tag_id},
+    )
+    page_id = _uid()
+    placement_id = f"{original_tag_id}-c0"
+    doc = (
+        '{"kind": "tag_sheet", "sheets": [{"id": "sheet-1", "tags": [{"id": "'
+        + placement_id
+        + '", "request_tag_id": "'
+        + original_tag_id
+        + '", "x_mm": 5, "y_mm": 5, "width_mm": 95, "height_mm": 44.5, "layers": []}]}]}'
+    )
+    db.execute(
+        text(
+            "INSERT INTO page (id, company_id, name, slug, kind, request_id, draft_doc) "
+            "VALUES (:i, :co, 'ZZT Tags', :s, 'tag_sheet', :r, CAST(:d AS jsonb))"
+        ),
+        {"i": page_id, "co": SORENTO, "s": unique_code("sheet"), "r": request_id, "d": doc},
+    )
+    db.execute(
+        text("UPDATE price_tag_requests SET page_id = :p WHERE id = :r"),
+        {"p": page_id, "r": request_id},
     )
     db.flush()
 
@@ -317,7 +349,45 @@ def test_upgrade_splits_existing_open_tags(db):
         ),
         {"l": line_id},
     ).all()
-    assert len(tags) == 2, "one tag per candidate, the open one gone"
+    assert len(tags) == 2, "one tag per candidate"
     choice_maps = [dict(row.choices) for row in tags]
     assert {choices.get("Basin") for choices in choice_maps} == {white_id, black_id}
     assert all(choices for choices in choice_maps), "no tag is left with empty choices"
+
+    # The ORIGINAL tag id survives, resolved to combination 0 (white, by
+    # candidate order) - not deleted and replaced with two fresh ids.
+    ids_by_choice = {choices.get("Basin"): str(row.id) for row, choices in zip(tags, choice_maps)}
+    assert ids_by_choice[white_id] == original_tag_id, (
+        "the tag that was already there keeps its id for the first candidate"
+    )
+    new_tag_id = ids_by_choice[black_id]
+    assert new_tag_id != original_tag_id
+
+    # The review comment still anchors to a REAL tag - the same one, since it
+    # was never about "either basin", it was about the specific tag someone
+    # commented on.
+    stored_comment_tag_id = db.execute(
+        text("SELECT tag_id FROM price_tag_review_comments WHERE id = :i"),
+        {"i": comment_id},
+    ).scalar()
+    assert str(stored_comment_tag_id) == original_tag_id
+
+    # The draft doc keeps the ORIGINAL placement (same id, same geometry,
+    # still keyed to the original tag id) and gains a COPY for the new
+    # sibling, not a doc that silently lost the second basin's tile.
+    stored_doc = db.execute(
+        text("SELECT draft_doc FROM page WHERE id = :i"), {"i": page_id}
+    ).scalar()
+    import json as _json
+
+    doc_obj = _json.loads(stored_doc) if isinstance(stored_doc, str) else stored_doc
+    placed = doc_obj["sheets"][0]["tags"]
+    by_request_tag = {p["request_tag_id"]: p for p in placed}
+    assert original_tag_id in by_request_tag, "the original placement is untouched"
+    assert by_request_tag[original_tag_id]["id"] == placement_id
+    assert by_request_tag[original_tag_id]["x_mm"] == 5
+    assert new_tag_id in by_request_tag, (
+        "the new sibling gets a COPY of the original's placement, not a blank tile"
+    )
+    assert by_request_tag[new_tag_id]["x_mm"] == 5
+    assert by_request_tag[new_tag_id]["width_mm"] == 95
