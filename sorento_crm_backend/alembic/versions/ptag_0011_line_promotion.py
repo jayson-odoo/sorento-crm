@@ -1,0 +1,201 @@
+"""Line-level promotion and manual price (PLAN-price-tag-line-promo-combo-subject.md D1, S6).
+
+A request-level promotion breaks the moment two lines sit on two promotions
+(owner ruling): `promotion_id` and `manual_sell_price` move from
+`price_tag_requests` onto `price_tag_request_lines`. The header keeps only
+`price_mode`.
+
+Steps:
+
+1. Add the two line columns.
+2. Backfill every line's `promotion_id` from its request's header value
+   (AC-S6-2) - no line loses its promotion.
+3. Drop the header column (and its index).
+4. D6/AC-S8-5: split every existing OPEN tag (a line with an unresolved
+   choice group that still carries exactly one tag with `choices = {}`) into
+   one tag per candidate combination, the same builder
+   `PriceTagRequestService._add_line_tags` uses at submit from this revision
+   onward - so no "Open" tag survives into the world where the designer never
+   splits one by hand.
+
+Downgrade restores the header column from the FIRST line (by `sort_order`)
+that carries a promotion, per request, and drops the line columns. The
+auto-split from step 4 is left as it is - a split tag is valid data either
+way, and un-splitting it would throw away a design choice as real as the
+tags it started with.
+
+Revision ID: ptag_0011_line_promo
+Revises: ptag_0010_badge_textcolor
+Create Date: 2026-09-16
+"""
+from __future__ import annotations
+
+import itertools
+import json
+import logging
+import uuid
+
+from alembic import op
+import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
+
+logger = logging.getLogger("alembic.runtime.migration")
+
+revision = "ptag_0011_line_promo"
+down_revision = "ptag_0010_badge_textcolor"
+branch_labels = None
+depends_on = None
+
+
+def _split_open_tags(conn) -> None:
+    """D6/AC-S8-5: mint one tag per candidate combination for every line an
+    unresolved choice group is still sitting on, straight-line style (no
+    Split / Pick one) - the same builder the request service now runs at
+    every save.
+
+    Scoped to a line with EXACTLY one existing tag whose `choices` is still
+    `{}` (or absent): that is what an open line looked like before this
+    revision. A line already split by hand (Split / Pick one, pre-D6) has
+    more than one tag or a non-empty `choices` map and is left untouched -
+    it is not "open", it already answered.
+    """
+    open_parts = conn.execute(
+        sa.text(
+            "SELECT line_id, role, candidates FROM price_tag_request_line_parts "
+            "WHERE product_id IS NULL AND jsonb_array_length(candidates) > 0"
+        )
+    ).all()
+    if not open_parts:
+        return
+
+    groups_by_line: dict[str, list[tuple[str, list[str]]]] = {}
+    for row in open_parts:
+        mapping = row._mapping
+        groups_by_line.setdefault(str(mapping["line_id"]), []).append(
+            (mapping["role"] or "", [str(c) for c in (mapping["candidates"] or [])])
+        )
+
+    split_count = 0
+    for line_id, groups in groups_by_line.items():
+        tags = conn.execute(
+            sa.text(
+                "SELECT id, sort_order, quantity, choices, marketing_price_override, "
+                "marketing_override_reason FROM price_tag_request_tags "
+                "WHERE line_id = :line_id ORDER BY sort_order"
+            ),
+            {"line_id": line_id},
+        ).all()
+        if len(tags) != 1:
+            continue
+        tag = tags[0]._mapping
+        if tag["choices"]:
+            continue
+
+        roles = [role for role, _ in groups]
+        combos = list(itertools.product(*[candidates for _, candidates in groups]))
+        if not combos:
+            continue
+
+        conn.execute(
+            sa.text("DELETE FROM price_tag_request_tags WHERE id = :id"),
+            {"id": tag["id"]},
+        )
+        for index, combo in enumerate(combos):
+            choices = dict(zip(roles, combo))
+            conn.execute(
+                sa.text(
+                    "INSERT INTO price_tag_request_tags "
+                    "(id, line_id, sort_order, quantity, choices, "
+                    " marketing_price_override, marketing_override_reason) "
+                    "VALUES (:id, :line_id, :sort_order, :quantity, CAST(:choices AS jsonb), "
+                    "        :override, :reason)"
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "line_id": line_id,
+                    "sort_order": index,
+                    "quantity": tag["quantity"],
+                    "choices": json.dumps(choices),
+                    "override": tag["marketing_price_override"],
+                    "reason": tag["marketing_override_reason"],
+                },
+            )
+        split_count += 1
+
+    if split_count:
+        logger.info("ptag_0011: auto-split %s pre-existing open line(s)", split_count)
+
+
+def upgrade() -> None:
+    op.add_column(
+        "price_tag_request_lines",
+        sa.Column(
+            "promotion_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("promotions.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    op.add_column(
+        "price_tag_request_lines",
+        sa.Column("manual_sell_price", sa.Numeric(12, 2), nullable=True),
+    )
+    op.create_index(
+        "ix_price_tag_request_lines_promotion_id",
+        "price_tag_request_lines",
+        ["promotion_id"],
+    )
+
+    conn = op.get_bind()
+
+    # AC-S6-2: every line inherits its request's header promotion. No line
+    # loses it - a request with 3 lines backfills all 3, not just one.
+    conn.execute(
+        sa.text(
+            "UPDATE price_tag_request_lines "
+            "SET promotion_id = price_tag_requests.promotion_id "
+            "FROM price_tag_requests "
+            "WHERE price_tag_requests.id = price_tag_request_lines.request_id "
+            "AND price_tag_requests.promotion_id IS NOT NULL"
+        )
+    )
+
+    op.drop_index("ix_price_tag_requests_promotion_id", table_name="price_tag_requests")
+    op.drop_column("price_tag_requests", "promotion_id")
+
+    _split_open_tags(conn)
+
+
+def downgrade() -> None:
+    op.add_column(
+        "price_tag_requests",
+        sa.Column(
+            "promotion_id",
+            postgresql.UUID(as_uuid=False),
+            sa.ForeignKey("promotions.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    op.create_index(
+        "ix_price_tag_requests_promotion_id", "price_tag_requests", ["promotion_id"]
+    )
+
+    conn = op.get_bind()
+    # Restored from the FIRST line (by sort_order) that carries one - the
+    # header can only hold ONE promotion, so this is a best-effort answer for
+    # whatever the header column meant before D1 retired it.
+    conn.execute(
+        sa.text(
+            "UPDATE price_tag_requests SET promotion_id = ("
+            "  SELECT l.promotion_id FROM price_tag_request_lines l"
+            "  WHERE l.request_id = price_tag_requests.id AND l.promotion_id IS NOT NULL"
+            "  ORDER BY l.sort_order, l.id LIMIT 1"
+            ")"
+        )
+    )
+
+    op.drop_index(
+        "ix_price_tag_request_lines_promotion_id", table_name="price_tag_request_lines"
+    )
+    op.drop_column("price_tag_request_lines", "manual_sell_price")
+    op.drop_column("price_tag_request_lines", "promotion_id")

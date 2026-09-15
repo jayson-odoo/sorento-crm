@@ -25,11 +25,12 @@ from app.models.portal import PortalToken
 from app.models.dealer_kit import Page
 from app.schemas.price_tag import (
     DebtorForAgentItem,
+    LinePricingRequest,
+    LinePricingRow,
     PortalTagSheetDesignResponse,
     PriceTagRequestCreate,
     PriceTagRequestResponse,
     PriceTagRequestUpdate,
-    PromotionLookupItem,
     RequestChangesPayload,
     RequestChangesResponse,
     ResolvedLineData,
@@ -106,20 +107,23 @@ def portal_create_price_tag_request(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Create a new price tag request as a draft."""
+    """Create a new price tag request as a draft.
+
+    D1 (S6): the promotion is a LINE fact now - each line's own
+    ``promotion_id``, if any, is validated (AC-S6-5) by ``_add_lines``
+    itself, against THIS contact's own audience (``_contact_viewer``), not by
+    a header-level check here.
+    """
     _assert_visible(db, token.contact_id)
     company_id = _resolve_company(db, token)
-    if payload.promotion_id is not None:
-        with company_scope(db, frozenset({company_id})):
-            PriceTagRequestService.validate_promotion_access(
-                db, token.contact_id, payload.promotion_id
-            )
-    req = PriceTagRequestService.create_request(
-        db,
-        contact_id=token.contact_id,
-        company_id=company_id,
-        data=payload.model_dump(),
-    )
+    with company_scope(db, frozenset({company_id})):
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=token.contact_id,
+            company_id=company_id,
+            data=payload.model_dump(),
+            viewer=_contact_viewer(db, token.contact_id),
+        )
     db.commit()
     return _detail_body(db, req)
 
@@ -334,11 +338,6 @@ def portal_update_price_tag_request(
     _require_draft(req, "Only a draft can be edited.")
 
     update_data = payload.model_dump(exclude_unset=True)
-    if "promotion_id" in update_data:
-        with company_scope(db, frozenset({req.company_id})):
-            PriceTagRequestService.validate_promotion_access(
-                db, req.contact_id, update_data["promotion_id"]
-            )
     # `lines` is a relationship, not a column: given, it REPLACES the draft's
     # lines; omitted, it leaves them alone. Re-saving a draft posts the whole
     # table, which is why the form no longer creates a second request each time.
@@ -346,7 +345,12 @@ def portal_update_price_tag_request(
     for key, value in update_data.items():
         setattr(req, key, value)
     if lines is not None:
-        PriceTagRequestService.replace_lines(db, req, lines)
+        # D1/AC-S6-5: each line's own `promotion_id` is validated here,
+        # against THIS contact's audience - same as create.
+        with company_scope(db, frozenset({req.company_id})):
+            PriceTagRequestService.replace_lines(
+                db, req, lines, viewer=_contact_viewer(db, req.contact_id)
+            )
 
     db.flush()
     db.commit()
@@ -747,36 +751,36 @@ def portal_lookup_product_combos(
 
 
 # ---------------------------------------------------------------------------
-# Promotion lookup
+# Line pricing (D1-D4, S7). Replaces the retired promotion dropdown lookup -
+# a line's own Promotion select reads THIS, not a flat promotion list, since
+# which promotions are even offered now depends on what is on the line.
 # ---------------------------------------------------------------------------
 
 
-@router.get("/lookups/promotions", response_model=list[PromotionLookupItem])
-def portal_lookup_promotions(
-    q: Optional[str] = Query(None),
+@router.post("/lookups/line-pricing", response_model=list[LinePricingRow])
+def portal_line_pricing(
+    payload: LinePricingRequest,
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    """Active-window, audience-gated promotions for the portal form's promotion
-    dropdown (S4, #477).
+    """What every line of the form currently in progress costs THIS contact.
 
-    Gated the same way as every other price tag route: a contact who cannot see
-    the form cannot browse the promotion book through it either. Beyond that,
-    the promotions returned are only the ones this contact's own access codes
-    are entitled to (``PriceTagRequestService.lookup_promotions``) - the same
-    audience rule a promotion's price is gated by everywhere else.
-
-    Scoped to the SAME company ``_resolve_company`` will stamp the request with,
-    same reasoning as ``portal_lookup_tag_items``: a contact who belongs to more
-    than one company would otherwise be offered the other company's promotion
-    alongside this one.
+    Gated the same way as every other price tag route: a contact who cannot
+    see the form cannot price one through it either. Audience-scoped to this
+    contact's own access codes (AC-S7-2), same rule the retired promotion
+    dropdown enforced. Scoped to the same company ``_resolve_company`` would
+    stamp the request with, same reasoning as the other lookups.
     """
     _assert_visible(db, token.contact_id)
+    from app.services.dealer_kit.pricing import line_pricing
+
     with company_scope(db, frozenset({_resolve_company(db, token)})):
-        return [
-            PromotionLookupItem(**item)
-            for item in PriceTagRequestService.lookup_promotions(db, token.contact_id, q)
-        ]
+        rows = line_pricing(
+            db,
+            lines=[line.model_dump() for line in payload.lines],
+            viewer=_contact_viewer(db, token.contact_id),
+        )
+    return [LinePricingRow(**row) for row in rows]
 
 
 # ---------------------------------------------------------------------------
@@ -910,6 +914,21 @@ def _detail_body(db: Session, req) -> dict:
     body["revision"] = revision_service.policy_for("price_tag_request", req.id).as_dict()
     body["revision_draft"] = revision_service.get_draft("price_tag_request", req.id)
     return body
+
+
+def _contact_viewer(db: Session, contact_id: str):
+    """The portal contact's own audience, as a pricing/promotion viewer (D4).
+
+    Every line-level promotion check (create, update, the line-pricing
+    lookup) reads THIS, never a bare pass-through of ``access_codes`` built
+    ad hoc per call site - one place answers "what can this contact see",
+    matching the old ``lookup_promotions``' own audience rule.
+    """
+    from app.services.contact_access_type_service import ContactAccessTypeService
+    from app.services.dealer_kit.viewer import ViewerContext
+
+    codes = ContactAccessTypeService(db).get_contact_access_codes(contact_id)
+    return ViewerContext(access_codes=frozenset(codes))
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

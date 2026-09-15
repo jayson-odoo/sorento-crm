@@ -264,6 +264,175 @@ def _a_real_price(value) -> Optional[Decimal]:
     return price
 
 
+#: What a LINE total is rounded to (D2/D3/D4, S7). The engine sums several
+#: products; this keeps the sum to two places the way `_a_real_price` keeps
+#: one product's own figure to two places.
+_LINE_MONEY = Decimal("0.01")
+
+
+def _covering_promotions(
+    db: Session, product_ids: Sequence[str], viewer: ViewerContext
+) -> list[Promotion]:
+    """Every active, in-window, audience-visible promotion pricing ANY of
+    ``product_ids`` today (AC-S7-2).
+
+    A promotion covering only a choice group's CANDIDATE still counts - the
+    salesperson may pick that candidate, so the line genuinely benefits from
+    it (D3/AC-S7-2).
+    """
+    if not product_ids:
+        return []
+    today = business_today()
+    rows = (
+        db.query(Promotion)
+        .join(PromotionProduct, PromotionProduct.promotion_id == Promotion.id)
+        .filter(PromotionProduct.product_id.in_(list(product_ids)))
+        .filter(Promotion.is_active.is_(True))
+        .filter(or_(Promotion.start_date.is_(None), Promotion.start_date <= today))
+        .filter(or_(Promotion.end_date.is_(None), Promotion.end_date >= today))
+        .distinct()
+        .all()
+    )
+    return [row for row in rows if _may_see_offer(row.access_levels, viewer)]
+
+
+def _line_total_under(
+    db: Session,
+    products_by_id: dict[str, Product],
+    resolved_ids: Sequence[str],
+    part_ids: Sequence[str],
+    viewer: ViewerContext,
+    promotion_id: str,
+) -> tuple[Decimal, list[str]]:
+    """The line's total under ONE promotion, and which PARTS printed at list.
+
+    Sum of (this promotion's offer, when it is worth showing, else the list
+    price) over the parent plus every RESOLVED part (D3) - the same rule
+    ``_offer_or_list`` already encodes for a tag's own price, generalised to
+    "which promotion" rather than always the line's one. ``resolved_ids``
+    includes the parent; ``part_ids`` is the subset that is worth naming back
+    to the caller when one of THEM specifically missed the offer (AC-S1-8) -
+    the parent missing it is not "a part at list", it is the whole line not
+    benefiting.
+    """
+    offers = _offer_prices(db, resolved_ids, viewer, promotion_id) if resolved_ids else {}
+    total = Decimal("0")
+    parts_at_list: list[str] = []
+    for product_id in resolved_ids:
+        product = products_by_id.get(product_id)
+        list_price = _a_real_price(product.list_price) if product else None
+        worth = _offer_worth_showing(offers.get(product_id), list_price)
+        if worth is not None:
+            total += worth
+        else:
+            total += list_price or Decimal("0")
+            if product_id in part_ids:
+                parts_at_list.append(product_id)
+    return total.quantize(_LINE_MONEY), parts_at_list
+
+
+def line_pricing(
+    db: Session,
+    lines: list[dict],
+    viewer: ViewerContext,
+) -> list[dict]:
+    """What EVERY line of a price tag request/form costs this viewer (D2-D4, S7).
+
+    One call answers every line at once (D4) - the portal form and the CRM
+    detail page's own routes are thin wrappers around this. Each input line is
+    ``{key, product_id, part_product_ids, candidate_product_ids, promotion_id?,
+    manual_sell_price?}``; each output row is ``{key, list_price,
+    promotion_options, auto_promotion_id, sell_price, sell_price_basis,
+    parts_at_list, candidates}`` per the plan's API contract.
+
+    ``sell_price_basis`` (AC-S7-4): ``manual`` when a manual figure is given,
+    ``promotion`` when a promotion (given or auto-picked) prices the line,
+    ``list`` otherwise - the SAME three-way answer ``_add_lines`` writes
+    ``show_promo_price`` from (AC-S7-5) and ``resolve_tags_live`` reads back
+    for a tag's own price (D3/AC-S9-3), so the three surfaces cannot disagree
+    about what a line is worth.
+    """
+    results: list[dict] = []
+    for line in lines:
+        key = line["key"]
+        product_id = line.get("product_id")
+        part_ids = [pid for pid in (line.get("part_product_ids") or []) if pid]
+        candidate_ids = [pid for pid in (line.get("candidate_product_ids") or []) if pid]
+        given_promotion_id = line.get("promotion_id")
+        manual = line.get("manual_sell_price")
+
+        resolved_ids = [pid for pid in [product_id, *part_ids] if pid]
+        lookup_ids = list({*resolved_ids, *candidate_ids})
+        products_by_id: dict[str, Product] = (
+            {p.id: p for p in db.query(Product).filter(Product.id.in_(lookup_ids)).all()}
+            if lookup_ids
+            else {}
+        )
+
+        list_price = Decimal("0")
+        for product_id_ in resolved_ids:
+            product = products_by_id.get(product_id_)
+            price = (_a_real_price(product.list_price) if product else None) or Decimal("0")
+            list_price += price
+        list_price = list_price.quantize(_LINE_MONEY)
+
+        covering = _covering_promotions(db, lookup_ids, viewer)
+        promotion_options = []
+        totals_by_promotion: dict[str, tuple[Decimal, list[str]]] = {}
+        for promo in covering:
+            total, parts_at_list_for_promo = _line_total_under(
+                db, products_by_id, resolved_ids, part_ids, viewer, promo.id
+            )
+            totals_by_promotion[promo.id] = (total, parts_at_list_for_promo)
+            promotion_options.append(
+                {"id": promo.id, "description": promo.description or "", "sell_price": total}
+            )
+        promotion_options.sort(key=lambda option: option["sell_price"])
+
+        auto_promotion_id = promotion_options[0]["id"] if promotion_options else None
+        chosen_id = given_promotion_id or auto_promotion_id
+        chosen_total = totals_by_promotion.get(chosen_id) if chosen_id else None
+
+        if manual is not None:
+            sell_price = _as_decimal(manual)
+            sell_price_basis = "manual"
+            parts_at_list: list[str] = []
+        elif chosen_total is not None:
+            sell_price, parts_at_list = chosen_total
+            sell_price_basis = "promotion"
+        else:
+            sell_price = list_price
+            sell_price_basis = "list"
+            parts_at_list = []
+
+        candidates_out = []
+        for candidate_id in candidate_ids:
+            product = products_by_id.get(candidate_id)
+            c_list = _a_real_price(product.list_price) if product else None
+            c_sell = c_list
+            if chosen_id and product:
+                offer = _offer_prices(db, [candidate_id], viewer, chosen_id).get(candidate_id)
+                worth = _offer_worth_showing(offer, c_list)
+                c_sell = worth if worth is not None else c_list
+            candidates_out.append(
+                {"product_id": candidate_id, "list_price": c_list, "sell_price": c_sell}
+            )
+
+        results.append(
+            {
+                "key": key,
+                "list_price": list_price,
+                "promotion_options": promotion_options,
+                "auto_promotion_id": auto_promotion_id,
+                "sell_price": sell_price,
+                "sell_price_basis": sell_price_basis,
+                "parts_at_list": parts_at_list,
+                "candidates": candidates_out,
+            }
+        )
+    return results
+
+
 def _offer_worth_showing(
     offer: Optional[Decimal], list_price: Optional[Decimal]
 ) -> Optional[Decimal]:

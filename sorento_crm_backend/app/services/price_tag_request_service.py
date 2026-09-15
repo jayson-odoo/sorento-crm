@@ -154,24 +154,33 @@ class PriceTagRequestService:
         contact_id: str,
         company_id: str,
         data: dict,
+        viewer=None,
     ) -> PriceTagRequest:
         """Create a price tag request with its lines.
 
-        ``data`` keys: debtor_code, debtor_name, promotion_id, needed_by_date,
-        notes, lines (list of line dicts). EVERY one of them is optional (D48a):
-        Save Draft validates nothing, so a form with one line and no dealer is a
-        request this has to be able to store. Completeness is checked on submit by
+        ``data`` keys: debtor_code, debtor_name, needed_by_date, notes, lines
+        (list of line dicts, each of which may carry its own ``promotion_id``
+        / ``manual_sell_price`` - D1, the promotion is a LINE fact since S6).
+        EVERY one of them is optional (D48a): Save Draft validates nothing, so
+        a form with one line and no dealer is a request this has to be able
+        to store. Completeness is checked on submit by
         ``validate_submittable``.
+
+        A bare top-level ``data["promotion_id"]`` is NOT part of the wire
+        contract - both Pydantic request schemas ``extra="forbid"`` it
+        (AC-S6-3) - but is honoured here as the default for any line that
+        does not carry its own, so an internal caller building a single-line
+        request (a script, a test) can say the promotion once rather than
+        repeating it per line.
 
         Sets ``portal_draft_at`` on creation (the request starts as a draft).
 
-        No promotion audience check here: this service method is also the
-        CRM-side entry point (``tag_data_service`` etc.), which is not bound
-        by a portal contact's audience. The audience gate
-        (``validate_promotion_access``) is applied by the PORTAL create/update
-        routes only (``portal_price_tag.py``), the one surface it is meant to
-        guard - moved out of here after it 422ed two CRM-side create paths
-        that have no contact audience to check.
+        ``viewer`` decides which promotions a LINE's own ``promotion_id`` is
+        validated and priced against (AC-S6-5, AC-S7-2) - the portal routes
+        pass the contact's own audience; every other caller (CRM, and this
+        default) gets ``staff_viewer()``, which is not bound by a portal
+        contact's audience and matches the same "CRM has no contact to check"
+        rule the old header-level audience gate followed.
         """
         request = PriceTagRequestService._insert_with_doc_number(
             db,
@@ -180,7 +189,6 @@ class PriceTagRequestService:
                 company_id=company_id,
                 debtor_code=data.get("debtor_code"),
                 debtor_name=data.get("debtor_name"),
-                promotion_id=data.get("promotion_id"),
                 needed_by_date=data.get("needed_by_date"),
                 notes=data.get("notes"),
                 price_mode=data.get("price_mode") or "list",
@@ -193,7 +201,13 @@ class PriceTagRequestService:
             company_id,
         )
 
-        PriceTagRequestService._add_lines(db, request, data.get("lines") or [])
+        PriceTagRequestService._add_lines(
+            db,
+            request,
+            data.get("lines") or [],
+            viewer=viewer,
+            default_promotion_id=data.get("promotion_id"),
+        )
         db.flush()
         return request
 
@@ -240,14 +254,19 @@ class PriceTagRequestService:
         lines: list[dict],
         *,
         carry_tags: dict[tuple, list[dict]] | None = None,
+        viewer=None,
+        default_promotion_id: str | None = None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
 
-        ``show_promo_price`` is DERIVED from the request's header ``price_mode``
-        (D5), never taken from the payload: the per-line switch is gone, and
-        every line save - create, replace on update - re-derives every line
-        from whatever the header says right now, so a header flip never leaves
-        a stale line behind.
+        ``show_promo_price`` is DERIVED per line (D1/D3/AC-S7-5) from the
+        request's header ``price_mode`` AND the line's own
+        ``sell_price_basis`` (through ``line_pricing`` - S7): a line in
+        Selling mode with no covering promotion and no manual figure is
+        still LP, same as a line whose promotion offer does not beat list.
+        Every line save - create, replace on update - re-derives it from
+        scratch, so neither a header flip nor a line's own promotion change
+        ever leaves a stale value behind.
 
         Every line gets its TAGS here too (D3): exactly one, carrying the line's
         quantity and an empty `choices`, unless ``carry_tags`` hands over the set
@@ -261,9 +280,17 @@ class PriceTagRequestService:
         before any insert, so the table's own
         ``uq_ptag_line_request_product`` / ``uq_ptag_line_request_set``
         constraints never get the chance to answer with a 500.
+
+        ``viewer`` (AC-S6-5, AC-S7-2) decides which promotions a line's own
+        ``promotion_id`` may be validated and priced against - see
+        ``create_request``'s own docstring for who passes what.
         """
+        from app.services.dealer_kit.pricing import line_pricing
+        from app.services.dealer_kit.tag_data_service import staff_viewer
+
+        viewer = viewer or staff_viewer()
         PriceTagRequestService._raise_on_duplicate_line(db, lines)
-        show_promo_price = request.price_mode == "selling"
+        selling = request.price_mode == "selling"
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
@@ -309,13 +336,88 @@ class PriceTagRequestService:
                     detail=f"line:{idx}",
                     code="INVALID_PART",
                 )
+
+            explicit_promotion = "promotion_id" in line_data
+            promotion_id = line_data.get("promotion_id", default_promotion_id)
+            manual_sell_price = line_data.get("manual_sell_price")
+            # D1/D3/AC-S7-5: a product line's price basis, resolved through
+            # the SAME engine the portal's and the CRM's own line-pricing
+            # routes call (S7) - `show_promo_price` can never disagree with
+            # what those routes just showed the salesperson. A set line has
+            # no line_pricing path (S7 is products only) and keeps the old
+            # simple rule.
+            basis = "list"
+            if product_id:
+                parts_data = line_data.get("parts") or []
+                resolved_part_ids = [
+                    p["product_id"] for p in parts_data if p.get("product_id")
+                ]
+                candidate_ids = [
+                    c
+                    for p in parts_data
+                    if not p.get("product_id")
+                    for c in (p.get("candidates") or [])
+                ]
+                pricing_row = line_pricing(
+                    db,
+                    lines=[
+                        {
+                            "key": "_p",
+                            "product_id": product_id,
+                            "part_product_ids": resolved_part_ids,
+                            "candidate_product_ids": candidate_ids,
+                            "promotion_id": promotion_id,
+                            "manual_sell_price": manual_sell_price,
+                        }
+                    ],
+                    viewer=viewer,
+                )[0]
+                if promotion_id and promotion_id not in {
+                    option["id"] for option in pricing_row["promotion_options"]
+                }:
+                    if explicit_promotion:
+                        # AC-S6-5: a line's promotion must be active, visible
+                        # to this viewer, and cover at least one product on
+                        # the line (the parent, a resolved part, or any
+                        # candidate) - answered by whether it shows up in the
+                        # SAME covering list `line_pricing` just computed, so
+                        # validation and pricing can never disagree about
+                        # what "covers this line" means.
+                        raise AppException(
+                            status_code=422,
+                            message="This promotion does not apply to this line.",
+                            detail=f"line:{idx}",
+                            code="PROMOTION_NOT_AVAILABLE",
+                        )
+                    # The request-level DEFAULT is best-effort sugar, not a
+                    # command (see create_request's docstring) - a line it
+                    # does not cover just prints at list, same as a line with
+                    # no promotion at all, rather than refusing a save nobody
+                    # asked to be refused.
+                    promotion_id = None
+                    pricing_row = line_pricing(
+                        db,
+                        lines=[
+                            {
+                                "key": "_p",
+                                "product_id": product_id,
+                                "part_product_ids": resolved_part_ids,
+                                "candidate_product_ids": candidate_ids,
+                                "promotion_id": None,
+                                "manual_sell_price": manual_sell_price,
+                            }
+                        ],
+                        viewer=viewer,
+                    )[0]
+                basis = pricing_row["sell_price_basis"]
+
             line = (
                 PriceTagRequestLine(
                     request_id=request.id,
                     line_type=line_data["line_type"],
                     product_id=product_id,
                     product_set_id=product_set_id,
-                    show_promo_price=show_promo_price,
+                    show_promo_price=selling and basis != "list",
                     quantity=line_data.get("quantity", 1),
                     combo_id=PriceTagRequestService._resolve_combo_id(
                         db, line_data, request.company_id
@@ -323,6 +425,8 @@ class PriceTagRequestService:
                     included_accessories=line_data.get("included_accessories"),
                     remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
+                    promotion_id=promotion_id,
+                    manual_sell_price=manual_sell_price,
                 )
             )
             db.add(line)
@@ -338,40 +442,79 @@ class PriceTagRequestService:
 
     @staticmethod
     def _add_line_tags(db: Session, line, carried: list[dict] | None = None) -> None:
-        """The tags that will be printed for this line (D3, AC-S3-1).
+        """The tags that will be printed for this line (D3/D6, AC-S8-1..S8-3).
 
-        Exactly ONE at submit, carrying the line's quantity and an empty
-        `choices`: not zero (the designer would have nothing to key its document
-        on) and not one per candidate (auto-split was rejected by the owner -
-        marketing decides in the designer).
+        One tag per candidate COMBINATION across every open choice group the
+        line still has (D6, owner ruling): a line with no open group mints
+        exactly one, carrying its quantity and an empty `choices`, same as
+        before this slice. A line with one open group of N candidates mints
+        N; two open groups of N and M mint N x M, `choices` filled for every
+        one of them - straight-line, no Split / Pick one left for the
+        designer to do by hand.
 
         `carried` is a surviving line's existing tag set, handed over by
-        `replace_lines`, so a revision that changes a remark keeps the split
-        marketing already made.
+        `replace_lines`. AC-S8-3: when the line's parts are UNCHANGED (the
+        set of `choices` maps this save would mint is exactly what `carried`
+        already has), the carried rows are reused as-is - id, sort_order,
+        quantity, overrides included - rather than rebuilt, so a remark edit
+        does not reshuffle tags the designer has already placed or discard a
+        split marketing made by hand before D6 shipped. Anything else
+        (different parts, or no carried set at all) mints fresh tags.
         """
+        from itertools import product as _cartesian
+
         from app.models.price_tag import PriceTagRequestTag
 
-        rows = carried if carried else [
-            {"sort_order": 0, "quantity": line.quantity or 1, "choices": {}}
+        open_groups = [
+            (part.role or "", list(part.candidates or []))
+            for part in (line.parts or [])
+            if not part.product_id and part.candidates
         ]
-        # A line that was never split has exactly one tag, and that tag's
-        # quantity is not marketing's - it is the salesperson's number, seeded
-        # from the line. Without this, a draft saved at 1, changed to 5 and
-        # submitted (or revised to 9) kept a tag at 1 and printed one tile
-        # instead of five (review round 2, B1). A SPLIT line keeps its per-tag
-        # quantities: once marketing has divided the line up, those numbers are
-        # decisions, not a copy of anything.
-        if carried and len(rows) == 1:
-            rows = [{**rows[0], "quantity": line.quantity or 1}]
-        for index, row in enumerate(rows):
+        if open_groups:
+            roles = [role for role, _ in open_groups]
+            combos = list(_cartesian(*[candidates for _, candidates in open_groups]))
+            new_choice_maps = [dict(zip(roles, combo)) for combo in combos]
+        else:
+            new_choice_maps = [{}]
+
+        if carried:
+            carried_keys = {
+                tuple(sorted((row.get("choices") or {}).items())) for row in carried
+            }
+            new_keys = {tuple(sorted(choices.items())) for choices in new_choice_maps}
+            if carried_keys == new_keys:
+                rows = carried
+                # A line that was never split has exactly one tag, and that
+                # tag's quantity is not marketing's - it is the salesperson's
+                # number, seeded from the line. Without this, a draft saved
+                # at 1, changed to 5 and submitted (or revised to 9) kept a
+                # tag at 1 and printed one tile instead of five (review round
+                # 2, B1). A SPLIT line keeps its per-tag quantities: once
+                # marketing has divided the line up, those numbers are
+                # decisions, not a copy of anything.
+                if len(rows) == 1:
+                    rows = [{**rows[0], "quantity": line.quantity or 1}]
+                for index, row in enumerate(rows):
+                    db.add(
+                        PriceTagRequestTag(
+                            id=row.get("id"),
+                            line_id=line.id,
+                            sort_order=row.get("sort_order", index),
+                            quantity=row.get("quantity") or 1,
+                            choices=row.get("choices") or {},
+                            marketing_price_override=row.get("marketing_price_override"),
+                            marketing_override_reason=row.get("marketing_override_reason"),
+                        )
+                    )
+                return
+
+        for index, choices in enumerate(new_choice_maps):
             db.add(
                 PriceTagRequestTag(
                     line_id=line.id,
-                    sort_order=row.get("sort_order", index),
-                    quantity=row.get("quantity") or 1,
-                    choices=row.get("choices") or {},
-                    marketing_price_override=row.get("marketing_price_override"),
-                    marketing_override_reason=row.get("marketing_override_reason"),
+                    sort_order=index,
+                    quantity=line.quantity or 1,
+                    choices=choices,
                 )
             )
 
@@ -652,7 +795,9 @@ class PriceTagRequestService:
         )
 
     @staticmethod
-    def replace_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
+    def replace_lines(
+        db: Session, request: PriceTagRequest, lines: list[dict], viewer=None
+    ) -> None:
         """Swap a draft's lines for the ones the form just posted.
 
         A re-save sends the whole table, not a diff: the rows are unsaved form
@@ -671,6 +816,12 @@ Marketing's own work is not part of the form's payload, so it is captured
         carry_tags = {
             (old.product_id, old.product_set_id): [
                 {
+                    # AC-S8-3: a re-save with unchanged parts keeps the SAME
+                    # tag rows, id included - the id is what lets the split
+                    # survive the delete-and-reinsert `lines.clear()` below
+                    # does, so the saved tag sheet document's own
+                    # placements (keyed on it) keep pointing at the right tag.
+                    "id": tag.id,
                     "sort_order": tag.sort_order,
                     "quantity": tag.quantity,
                     "choices": dict(tag.choices or {}),
@@ -685,7 +836,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         }
         request.lines.clear()
         db.flush()
-        PriceTagRequestService._add_lines(db, request, lines, carry_tags=carry_tags)
+        PriceTagRequestService._add_lines(
+            db, request, lines, carry_tags=carry_tags, viewer=viewer
+        )
         db.flush()
         # `_add_lines` inserts the new rows via `db.add(...)`, not
         # `request.lines.append(...)`, so the in-memory collection is left
@@ -703,6 +856,108 @@ Marketing's own work is not part of the form's payload, so it is captured
 
             tag_data_service.pin_tags(db, request, only_unpinned=True)
             db.flush()
+
+    @staticmethod
+    def set_line_price(
+        db: Session,
+        request: PriceTagRequest,
+        line: PriceTagRequestLine,
+        data: dict,
+        *,
+        viewer=None,
+    ) -> None:
+        """D5/AC-S11-1: the office changing ONE line's own promotion or
+        manual price on a request already sent in.
+
+        ``data`` is ``payload.model_dump(exclude_unset=True)`` from
+        ``PriceTagRequestLinePricePatch`` - only a key the caller actually
+        sent moves the line; an omitted one keeps its current value. D2's
+        "picking a promotion clears manual" is symmetric here: whichever
+        field THIS patch set to a real value wins and clears the other, so a
+        `manual_sell_price` patch clears a standing promotion just as a
+        `promotion_id` patch clears a standing manual figure.
+
+        Validates the same AC-S6-4 (mutually exclusive, manual only in
+        Selling mode) and AC-S6-5 (promotion must cover the line) rules the
+        create/update path runs, through the SAME ``line_pricing`` engine, so
+        the CRM route and the portal form can never disagree about what is
+        allowed. Clears the line's tags' pins (AC-S11-1) so the existing
+        data-change banner carries the change into an already-pinned design
+        (r9 D16).
+        """
+        from app.services.dealer_kit.pricing import line_pricing
+        from app.services.dealer_kit.tag_data_service import staff_viewer
+
+        viewer = viewer or staff_viewer()
+
+        promotion_id = (
+            data["promotion_id"] if "promotion_id" in data else line.promotion_id
+        )
+        manual_sell_price = (
+            data["manual_sell_price"]
+            if "manual_sell_price" in data
+            else line.manual_sell_price
+        )
+        if "promotion_id" in data and data["promotion_id"] is not None:
+            manual_sell_price = None
+        if "manual_sell_price" in data and data["manual_sell_price"] is not None:
+            promotion_id = None
+
+        if manual_sell_price is not None:
+            if promotion_id is not None:
+                raise AppException(
+                    status_code=422,
+                    message="A manual price and a promotion are mutually exclusive.",
+                    code="INVALID_LINE_PRICE",
+                )
+            if request.price_mode != "selling":
+                raise AppException(
+                    status_code=422,
+                    message="A manual price only applies in Selling mode.",
+                    code="INVALID_LINE_PRICE",
+                )
+
+        basis = "list"
+        if line.product_id:
+            resolved_part_ids = [p.product_id for p in line.parts if p.product_id]
+            candidate_ids = [
+                candidate
+                for part in line.parts
+                if not part.product_id
+                for candidate in (part.candidates or [])
+            ]
+            pricing_row = line_pricing(
+                db,
+                lines=[
+                    {
+                        "key": "_p",
+                        "product_id": line.product_id,
+                        "part_product_ids": resolved_part_ids,
+                        "candidate_product_ids": candidate_ids,
+                        "promotion_id": promotion_id,
+                        "manual_sell_price": manual_sell_price,
+                    }
+                ],
+                viewer=viewer,
+            )[0]
+            if promotion_id and promotion_id not in {
+                option["id"] for option in pricing_row["promotion_options"]
+            }:
+                raise AppException(
+                    status_code=422,
+                    message="This promotion does not apply to this line.",
+                    code="PROMOTION_NOT_AVAILABLE",
+                )
+            basis = pricing_row["sell_price_basis"]
+
+        line.promotion_id = promotion_id
+        line.manual_sell_price = manual_sell_price
+        line.show_promo_price = request.price_mode == "selling" and basis != "list"
+
+        for tag in line.tags:
+            tag.pinned_tag_data = None
+            tag.pinned_at = None
+            tag.data_change_ack_hash = None
 
     @staticmethod
     def submit_request(
@@ -1312,91 +1567,6 @@ Marketing's own work is not part of the form's payload, so it is captured
         }
 
     @staticmethod
-    def validate_choices(db: Session, tag, choices: dict) -> None:
-        """"Pick one" may only pick from what the line actually left open.
-
-        Unvalidated, `choices` was a free `{anything: anything}` write from a
-        marketing user: a role the line never opened, or a product id from
-        another company, would be stored and then resolved onto the tag - which
-        is how a cabinet ends up printing a basin nobody offered.
-
-        Both halves are checked against the LINE's own part rows, which is the
-        only place that says what was asked for.
-        """
-        open_groups = {}
-        for part in tag.line.parts or []:
-            if part.product_id or not part.role:
-                continue
-            open_groups[part.role] = {str(c) for c in (part.candidates or [])}
-
-        for role, product_id in (choices or {}).items():
-            if role not in open_groups:
-                raise AppException(
-                    status_code=422,
-                    message=f"This line has no open {role} to choose.",
-                    code="INVALID_CHOICE",
-                )
-            if str(product_id) not in open_groups[role]:
-                raise AppException(
-                    status_code=422,
-                    message=f"That product is not one of the {role} options on this line.",
-                    code="INVALID_CHOICE",
-                )
-
-    @staticmethod
-    def split_tag(db: Session, tag, role: str) -> list:
-        """"Split into N tags" (AC-S3-4).
-
-        The tag that is there resolves to candidate 1 and KEEPS ITS ID, so its
-        placed geometry and its review pins survive; N-1 siblings are inserted
-        after it, one per remaining candidate in combo order, and the draft
-        document gets a copy of the original's placement for each.
-        """
-        from app.models.price_tag import PriceTagRequestTag
-
-        line = tag.line
-        candidates: list[str] = []
-        for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
-            if part.product_id or (part.role or "") != role:
-                continue
-            candidates = [str(c) for c in (part.candidates or [])]
-            break
-        if not candidates:
-            raise AppException(
-                status_code=422,
-                message=f"This line has no open {role} to split.",
-                code="NO_OPEN_GROUP",
-            )
-
-        siblings = sorted(line.tags or [], key=lambda t: (t.sort_order or 0, t.id))
-        after = [row for row in siblings if (row.sort_order or 0) > (tag.sort_order or 0)]
-        shift = len(candidates) - 1
-        for row in after:
-            row.sort_order = (row.sort_order or 0) + shift
-
-        tag.choices = {**dict(tag.choices or {}), role: candidates[0]}
-        created = []
-        for offset, candidate in enumerate(candidates[1:], start=1):
-            sibling = PriceTagRequestTag(
-                line_id=line.id,
-                sort_order=(tag.sort_order or 0) + offset,
-                quantity=tag.quantity,
-                choices={**dict(tag.choices or {}), role: candidate},
-                marketing_price_override=tag.marketing_price_override,
-                marketing_override_reason=tag.marketing_override_reason,
-            )
-            db.add(sibling)
-            created.append(sibling)
-        db.flush()
-
-        PriceTagRequestService._copy_placements_in_draft(
-            db, line.request_id, tag.id, [row.id for row in created]
-        )
-        db.flush()
-        db.expire(line, ["tags"])
-        return sorted(line.tags, key=lambda t: (t.sort_order or 0, t.id))
-
-    @staticmethod
     def delete_tag(db: Session, tag) -> None:
         """Remove one tag and its placements. Never the line's last (AC-S3-6)."""
         line = tag.line
@@ -1421,39 +1591,6 @@ Marketing's own work is not part of the form's payload, so it is captured
             .filter(Page.request_id == request_id, Page.kind == "tag_sheet")
             .first()
         )
-
-    @staticmethod
-    def _copy_placements_in_draft(
-        db: Session, request_id: str, source_tag_id: str, new_tag_ids: list[str]
-    ) -> None:
-        """Give every new sibling the split tag's own geometry (AC-S3-4).
-
-        Marketing drew ONE tag and asked for four; landing three of them
-        unplaced would make the sheet look broken at the moment of the split.
-        The copies keep their own `-cN` suffix, which is how `tagsFromDoc` tells
-        copy 0 (the master, whose layers are the design) from the rest.
-        """
-        page = PriceTagRequestService._tag_sheet_page(db, request_id)
-        if page is None or not page.draft_doc or not new_tag_ids:
-            return
-        doc = copy.deepcopy(page.draft_doc)
-        changed = False
-        for sheet in doc.get("sheets") or []:
-            placed = sheet.get("tags") or []
-            sources = [p for p in placed if p.get("request_tag_id") == source_tag_id]
-            for source in sources:
-                suffix = str(source.get("id") or "")
-                copy_index = suffix.rsplit("-c", 1)[-1] if "-c" in suffix else "0"
-                for new_tag_id in new_tag_ids:
-                    clone = copy.deepcopy(source)
-                    clone["request_tag_id"] = new_tag_id
-                    clone["id"] = f"{new_tag_id}-c{copy_index}"
-                    placed.append(clone)
-                    changed = True
-            sheet["tags"] = placed
-        if changed:
-            page.draft_doc = doc
-            flag_modified(page, "draft_doc")
 
     @staticmethod
     def _drop_placements_in_draft(db: Session, request_id: str, tag_id: str) -> None:
@@ -1601,15 +1738,16 @@ Marketing's own work is not part of the form's payload, so it is captured
     ) -> dict[str, dict]:
         """The names and the line count behind a request's ids, per request id.
 
-        A request row carries a contact id, a user id and a promotion id, and no
-        screen may show a UUID. Two set-based queries answer for the whole page:
-        asking per row would be four queries per row on a fifty-row listing.
+        A request row carries a contact id and a user id, and no screen may
+        show a UUID. Two set-based queries answer for the whole page: asking
+        per row would be four queries per row on a fifty-row listing. D1
+        (S6): a promotion is a LINE fact now - there is no single header
+        promotion left to name here.
         """
         if not request_ids:
             return {}
 
         from app.models.access import RespondContact
-        from app.models.marketing import Promotion
         from app.models.user import User
 
         counts = dict(
@@ -1628,20 +1766,17 @@ Marketing's own work is not part of the form's payload, so it is captured
                 PriceTagRequest.id,
                 RespondContact.name,
                 User.name,
-                Promotion.description,
             )
             .select_from(PriceTagRequest)
             .outerjoin(RespondContact, RespondContact.id == PriceTagRequest.contact_id)
             .outerjoin(User, User.id == PriceTagRequest.assigned_to_id)
-            .outerjoin(Promotion, Promotion.id == PriceTagRequest.promotion_id)
             .filter(PriceTagRequest.id.in_(request_ids))
             .all()
         )
-        for request_id, contact_name, assigned_to_name, promotion_name in rows:
+        for request_id, contact_name, assigned_to_name in rows:
             labels[request_id] = {
                 "contact_name": contact_name,
                 "assigned_to_name": assigned_to_name,
-                "promotion_name": promotion_name,
                 "line_count": int(counts.get(request_id, 0)),
             }
         return labels
@@ -1925,83 +2060,6 @@ Marketing's own work is not part of the form's payload, so it is captured
             for row in tag_data_service.search_products(db, query, limit=limit)
         )
         return items
-
-    @staticmethod
-    def lookup_promotions(
-        db: Session, contact_id: str, query: str | None = None
-    ) -> list[dict]:
-        """Active-window, audience-gated promotions for the portal's promotion
-        dropdown (S4, #477).
-
-        The active-window half mirrors ``resolve_prices``' ``_offer_prices``:
-        switched-on (``is_active``) AND inside an inclusive ``[start_date,
-        end_date]`` window, either end open. Company scoping is not written here
-        on purpose - ``Promotion`` carries ``CompanyScopedMixin`` and the ordinary
-        ORM scope filter already keeps another company's promotion off this list,
-        the same way it already keeps it out of a price.
-
-        The audience half is applied too - a first cut of this lookup shipped
-        without it, so a dealer-only promotion showed up in every contact's
-        dropdown. It intersects the contact's own access codes
-        (``ContactAccessTypeService.get_contact_access_codes``) against
-        ``Promotion.access_levels``, same rule ``pricing._may_see_offer``
-        enforces: an empty ``access_levels`` reaches nobody. It deliberately does
-        NOT call ``_may_see_offer`` itself, though, because that helper's other
-        half does not apply here - an empty ``ViewerContext.access_codes`` there
-        falls back to the PUBLIC access code, because the anonymous public
-        catalogue is a real, intentional viewer. A portal contact is never
-        anonymous: one with no assigned access code is missing data, not a
-        member of the public, so it fails closed instead of widening to the
-        public audience.
-        """
-        from app.models.marketing import Promotion
-        from app.services.contact_access_type_service import ContactAccessTypeService
-        from app.services.dealer_kit.pricing import business_today
-
-        contact_codes = set(
-            ContactAccessTypeService(db).get_contact_access_codes(contact_id)
-        )
-        if not contact_codes:
-            return []
-
-        today = business_today()
-        q = (
-            db.query(Promotion)
-            .filter(Promotion.is_active.is_(True))
-            .filter(or_(Promotion.start_date.is_(None), Promotion.start_date <= today))
-            .filter(or_(Promotion.end_date.is_(None), Promotion.end_date >= today))
-        )
-        if query:
-            q = q.filter(Promotion.description.ilike(f"%{query}%"))
-        rows = q.order_by(Promotion.description).all()
-        return [
-            {"id": row.id, "name": row.description or ""}
-            for row in rows
-            if row.access_levels and contact_codes & set(row.access_levels)
-        ]
-
-    @staticmethod
-    def validate_promotion_access(
-        db: Session, contact_id: str, promotion_id: str | None
-    ) -> None:
-        """Review round 2: a raw ``promotion_id`` on create/update must be one
-        this contact's own audience can see. ``lookup_promotions`` already
-        gates the dropdown by access code and active window; nothing gated a
-        promotion id posted directly, so a promotion whose ``access_levels``
-        exclude this contact went through unchecked. Reuses the same lookup
-        rather than re-deriving the rule, so the two can never disagree.
-        """
-        if promotion_id is None:
-            return
-        allowed_ids = {
-            row["id"] for row in PriceTagRequestService.lookup_promotions(db, contact_id)
-        }
-        if promotion_id not in allowed_ids:
-            raise AppException(
-                status_code=422,
-                message="This promotion is not available for your account.",
-                code="PROMOTION_NOT_AVAILABLE",
-            )
 
     @staticmethod
     def lookup_debtors_for_agent(

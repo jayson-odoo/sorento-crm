@@ -391,19 +391,13 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
     # later guard gets a chance to refuse it - "nothing written" on a refusal
     # has to mean nothing FLUSHED, not just nothing committed.
     with db.no_autoflush:
-        # Gap A (security review of S10): a revise payload setattrs
-        # `promotion_id` straight onto the row via the generic
-        # field-whitelist writer - nothing gated a promotion this contact's
-        # audience cannot see, or one belonging to another company, the way
-        # create/update already do.
-        if "promotion_id" in payload:
-            from app.models.base import company_scope
-
-            with company_scope(db, frozenset({row.company_id})):
-                PriceTagRequestService.validate_promotion_access(
-                    db, row.contact_id, payload.get("promotion_id")
-                )
-
+        # D1 (S6): the promotion moved to the LINE - there is no header
+        # `promotion_id` left on the row for a revise payload to set, so the
+        # old per-revision audience check (Gap A, security review of S10)
+        # has nothing left to guard here. A line's own promotion still goes
+        # through `_add_lines`' AC-S6-5 check inside `replace_lines` below;
+        # the revise composer does not expose a line promotion field yet
+        # (backlog: PLAN-price-tag-line-promo-combo-subject.md).
         if "products" not in payload:
             # No lines in this revision - still has to clear the same bar
             # with whatever the row already carries. `require_debtor=True`:
@@ -488,10 +482,10 @@ _PTAG_ADAPTER = RevisionAdapter(
     label="price tag request",
     number_attr="doc_number",
     snapshot_extra_fields=("doc_number", "status"),
+    # D1 (S6): `promotion_id` is a LINE fact now, not a header snapshot field.
     snapshot_form_fields=(
         "debtor_code",
         "debtor_name",
-        "promotion_id",
         "needed_by_date",
         "notes",
         "price_mode",
