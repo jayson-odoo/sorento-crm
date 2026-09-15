@@ -320,3 +320,21 @@ above is left as-is (historical record) rather than rewritten in place.
   just the one originally named. Flagged for the captain; not fixed here (out of
   AC-1592 scope, names no head/tail/dialogue import). The port file itself
   (independent of this file) collects and passes clean (3/3).
+
+- **`test_parser_low_stock_publish.py` - confirmed "resolves itself" was correct,
+  but not fully resolved.** No doomed import of its own; it imports
+  `_alembic_heads_excluding` FROM `test_parser_growth_r1_reachability.py`
+  (transitive). AC-1592's OWN doomed imports in that source file are now fully
+  fixed (previous entry), so this file's remaining collection failure is 100%
+  attributable to the SAME out-of-scope `SEMANTIC_PARSER_PROMPT_SLIM` defect, not
+  to anything AC-1592 names. No separate action - resolves the moment that
+  unrelated defect is fixed, as the original table predicted, just not for the
+  reason it guessed (AC-1592's own imports were never this file's blocker either).
+
+- **`test_parser_warehouse_arrival_cue.py` - confirmed out of AC-1592 scope, no
+  action.** Same `ImportError: cannot import name 'SEMANTIC_PARSER_PROMPT_SLIM'`,
+  names no head/tail/dialogue import. Now THREE files share this one pre-existing
+  defect (this one, `test_parser_growth_r1_reachability.py`, transitively
+  `test_parser_low_stock_publish.py`) - worth the captain routing a coder at
+  `chatbot_parser_prompt.py` directly, since fixing it once would un-block all
+  three, but that fix is not an AC-1592 deliverable.
