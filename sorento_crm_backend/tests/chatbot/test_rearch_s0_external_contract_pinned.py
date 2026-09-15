@@ -2,11 +2,10 @@
 `CompleteResponse`/`ACTION_KINDS`) is byte-identical to what shipped on `main` before
 this lane started (AC-1507, PLAN-chatbot-turn-rearch.md).
 
-The fixture (`tests/chatbot/fixtures/external_contract_main_3009b374c.json`) was
+The fixture (`tests/chatbot/fixtures/external_contract_main_f14802a7c.json`) was
 captured by the tester FROM `origin/main` (`model_json_schema()` on each class plus
-`list(ACTION_KINDS)`), on this lane's branch point - `f14802a7c` at the time of writing,
-not the `3009b374c` in the captain's brief; the filename is kept exactly as specified in
-the brief regardless (see the tester's ambiguity list).
+`list(ACTION_KINDS)`) at this lane's real branch point, `f14802a7c` - the captain
+corrected the filename from the brief's `3009b374c` to match (ruling, 16 Sep 2026).
 
 THIS AC IS EXPECTED GREEN RIGHT NOW, by design - it is the guard that later S0/S2/S3
 slices must not silently reshape the outer-loop contract, not a red waiting on new work.
@@ -28,7 +27,7 @@ from app.services.chatbot.contracts import (
 FIXTURE = (
     pathlib.Path(__file__).resolve().parent
     / "fixtures"
-    / "external_contract_main_3009b374c.json"
+    / "external_contract_main_f14802a7c.json"
 )
 
 

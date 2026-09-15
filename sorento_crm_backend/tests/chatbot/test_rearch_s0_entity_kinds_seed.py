@@ -5,7 +5,15 @@ Same substrate discipline as `test_rearch_s0_domains_seed.py`: real migrated DB,
 `create_all` scratch schema, because the rows are migration-seeded data. See that file's
 docstring for the full reasoning; not repeated here.
 
-RIGHT NOW every test here is RED: `chatbot_entity_kinds` does not exist.
+Tier order (captain ruling, 16 Sep 2026): NOT a `chatbot_entity_kinds` row - `tier` is
+not one of the 12 `ENTITY_HINTS` and never gets a row. It is the new
+`system_settings.chatbot_tier_order` JSONB column, defaulting to the code's own literal
+order (`lanes/business/tier_gate.TIER_ORDER`, `("dealer", "office", "end_user")`). That
+column is a plain model addition (like `chatbot_crossdomain_ladder`), not migration-only
+seed DATA, so its test runs on the ordinary blank scratch schema.
+
+RIGHT NOW every test here is RED: `chatbot_entity_kinds` does not exist, and
+`system_settings` has no `chatbot_tier_order` column.
 """
 from __future__ import annotations
 
@@ -16,7 +24,7 @@ from sqlalchemy import text
 from app.services.chatbot.contracts import ENTITY_HINTS
 from app.services.chatbot.lanes.business.fetch import _BASE_PROPERTY_WORDS
 from app.services.chatbot.lanes.business.tier_gate import TIER_ORDER
-from tests._pg_fixture import pg_session
+from tests._pg_fixture import blank_session, pg_session
 
 # AC-1502's own words plus discontinued -> is_discontinued and brand.
 EXPECTED_PRODUCT_WORDS = set(_BASE_PROPERTY_WORDS) | {"discontinued", "brand"}
@@ -63,16 +71,23 @@ def test_brand_word_is_mapped_to_some_column(rows):
     assert words.get("brand"), words
 
 
-# AC-1502: "tier_order on the `tier` row". `tier` is NOT one of the 12 ENTITY_HINTS
-# (see ambiguity list in the tester's report) - written against the literal text
-# anyway; if the coder's design puts `tier_order` somewhere else this test needs to move
-# with it.
-def test_tier_row_carries_tier_order_matching_tier_gate_literal(rows):
-    assert "tier" in rows, (
-        "AC-1502 names a `tier` row for `tier_order`, but `tier` is not one of the 12 "
-        "ENTITY_HINTS kinds (flagged as an ambiguity in the tester's report)"
-    )
-    assert list(rows["tier"].get("tier_order") or []) == list(TIER_ORDER)
+def test_no_tier_row_in_chatbot_entity_kinds(rows):
+    """Captain ruling: tier order is a system setting, not an entity-kind row."""
+    assert "tier" not in rows, rows.keys()
+
+
+def test_chatbot_tier_order_system_setting_defaults_to_tier_gate_literal():
+    from app.models.user import SystemSetting
+
+    with blank_session() as db:
+        row = SystemSetting()
+        db.add(row)
+        db.flush()
+        value = db.execute(
+            text("SELECT chatbot_tier_order FROM system_settings WHERE id = :i"),
+            {"i": row.id},
+        ).scalar()
+        assert list(value or []) == list(TIER_ORDER)
 
 
 @pytest.mark.parametrize("kind", [k for k in ENTITY_HINTS if k != "product"])
