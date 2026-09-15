@@ -32,8 +32,10 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
     family of one.
 
     `stamp` is what the picker probe already measured about that row ("has incoming"),
-    printed after the label so the customer can choose on the fact rather than on the
-    code alone.
+    kept as its OWN field rather than folded into `label` - `label` is the resolver's
+    own code (contract 28's roster lists what the resolver found, not a sentence about
+    it), what a pick resolves back onto (`apply._answer_pending`'s `raw`); the renderer
+    is what prints `"{label} - {stamp}"` for the customer to read.
     """
     built = []
     for i, c in enumerate(candidates):
@@ -42,16 +44,17 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
         family = c.get("uuids")
         label = c.get("raw") or code
         stamp = c.get("stamp")
-        built.append(
-            {
-                "position": i + 1,
-                "label": f"{label} - {stamp}" if stamp else label,
-                "uuid": identity,
-                "uuids": list(family) if isinstance(family, list) and family else ([identity] if identity else []),
-                "entity_type": kind,
-                "payload": {},
-            }
-        )
+        option: dict[str, Any] = {
+            "position": i + 1,
+            "label": label,
+            "uuid": identity,
+            "uuids": list(family) if isinstance(family, list) and family else ([identity] if identity else []),
+            "entity_type": kind,
+            "payload": {},
+        }
+        if stamp:
+            option["stamp"] = stamp
+        built.append(option)
     return built
 
 

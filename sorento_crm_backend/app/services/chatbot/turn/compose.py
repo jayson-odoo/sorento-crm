@@ -222,8 +222,10 @@ def compose_question(pending: Any) -> Answer:
         label = option.get("label")
         if label is None:
             continue
-        labels.append(str(label))
-        lines.append(f"{option.get('position')}. {label}")
+        stamp = option.get("stamp")
+        printed = f"{label} - {stamp}" if stamp else str(label)
+        labels.append(printed)
+        lines.append(f"{option.get('position')}. {printed}")
     body = "\n".join(lines)
     action: dict[str, Any] = {
         "kind": "send_message",

@@ -461,6 +461,12 @@ SUGGESTED_AGENTS = (
 )
 SuggestedAgent = Literal[SUGGESTED_AGENTS]  # type: ignore[valid-type]
 
+# The agent an escalation's round-robin draw falls to when the parser named none - a
+# person the customer never asked FOR by role still needs `agent_code` filled in
+# (`/external/next-assignee` 400s on neither `agent_id` nor `agent_code`); the first,
+# catch-all member of `SUGGESTED_AGENTS` is what the retired head chain defaulted to.
+DEFAULT_SUGGESTED_AGENT = SUGGESTED_AGENTS[0]
+
 ENTITY_HINTS = (
     "product",
     "promotion",

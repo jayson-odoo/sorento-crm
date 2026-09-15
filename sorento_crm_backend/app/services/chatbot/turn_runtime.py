@@ -29,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn.state import Focus, Profile, State, focus_from_wire
@@ -160,25 +161,65 @@ def focus_diff(before: Focus, after: Focus) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 
 
+def _prior_suggested_team(session_block: Any) -> str | None:
+    """The legacy `variables.routing.suggested_team` nest a previous turn wrote.
+
+    `session_block` here is exactly what `engine.py` hands `build_ctx` as `session=`, so
+    this reads it the SAME way `escalation._prev_variables(ctx)` reads `ctx.session` -
+    `session_vars.variables`, then `session_vars`'s own bare `variables`, then nothing.
+    Any shape mismatch (a blank session, a five-key-only contact with no legacy nest at
+    all) reads as "nothing carried", never an error.
+    """
+    try:
+        session_vars = session_block.get("session_vars") if isinstance(session_block, dict) else None
+        variables = session_vars.get("variables") if isinstance(session_vars, dict) else None
+        if not variables:
+            # The node's own second fallback: `ctx.session.variables` directly, bypassing
+            # `session_vars` - the session block has had three shapes over its life
+            # (`escalation._prev_variables`'s own docstring), reproduced whole.
+            variables = session_block.get("variables") if isinstance(session_block, dict) else None
+        routing = variables.get("routing") if isinstance(variables, dict) else None
+        team = routing.get("suggested_team") if isinstance(routing, dict) else None
+        team = str(team).strip() if team else ""
+        return team or None
+    except Exception:  # noqa: BLE001 - a session shape this cannot read carries nothing
+        return None
+
+
 def lane_parse_output(
     verdict: dict[str, Any],
     *,
     focus: Focus | None = None,
     pending: Pending | None = None,
     domain: str | None = None,
+    prior_session: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
 
-    The verdict travels VERBATIM but for three projections, each of which exists because
+    The verdict travels VERBATIM but for four projections, each of which exists because
     a kept reader asks its question in the pre-rearch vocabulary:
 
     * `order_status` - the order tools' one bucket, from `document` + `status` (D6);
     * `domain_hint` - pinned to the domain being fetched, so a two-domain fan-out picks
       the right tool per leg instead of the first domain's tool twice (contract 122);
-    * `routing.suggested_team` - an acceptance names no team of its own, so it inherits
-      the team the OPEN QUESTION offered (contract 108). The parser's own answer stays
-      untouched on `_parser_raw`, which is what `escalation._parser_team` reads to tell
-      "this turn named a team" from "this turn accepted one".
+    * `routing.suggested_team` / `routing.suggested_agent` - the retired
+      `output_exchange` chain never emitted a null routing pair (`DEFAULT_SUGGESTED_TEAM`
+      / `DEFAULT_SUGGESTED_AGENT`, `contracts.py`), which is what let the escalation
+      lane's round-robin draw assume both were always populated (`_next_assignee_body`
+      400s on neither). Reproduced here, ONE LAYER UP from that lane - `escalation.py`
+      itself keeps NO guard of its own (H27, deliberately: `test_s5_escalation_lane.py`'s
+      `test_no_team_clarify_on_live_team_flows_through_unguarded` and
+      `test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing`
+      both call `escalation.run()` directly with a hand-built ctx and pin a null/inherited
+      team flowing through UNGUARDED - the default belongs to the layer that builds
+      `ctx.parse.output`, not to the lane that reads it). Chain, in order: a NAMED team
+      (this turn's own); an OFFER's carried team (`pending.team`, contract 108, an
+      acceptance names no team of its own); a PREVIOUS turn's own carried routing
+      (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
+      turn had one, else the table's default", never the default unconditionally); the
+      hard default, last. The parser's own answer stays untouched on `_parser_raw`, which
+      is what `escalation._parser_team` reads to tell "this turn named a team" from "this
+      turn accepted one".
     """
     out = dict(verdict)
     if domain:
@@ -197,6 +238,10 @@ def lane_parse_output(
     routing = dict(out.get("routing") or {})
     if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
         routing["suggested_team"] = pending.team
+    if not routing.get("suggested_team"):
+        routing["suggested_team"] = _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
+    if not routing.get("suggested_agent"):
+        routing["suggested_agent"] = DEFAULT_SUGGESTED_AGENT
     out["routing"] = routing
     return out
 

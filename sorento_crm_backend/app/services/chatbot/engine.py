@@ -1366,7 +1366,7 @@ def _run_stages(  # noqa: PLR0915
             session=session_block,
             parse={
                 "output": turn_runtime.lane_parse_output(
-                    verdict, focus=state_out.focus, pending=state_in.pending
+                    verdict, focus=state_out.focus, pending=state_in.pending, prior_session=session_block
                 ),
                 "_parser_raw": verdict,
             },

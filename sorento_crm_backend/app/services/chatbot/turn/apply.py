@@ -264,18 +264,32 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
     return None
 
 
-def _did_you_mean(entities: list[dict[str, Any]], policy: Policy, state: State, trace: Trace):
+def _did_you_mean(
+    entities: list[dict[str, Any]],
+    policy: Policy,
+    state: State,
+    trace: Trace,
+    candidates: dict[str, list[dict[str, Any]]] | None = None,
+):
     """An entity the parser could not place asks before anything else does (contract 26,
     111: did-you-mean before the team question).
 
     `confident is False` is the parser's own "I read a token here and could not pin it".
     The kind's `did_you_mean` flag (AC-1502) decides whether that kind is worth asking
     about at all; a kind that is not stays silent and simply does not narrow.
+
+    A kind the RESOLVER already found real candidates for (the second `apply()` pass,
+    `candidates` non-empty for this kind) defers to the narrower instead of asking the
+    raw guess back: "wc286" is one typed word and ten real products, and a roster of the
+    resolver's own matches is a better question than "did you mean wc286?" - the
+    narrower's `narrow_to_code` ask is what actually lists them (contract 28).
     """
     unsure = [e for e in entities if e.get("confident") is False and e.get("hint")]
     if not unsure:
         return None
     kind = unsure[0]["hint"]
+    if (candidates or {}).get(kind):
+        return None
     row = policy.kind(kind)
     if row is not None and not row.did_you_mean:
         return None
@@ -342,6 +356,24 @@ def _narrow_and_plan(
             entities.extend(outcome.entities)
             if outcome.filter_value is not None:
                 filters[kind] = outcome.filter_value
+        # Attribute-first (AC-1534): a HAS turn ("which taps have certificates") names
+        # its scope with a `product_type`/`category` entity, not a `product` one - the
+        # resolver's own class-word match is what carries the real product candidates
+        # (`turn_runtime.candidates_by_kind`'s "product" bucket), and a domain whose
+        # `narrowing` map has no "product" key (most domains never narrow on it) would
+        # otherwise leave the fetch with NO entities at all, which falls through to
+        # every compatible entity the resolver matched for ANY token this turn -
+        # including ones the class word coincidentally also hit (contract 114). Only
+        # fires when nothing already claimed "product" and this domain did not ask.
+        if (
+            attributes
+            and domain_ask_kind is None
+            and "product" not in row.narrowing
+            and not entities
+        ):
+            product_candidates = (candidates or {}).get("product")
+            if product_candidates:
+                entities.extend(product_candidates)
         outcomes.append((name, domain_ask_kind, domain_ask_options, entities, filters))
 
     asking = next((o for o in outcomes if o[1]), None)
@@ -444,7 +476,7 @@ def apply(
     # is the first thing worth asking about (contract 26, 111).
     answers = verdict.get("answers_open_question") or {}
     if answers.get("resolved") is not True:
-        dym = _did_you_mean(entities, policy, new_state, trace)
+        dym = _did_you_mean(entities, policy, new_state, trace, candidates)
         if dym is not None:
             return new_state, Plan(
                 domains=list(domains), fetch=[], ask=dym, denied=[], trace=trace

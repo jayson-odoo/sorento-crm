@@ -1120,10 +1120,24 @@ def _sla_body(
         "team_set_code": prefer("team_set_code", jsc.get(context_item, "team") or ""),
         "brand_code": prefer("brand_code", jsc.get(context_item, "brand_code") or None),
         "company_id": prefer("company_id", jsc.get(context_item, "company_id") or None),
-        "message_id": message_id if message_id is not None else None,
+        "message_id": _numeric_message_id(message_id),
         "source_message_id": None if message_id is None else jsc.js_string(message_id),
         "source_message_text": input_message or "",
     }
+
+
+def _numeric_message_id(message_id: Any) -> int | None:
+    """`ConversationSLATrackingCreate.message_id` is an int FK-ish correlation field -
+    respond.io's own ids are base-10; a channel or harness id that is not (a dry-run /
+    test sentinel) degrades to None rather than failing the whole escalation, exactly
+    as an absent id already does. `source_message_id` (a plain string) is what keeps
+    the real value regardless."""
+    if message_id is None:
+        return None
+    try:
+        return int(str(message_id).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _input_message(ctx: dict[str, Any]) -> str:
