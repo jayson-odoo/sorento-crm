@@ -95,6 +95,7 @@ import {
   lookupLinePricing,
   updatePriceTagLinePrice,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
+  type PriceTagRequestLine,
   type LinePricingResult,
 } from '../../services/priceTagRequestService';
 import {
@@ -146,6 +147,33 @@ interface Props {
   requestId: string;
 }
 
+type LinePriceOverride = {
+  promotion_id: string | null;
+  manual_sell_price: number | null;
+  locked: boolean;
+};
+
+/** F4 (reviewer B2): every line's SAVED promotion/manual price, as the
+ *  override map already shapes it - `locked: true`, since a value the
+ *  server persisted is exactly as deliberate as a pick the viewer just
+ *  made this session, and must not be overridden by the auto pick. */
+function seedLinePriceOverrides(
+  lines: PriceTagRequestLine[],
+): Record<string, LinePriceOverride> {
+  return Object.fromEntries(
+    lines
+      .filter((line) => line.line_type === 'product' && line.product_id)
+      .map((line) => [
+        line.id,
+        {
+          promotion_id: line.promotion_id ?? null,
+          manual_sell_price: line.manual_sell_price ?? null,
+          locked: line.promotion_id != null || line.manual_sell_price != null,
+        },
+      ]),
+  );
+}
+
 export default function PriceTagRequestDetail({ requestId }: Props) {
   const router = useRouter();
   const [request, setRequest] = useState<PriceTagRequestDetailType | null>(null);
@@ -169,13 +197,15 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // card's primary CTA counts the open ones (r9 D6) and the Design section is
   // what fetches them.
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
-  // D5/S5 (mocked - see the service file's contract block): a line's own
-  // promotion/manual price, kept here rather than on `request.lines` since
-  // the real backend does not carry them yet. `locked` marks a deliberate
-  // pick or clear (S1's rule, mirrored here) so the auto pick never
-  // overwrites it.
+  // D5/S5: a line's own promotion/manual price. `request.lines` already
+  // carries the SAVED value (S6-S9), but this stays a separate map: `locked`
+  // marks a deliberate pick or clear (S1's rule, mirrored here) so the auto
+  // pick never overwrites it, and it is what the select/input actually bind
+  // to while the viewer is choosing. Seeded from `request.lines` on load
+  // (`seedLinePriceOverrides`, F4) so a saved pick opens on itself, not on
+  // whatever `lookupLinePricing` auto-picks this session.
   const [linePriceOverrides, setLinePriceOverrides] = useState<
-    Record<string, { promotion_id: string | null; manual_sell_price: number | null; locked: boolean }>
+    Record<string, LinePriceOverride>
   >({});
   const [savingLinePrice, setSavingLinePrice] = useState<string | null>(null);
   const canProcessPrice = useHasPermission('dealer_kit.price_tag_requests.process');
@@ -187,6 +217,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       .then((data) => {
         if (cancelled) return;
         setRequest(data);
+        // F4 (reviewer B2): without this, `linePriceOverrides` starts empty
+        // and `effectivePromotionId` falls back to the AUTO pick until the
+        // viewer makes a fresh choice this session - a line saved with a
+        // real promotion opened on whatever `lookupLinePricing` auto-picked
+        // instead of what was actually saved.
+        setLinePriceOverrides(seedLinePriceOverrides(data?.lines ?? []));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -485,9 +521,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     : true;
   const canEditLinePrice = canProcessPrice && !isTerminal;
 
-  // D5/S5 (mocked): recomputed whenever the request or a line's own
-  // override changes. `locked` means the salesperson/marketing has already
-  // decided this line's promotion (picked or cleared); until then the
+  // D5/S5 (built, S7/S12): recomputed through the real `lookupLinePricing`
+  // whenever the request or a line's own override changes. `locked` means
+  // the salesperson/marketing has already decided this line's promotion
+  // (picked or cleared, or SAVED - seeded on load, F4); until then the
   // effective promotion is the auto pick, same rule as the portal form.
   const [linePricing, setLinePricing] = useState<Record<string, LinePricingResult>>({});
   useEffect(() => {
@@ -565,25 +602,39 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         ...prev,
         [lineId]: { promotion_id: nextPromotionId, manual_sell_price: null, locked: true },
       }));
+      // D2: picking a promotion clears any manual figure - including one
+      // still sitting, uncommitted, in the draft the manual input reads.
+      setManualPriceDraft((prev) => ({ ...prev, [lineId]: '' }));
       void saveLinePrice(lineId, { promotion_id: nextPromotionId, manual_sell_price: null });
     },
     [saveLinePrice],
   );
 
+  // F7 (reviewer S7): the raw typed text, per line - updates on every
+  // keystroke for the input's own display, but does NOT touch
+  // `linePriceOverrides`. That map is a dependency of the `lookupLinePricing`
+  // recompute effect above, so writing it per keystroke fired a network call
+  // per keystroke too; nothing about typing a manual figure changes which
+  // promotions cover the line, so there was nothing for that recompute to
+  // answer differently anyway. Committed into `linePriceOverrides` (and
+  // saved) only on blur, in `commitManualLinePrice`.
+  const [manualPriceDraft, setManualPriceDraft] = useState<Record<string, string>>({});
+
   const setManualLinePrice = useCallback((lineId: string, value: string) => {
-    const manual = value === '' ? null : Number(value);
-    setLinePriceOverrides((prev) => ({
-      ...prev,
-      [lineId]: { promotion_id: null, manual_sell_price: manual, locked: true },
-    }));
+    setManualPriceDraft((prev) => ({ ...prev, [lineId]: value }));
   }, []);
 
   const commitManualLinePrice = useCallback(
     (lineId: string) => {
-      const manual = linePriceOverrides[lineId]?.manual_sell_price ?? null;
+      const draft = manualPriceDraft[lineId];
+      const manual = draft === undefined || draft === '' ? null : Number(draft);
+      setLinePriceOverrides((prev) => ({
+        ...prev,
+        [lineId]: { promotion_id: null, manual_sell_price: manual, locked: true },
+      }));
       void saveLinePrice(lineId, { promotion_id: null, manual_sell_price: manual });
     },
-    [linePriceOverrides, saveLinePrice],
+    [manualPriceDraft, saveLinePrice],
   );
 
   // Sales Order attachments: standard preview/download, read-only - upload
@@ -898,10 +949,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   <span className="text-muted-foreground block">Salesperson</span>
                   <p className="font-medium">{request.contact_name ?? '-'}</p>
                 </div>
-                <div>
-                  <span className="text-muted-foreground block">Promotion</span>
-                  <p className="font-medium">{request.promotion_name ?? '-'}</p>
-                </div>
+                {/* D1: a promotion is per LINE now (see the Lines tab) -
+                    there is no single request-level promotion to name here
+                    any more. */}
                 <div>
                   <span className="text-muted-foreground block">Price</span>
                   <p className="font-medium">
@@ -1197,7 +1247,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                             variant="sm"
                                             className="w-28"
                                             value={
-                                              linePriceOverrides[line.id]?.manual_sell_price ?? ''
+                                              manualPriceDraft[line.id] ??
+                                              linePriceOverrides[line.id]?.manual_sell_price ??
+                                              ''
                                             }
                                             onChange={(e) => setManualLinePrice(line.id, e.target.value)}
                                             onBlur={() => commitManualLinePrice(line.id)}

@@ -48,15 +48,13 @@
  * ===========================================================================
  *
  * ===========================================================================
- * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1-D4,
- * Phase 1 slices S1/S2 - MOCKED, no backend wired yet)
+ * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1-D4, S7)
  * ===========================================================================
  * D1: the request-level `promotion_id` header select is retired; a promotion
  * (or a hand-typed price) now lives on the LINE. `price_mode` stays on the
  * header. D4: one pricing call answers every line at once.
  *
- * ---- BACKEND CONTRACT (Phase 2, not built - `lookupLinePricing` below is an
- * in-memory stand-in with the SAME shape, per PLAN "API contract") ---------
+ * ---- BACKEND CONTRACT (built) ---------------------------------------------
  *
  *  POST /api/v1/public/portal/lookups/line-pricing
  *    body  { price_mode: PriceMode, lines: [{ key, product_id, part_product_ids: string[],
@@ -170,9 +168,9 @@ export interface PriceTagRequestLine {
   parts?: PriceTagRequestLinePart[];
   /** What actually prints for this line: one tag by default, N after a split. */
   tags?: PriceTagRequestTag[];
-  // ---- D1 (Phase 2, not wired yet): the line's own promotion / manual price.
-  // Optional so a server that predates the migration keeps validating; the
-  // form falls back to `lookupLinePricing` (mocked) while these are absent.
+  // ---- D1: the line's own promotion / manual price, resolved server-side.
+  // Optional so a server row that predates the migration keeps validating;
+  // the form falls back to `lookupLinePricing` while these are absent.
   promotion_id?: string | null;
   promotion_name?: string | null;
   manual_sell_price?: number | null;
@@ -191,8 +189,6 @@ export interface PriceTagRequestSummary {
   debtor_code: string | null;
   /** Null on a draft: Save Draft validates nothing (D48a). */
   debtor_name: string | null;
-  promotion_id: string | null;
-  promotion_name: string | null;
   /** Null on a draft, for the same reason as `debtor_name`. */
   needed_by_date: string | null;
   notes: string | null;
@@ -441,8 +437,7 @@ export async function lookupProductCombos(
 }
 
 // ---------------------------------------------------------------------------
-// Line pricing (D1-D4, Phase 1 mock - see the contract block at the top of
-// this file)
+// Line pricing (D1-D4, S7 - see the contract block at the top of this file)
 // ---------------------------------------------------------------------------
 
 export type {

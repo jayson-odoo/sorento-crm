@@ -28,15 +28,16 @@
  *       `open_groups` and `parts`; `quantity` is the TAG's.
  *
  *  PATCH /dealer-kit/price-tag-requests/{id}/tags/{tag_id}
- *    body `{quantity?, marketing_price_override?, marketing_override_reason?,
- *    choices?}` -> the updated tag. "Pick one" sends `choices`; the marketing
- *    override moves here from the retired line route.
+ *    body `{quantity?, marketing_price_override?, marketing_override_reason?}`
+ *    -> the updated tag. The marketing override moved here from the retired
+ *    line route.
  *
- *  POST /dealer-kit/price-tag-requests/{id}/tags/{tag_id}/split
- *    body `{role}` -> the LINE's tags after the split. The tag keeps its id,
- *    its geometry and its pins and resolves to candidate 1; N-1 siblings are
- *    inserted after it, one per remaining candidate, with the geometry copied
- *    in the draft doc.
+ *  POST /dealer-kit/price-tag-requests/{id}/tags/{tag_id}/split   REMOVED
+ *    D6 (PLAN-price-tag-line-promo-combo-subject.md): open groups now split
+ *    where tags are built (create/update/revise), one tag per candidate
+ *    combination, straight-line - no Split / Pick one left for the designer
+ *    to do by hand, so `splitRequestTag` and `PriceTagRequestTagUpdate.choices`
+ *    are gone with it.
  *
  *  DELETE /dealer-kit/price-tag-requests/{id}/tags/{tag_id}
  *    204, or 422 `LAST_TAG` when it is the line's only tag. No UI in S3 (the
@@ -52,26 +53,26 @@
  * ===========================================================================
  *
  * ===========================================================================
- * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1/D5,
- * Phase 1 slice S5 - MOCKED, no backend wired yet)
+ * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1/D5, S7/S11)
  * ===========================================================================
  * D5: CRM staff can change a line's price basis (promotion or a hand-typed
  * price) from the detail page, same rules as the portal form (S1).
- * `lookupLinePricing` is the CRM side of the S1 mock - same computation as
- * the portal's own (test fixture:
- * `app/(auth)/portal/components/__fixtures__/line-pricing.ts`), so a product
- * prices identically whether the salesperson or marketing is looking at it.
+ * `lookupLinePricing` is the CRM side of the same engine the portal's own
+ * route calls (S7's `line_pricing`), so a product prices identically
+ * whether the salesperson or marketing is looking at it.
  *
- * ---- BACKEND CONTRACT (Phase 2, not built) --------------------------------
+ * ---- BACKEND CONTRACT (built) ---------------------------------------------
  *
  *  POST /dealer-kit/price-tag-requests/line-pricing   same body/response as
  *    the portal's own route (see the portal service's contract block).
+ *    Gated on `dealer_kit.price_tag_requests.process`.
  *
  *  PATCH /dealer-kit/price-tag-requests/{id}/lines/{line_id}
  *    body `{ promotion_id?: string | null, manual_sell_price?: number | null }`
- *    -> the refreshed request. `price_tag_requests.process`, 409 on a
- *    terminal request, clears the line's tags' pin fields so a pinned design
- *    picks up the price change as the usual data-change banner.
+ *    -> the refreshed request. `dealer_kit.price_tag_requests.process`, 409
+ *    on a terminal request, 404 for a malformed or cross-request line id,
+ *    clears the line's tags' pin fields so a pinned design picks up the
+ *    price change as the usual data-change banner.
  * ===========================================================================
  */
 
@@ -119,11 +120,12 @@ export interface PriceTagRequestLinePart {
 /**
  * One printed tag under a line (D3).
  *
- * `choices` is the stored `{role: product_id}` map and is never rendered;
- * `choices_display` is the same answer resolved to codes, which is what the
- * rail and the Lines tab show (AC-X-2). `list_price` / `sell_price` ride along
- * because price is a TAG fact since D4 - the host plus this tag's own resolved
- * parts - and both surfaces the brief asks for render them per tag.
+ * The server's `choices` (the raw `{role: product_id}` map) is never
+ * rendered and is dropped from this type (F5, D6) - `choices_display` is the
+ * same answer resolved to codes, which is what the rail and the Lines tab
+ * show (AC-X-2). `list_price` / `sell_price` ride along because price is a
+ * TAG fact since D4 - the host plus this tag's own resolved parts - and both
+ * surfaces the brief asks for render them per tag.
  */
 export interface PriceTagRequestTag {
   id: string;
@@ -131,7 +133,6 @@ export interface PriceTagRequestTag {
   /** "1a", "1b" - line index plus a letter. Never an id. */
   label: string;
   quantity: number;
-  choices: Record<string, string>;
   choices_display: { role: string; code: string }[];
   /** Groups still undecided on this tag: what Split / Pick one act on.
    *  Candidates carry the id beside the code - see `TagOpenGroup`. */
@@ -166,10 +167,9 @@ export interface PriceTagRequestLine {
   package_warning: string | null;
   /** What gets printed for this line: one tag by default, N after a split. */
   tags: PriceTagRequestTag[];
-  // ---- D1/D5 (Phase 2, not wired yet): the line's own promotion / manual
-  // price. Optional so a server that predates the migration keeps
-  // validating; the detail page falls back to `lookupLinePricing` (mocked)
-  // while these are absent.
+  // ---- D1/D5 (built, S7/S9): the line's own promotion / manual price.
+  // Optional so a response from a server that predates the migration still
+  // validates.
   promotion_id?: string | null;
   promotion_name?: string | null;
   manual_sell_price?: number | null;
@@ -207,8 +207,6 @@ export interface PriceTagRequestSummary {
   debtor_code: string | null;
   /** Null while the portal request is still a draft (D48a). */
   debtor_name: string | null;
-  promotion_id: string | null;
-  promotion_name: string | null;
   needed_by_date: string | null;
   notes: string | null;
   /** Defaults to 'list' server-side; absent on a request created before r7. */
@@ -341,8 +339,8 @@ export async function updatePriceTagPrintBy(
 }
 
 // ---------------------------------------------------------------------------
-// Line pricing (D1/D4/D5, Phase 1 mock - see the contract block at the top
-// of this file)
+// Line pricing (D1/D4/D5, S7 - see the contract block at the top of this
+// file)
 // ---------------------------------------------------------------------------
 
 /**
@@ -457,8 +455,6 @@ export interface PriceTagRequestTagUpdate {
   quantity?: number;
   marketing_price_override?: number | null;
   marketing_override_reason?: string | null;
-  /** `{role: product_id}` - what "Pick one" writes. */
-  choices?: Record<string, string>;
 }
 
 /** PATCH one tag. Replaces the retired line-level PUT. */
@@ -479,29 +475,6 @@ export async function updateRequestTag(
     throw new Error(await extractApiError(response, 'Failed to update the tag'));
   }
   return (await response.json()) as PriceTagRequestTag;
-}
-
-/**
- * "Split into N tags": the tag resolves to the group's first candidate and
- * N-1 siblings follow it, one per remaining candidate. Answers the LINE's tags.
- */
-export async function splitRequestTag(
-  requestId: string,
-  tagId: string,
-  role: string,
-): Promise<PriceTagRequestTag[]> {
-  const response = await apiFetch(
-    `${BASE}/${encodeURIComponent(requestId)}/tags/${encodeURIComponent(tagId)}/split`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ role }),
-    },
-  );
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to split the tag'));
-  }
-  return (await response.json()) as PriceTagRequestTag[];
 }
 
 /** Remove one tag. 422 `LAST_TAG` when it is the line's only one (AC-S3-6). */

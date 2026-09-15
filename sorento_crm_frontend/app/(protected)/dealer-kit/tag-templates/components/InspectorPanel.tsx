@@ -284,12 +284,22 @@ export function InspectorPanel({
   // D7/AC-S4-1/S4-2: the Product picker shows on any layer that reads
   // product data - a combo tag only (single-product tags have no parts to
   // point at, so `subjectParts` arrives empty and the section never renders).
+  //
+  // Browser finding: the designer's own photo slots are `image` layers
+  // carrying `slot_binding: 'product_image'`, not `product_slot` - the
+  // Product select never appeared on the image slot the walk selected. A
+  // text layer can carry a slot_binding too (`code`, `name`, ...), same
+  // gap. Keyed on "does this layer read product data" generally now:
+  // the four kinds that always do, a text layer with a `{{product.*}}` /
+  // `{{spec.*}}` token, OR ANY layer whose own `slot_binding` names a
+  // product field.
   const isSubjectAwareKind =
     layer.props.kind === 'product_slot' ||
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
     (layer.props.kind === 'text' &&
-      hasSubjectAwareToken(layer.text_override ?? layer.props.text));
+      hasSubjectAwareToken(layer.text_override ?? layer.props.text)) ||
+    layer.slot_binding != null;
   const showSubjectPicker = isSubjectAwareKind && (subjectParts?.length ?? 0) > 0;
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
@@ -1394,7 +1404,16 @@ function SubjectInspector({
       <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
         Product
       </h4>
+      {/* `htmlFor`/`id` is what actually pairs a `<label>` with its control
+       *  (unlike the `<h4>` heading above, a section title every sibling
+       *  inspector section uses) - `sr-only` since the heading already
+       *  says "Product" visually, one word away. */}
+      <Label htmlFor="layer-subject-part" className="sr-only">
+        Product
+      </Label>
       <SearchableSelect
+        id="layer-subject-part"
+        size="sm"
         value={value}
         onChange={(v: string) =>
           onChange({

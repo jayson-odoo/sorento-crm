@@ -95,6 +95,12 @@ export interface ImageLayerProps {
    * the first version of the editor still opens.
    */
   assetId?: string | null;
+  /** D7 - see `TextLayerProps.subjectPart`. An `image` layer bound to
+   *  `slot_binding: 'product_image'` reads product data exactly like a
+   *  `product_slot` layer does (browser finding: the designer's own photo
+   *  slots are `image` layers, not `product_slot`), so it needs the same
+   *  per-layer subject. */
+  subjectPart?: number;
 }
 
 /**
@@ -583,10 +589,10 @@ export interface TagOpenGroup {
 /**
  * One part printed under the host on a tag (D3/D4).
  *
- * D7 (Phase 2, not wired yet): grows the full product surface a subject
- * picker can point a layer at - `spec_lines`/`specs`/`images`/`barcode`/
- * `list_price`/`sell_price` all optional until the backend resolves them per
- * part, so a Phase 1 part (code/name/dimensions only) still fails soft:
+ * D7 (built, S9): the full product surface a subject picker can point a
+ * layer at - `spec_lines`/`specs`/`images`/`barcode`/`list_price`/
+ * `sell_price`, resolved server-side per part. Still declared optional so
+ * an OLDER pinned row (frozen before D7 landed) fails soft:
  * `subjectOf` reads an absent field as "this part has none" - an empty
  * placeholder, not the parent's (AC-S4-5) - rather than throwing.
  */

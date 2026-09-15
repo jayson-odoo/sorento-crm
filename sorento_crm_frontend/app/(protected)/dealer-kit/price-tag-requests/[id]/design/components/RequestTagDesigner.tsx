@@ -1546,7 +1546,9 @@ export function RequestTagDesigner({
               key={selectedTag.id}
               doc={selectedDoc}
               onChange={() => void save()}
-              promotionId={request.promotion_id}
+              // D1: a promotion is a LINE fact now, not the request's - the
+              // selected tag's own line carries it.
+              promotionId={selectedLine?.promotion_id ?? null}
               boundData={boundData}
               leftRail={rail}
               onLayersChange={handleLayersChange}

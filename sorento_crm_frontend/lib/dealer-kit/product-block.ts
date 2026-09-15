@@ -75,6 +75,11 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
     case 'product_slot':
     case 'price_badge':
     case 'barcode':
+    // Browser finding: the designer's own photo slots are `image` layers
+    // (bound via `slot_binding: 'product_image'`), not `product_slot` -
+    // they read product data exactly the same way and need the same
+    // per-layer subject.
+    case 'image':
       return props.subjectPart;
     default:
       return undefined;
@@ -91,8 +96,15 @@ function parentAlonePrice(line: LineTagData, field: 'list_price' | 'sell_price')
   const total = field === 'list_price' ? line.list_price : line.sell_price;
   if (total == null) return null;
   const partsTotal = line.parts.reduce((sum, part) => {
-    const value = field === 'list_price' ? part.list_price : part.sell_price;
-    return sum + (value ?? 0);
+    if (field === 'list_price') return sum + (part.list_price ?? 0);
+    // F6 (reviewer S8): the roll-up's SELL side follows the same rule the
+    // tag's own price does per part - the part's offer when it has one,
+    // else its LIST price (AC-S1-8/S7-3: an uncovered part still prints,
+    // and contributes to the total, at list - it is not absent). `?? 0`
+    // alone treated an at-list part as contributing NOTHING, so
+    // subtracting it under-subtracted and left the recovered parent offer
+    // reading as the parent's plain list price instead.
+    return sum + (part.sell_price ?? part.list_price ?? 0);
   }, 0);
   return total - partsTotal;
 }

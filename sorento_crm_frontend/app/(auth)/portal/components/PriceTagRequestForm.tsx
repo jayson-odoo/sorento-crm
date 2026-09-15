@@ -830,43 +830,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // already fires this whenever a pricing-relevant field changes.
   }, [priceMode, pricingSignature]);
 
-  // ---- Line pricing, read-only view (AC-S1-10) - fed the submitted
-  // request's own lines (each already carrying its own `promotion_id`, S7)
-  // the moment it loads, through the real `lookupLinePricing` (S12). ----
-  const [readLinePricing, setReadLinePricing] = useState<
-    Record<string, LinePricingResult>
-  >({});
-  useEffect(() => {
-    if (!request || request.lines.length === 0) {
-      setReadLinePricing({});
-      return;
-    }
-    const inputs: LinePricingLineInput[] = request.lines
-      .filter((l) => l.line_type === 'product' && l.product_id)
-      .map((l) => ({
-        key: l.id,
-        product_id: l.product_id,
-        part_product_ids: (l.parts ?? [])
-          .filter((p) => p.product_id)
-          .map((p) => p.product_id as string),
-        candidate_product_ids: [],
-        promotion_id: l.promotion_id ?? null,
-      }));
-    if (inputs.length === 0) {
-      setReadLinePricing({});
-      return;
-    }
-    let cancelled = false;
-    lookupLinePricing(request.price_mode ?? 'list', inputs).then((results) => {
-      if (!cancelled) {
-        setReadLinePricing(Object.fromEntries(results.map((r) => [r.key, r])));
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [request]);
-
   // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
   // NEW draft. Attachments stay empty (Sales Order files are not copied);
   // nothing is saved until Save draft / Submit. A source this contact does
@@ -2023,9 +1986,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           </td>
                         </tr>
                         {/* AC-S1-10: List price always; Promotion + Selling
-                            price in Selling mode. Same mocked pricing the
-                            edit form reads (`readLinePricing`, keyed by
-                            line id here). */}
+                            price in Selling mode - read straight off the
+                            LINE the server already resolved (F2, browser
+                            finding: this used to recompute client-side
+                            through `lookupLinePricing` keyed only on
+                            `promotion_id`, so a line saved with a manual
+                            price and no promotion showed the recomputed
+                            list total instead of the manual figure the
+                            salesperson actually typed and the server
+                            actually stored). */}
                         {line.line_type === 'product' && line.product_id && (
                           <tr className="align-top">
                             <td colSpan={4} className="px-2 pb-2 pl-9">
@@ -2035,7 +2004,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                     List price
                                   </div>
                                   <div className="text-sm font-medium">
-                                    {formatRM(readLinePricing[line.id]?.list_price)}
+                                    {formatRM(line.list_price)}
                                   </div>
                                 </div>
                                 {(request.price_mode ?? 'list') === 'selling' && (
@@ -2045,11 +2014,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                         Promotion
                                       </div>
                                       <div className="text-sm font-medium">
-                                        {readLinePricing[line.id]?.promotion_options.find(
-                                          (o) =>
-                                            o.id ===
-                                            readLinePricing[line.id]?.auto_promotion_id,
-                                        )?.description ?? '-'}
+                                        {line.promotion_name ??
+                                          (line.sell_price_basis === 'manual'
+                                            ? 'Manual price'
+                                            : '-')}
                                       </div>
                                     </div>
                                     <div>
@@ -2057,7 +2025,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                         Selling price
                                       </div>
                                       <div className="text-sm font-medium">
-                                        {formatRM(readLinePricing[line.id]?.sell_price)}
+                                        {formatRM(line.sell_price)}
                                       </div>
                                     </div>
                                   </>
@@ -2129,10 +2097,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         >
           <div className="space-y-1.5">
             <Label>Price</Label>
+            {/* F2/readOnlyManualPrice: the exact string "Selling price" is
+                the Lines table's per-line label (AC-S1-10) - naming the
+                MODE the same way here made `getByText('Selling price')`
+                ambiguous between the two, so this reads as a mode, not a
+                price label. */}
             <p className="text-sm font-medium py-2">
               {(request.price_mode ?? 'list') === 'selling'
-                ? 'Selling price'
-                : 'List price'}
+                ? 'Selling price mode'
+                : 'List price mode'}
             </p>
           </div>
           {/* D1: a promotion is per LINE now (see the Lines table above) -
@@ -2776,16 +2749,21 @@ interface LineRowProps {
   onManualSellPriceChange: (key: string, value: string) => void;
 }
 
-/** AC-S2-1: "CODE  RM x" - x is the candidate's price under `pricing`
- *  (already resolved to list or offer by `lookupLinePricing`). Falls back to
- *  the bare code while pricing has not answered yet. */
+/** AC-S2-1: "CODE  RM x" - x is the candidate's LIST price in List mode, or
+ *  its price under the line's promotion (offer, else list) in Selling mode
+ *  (F1, browser finding) - `pricing.candidates[]` carries both, and reading
+ *  `sell_price` unconditionally showed the offer price in List mode too.
+ *  Falls back to the bare code while pricing has not answered yet. */
 function candidateOptionLabel(
   candidate: LinePartCandidate,
   pricing: LinePricingResult | null,
+  priceMode: PriceMode,
 ): string {
   const price = pricing?.candidates.find((c) => c.product_id === candidate.product_id);
   const code = candidate.code || candidate.name;
-  return price ? `${code}  ${formatRM(price.sell_price)}` : code;
+  if (!price) return code;
+  const amount = priceMode === 'selling' ? price.sell_price : price.list_price;
+  return `${code}  ${formatRM(amount)}`;
 }
 
 /** One part row under a line: a fixed or hand-added product, or an open group. */
@@ -2794,6 +2772,7 @@ function PartRow({
   lineIndex,
   part,
   pricing,
+  priceMode,
   onResolvePart,
   onRemovePart,
 }: {
@@ -2801,6 +2780,7 @@ function PartRow({
   lineIndex: number;
   part: DraftPart;
   pricing: LinePricingResult | null;
+  priceMode: PriceMode;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
@@ -2824,7 +2804,7 @@ function PartRow({
                   onChange={(value) => onResolvePart(lineKey, part.key, value)}
                   options={part.candidates.map((candidate) => ({
                     value: candidate.product_id,
-                    label: candidateOptionLabel(candidate, pricing),
+                    label: candidateOptionLabel(candidate, pricing, priceMode),
                     description: candidate.code,
                   }))}
                   placeholder={`Not sure, any of ${part.candidates.length}`}
@@ -3089,6 +3069,7 @@ function LineRow({
             lineIndex={index}
             part={part}
             pricing={pricing}
+            priceMode={priceMode}
             onResolvePart={onResolvePart}
             onRemovePart={onRemovePart}
           />
