@@ -323,6 +323,16 @@ def _seed_contact(session_factory, *, variables: dict[str, Any]) -> None:
         ),
         {"sid": _SPACE_ID},
     )
+    # Idempotent (R-B follow-up, 15 Sep 2026): a test that re-seeds this SAME contact
+    # more than once within one test function (e.g. looping two channels of the same
+    # scenario) hit `respond_contacts_phone_number_key` on the second insert - nothing
+    # here deleted the first row, unlike every other test's isolation, which comes from
+    # `session_factory`'s own rollback BETWEEN tests, not within one. Delete-then-insert
+    # is a no-op for every existing single-seed caller.
+    db.execute(
+        text("DELETE FROM respond_contacts WHERE respond_io_id = :cid"),
+        {"cid": str(CONTACT_ID)},
+    )
     db.execute(
         text(
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
@@ -3252,6 +3262,105 @@ class TestDateNarrowingUnderAnOpenOffer:
         stored = _session_of(session_factory)["variables"]
         assert _stored_oq_kind(stored) == "outstanding_detail", (
             _stored_oq(stored)
+        )
+        filters_out = _stored_oq_filters(stored)
+        assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
+        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
+
+    def test_a_location_only_turn_WITH_a_non_null_domain_hint_still_narrows(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """R-H (owner-found on the merged head, coder a1f1112d diagnosis, 15 Sep
+        2026): the sibling test above hand-constructs "only BRW" with `domain_hint:
+        None`, which is what R24's own docstring (`TestABusinessQueryUnderAnOpenOfferIsANewAsk`)
+        assumed every location-only refinement looks like. The LIVE v20 parser does
+        not agree - a real captured turn for the SAME phrase, under the SAME R15
+        refinement chain (`sorento_ai_automation_focus_full`, turn
+        94639ef2-cdf7-4540-a78e-93b411ba2e84), emits `message_type: "business_query"`
+        WITH `domain_hint: "order"` and the carried customer (CNK HARDWARE,
+        `current_message: False`) still riding `entities` beside the new BRW
+        warehouse entity. `_outstanding_keeps_subject`'s R24 guard
+        (`output_exchange.py`, "a NON-NULL domain_hint is a new ask, whatever its
+        entities' axes") fires on THIS shape and refuses the refinement - the real
+        turn's own recorded output shows `outstanding_pending_dropped: True`. A
+        location word alone must still narrow the same open offer, exactly as the
+        `domain_hint: None` sibling already does."""
+        from app.models.inventory import Warehouse
+
+        db = session_factory()
+        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
+        db.commit()
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "both",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            # The LIVE trace's own parser output, verbatim on the fields that matter:
+            # message_type/domain_hint/intent_hint ALL set (unlike the domain_hint:
+            # None sibling above), entity_op replace_combine, the carried customer
+            # entity still present with current_message False.
+            qf=_parser_output(
+                message_type="business_query", intent_hint="check_order", domain_hint="order",
+                entity_op="replace_combine", order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                    {
+                        "raw": "CNK HARDWARE", "hint": "customer", "canonical_code": None,
+                        "current_message": False, "confident": True,
+                    },
+                ],
+                reference_positions=[],
+            ),
+            text_body="only BRW",
+            msg_id="ZZT-outstanding-rh-domain-hint-narrow-1",
+            attributes=["sales_orders.outstanding"],
+            matches={
+                "CNK HARDWARE": {
+                    "uuid": CUSTOMER_UUID, "entity_type": "customer",
+                    "canonical_code": "CNK HARDWARE",
+                },
+            },
+            mcp_response=REPORT_HIT,
+        )
+        assert len(captured) == 1, (
+            f"exactly one report call, the location refines the SAME offer - a "
+            f"non-null domain_hint must not make this a new ask: {captured}"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("warehouse_codes") == ["BRW"], (
+            f"the location word must reach the tool as warehouse_codes: {args}"
+        )
+        assert args.get("customer_ids") == [CUSTOMER_UUID], (
+            f"the carried customer subject must survive the refinement: {args}"
+        )
+        assert args.get("scope") == "both", args
+        assert "detail" not in args, (
+            f"a location-only refinement re-runs the REPORT, not a detail pick: {args}"
+        )
+        _result_unused = result
+        stored = _session_of(session_factory)["variables"]
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            f"the offer must survive the refinement, not be dropped as a new ask: "
+            f"{_stored_oq(stored)!r}"
         )
         filters_out = _stored_oq_filters(stored)
         assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
