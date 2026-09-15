@@ -1161,6 +1161,58 @@ DIVERGENCES: list[Divergence] = [
         ),
         strip_paths=(("_xd", "requested"),),
     ),
+    # R-F (coder a1f1112d, 15 Sep 2026, design revised same day - `family_uuids` on the
+    # roster row and the picked entity, not `open_question.payload.families`): these
+    # five captures were recorded with `picker_families` in `ctx` (the OLD n8n 34-key
+    # spine's map), and n8n's OWN JS appended the family's extra customer rows onto
+    # `compatible_entities` FROM that map before the capture was taken. The map read is
+    # DELETED (2026-08-24 "family outlives the roster" ruling: five-key sessions never
+    # carry `picker_families`), and the port's replacement (`family_uuids` riding the
+    # row/entity, expanded at `entity_ids_transformer`) is a different mechanism at a
+    # different seat, so the port's `compatible_entities` is SHORT the family rows these
+    # captures already have. `exec-14206818`: expected 5 `compatible_entities`, the port
+    # produces 3 - the missing two are customer rows the family widened to (e.g.
+    # `{"uuid": ..., "entity_type": "customer", "code": "UNIMAX LIVINGMART (M) SDN
+    # BHD"}`). FIELD-SCOPED to `compatible_entities` (never a whole-capture skip):
+    # `gate_passed`, `require_specific`, `gate_reason`, `gate_clarification`,
+    # `gate_debug` and every other byte of the gate's own output are still graded. Five
+    # paths per the same reason the AC-1 `allowed_lookup` entry above needs five: the
+    # SAME `compatible_entities` object is seen through the flat item, `gate`, `ctx.gate`
+    # and the two `ctx_resolved` nestings the exit arms carry it under. `rg-15125764`
+    # gets TWO entries because it replays under two different `node` labels
+    # (`disallowed-entity-gate` directly, and `sub-resolve-and-gate` for the whole-sub
+    # replay - `test_full_corpus_whole_sub_replay` keys `_compare` off `fixture.node`,
+    # which is "sub-resolve-and-gate" for that parametrization regardless of which exit
+    # arm folder the fixture came from, per the `incompatible_only` entry's own note
+    # above). Behaviour pinned by
+    # tests/chatbot/test_owner_regressions_15sep.py::TestRFAPickedMultiLedgerRowKeepsEveryLedger.
+    *(
+        Divergence(
+            node=node,
+            fixture=fixture,
+            hazard="R-F (chatbot-focus, coder a1f1112d, 15 Sep 2026)",
+            reason=(
+                "legacy picker_families map read deleted; family rides on family_uuids "
+                "(2026-08-24 lifetime ruling) - the port's compatible_entities is short "
+                "the family rows this capture's picker_families already widened to. "
+                "Field-scoped to compatible_entities."
+            ),
+            strip_paths=(
+                ("compatible_entities",),
+                ("gate", "compatible_entities"),
+                ("ctx", "gate", "compatible_entities"),
+                ("ctx_resolved", "compatible_entities"),
+                ("ctx_resolved", "ctx", "gate", "compatible_entities"),
+            ),
+        )
+        for node, fixture in (
+            ("disallowed-entity-gate", "exec-14206818"),
+            ("disallowed-entity-gate", "exec-14095480"),
+            ("disallowed-entity-gate", "rg-15125764"),
+            ("sub-resolve-and-gate", "rg-15114061"),
+            ("sub-resolve-and-gate", "rg-15125764"),
+        )
+    ),
 ]
 
 

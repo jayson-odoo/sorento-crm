@@ -1082,8 +1082,12 @@ class TestAPickerLineNamesEveryLedgerItsFamilySpans:
         assert titles == ["A CRAFT IDEA SDN BHD (SRT, MOCHA)", "A CRAFT IDEA TRADING SDN BHD (SRT)"], (
             f"a family spanning two ledgers must name both, in first-seen order: {titles!r}"
         )
-        families = out["picker_families"]
-        assert set(families["A CRAFT IDEA"]) == {"u-srt-1", "u-mocha"}, families
+        # `out["picker_families"]` assertion RETIRED here (R-F, coder a1f1112d, 15 Sep
+        # 2026): the key is retired along with the session-level map it fed
+        # (2026-08-24 "family outlives the roster" ruling - the family now rides on the
+        # roster row / picked entity as `family_uuids`, not a separate top-level gate
+        # output key). Covered instead by
+        # tests/chatbot/test_owner_regressions_15sep.py::TestRFAPickedMultiLedgerRowKeepsEveryLedger.
         assert "1. A CRAFT IDEA SDN BHD (SRT, MOCHA)" in out["gate_clarification"]
 
     def test_a_ledger_with_no_code_on_the_row_contributes_nothing(self) -> None:

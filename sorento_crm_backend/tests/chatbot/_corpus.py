@@ -306,7 +306,20 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # in the corpus is masked by this entry today, and the trigger to revisit is a capture
 # that carries the key already disagreeing with the port.
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
-    "disallowed-entity-gate": ("specific_options", "display_name", "incompatible_only"),
+    # `family_uuids` (R-F, coder a1f1112d, 15 Sep 2026, design revised same day): a
+    # customer-picker row now carries every uuid its account family spans, a per-row
+    # field the gate's ambiguous-customer arm composes (`lanes/business/gate.py`'s
+    # picker-row construction). Three captures (`rg-15114061`, `exec-14091114`,
+    # `exec-14109393`) predate it the same way earlier ones predate `specific_options` -
+    # otherwise byte-identical, missing only the one new field on their customer picker
+    # rows. Same mechanism as those, not a field-scoped divergence: the strip is
+    # unconditional per-node, so a capture that DOES carry `family_uuids` grades it.
+    "disallowed-entity-gate": (
+        "specific_options",
+        "display_name",
+        "incompatible_only",
+        "family_uuids",
+    ),
     # `construct-user-prompt`'s `focus_hints` / `open_question` (AC-1024, S2 clarifier
     # ruling, 12 Sep 2026): the dialogue module's hints replace the raw `session_vars`
     # echo unconditionally, so every one of the 8 `sub-casual-llm-live` captures (and the
