@@ -12,10 +12,13 @@ and each arm's shape was MEASURED on this head before the assertion was written.
 
 The three rules, as the coder is implementing them:
 
-1. **THE OFFER HAS ONE WRITER AND ONE TEAM.** The escalate offer is armed once, at the
-   engine's post-compose arm (the three tail arms - `_ask_for_turn`'s offer arm,
-   `_offer_rides_on_roster`, `_offer_born_beside_roster` - collapse into it; `with_offer`
-   stays the merge primitive). The team the SENTENCE prints and `payload.offer.team` /
+1. **THE OFFER HAS ONE WRITER AND ONE TEAM.** As shipped: the arms keep their own
+   selection condition and delegate CONSTRUCTION to `dialogue/open_question.record_offer`,
+   which is the single implementation of what an offer is - called from two sites, the
+   tail (over its own composed text) and the engine's post-compose arm (over the text
+   `crossdomain_compose` may have appended), idempotent through `with_offer`. One team
+   source: `team_from_reply` reads the team back off the sentence the customer will read.
+   The team the SENTENCE prints and `payload.offer.team` /
    `payload.team` come from ONE source, and a `yes` routes to THAT team. A v1-shaped
    `yes` - the PROMOTED prompt's own shape, with `escalation.is_escalation_confirmation:
    true` and NO `answers_open_question` key at all - resolves the question through the
@@ -393,6 +396,7 @@ def _exact_services(
     *,
     multi: dict[str, list[dict[str, Any]]] | None = None,
     single: dict[str, dict[str, Any]] | None = None,
+    unresolved: tuple[str, ...] = (),
 ) -> ResolveGateServices:
     """A `resolve_entity` seam keyed on EXACT tokens (see the module docstring).
 
@@ -414,10 +418,12 @@ def _exact_services(
                 resolutions.append(
                     {"raw": token, "token": token, "resolved": True, "matches": [dict(row)]}
                 )
+        missed = [token for token in unresolved if token.lower() in asked]
         return {
-            "tokens": [r["token"] for r in resolutions],
-            "resolutions": resolutions,
-            "unresolved_tokens": [],
+            "tokens": [r["token"] for r in resolutions] + missed,
+            "resolutions": resolutions
+            + [{"raw": token, "token": token, "resolved": False, "matches": []} for token in missed],
+            "unresolved_tokens": missed,
         }
 
     return ResolveGateServices(
@@ -2219,4 +2225,381 @@ def test_a_numbered_answer_to_the_scope_question_resolves_after_a_customer_pick(
     assert reports[0].get("customer_ids") == [CHIN_CHUN[0][0]], (
         f"{position} / {channel}: the customer the pick chose two turns ago is still the "
         f"report's subject: {reports[0]!r}"
+    )
+
+
+# =========================================================================== #
+# GROUP 6 - the re-review's two blockers, and guards for the hunks the kill
+# test found unguarded (reviewer, 15 Sep 2026, on the general-rule round)
+# =========================================================================== #
+
+
+def _decline_with_a_new_ask_qf(
+    domain_hint: str | None, *, raw: str, hint: str
+) -> dict[str, Any]:
+    """"no, check stock SRTWT2634": a decline AND a question of its own, in one message.
+
+    `is_affirmative: False` is the parser's own decline signal, and the entity is
+    `current_message: True` - the customer named a new subject in the same breath.
+    """
+    return _parser_output(
+        message_type="business_query",
+        intent_hint="check_stock" if domain_hint == "inventory" else None,
+        domain_hint=domain_hint, entity_op="replace_combine", is_affirmative=False,
+        reference_positions=[], asks=[],
+        entities=[_entity(raw, hint)],
+    )
+
+
+_NEW_SUBJECTS = (
+    ("product", STOCK_CODE, "product", STOCK_UUID),
+    ("customer", "hanlim", "customer", CARRIED_CUSTOMER_UUID),
+)
+
+
+@pytest.mark.parametrize("domain_hint", (None, "inventory"), ids=lambda d: f"domain-{d or 'null'}")
+@pytest.mark.parametrize(
+    ("subject_id", "raw", "hint", "uuid"), _NEW_SUBJECTS, ids=lambda x: str(x)
+)
+def test_b1_a_decline_that_brings_its_own_question_is_answered_not_just_acknowledged(
+    subject_id, raw, hint, uuid, domain_hint, session_factory, monkeypatch
+) -> None:
+    """B1 (reviewer, NEW regression on the general-rule round): "no, check stock
+    SRTWT2634" over an open outstanding question is a decline AND an ask.
+
+    R22(a)'s way out reads `is_affirmative: False` on a turn that "picked nothing, named
+    nothing and refined nothing" and answers with one line from the registry's
+    `offer_declined` key ("Okay, noted.", `lanes/business/__init__._outstanding_offer_closed`).
+    A turn that names its OWN subject is not that turn: closing the question is right, and
+    stopping there leaves the customer's actual question unanswered.
+    """
+    _seed_open_detail(session_factory, filters=_customer_subject_filters())
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_decline_with_a_new_ask_qf(domain_hint, raw=raw, hint=hint),
+        text_body=f"no, check stock {raw}",
+        msg_id=f"ZZT-gr6-b1-{subject_id}-{domain_hint or 'null'}",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(
+            single={
+                raw: {
+                    "uuid": uuid, "entity_type": hint, "canonical_code": raw,
+                    "match_tier": "exact", "company_name": "Sorento",
+                }
+            }
+        ),
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Okay, noted." not in reply, (
+        f"{subject_id} / {domain_hint!r}: the customer declined the offer AND asked "
+        f"something - acknowledging the decline is not an answer to the question: {reply!r}"
+    )
+    tool_calls = [c for c in calls if not c[0].startswith("probe:")]
+    assert tool_calls, (
+        f"{subject_id} / {domain_hint!r}: the new subject must reach a tool - nothing ran: "
+        f"{calls!r}"
+    )
+    for name, args in tool_calls:
+        assert not (
+            name == "crm_outstanding_report" and args.get("product_code") == PRODUCT_CODE_IN_OFFER
+        ), (
+            f"{subject_id} / {domain_hint!r}: the declined report must not be what answers "
+            f"the new ask: {name} {args!r}"
+        )
+    if domain_hint == "inventory" and hint == "product":
+        assert [name for name, _a in tool_calls] == ["crm_inventory_stock_balance_list"], (
+            f"a stock ask is answered by the stock tool: {tool_calls!r}"
+        )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") != "outstanding_detail", (
+        f"{subject_id} / {domain_hint!r}: the declined question still closes: {question!r}"
+    )
+
+
+#: The product the seeded offer is about, so B1 can assert the OLD report is not re-run.
+PRODUCT_CODE_IN_OFFER = OUTSTANDING_CODE
+
+
+@pytest.mark.parametrize(
+    "domain_hint", (None, "order", "inventory"), ids=lambda d: f"domain-{d or 'null'}"
+)
+def test_b2_a_bare_no_closes_the_open_outstanding_question(
+    domain_hint, session_factory, monkeypatch
+) -> None:
+    """B2 (reviewer): the fifth matrix cell - a bare "no" whose emission carries NO
+    entities at all.
+
+    The decline case earlier in this file carries the question's own subject on `entities`
+    with `current_message: False` (the live R-H shape), which is a different turn: this one
+    names nothing whatsoever, which is R22(a)'s own premise. Measured: under
+    `domain_hint: "order"` the detail rows are re-printed and the question stays open, so
+    "no" cannot close it - the same "wud i can't reset now?" the owner hit, back through
+    the domain word.
+    """
+    _seed_open_detail(session_factory, filters=_customer_subject_filters())
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="business_query" if domain_hint else "casual", intent_hint=None,
+            domain_hint=domain_hint, entity_op="reuse", is_affirmative=False,
+            reference_positions=[], entities=[], asks=[],
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+        ),
+        text_body="no", msg_id=f"ZZT-gr6-b2-{domain_hint or 'null'}",
+        attributes=["sales_orders.outstanding"],
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    reports = _report_tool_calls(calls)
+    assert reports == [], (
+        f"domain_hint {domain_hint!r}: a decline is answered with one line, never by "
+        f"running the report the customer just declined: {calls!r}"
+    )
+    reply = (result.reply or {}).get("text") or ""
+    assert "Reply 1 for" not in reply and "1. Sales order list" not in reply, (
+        f"domain_hint {domain_hint!r}: the declined question must not be printed back: "
+        f"{reply!r}"
+    )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") not in ("outstanding_detail", "outstanding_scope"), (
+        f"domain_hint {domain_hint!r}: 'no' closes it: {question!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# S1 - an offer exists because the BOT offered, not because the words appear
+# --------------------------------------------------------------------------- #
+
+#: Replies that carry the bot's OWN offer sentence, one per composer shape that writes it
+#: (`open_question.ESCALATE_PREFIX`'s own comment names all four).
+REAL_OFFER_REPLIES = (
+    ("frozen-prefix", "Would you like me to escalate to warehouse team?", "warehouse"),
+    (
+        "lower-case-variant",
+        "Couldn't pin down \"wc286\". Here are the closest matches:\n1. A\n2. B\n"
+        "Reply with a number to continue, or would you like me to escalate to warehouse team?",
+        "warehouse",
+    ),
+    (
+        "yes-to-escalate",
+        "Couldn't find some items:\n\n\"wc286\" - did you mean:\n1. A\n2. B\n\n"
+        "Reply a number to pick, or 'yes' to escalate to purchasing.",
+        "purchasing",
+    ),
+    (
+        "bold-company-insert",
+        "Would you like me to escalate to *Sorento* customer service team?",
+        "customer_service",
+    ),
+)
+
+#: Replies where the phrase is the CUSTOMER's, quoted back at them. Measured live: a
+#: not-found echo of the token "escalate to purchasing." records a `purchasing` offer, so
+#: the next bare "yes" escalates something nobody offered.
+ECHOED_OFFER_REPLIES = (
+    (
+        "not-found-echo",
+        'Couldn\'t find these: "escalate to purchasing." (product): not found.',
+    ),
+    (
+        "scope-header-echo",
+        "Customer: all\nProduct: escalate to warehouse.\nDates: all dates\n\n"
+        "Here are the orders I found.",
+    ),
+)
+
+
+@pytest.mark.parametrize(("case_id", "reply", "team"), REAL_OFFER_REPLIES, ids=lambda x: str(x))
+def test_s1_every_composer_shape_of_the_bots_own_offer_is_recorded(
+    case_id, reply, team
+) -> None:
+    """One rule, four sentences. `record_offer` is the single implementation, so each
+    composer's own wording has to reach it - a shape it cannot read is an offer the
+    customer can act on and the bot cannot answer (that is R-I)."""
+    from app.services.chatbot.dialogue import open_question as oq
+
+    question = oq.record_offer(None, reply_text=reply, turn_no=1)
+    assert isinstance(question, dict), f"{case_id}: no offer recorded: {reply!r}"
+    assert (question.get("payload") or {}).get("team") == team, (
+        f"{case_id}: the offer records the team the sentence named: {question!r}"
+    )
+    assert question.get("expects") == "yes_no", question
+
+
+@pytest.mark.parametrize(("case_id", "reply"), ECHOED_OFFER_REPLIES, ids=lambda x: str(x))
+def test_s1_a_reply_that_merely_echoes_the_customers_words_records_no_offer(
+    case_id, reply
+) -> None:
+    """S1 (reviewer): the phrase appearing in the reply is not the same fact as the bot
+    having offered.
+
+    `team_from_reply` anchors on the two words that never vary ("escalate to"), which is
+    what makes it read every composer - and a customer token quoted back inside a
+    not-found line or a scope header carries those same two words. An offer nobody made
+    must not be answerable: the next bare "yes" would escalate on the strength of the
+    customer's own typing.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    assert oq.record_offer(None, reply_text=reply, turn_no=1) is None, (
+        f"{case_id}: the bot did not offer anything here - the words are the customer's, "
+        f"quoted back: {reply!r}"
+    )
+
+
+def test_s1_an_echoed_phrase_never_outranks_the_bots_own_offer(
+    session_factory, monkeypatch
+) -> None:
+    """The same rule end to end, on the one turn shape that carries BOTH: the customer's
+    unresolvable token quoted back ("escalate to purchasing.") and the bot's own offer
+    sentence in the same reply.
+
+    The live shape is the order-domain not-found line, measured on the console pass:
+    `Couldn't find: "DO12345" (order). Would you like me to escalate to customer service
+    team?`. The echo comes FIRST in the text, so a reader that takes the first "escalate
+    to" it finds records `purchasing` - a team nobody offered - and the customer's next
+    "yes" goes there.
+    """
+    _seed_contact(session_factory, variables={})
+    token = "escalate to purchasing."
+    result, _calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_qf([_entity(token, "order")], domain="order", intent_hint="check_order"),
+        text_body=f'has my order "{token}" arrived', msg_id="ZZT-gr6-s1-echo",
+        resolve_services=_exact_services(unresolved=(token,)),
+    )
+    reply = (result.reply or {}).get("text") or ""
+    assert token in reply, (
+        f"this test is only itself if the reply quotes the customer's token back: {reply!r}"
+    )
+    printed = _printed_team(reply)
+    question = _stored_oq(_final_vars(session_factory, result))
+    recorded = _recorded_team(question)
+    assert recorded != "purchasing", (
+        f"'purchasing' is the customer's own word, quoted back inside a not-found line - "
+        f"the offer is whatever the BOT's own sentence named ({printed!r}): {question!r}"
+    )
+    if printed is not None:
+        assert _pretty(recorded) == printed, (
+            f"the reply promised {printed!r} and the question recorded {recorded!r}: "
+            f"{question!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Guards for the three hunks the reviewer's kill test found unguarded
+# --------------------------------------------------------------------------- #
+
+
+def test_the_family_rides_only_a_customer_row() -> None:
+    """`_entity_of` (security review n2): an account family is a fact about a CUSTOMER.
+
+    `entity_ids_transformer` expands `family_uuids` into `customer_ids`, so copying the
+    key off any row that happened to carry one would hand an unowned uuid list to a type
+    with no notion of a family - a product pick that reached six customers' orders.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    customer = oq.resolve(
+        "customer_pick",
+        {**ox_no_answer(), "resolved": True, "picks": [1]},
+        [
+            {
+                "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (SRT, MCH)", "code": "300-C043",
+                "uuid": CHIN_CHUN[0][0], "entity_type": "customer",
+                "family_uuids": [CHIN_CHUN[0][0], CHIN_CHUN[1][0]],
+            }
+        ],
+        {},
+    )
+    assert customer.focus["customer"].get("family_uuids") == [
+        CHIN_CHUN[0][0], CHIN_CHUN[1][0]
+    ], customer.focus
+
+    product = oq.resolve(
+        "product_pick",
+        {**ox_no_answer(), "resolved": True, "picks": [1]},
+        [
+            {
+                "idx": 1, "label": "SRTWC286-SH", "code": "SRTWC286-SH",
+                "uuid": "33333331-1111-1111-1111-111111111111", "entity_type": "product",
+                # A row that carries the key anyway: nothing downstream may act on it.
+                "family_uuids": [CHIN_CHUN[0][0], CHIN_CHUN[1][0]],
+            }
+        ],
+        {},
+    )
+    picked = product.focus["products"][0]
+    assert "family_uuids" not in picked, (
+        f"a product is not an account family: {picked!r}"
+    )
+
+
+def ox_no_answer() -> dict[str, Any]:
+    from app.services.chatbot.head import output_exchange as ox
+
+    return dict(ox.NO_OPEN_QUESTION_ANSWER)
+
+
+def test_record_offer_leaves_a_non_roster_question_alone() -> None:
+    """`record_offer`'s non-roster guard: a team clarify, a company clarify and a member
+    offer are ALREADY what the customer is being asked, and the escalate yes/no has
+    nothing to add to any of them.
+
+    A roster takes the offer on board (D19 rule 3) and no question at all becomes the
+    plain yes/no; those two are covered by the shapes above. This is the third branch,
+    which the kill test found nothing grading.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    reply = "Would you like me to escalate to warehouse team?"
+    for kind, options in (
+        ("team_pick", [{"idx": 1, "team": "purchasing", "label": "purchasing"}]),
+        ("company_pick", [{"idx": 1, "label": "Sorento", "company_id": "co-1"}]),
+        ("member_offer", [{"idx": 1, "label": "Nurain", "uuid": "u-1"}]),
+    ):
+        question = oq.ask(kind, options=options, turn_no=3)
+        after = oq.record_offer(question, reply_text=reply, turn_no=4)
+        assert after == question, (
+            f"{kind} is already the question on the customer's screen: {after!r}"
+        )
+
+
+def test_the_engines_post_compose_arm_never_replaces_an_open_member_offer(
+    session_factory, monkeypatch
+) -> None:
+    """The engine's own arm, guarded end to end: a re-prompted member roster must survive
+    a turn whose reply carries the escalate sentence.
+
+    Measured cause in the engine's own comment: two owner worlds
+    (`sub-output-live/out-14875019`, `out-15145655`) turned a six-person roster into a
+    one-option team clarify as soon as this arm could read a team off the printed
+    sentence. A member offer is an open offer with its own yes, its own no and its own
+    re-prompt.
+    """
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.dialogue import open_question as oq
+
+    member = oq.ask(
+        "member_offer",
+        options=[
+            {"idx": 1, "label": "Nurain", "uuid": "aaaaaaaa-0000-0000-0000-000000000001"},
+            {"idx": 2, "label": "Aina", "uuid": "aaaaaaaa-0000-0000-0000-000000000002"},
+        ],
+        turn_no=5,
+        payload={"team": "warehouse"},
+    )
+    sealed = {
+        "text": "No stock for SRTWT2634. Would you like me to escalate to warehouse team?",
+        "session_patch": {"variables": {"open_question": member}},
+    }
+    ctx = {"parse": {"_turn_no": 6, "_open_question_before": member}}
+
+    engine_mod._arm_cross_domain_offer(sealed, {"team": "warehouse"}, ctx=ctx, domain="inventory")
+
+    after = sealed["session_patch"]["variables"]["open_question"]
+    assert after == member, (
+        f"the named people the customer is reading must still be the question: {after!r}"
     )
