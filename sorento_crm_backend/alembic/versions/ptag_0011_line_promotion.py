@@ -30,6 +30,7 @@ Create Date: 2026-09-16
 """
 from __future__ import annotations
 
+import copy
 import itertools
 import json
 import logging
@@ -58,11 +59,30 @@ def _split_open_tags(conn) -> None:
     revision. A line already split by hand (Split / Pick one, pre-D6) has
     more than one tag or a non-empty `choices` map and is left untouched -
     it is not "open", it already answered.
+
+    R3 (security H2 / reviewer B3): the FIRST candidate combination UPDATES
+    the existing tag row rather than deleting it - a review comment
+    (`price_tag_review_comments.tag_id`) or a saved draft placement anchored
+    to it must not go dangling just because the migration is what answered
+    the group, not a click. The N-1 siblings are freshly inserted, same as
+    before, and `_copy_placements_in_draft` gives each one a copy of the
+    original tile's geometry, porting the SQL of the retired hand-driven
+    Split's own helper of the same name (`PriceTagRequestService`, pre-D6) -
+    a migration has no ORM session to share it through, so it is ported
+    rather than imported.
+
+    R14: `groups_by_line` is built from a query ordered `line_id, sort_order`
+    - the SAME convention `line.parts`' relationship `order_by` gives the
+    live service builder (`_add_line_tags`), so which open group is the
+    outer loop of `itertools.product` (and therefore which candidate lands
+    on which tag) agrees between a request split at migration time and one
+    split by a save from this revision onward.
     """
     open_parts = conn.execute(
         sa.text(
             "SELECT line_id, role, candidates FROM price_tag_request_line_parts "
-            "WHERE product_id IS NULL AND jsonb_array_length(candidates) > 0"
+            "WHERE product_id IS NULL AND jsonb_array_length(candidates) > 0 "
+            "ORDER BY line_id, sort_order"
         )
     ).all()
     if not open_parts:
@@ -96,12 +116,23 @@ def _split_open_tags(conn) -> None:
         if not combos:
             continue
 
-        conn.execute(
-            sa.text("DELETE FROM price_tag_request_tags WHERE id = :id"),
-            {"id": tag["id"]},
-        )
+        original_tag_id = str(tag["id"])
+        new_tag_ids: list[str] = []
         for index, combo in enumerate(combos):
             choices = dict(zip(roles, combo))
+            if index == 0:
+                # The tag that was already there resolves to combination 0
+                # and KEEPS ITS ID - not deleted and replaced.
+                conn.execute(
+                    sa.text(
+                        "UPDATE price_tag_request_tags "
+                        "SET choices = CAST(:choices AS jsonb) WHERE id = :id"
+                    ),
+                    {"id": original_tag_id, "choices": json.dumps(choices)},
+                )
+                continue
+            new_id = str(uuid.uuid4())
+            new_tag_ids.append(new_id)
             conn.execute(
                 sa.text(
                     "INSERT INTO price_tag_request_tags "
@@ -111,7 +142,7 @@ def _split_open_tags(conn) -> None:
                     "        :override, :reason)"
                 ),
                 {
-                    "id": str(uuid.uuid4()),
+                    "id": new_id,
                     "line_id": line_id,
                     "sort_order": index,
                     "quantity": tag["quantity"],
@@ -120,10 +151,98 @@ def _split_open_tags(conn) -> None:
                     "reason": tag["marketing_override_reason"],
                 },
             )
+        if new_tag_ids:
+            _copy_placements_in_draft(conn, line_id, original_tag_id, new_tag_ids)
         split_count += 1
 
     if split_count:
         logger.info("ptag_0011: auto-split %s pre-existing open line(s)", split_count)
+
+
+def _dealer_kit_schema(conn) -> str:
+    """Where `page` actually is: literally `dealer_kit` outside a test, the
+    scratch schema's own `..._dealer_kit` sibling under `blank_session`'s
+    naming convention (`tests/_pg_fixture.py`) when testing.
+
+    Read at runtime rather than hardcoded, the same reasoning
+    `354_projects_schema_move.py`'s own `_source_schema()` gives for
+    `current_schema()`: `app.models.dealer_kit.Page` carries
+    `{"schema": "dealer_kit"}`, never `public` where every price_tag_* table
+    this migration otherwise touches lives, and a Core construct built with
+    a HARDCODED `schema="dealer_kit"` compiles to that literal name
+    regardless of the connection's `schema_translate_map` (measured: the
+    docs describe Core constructs as translated automatically, but that
+    substitution did not fire through `Operations.context`'s connection in
+    this alembic/SQLAlchemy combination, and the query silently read the
+    REAL production `dealer_kit.page` from inside the test's own scratch
+    session - the one bug this whole function exists to rule out). Resolved
+    by asking Postgres directly instead: `current_schema()` is the SAME
+    per-test default schema `354`'s own helper reads (`{name}` under test,
+    `public` for real), and blank_session's naming convention suffixes that
+    default with `_dealer_kit` for the module schema - if that suffixed name
+    exists, we are under test and it is the right one; otherwise the literal
+    `dealer_kit` is.
+    """
+    default_schema = conn.execute(sa.text("SELECT current_schema()")).scalar()
+    candidate = f"{default_schema}_dealer_kit" if default_schema else None
+    exists = (
+        conn.execute(
+            sa.text(
+                "SELECT 1 FROM information_schema.schemata WHERE schema_name = :s"
+            ),
+            {"s": candidate},
+        ).scalar()
+        if candidate
+        else None
+    )
+    return candidate if exists else "dealer_kit"
+
+
+def _copy_placements_in_draft(
+    conn, line_id: str, source_tag_id: str, new_tag_ids: list[str]
+) -> None:
+    """Give every new sibling the split tag's own geometry (R3/H2).
+
+    Ported from the retired `PriceTagRequestService._copy_placements_in_draft`
+    (pre-D6 hand-driven Split): the copies keep their own `-cN` suffix, which
+    is how `tagsFromDoc` tells copy 0 (the master, whose layers are the
+    design) from the rest.
+    """
+    page = sa.table(
+        "page",
+        sa.column("id"),
+        sa.column("request_id"),
+        sa.column("kind"),
+        sa.column("draft_doc", postgresql.JSONB),
+        schema=_dealer_kit_schema(conn),
+    )
+    lines = sa.table("price_tag_request_lines", sa.column("id"), sa.column("request_id"))
+
+    row = conn.execute(
+        sa.select(page.c.id, page.c.draft_doc)
+        .select_from(page.join(lines, lines.c.request_id == page.c.request_id))
+        .where(lines.c.id == line_id, page.c.kind == "tag_sheet")
+    ).first()
+    if row is None or not row.draft_doc:
+        return
+    raw = row.draft_doc
+    doc = json.loads(raw) if isinstance(raw, str) else copy.deepcopy(raw)
+    changed = False
+    for sheet in doc.get("sheets") or []:
+        placed = sheet.get("tags") or []
+        sources = [p for p in placed if p.get("request_tag_id") == source_tag_id]
+        for source in sources:
+            suffix = str(source.get("id") or "")
+            copy_index = suffix.rsplit("-c", 1)[-1] if "-c" in suffix else "0"
+            for new_tag_id in new_tag_ids:
+                clone = copy.deepcopy(source)
+                clone["request_tag_id"] = new_tag_id
+                clone["id"] = f"{new_tag_id}-c{copy_index}"
+                placed.append(clone)
+                changed = True
+        sheet["tags"] = placed
+    if changed:
+        conn.execute(sa.update(page).where(page.c.id == row.id).values(draft_doc=doc))
 
 
 def upgrade() -> None:
