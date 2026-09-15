@@ -22,12 +22,14 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy import text
 
 from app.services.chatbot.contracts import ENTITY_HINTS
-from app.services.chatbot.lanes.business.fetch import _BASE_PROPERTY_WORDS
-from app.services.chatbot.lanes.business.tier_gate import TIER_ORDER
+from app.services.chatbot.turn.policy_rows import PRODUCT_BASE_PROPERTY_WORDS
 from tests._pg_fixture import blank_session, pg_session
 
-# AC-1502's own words plus discontinued -> is_discontinued and brand.
-EXPECTED_PRODUCT_WORDS = set(_BASE_PROPERTY_WORDS) | {"discontinued", "brand"}
+# AC-1592: `lanes.business.fetch._BASE_PROPERTY_WORDS` no longer exists (AC-1594) -
+# `turn/policy_rows.py::PRODUCT_BASE_PROPERTY_WORDS` is its replacement, and already
+# carries "discontinued"/"brand" natively (the old constant didn't, hence the union
+# this file used to need).
+EXPECTED_PRODUCT_WORDS = set(PRODUCT_BASE_PROPERTY_WORDS)
 
 
 @pytest.fixture(scope="module")
@@ -77,7 +79,11 @@ def test_no_tier_row_in_chatbot_entity_kinds(rows):
 
 
 def test_chatbot_tier_order_system_setting_defaults_to_tier_gate_literal():
+    """AC-1592: the module-level `tier_gate.TIER_ORDER` constant is gone (AC-1594);
+    `tier_gate._tier_order()` now reads `turn.policy.default_policy().tier_order`
+    instead, the frozen seed `policy_rows.py::DEFAULT_TIER_ORDER` provides."""
     from app.models.user import SystemSetting
+    from app.services.chatbot.lanes.business.tier_gate import _tier_order
 
     with blank_session() as db:
         row = SystemSetting()
@@ -87,7 +93,7 @@ def test_chatbot_tier_order_system_setting_defaults_to_tier_gate_literal():
             text("SELECT chatbot_tier_order FROM system_settings WHERE id = :i"),
             {"i": row.id},
         ).scalar()
-        assert list(value or []) == list(TIER_ORDER)
+        assert list(value or []) == list(_tier_order())
 
 
 @pytest.mark.parametrize("kind", [k for k in ENTITY_HINTS if k != "product"])
