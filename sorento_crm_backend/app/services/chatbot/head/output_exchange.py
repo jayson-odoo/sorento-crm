@@ -1531,6 +1531,28 @@ def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
     return None
 
 
+def _close_outstanding_pending(o: dict) -> None:
+    """The pending is CLOSED - one close, whichever arm decided it (owner ruling, 15 Sep
+    2026: "R22 stands and arms may not differ").
+
+    Two arms close an outstanding question: the new-ask arm and R22's way-out. They used to
+    differ in what the turn was owed afterwards - only the way-out stamped a DECLINE - so
+    once arm 1 stopped catching a decline (reviewer B2) the same "no" closed the question
+    through the other door and got no closing line. A decline is a decline wherever it is
+    recognised, so the stamping lives here, at the close, and neither arm carries copy of
+    its own.
+
+    `outstanding_offer_declined` is what makes the lane compose ONE closing reply and arm
+    nothing (`run_fetch`); the three routing fields are what get the turn to that lane.
+    """
+    o["outstanding_pending_dropped"] = True
+    if o.get("is_affirmative") is False:
+        o["outstanding_offer_declined"] = True
+        o["domain_hint"] = "order"
+        o["message_type"] = "business_query"
+        o["intent_hint"] = "check_order"
+
+
 def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -> None:
     """S4 points 4/5 (PLAN-chatbot-outstanding-report.md): read an OPEN
     `outstanding_scope` or `outstanding_detail` ask against this turn - answered,
@@ -1672,7 +1694,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             # `tail/compile_state.py` both keyed off "an outstanding pending was open last
             # turn", so a hit's `outstanding_detail` marker silently suppressed the scope
             # question on the NEXT bare-word ask, however many turns later.
-            o["outstanding_pending_dropped"] = True
+            _close_outstanding_pending(o)
             return
         elif picked is None and _outstanding_leaves_the_offer(o, prev_pending):
             # R22 (owner round 9, 13 Sep 2026): THE WAY OUT. A customer who answers
@@ -1682,16 +1704,10 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             # can't reset now?" Both shapes close it through the SAME door the new ask
             # above uses, so the filters die with it; they differ only in what the turn is
             # owed afterwards.
-            o["outstanding_pending_dropped"] = True
-            if o.get("is_affirmative") is False:
-                # A DECLINE was aimed at this question, so it gets an answer to it: the
-                # lane composes one closing reply and arms nothing (`run_fetch`). Kept on
-                # the outstanding arm for that one line, exactly as the re-print it
-                # replaces already is.
-                o["outstanding_offer_declined"] = True
-                o["domain_hint"] = "order"
-                o["message_type"] = "business_query"
-                o["intent_hint"] = "check_order"
+            # A DECLINE aimed at this question gets an answer to it - the lane composes one
+            # closing reply and arms nothing (`run_fetch`) - and that is stamped at the
+            # close, not here, so the other arm cannot close the same "no" in silence.
+            _close_outstanding_pending(o)
             # The SECOND unreadable turn was not aimed at the question at all, so it takes
             # its own ordinary path with the offer simply gone - a greeting for "hi",
             # which is the right reply once nothing is open.
