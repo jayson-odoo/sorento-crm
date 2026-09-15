@@ -699,14 +699,230 @@ def _revoke_grant(db, contact) -> None:
 
 
 # D1 (PLAN-price-tag-line-promo-combo-subject.md): `PriceTagRequest.promotion_id`
-# is DROPPED (ptag_0011) - the header column `TestRevisePromotionAudienceGate`
-# (security review Gap A) guarded against a bad audience landing on no longer
-# exists for a revise payload to set at all, so the old attack surface is closed
-# by the column's removal. The revise composer does not yet expose a per-LINE
-# promotion field (coder's own note in `_apply_price_tag_lines`, backlogged in
-# the plan) - there is no promotion write path on revise for an audience gate
-# to guard until that backlog item lands, so this class is retired rather than
-# rewritten against a payload shape the product does not accept yet.
+# is DROPPED (ptag_0011) - the header column the old `TestRevisePromotionAudienceGate`
+# (security review Gap A) guarded no longer exists. The backlog item that class's
+# retirement comment named has since landed: `_apply_price_tag_lines` now converts
+# a per-LINE `promotion_id` / `manual_sell_price` through `_convert_ptag_revise_line`
+# and runs them through the SAME `_add_lines` gate create/update take
+# (AC-S6-4/S6-5), so this class covers the line-level audience/coverage guard on
+# revise instead.
+
+
+def _grant_audience_code(db, contact_id: str, code: str = "dealer") -> None:
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    if db.query(ContactAccessType).filter(ContactAccessType.code == code).first() is None:
+        db.add(ContactAccessType(code=code, name=code))
+        db.flush()
+    db.execute(
+        respond_contact_access_types.insert().values(
+            contact_id=contact_id, access_type_code=code
+        )
+    )
+    db.flush()
+
+
+def _promotion_covering(db, product_id: str, *, access_levels=None) -> str:
+    """A promotion with a real `PromotionProduct` row for `product_id`."""
+    from decimal import Decimal
+
+    from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+
+    promotion = Promotion(
+        id=str(uuid.uuid4()),
+        description=unique_code("ZZT promo"),
+        is_active=True,
+        access_levels=access_levels or ["dealer"],
+        company_id=_SORENTO_COMPANY_ID,
+    )
+    db.add(promotion)
+    db.flush()
+    group = PromotionGroup(promotion_id=promotion.id, group_name="ZZT group", sort_order=0)
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()),
+            promotion_id=promotion.id,
+            promotion_group_id=str(group.id),
+            product_id=product_id,
+            promo_selling_price=Decimal("400.00"),
+            company_id=_SORENTO_COMPANY_ID,
+        )
+    )
+    db.flush()
+    return promotion.id
+
+
+def _promotion_not_covering(db, *, access_levels=None) -> str:
+    """A promotion with NO `PromotionProduct` rows at all - covers nothing."""
+    from app.models.marketing import Promotion
+
+    promotion = Promotion(
+        id=str(uuid.uuid4()),
+        description=unique_code("ZZT promo"),
+        is_active=True,
+        access_levels=access_levels or ["dealer"],
+        company_id=_SORENTO_COMPANY_ID,
+    )
+    db.add(promotion)
+    db.flush()
+    return promotion.id
+
+
+class TestReviseLinePromotionGate:
+    """The line-level AC-S6-4/S6-5 gate, exercised through the real
+    `POST .../revise` route (not the direct-service harness the rest of this
+    file uses), since the wire shape - `fields` vs `products`, `promotion_id`
+    absent vs explicit `null` - is exactly what this class is pinning."""
+
+    @pytest.fixture
+    def revise_client(self):
+        from app.database import get_db
+
+        with blank_session() as db:
+
+            def _override_get_db():
+                yield db
+
+            app.dependency_overrides[get_db] = _override_get_db
+            try:
+                with TestClient(app) as c:
+                    yield c, db
+            finally:
+                app.dependency_overrides.clear()
+
+    def _revise(self, c, row_id, headers, *, expected_revision_no, products, fields=None, reason="Reason"):
+        return c.post(
+            f"{_PORTAL_BASE}/submissions/price_tag_request/{row_id}/revise",
+            headers=headers,
+            json={
+                "reason": reason,
+                "expected_revision_no": expected_revision_no,
+                "fields": fields or {},
+                "products": products,
+            },
+        )
+
+    def test_revise_line_promotion_wrong_audience_422(self, revise_client):
+        """(a) a promotion that covers the product but is not visible to this
+        contact's audience is refused, naming the line."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        _grant_audience_code(db, contact.id, "dealer")
+        promotion_id = _promotion_covering(db, product_id, access_levels=["some-other-audience"])
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = self._revise(
+            c, row.id, headers,
+            expected_revision_no=0,
+            products=[{"product_id": product_id, "quantity": 1, "promotion_id": promotion_id}],
+        )
+        assert res.status_code == 422, res.text
+        body = res.json()
+        assert body.get("detail") == "line:0", body
+        assert body.get("code") == "PROMOTION_NOT_AVAILABLE", body
+
+    def test_revise_line_promotion_covers_nothing_422(self, revise_client):
+        """(b) a promotion with no `PromotionProduct` row for any product on
+        the line is refused, naming the line."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        _grant_audience_code(db, contact.id, "dealer")
+        promotion_id = _promotion_not_covering(db, access_levels=["dealer"])
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = self._revise(
+            c, row.id, headers,
+            expected_revision_no=0,
+            products=[{"product_id": product_id, "quantity": 1, "promotion_id": promotion_id}],
+        )
+        assert res.status_code == 422, res.text
+        body = res.json()
+        assert body.get("detail") == "line:0", body
+        assert body.get("code") == "PROMOTION_NOT_AVAILABLE", body
+
+    def test_revise_omitting_promotion_id_keeps_the_old_line_value(self, revise_client):
+        """(c) a products[i] entry that omits `promotion_id` entirely carries
+        the OLD line's promotion forward - a revision that only touches a
+        remark must not silently drop it."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        _grant_audience_code(db, contact.id, "dealer")
+        promotion_id = _promotion_covering(db, product_id, access_levels=["dealer"])
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        first = self._revise(
+            c, row.id, headers,
+            expected_revision_no=0,
+            products=[{"product_id": product_id, "quantity": 1, "promotion_id": promotion_id}],
+        )
+        assert first.status_code == 200, first.text
+
+        second = self._revise(
+            c, row.id, headers,
+            expected_revision_no=1,
+            reason="Just a remark",
+            products=[{"product_id": product_id, "quantity": 1, "remarks": "Face out"}],
+        )
+        assert second.status_code == 200, second.text
+
+        db.expire_all()
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.lines[0].promotion_id == promotion_id
+        assert fresh.lines[0].remarks == "Face out"
+
+    def test_revise_null_promotion_id_clears_it(self, revise_client):
+        """(d) a products[i] entry sending `promotion_id: null` explicitly
+        clears the line's promotion - distinct from omitting the key."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        _grant_audience_code(db, contact.id, "dealer")
+        promotion_id = _promotion_covering(db, product_id, access_levels=["dealer"])
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        first = self._revise(
+            c, row.id, headers,
+            expected_revision_no=0,
+            products=[{"product_id": product_id, "quantity": 1, "promotion_id": promotion_id}],
+        )
+        assert first.status_code == 200, first.text
+
+        second = self._revise(
+            c, row.id, headers,
+            expected_revision_no=1,
+            reason="Cleared the promotion",
+            products=[{"product_id": product_id, "quantity": 1, "promotion_id": None}],
+        )
+        assert second.status_code == 200, second.text
+
+        db.expire_all()
+        fresh = PriceTagRequestService.get_request(db, str(row.id))
+        assert fresh.lines[0].promotion_id is None
+
+    def test_revise_manual_price_with_promotion_on_the_same_line_422(self, revise_client):
+        """(e) AC-S6-4: a manual price and a promotion are mutually exclusive
+        on one line, even via revise."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        _grant_audience_code(db, contact.id, "dealer")
+        promotion_id = _promotion_covering(db, product_id, access_levels=["dealer"])
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = self._revise(
+            c, row.id, headers,
+            expected_revision_no=0,
+            fields={"price_mode": "selling"},
+            products=[
+                {
+                    "product_id": product_id,
+                    "quantity": 1,
+                    "promotion_id": promotion_id,
+                    "manual_sell_price": 123.45,
+                }
+            ],
+        )
+        assert res.status_code == 422, res.text
 class TestRevisionRoutesRequireFormVisibility:
     """Gap B: ``_require_own_request`` (the ownership check the generic
     revision routes dispatch to for price_tag_request) checks ownership

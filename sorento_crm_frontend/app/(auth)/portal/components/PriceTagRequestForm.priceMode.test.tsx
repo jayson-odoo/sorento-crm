@@ -241,7 +241,7 @@ describe('PriceTagRequestForm - price mode (D5, D-P2/AC-P8)', () => {
     expect(payload.price_mode).toBe('selling');
     // D1: the request-level `promotion_id` is dropped from the payload
     // entirely, backfilled into lines instead (AC-S6-3).
-    expect(payload.promotion_id).toBeNull();
+    expect('promotion_id' in payload).toBe(false);
   });
 
   it('switching back to List keeps posting no header promotion_id (D1)', async () => {
@@ -257,7 +257,7 @@ describe('PriceTagRequestForm - price mode (D5, D-P2/AC-P8)', () => {
 
     const payload = await lastCreatePayload();
     expect(payload.price_mode).toBe('list');
-    expect(payload.promotion_id).toBeNull();
+    expect('promotion_id' in payload).toBe(false);
   });
 
   it('has no per-line "Promo price" switch anywhere on the form (AC-S2-3)', async () => {

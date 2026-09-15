@@ -547,16 +547,21 @@ class TestResolveLines:
             data={
                 "debtor_name": "ZZT Dealer",
                 "needed_by_date": date.today() + timedelta(days=7),
-                "promotion_id": promotion_id,
-                # D5: show_promo_price is DERIVED from price_mode on save, not
-                # taken from the line payload - "selling" is what makes the
-                # line resolve to True.
+                # D1 (S6): a promotion is a LINE fact - the header convenience
+                # is gone, so it goes on the line's own dict. AC-S6-5: it must
+                # cover the line's product (`_promotion` seeds a
+                # `PromotionProduct` row for it) and be visible to the
+                # viewer's audience - `create_request`'s default viewer is
+                # `staff_viewer()`, which is not audience-gated, so
+                # `_promotion`'s own `access_levels` default already covers
+                # it.
                 "price_mode": "selling",
                 "lines": [
                     {
                         "line_type": "product",
                         "product_id": product.id,
                         "quantity": 1,
+                        **({"promotion_id": promotion_id} if promotion_id else {}),
                     }
                 ],
             },

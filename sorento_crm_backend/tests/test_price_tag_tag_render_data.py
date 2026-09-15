@@ -154,13 +154,15 @@ def _combo(db, host, name, parts):
 
 
 def _request(db, *, product, combo=None, parts=None, promotion_id=None, price_mode="list"):
+    """D1 (S6): a promotion is a LINE fact, never the header - `promotion_id`
+    is attached to the line's own dict here, not to `data["promotion_id"]`
+    (which the schema no longer accepts and the service no longer honours)."""
     return PriceTagRequestService.submit_request(
         db,
         contact_id=_contact(db).id,
         company_id=SORENTO,
         data={
             "debtor_name": "ZZT Dealer",
-            "promotion_id": promotion_id,
             "price_mode": price_mode,
             "lines": [
                 {
@@ -169,6 +171,7 @@ def _request(db, *, product, combo=None, parts=None, promotion_id=None, price_mo
                     "combo_id": combo.id if combo is not None else None,
                     "quantity": 1,
                     "parts": parts or [],
+                    **({"promotion_id": promotion_id} if promotion_id else {}),
                 }
             ],
         },
@@ -444,14 +447,16 @@ def test_combo_without_offer_prints_lp(db):
     assert covered_row["sell_price_basis"] == "promotion"
     assert covered_row["show_promo_price"] is True
 
+    # AC-S6-5: a promotion that covers NONE of the line's products is refused
+    # outright now (the line is explicit, unlike the old header "best-effort
+    # sugar" default) - so the "nothing covers" case this half is actually
+    # about is simply no promotion on the line at all.
     other_cabinet = _product(db, "SRT9NOCOV", list_price="899.00")
     other_combo = _combo(db, other_cabinet, "solo", [])
     not_covered = _request(
         db,
         product=other_cabinet,
         combo=other_combo,
-        # A promotion exists but does not price THIS product at all.
-        promotion_id=promotion.id,
         price_mode="selling",
     )
     db.flush()
