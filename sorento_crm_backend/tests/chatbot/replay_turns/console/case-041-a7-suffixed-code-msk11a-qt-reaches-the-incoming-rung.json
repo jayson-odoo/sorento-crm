@@ -1,0 +1,238 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock MSK11A-QT",
+              "type": "text"
+            },
+            "messageId": "console-check-e4d896dda974",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "3acc5445-c496-42db-acc1-38bc51b8be15"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Here's what you want:\n\u2022 product: MSK11A-QT\n\nBut no inventory matched these.\nNo stock for MSK11A-QT.\n\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* MSK11A-QT\n*Container:* TEMU6355180\n*ETA:* 2026-09-02\n*ETA Delay:* 2026-09-08\n*Loading:* 2026-08-21\n*ETC:* 2026-08-23\n*ETD:* 2026-08-25\n*Liner:* CMA\n*China Forwarder:* Hongxin\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento (Mocha)\n*Free Days Available:* 14\n*Incoming Quantity:* 400\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\nWould you like me to escalate to warehouse team?",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_sellable",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_inventory_stock_balance_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "MSK11A-QT",
+                "entity_type": "product",
+                "uuid": "3acc5445-c496-42db-acc1-38bc51b8be15"
+              }
+            ],
+            "resolved": true,
+            "token": "MSK11A-QT"
+          }
+        ],
+        "tokens": [
+          "MSK11A-QT"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:55:52.893962+09:00",
+        "turn_id": "4dedf8cb-766e-4da7-8f24-247f0dbe9799"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "include_sellable": true,
+            "is_active": null,
+            "product_ids": [
+              "3acc5445-c496-42db-acc1-38bc51b8be15"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "alternatives": [
+              {
+                "display": "MSK11A",
+                "id": "298fda57-736b-4730-8e9b-3083720d1f0e",
+                "is_variant": false,
+                "sim": 0.6,
+                "value": "MSK11A"
+              },
+              {
+                "display": "MSK11A-DIY",
+                "id": "2d671ab2-d84c-4db0-b3b1-cfd60e827f37",
+                "is_variant": false,
+                "sim": 0.462,
+                "value": "MSK11A-DIY"
+              },
+              {
+                "display": "MSK11B",
+                "id": "b518f183-278a-4e41-b96a-f6961d850bd1",
+                "is_variant": false,
+                "sim": 0.455,
+                "value": "MSK11B"
+              }
+            ],
+            "attachments": [],
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": "2026-09-04T17:30:59.549278",
+            "relaxed_axis": "entity",
+            "result_type": "stock",
+            "stock_visibility": {
+              "hide_zero_locations": true,
+              "mode": "detailed",
+              "source": "contact",
+              "warehouse_codes": null
+            }
+          },
+          "tool": "crm_inventory_stock_balance_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "MSK11A-QT"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check stock for MSK11A-QT"
+      }
+    }
+  ]
+}

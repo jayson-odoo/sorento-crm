@@ -1,0 +1,480 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "customer a craft delivery order",
+              "type": "text"
+            },
+            "messageId": "console-check-c64e9065eb3e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. A CRAFT IDEA SDN BHD (SRT, MCH) - has DO\n2. A CRAFT KITCHEN (SRT) (SRT) - no DO\n3. CRAFTLY ASSOCIATES SDN BHD (PROJECT-CASH) (SRT) - no DO\n4. HOMECRAFT CENTER (SRT) - no DO\n5. KB CRAFT STONE SDN BHD (SRT) - no DO\n6. RED POINT SIGNCRAFT SDN BHD (PROJECT) (SRT) - no DO",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "customer a craft"
+          }
+        ],
+        "tokens": [
+          "customer a craft"
+        ],
+        "unresolved_tokens": [
+          "customer a craft"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:48:00.101724+09:00",
+        "turn_id": "1ce1b057-1a18-462d-9ec5-4fc9bad4abfc"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "customer a craft"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check delivery orders for customer a craft"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-d9d71a7beb29",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 10,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "customer a craft"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 10,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 10,
+            "expects": "pick_or_yes_no",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "132f7a45-1593-4590-a386-65a39d8ab0c1",
+                  "3cdcaf28-2082-4964-8654-d922e04c7ee1",
+                  "73a7cc8f-5211-458c-83f2-a2856b00403e",
+                  "6308eef7-657b-4b48-90b0-6697cf9d3904",
+                  "9dfa62d8-cf0f-4f2e-841a-4ddb10e1a5e4",
+                  "81bd3283-f779-405b-9dc1-3bdec928632c"
+                ],
+                "filename": null,
+                "idx": 1,
+                "label": "A CRAFT IDEA SDN BHD (SRT, MCH)",
+                "product": "300-A056",
+                "uuid": "132f7a45-1593-4590-a386-65a39d8ab0c1"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "ec1c4299-dc4c-43c7-8ef0-082c3e47c71d"
+                ],
+                "filename": null,
+                "idx": 2,
+                "label": "A CRAFT KITCHEN (SRT) (SRT)",
+                "product": "300-A055",
+                "uuid": "ec1c4299-dc4c-43c7-8ef0-082c3e47c71d"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "8e458a19-756c-4cd0-9b3c-a9a3c9fe5b21"
+                ],
+                "filename": null,
+                "idx": 3,
+                "label": "CRAFTLY ASSOCIATES SDN BHD (PROJECT-CASH) (SRT)",
+                "product": "302-C055",
+                "uuid": "8e458a19-756c-4cd0-9b3c-a9a3c9fe5b21"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "888756aa-5c06-4400-b9b0-2ad77847be38",
+                  "5413f78a-5116-4a6d-a78a-ef688f060ad9",
+                  "ce22a4ae-9e7f-42bd-ad95-734b822af056",
+                  "fcfd9199-380a-4b55-bbcf-13cbd7b145b3",
+                  "981322e5-7532-4782-b44e-4d08d64040e9"
+                ],
+                "filename": null,
+                "idx": 4,
+                "label": "HOMECRAFT CENTER (SRT)",
+                "product": "300-H178",
+                "uuid": "888756aa-5c06-4400-b9b0-2ad77847be38"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "4a073cc3-b165-4ff8-8443-b8bc197d699a"
+                ],
+                "filename": null,
+                "idx": 5,
+                "label": "KB CRAFT STONE SDN BHD (SRT)",
+                "product": "300-K007",
+                "uuid": "4a073cc3-b165-4ff8-8443-b8bc197d699a"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "2631e6e3-63f9-4472-bd49-754ada463d90"
+                ],
+                "filename": null,
+                "idx": 6,
+                "label": "RED POINT SIGNCRAFT SDN BHD (PROJECT) (SRT)",
+                "product": "300-R024",
+                "uuid": "2631e6e3-63f9-4472-bd49-754ada463d90"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": [],
+              "offer": {
+                "domain": "order",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "customer_service",
+                    "team": "customer_service"
+                  }
+                ],
+                "team": "customer_service"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "132f7a45-1593-4590-a386-65a39d8ab0c1",
+          "3cdcaf28-2082-4964-8654-d922e04c7ee1",
+          "6308eef7-657b-4b48-90b0-6697cf9d3904",
+          "73a7cc8f-5211-458c-83f2-a2856b00403e",
+          "81bd3283-f779-405b-9dc1-3bdec928632c",
+          "9dfa62d8-cf0f-4f2e-841a-4ddb10e1a5e4"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Customer: A CRAFT IDEA SDN BHD (SRT, MCH)\nProduct: all products\nDates: all dates\n\nHere are the orders I found.\n\n1. *Company:* Sorento\n*Order Number:* REP202608-0514\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 26/08/2026\n*Actual Delivery Date:* 27/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 14:36:00\n*Transporter:* LAW TRANSPORT\n*Driver:* SAFRI\n*Lorry Plate:* VHV1528\n*Warehouse:* BRW\n*Products:* SRTBF11502 (1), SRTBF11503 (1)\n\n2. *Company:* Sorento\n*Order Number:* REP202608-0375\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 19/08/2026\n*Actual Delivery Date:* 20/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:33:00\n*Transporter:* LAW TRANSPORT\n*Driver:* ALIF\n*Lorry Plate:* NCE7175\n*Warehouse:* BRW\n*Products:* RPAC (1)\n\n3. *Company:* Sorento\n*Order Number:* REP202608-0408\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 19/08/2026\n*Actual Delivery Date:* 20/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:33:00\n*Transporter:* LAW TRANSPORT\n*Driver:* ALIF\n*Lorry Plate:* NCE7175\n*Warehouse:* BRW\n*Products:* SRTPC (1)\n\n4. *Company:* Sorento\n*Order Number:* 202608-2841\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 18/08/2026\n*Actual Delivery Date:* 20/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:33:00\n*Transporter:* LAW TRANSPORT\n*Driver:* ALIF\n*Lorry Plate:* NCE7175\n*Warehouse:* BRW\n*Products:* SRTWC286-SH-NEW-200 (8), SRTWC286-SH-NEW (2), SRTWC286-SH-NEW (7), WESERP10B (17)\n\n5. *Company:* Sorento\n*Order Number:* REP202608-0298\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 17/08/2026\n*Actual Delivery Date:* 19/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:37:00\n*Transporter:* PARCEL\n*Driver:* LONG\n*Lorry Plate:* VKC7715\n*Warehouse:* BRW\n*Products:* ACC-CB2007 (1)\n\n6. *Company:* Sorento\n*Order Number:* 202608-2840\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 18/08/2026\n*Actual Delivery Date:* 19/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:17:00\n*Transporter:* SORENTO - LAW\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* CWB1218 (6)\n\n7. *Company:* Sorento\n*Order Number:* 202608-2590\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 17/08/2026\n*Actual Delivery Date:* 18/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:14:00\n*Transporter:* LAW TRANSPORT\n*Driver:* ALIF\n*Lorry Plate:* NEC7175\n*Warehouse:* BRW\n*Products:* CGB248 (10), CGB248 (1), SRTWHBWP (11), CGB9032B-NEW (10), SRTWHBWP-GB9032B-NEW (10)\n\n8. *Company:* Mocha\n*Order Number:* M2608-1033\n*Customer:* A CRAFT IDEA SDN BHD - [CERAMIC]\n*Order Date:* 17/08/2026\n*Actual Delivery Date:* 18/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:16:00\n*Transporter:* LAW\n*Driver:* FAIZAL\n*Lorry Plate:* VDJ8711\n*Warehouse:* MWH\n*Products:* MWB7627-BL (1)\n\n9. *Company:* Mocha\n*Order Number:* REP2608-0132\n*Customer:* A CRAFT IDEA SDN BHD - [CERAMIC]\n*Order Date:* 13/08/2026\n*Actual Delivery Date:* 18/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:16:00\n*Transporter:* LAW\n*Driver:* FAIZAL\n*Lorry Plate:* VDJ8711\n*Warehouse:* MWH\n*Products:* MWC-SC87-UF (1)\n\n10. *Company:* Sorento\n*Order Number:* 202608-2624\n*Customer:* A CRAFT IDEA SDN BHD (SRT)\n*Order Date:* 17/08/2026\n*Actual Delivery Date:* 18/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:14:00\n*Transporter:* LAW TRANSPORT\n*Driver:* ALIF\n*Lorry Plate:* NEC7175\n*Warehouse:* BRW\n*Products:* CB781-GM (3)\n\n11. *Company:* Sorento\n*Order Number:* REP202608-0173\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 11/08/2026\n*Actual Delivery Date:* 11/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 16:46:00\n*Transporter:* LALAMOVE/OWN\n*Driver:* YU\n*Lorry Plate:* CCU9059\n*Warehouse:* BRW\n*Products:* RPACC (20)\n\n12. *Company:* Sorento\n*Order Number:* 202608-1869\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 11/08/2026\n*Actual Delivery Date:* 11/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 22:14:00\n*Transporter:* SUNCREST\n*Driver:* SIVEN\n*Lorry Plate:* JRS7425\n*Warehouse:* BRW\n*Products:* CWB1218 (8)\n\n13. *Company:* Sorento\n*Order Number:* 202608-1223\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 07/08/2026\n*Actual Delivery Date:* 10/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 13:53:00\n*Transporter:* LAW TRANSPORT\n*Driver:* MOHD SYAZWAN\n*Lorry Plate:* WWY9528\n*Warehouse:* BRW\n*Products:* SRTWC8319-P-RL-UF (5), SRTWC8319-P-RL-UF (3), SRTPCAT125 (8)\n\n14. *Company:* Sorento\n*Order Number:* 202608-0809\n*Customer:* A CRAFT IDEA SDN BHD [A/C IV]\n*Order Date:* 04/08/2026\n*Actual Delivery Date:* 06/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 15:04:00\n*Transporter:* LAW TRANSPORT\n*Driver:* REZA\n*Lorry Plate:* VBH1928\n*Warehouse:* BRW\n*Products:* CB2542SS-DIY (5), CB2542SS-DIY (2), CB2542SS-BL-DIY (5), CB2542SS-BL-DIY (2)\n\n15. *Company:* Sorento\n*Order Number:* 202608-0808\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 04/08/2026\n*Actual Delivery Date:* 06/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 15:04:00\n*Transporter:* LAW TRANSPORT\n*Driver:* REZA\n*Lorry Plate:* VBH1928\n*Warehouse:* BRW\n*Products:* SRTFT203-NEW (250)\n\n16. *Company:* Sorento\n*Order Number:* REP202608-0081\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 05/08/2026\n*Actual Delivery Date:* 06/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 15:04:00\n*Transporter:* LAW TRANSPORT\n*Driver:* REZA\n*Lorry Plate:* VBH1928\n*Warehouse:* BRW\n*Products:* SRTMR11404-BL (1)\n\n17. *Company:* Sorento\n*Order Number:* 202608-0140\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 03/08/2026\n*Actual Delivery Date:* 04/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 14:27:00\n*Transporter:* LAW TRANSPORT\n*Driver:* SYAZWAN\n*Lorry Plate:* WWY9528\n*Warehouse:* BRW\n*Products:* SRT6542-DIY (10), SRT6542-DIY (5)\n\n18. *Company:* Sorento\n*Order Number:* 202607-4500\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 27/07/2026\n*Actual Delivery Date:* 29/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:19:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n*Products:* SRTWT2214 (5), SRTWT5847-RG (2)\n\n19. *Company:* Sorento\n*Order Number:* 202607-4501\n*Customer:* A CRAFT IDEA SDN BHD [A/C I]\n*Order Date:* 27/07/2026\n*Actual Delivery Date:* 29/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:19:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* PPS1678\n*Warehouse:* BRW\n*Products:* SRTSC04-BL (3), SRTWT912-GM (10)\n\n20. *Company:* Sorento\n*Order Number:* 202607-4087\n*Customer:* A CRAFT IDEA SDN BHD [A/C III]\n*Order Date:* 24/07/2026\n*Actual Delivery Date:* 27/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 15:34:00\n*Transporter:* LAW TRANSPORT\n*Driver:* SYAZWAN\n*Lorry Plate:* WWY9528\n*Warehouse:* BRW\n*Products:* SRTWT6855-GY (1)\n\n_Data last updated: 07/09/2026 10:27:40_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_order_management_orders_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:48:11.054444+09:00",
+        "turn_id": "a2d30a33-8a19-4edf-89f2-48d0dde87cdb"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 6,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 6,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "132f7a45-1593-4590-a386-65a39d8ab0c1",
+              "3cdcaf28-2082-4964-8654-d922e04c7ee1",
+              "73a7cc8f-5211-458c-83f2-a2856b00403e",
+              "6308eef7-657b-4b48-90b0-6697cf9d3904",
+              "9dfa62d8-cf0f-4f2e-841a-4ddb10e1a5e4",
+              "81bd3283-f779-405b-9dc1-3bdec928632c"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 16674,
+            "head": "{\"result_type\": \"orders\", \"intro\": \"Here are the orders I found.\", \"items\": [{\"title\": \"REP202608-0514\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"REP202608-0514\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-26T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-27T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"14:36:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW TRANSPORT\"}, {\"label\": \"Driver\", \"value\": \"SAFRI\"}, {\"label\": \"Lorry Plate\", \"value\": \"VHV1528\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTBF11502 (1), SRTBF11503 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"REP202608-0375\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"REP202608-0375\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-19T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-20T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"16:33:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW TRANSPORT\"}, {\"label\": \"Driver\", \"value\": \"ALIF\"}, {\"label\": \"Lorry Plate\", \"value\": \"NCE7175\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"RPAC (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"REP202608-0408\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"REP202608-0408\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-19T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-20T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"16:33:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW TRANSPORT\"}, {\"label\": \"Driver\", \"value\": \"ALIF\"}, {\"label\": \"Lorry Plate\", \"value\": \"NCE7175\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTPC (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-2841\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"202608-2841\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-18T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-20T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"16:33:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW TRANSPORT\"}, {\"label\": \"Driver\", \"value\": \"ALIF\"}, {\"label\": \"Lorry Plate\", \"value\": \"NCE7175\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"SRTWC286-SH-NEW-200 (8), SRTWC286-SH-NEW (2), SRTWC286-SH-NEW (7), WESERP10B (17)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"REP202608-0298\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"REP202608-0298\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C I]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-17T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-19T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:37:00\"}, {\"label\": \"Transporter\", \"value\": \"PARCEL\"}, {\"label\": \"Driver\", \"value\": \"LONG\"}, {\"label\": \"Lorry Plate\", \"value\": \"VKC7715\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"ACC-CB2007 (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-2840\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"202608-2840\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-18T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-19T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:17:00\"}, {\"label\": \"Transporter\", \"value\": \"SORENTO - LAW\"}, {\"label\": \"Driver\", \"value\": \"AZHAR\"}, {\"label\": \"Lorry Plate\", \"value\": \"VQP1678\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"CWB1218 (6)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-2590\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"202608-2590\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD [A/C III]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-17T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-18T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"16:14:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW TRANSPORT\"}, {\"label\": \"Driver\", \"value\": \"ALIF\"}, {\"label\": \"Lorry Plate\", \"value\": \"NEC7175\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"CGB248 (10), CGB248 (1), SRTWHBWP (11), CGB9032B-NEW (10), SRTWHBWP-GB9032B-NEW (10)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"M2608-1033\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Mocha\"}, {\"label\": \"Order Number\", \"value\": \"M2608-1033\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD - [CERAMIC]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-17T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-18T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:16:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW\"}, {\"label\": \"Driver\", \"value\": \"FAIZAL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VDJ8711\"}, {\"label\": \"Warehouse\", \"value\": \"MWH\"}, {\"label\": \"Products\", \"value\": \"MWB7627-BL (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"REP2608-0132\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Mocha\"}, {\"label\": \"Order Number\", \"value\": \"REP2608-0132\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD - [CERAMIC]\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-13T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-18T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"09:16:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW\"}, {\"label\": \"Driver\", \"value\": \"FAIZAL\"}, {\"label\": \"Lorry Plate\", \"value\": \"VDJ8711\"}, {\"label\": \"Warehouse\", \"value\": \"MWH\"}, {\"label\": \"Products\", \"value\": \"MWC-SC87-UF (1)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}}, {\"title\": \"202608-2624\", \"fields\": [{\"key\": \"company_name\", \"label\": \"Company\", \"value\": \"Sorento\"}, {\"label\": \"Order Number\", \"value\": \"202608-2624\"}, {\"label\": \"Customer\", \"value\": \"A CRAFT IDEA SDN BHD (SRT)\"}, {\"label\": \"Order Date\", \"value\": \"2026-08-17T00:00:00\"}, {\"label\": \"Actual Delivery Date\", \"value\": \"2026-08-18T00:00:00\"}, {\"label\": \"Status\", \"value\": \"Picked Up / In Transit\"}, {\"label\": \"Pickup Time\", \"value\": \"16:14:00\"}, {\"label\": \"Transporter\", \"value\": \"LAW TRANSPORT\"}, {\"label\": \"Driver\", \"value\": \"ALIF\"}, {\"label\": \"Lorry Plate\", \"value\": \"NEC7175\"}, {\"label\": \"Warehouse\", \"value\": \"BRW\"}, {\"label\": \"Products\", \"value\": \"CB781-GM (3)\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partial",
+            "truncated": true
+          },
+          "tool": "crm_order_management_orders_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose option 1 from the customer list"
+      }
+    }
+  ]
+}

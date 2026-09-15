@@ -1,0 +1,215 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock CWCX1009-SH",
+              "type": "text"
+            },
+            "messageId": "console-check-9b2d594b665d",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "e961e407-5ceb-4304-bc50-2a76cef80497"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Here's what you want:\n\u2022 product: CWCX1009-SH\n\nBut no inventory matched these.\nNo stock for CWCX1009-SH.\n\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* CWCX1009-SH\n*Container:* CMAU9233271\n*ETA:* 2026-08-16\n*ETA Delay:* 2026-08-20\n*Loading:* 2026-07-30\n*ETC:* 2026-08-05\n*ETD:* 2026-08-07\n*Liner:* CMA\n*China Forwarder:* Haiian\n*Malaysia Forwarder:* Haiian\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 15\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* CWCX1009-SH\n*Container:* TXGU8711127\n*ETA:* 2026-08-25\n*ETA Delay:* 2026-09-18\n*Loading:* 2026-08-12\n*ETC:* 2026-08-16\n*ETD:* 2026-08-18\n*Liner:* CMA\n*China Forwarder:* Haiian\n*Malaysia Forwarder:* Haiian\n*Consignee:* Sorento (Mocha)\n*Free Days Available:* 14\n*Incoming Quantity:* 31\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* CWCX1009-SH\n*Container:* WHLU5774588\n*ETA:* 2026-09-04\n*ETA Delay:* 2026-09-04\n*Loading:* 2026-08-26\n*ETC:* 2026-08-27\n*ETD:* 2026-08-28\n*Liner:* WHL\n*China Forwarder:* Kaidila\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 162\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\nWould you like me to escalate to warehouse team?",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_sellable",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_inventory_stock_balance_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "CWCX1009-SH",
+                "entity_type": "product",
+                "uuid": "e961e407-5ceb-4304-bc50-2a76cef80497"
+              }
+            ],
+            "resolved": true,
+            "token": "CWCX1009-SH"
+          }
+        ],
+        "tokens": [
+          "CWCX1009-SH"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:56:03.280072+09:00",
+        "turn_id": "660bbdc2-6f83-46b2-b3e2-facebbae6eff"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "include_sellable": true,
+            "is_active": null,
+            "product_ids": [
+              "e961e407-5ceb-4304-bc50-2a76cef80497"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": "2026-09-04T17:30:59.549278",
+            "result_type": "stock",
+            "stock_visibility": {
+              "hide_zero_locations": true,
+              "mode": "detailed",
+              "source": "contact",
+              "warehouse_codes": null
+            }
+          },
+          "tool": "crm_inventory_stock_balance_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "CWCX1009-SH"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check stock for CWCX1009-SH"
+      }
+    }
+  ]
+}

@@ -102,3 +102,46 @@ all fields, not deduplicated by file):
    (LESSONS: do not chase further as tester once a root cause is named).
 
 The template below is real, not illustrative filler to delete before first use.
+
+## Console corpus, 16 Sep 2026 (tester, this session, deliverable 2)
+
+`console/` grew from 20 files (the prior session's "owner chains") to 116: 73 matched
+from the nine `console_cases/*.yaml` (81 total cases parsed, 8 unmatched) against
+`sorento_ai_automation_focus_full`'s `chatbot.turns` (all recorded under contact
+437264483, matched newest-run-first by exact text sequence, single or multi-turn);
+17 from `2026-09-15-focus.yaml` (origin/feat/chatbot-focus, ALL matched); 6 hand-built
+(`hand_built: true` in `expected`) for the cases with a `expect.parser` pin but no
+recorded run - `2026-09-16-rearch-prompt.yaml` (4 of its 6 unmatched single-turn
+cases; the 2 multi-turn ones skipped, time-boxed) and `2026-09-14-low-stock-report.yaml`
+(2, branch_kind-only, `intent_hint` inferred from the sibling rearch-prompt pin for
+the same phrase). Each hand-built case asserts ONLY `branch_kind` - deliberately:
+`_compare`'s `pending` check fires whenever the ACTUAL result carries an open
+question, expected or not (`expected_pending is not None or actual_open_question is
+not None`), so a hand-built case with no real run to ground `pending`/`action_kinds`
+leaves those fields unasserted rather than guessed, and any real divergence there
+reports honestly instead of silently passing or silently excusing.
+
+**#930 (`2026-09-15-answer-feedback.yaml`, 8 cases) and #833 (`2026-09-11-
+attribute-first-asks.yaml`, 14 cases) - NOT recorded, real finding, not silently
+skipped.** Confirmed this session: #930's contact (487555417) has ZERO turns of any
+kind in `sorento_ai_automation_focus_full` (matches its own commit message - the run
+was blocked by a 401 auth failure and never executed). #833's contact (438930735)
+has 12 turns in that DB, but they are all from a UNRELATED 6 Sep 2026 probe session
+("Check stock SRT53-CR" etc.) - none match any of #833's 14 case texts (confirmed by
+both per-contact and whole-database exact-text search for a sample phrase). **Neither
+file has a single `expect.parser` pin anywhere** (grepped both) - every case's only
+structured signal is free-text `reply_contains`. Hand-building a `verdict` (the
+parser's structured output) from a bare reply substring would be INVENTING what the
+parser said, not reconstructing it - the opposite of what a replay case is for.
+**Not recorded, flagged for the captain**: either accept these 22 cases as
+permanently un-recordable without a live rerun (the honest option), or schedule a
+live rerun against a reachable backend once #930's auth blocker is fixed, from which
+a real recording becomes possible.
+
+`pytest tests/chatbot/test_turn_replay.py` after console (engine head unchanged,
+merged through `b69a04f0c`): **42 passed, 148 failed**, ~55s, 190 cases total. Not
+re-clustered field-by-field this pass (time-boxed per the captain's "corpus first"
+instruction) - the six clusters logged after the prod_sample pass above still
+describe the dominant shapes; two NEW real divergences from the 6 hand-built cases
+are additionally unsigned in the file list, expected given they assert nothing
+beyond branch_kind.

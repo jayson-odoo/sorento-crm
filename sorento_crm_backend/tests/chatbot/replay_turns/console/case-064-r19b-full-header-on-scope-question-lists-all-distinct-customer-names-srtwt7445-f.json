@@ -1,0 +1,478 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT7445 outstanding for fullshun sanitaryware sdn bhd",
+              "type": "text"
+            },
+            "messageId": "console-check-248c5ee71be8",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT7445"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "fullshun sanitaryware sdn bhd"
+          }
+        ],
+        "tokens": [
+          "SRTWT7445",
+          "fullshun sanitaryware sdn bhd"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7445",
+          "fullshun sanitaryware sdn bhd"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:04:05.695825+09:00",
+        "turn_id": "c27c4aee-e523-4fee-9c93-d95f113a1c69"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7445"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "fullshun sanitaryware sdn bhd"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check outstanding delivery orders for SRTWT7445 for fullshun sanitaryware sdn bhd"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-4beceb24a169",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "fullshun sanitaryware sdn bhd"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 13,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7445"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 13,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+                  "c971fd31-1535-4b52-841c-8241c7bc357a",
+                  "026977c4-9f09-408f-8039-95252b68511d",
+                  "84611b0d-7ad1-478d-aee6-08395af886a4",
+                  "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+                  "108e7169-3570-49a8-b0d0-695a76de430a",
+                  "cdabd5e7-a348-46ce-8661-491eae2a975b",
+                  "5525f716-fe4b-4894-8f58-214218854d51",
+                  "7a58be74-d9af-4fc1-bddc-243579ebd975",
+                  "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+                  "64d9432e-d969-4c1a-9539-af52877af64f",
+                  "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+                  "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c",
+                  "9ae85807-9761-40fb-8649-b9f3c89b9ada"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": "SRTWT7445",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "026977c4-9f09-408f-8039-95252b68511d",
+          "108e7169-3570-49a8-b0d0-695a76de430a",
+          "5525f716-fe4b-4894-8f58-214218854d51",
+          "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+          "64d9432e-d969-4c1a-9539-af52877af64f",
+          "7a58be74-d9af-4fc1-bddc-243579ebd975",
+          "84611b0d-7ad1-478d-aee6-08395af886a4",
+          "9ae85807-9761-40fb-8649-b9f3c89b9ada",
+          "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+          "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+          "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+          "c971fd31-1535-4b52-841c-8241c7bc357a",
+          "cdabd5e7-a348-46ce-8661-491eae2a975b",
+          "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 3\nTransferred to DO: 0\nOutstanding: 3\nOrder date range: 28/08/2026\n*_By location_*\nBRW: 3 (O/S: 3)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:04:17.690207+09:00",
+        "turn_id": "6f6b93db-dc3f-46ce-9257-55c982ec79e5"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+              "c971fd31-1535-4b52-841c-8241c7bc357a",
+              "026977c4-9f09-408f-8039-95252b68511d",
+              "84611b0d-7ad1-478d-aee6-08395af886a4",
+              "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+              "108e7169-3570-49a8-b0d0-695a76de430a",
+              "cdabd5e7-a348-46ce-8661-491eae2a975b",
+              "5525f716-fe4b-4894-8f58-214218854d51",
+              "7a58be74-d9af-4fc1-bddc-243579ebd975",
+              "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+              "64d9432e-d969-4c1a-9539-af52877af64f",
+              "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+              "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c",
+              "9ae85807-9761-40fb-8649-b9f3c89b9ada"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "product_code": "SRTWT7445",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 3\nTransferred to DO: 0\nOutstanding: 3\nOrder date range: 28/08/2026\n*_By location_*\nBRW: 3 (O/S: 3)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose sales orders"
+      }
+    }
+  ]
+}

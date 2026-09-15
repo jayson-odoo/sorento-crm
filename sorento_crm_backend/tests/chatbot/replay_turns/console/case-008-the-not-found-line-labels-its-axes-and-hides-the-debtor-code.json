@@ -1,0 +1,540 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "delivery to hanlim customer, product rpacc",
+              "type": "text"
+            },
+            "messageId": "console-check-01a92718928a",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789472784"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "5ce1ebdc-528a-480e-aca9-b7dc0baaaa54",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "c18fa9ea-ad6b-46c4-88a7-d7423d4229e0",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Customer: hanlim\nProduct: rpacc\nDates: all dates\n\nHere are the orders I found.\n\n1. *Company:* Sorento\n*Order Number:* REP202608-0440\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 20/08/2026\n*Actual Delivery Date:* 21/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:02:00\n*Transporter:* SORENTO\n*Driver:* hafiz\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* RPACC (1)\n\n2. *Company:* Sorento\n*Order Number:* 202607-4804\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 29/07/2026\n*Actual Delivery Date:* 30/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:34:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* RPACC (1)\n\n3. *Company:* Sorento\n*Order Number:* REP202607-0401\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Order Date:* 20/07/2026\n*Actual Delivery Date:* 20/07/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 14:26:00\n*Transporter:* DOCUMENTATION\n*Driver:* Documentation\n*Lorry Plate:* Documentation\n*Warehouse:* BRW\n*Products:* RPACC (1), RPACC (1)\n\n4. *Company:* Sorento\n*Order Number:* REP202605-0187\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 13/05/2026\n*Actual Delivery Date:* 14/05/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 09:25:00\n*Transporter:* SORENTO\n*Driver:* AZHAR\n*Lorry Plate:* VQP1678\n*Warehouse:* BRW\n*Products:* RPACC (2)\n\n5. *Company:* Sorento\n*Order Number:* REP202606-0168\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Order Date:* 11/06/2026\n*Status:* New Order\n*Warehouse:* SPARE/P\n*Products:* RPACC (2)\n\n*Mocha:* no orders records found for customer HANLIM TRADING SDN BHD, product RPACC.\n\n_Data last updated: 07/09/2026 10:27:40_\n\nWould you like me to escalate to *Mocha* customer service team?",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_order_management_orders_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "hanlim customer",
+                "entity_type": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              }
+            ],
+            "resolved": true,
+            "token": "hanlim customer"
+          },
+          {
+            "matches": [
+              {
+                "canonical_code": "rpacc",
+                "entity_type": "product",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "resolved": true,
+            "token": "rpacc"
+          }
+        ],
+        "tokens": [
+          "hanlim customer",
+          "rpacc"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:47:48.998733+09:00",
+        "turn_id": "f79f5064-a286-4d4a-943f-0570ee3e0975"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 8,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 8,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "5ce1ebdc-528a-480e-aca9-b7dc0baaaa54",
+              "c18fa9ea-ad6b-46c4-88a7-d7423d4229e0"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "Here are the orders I found.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "label": "Order Number",
+                    "value": "REP202608-0440"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "HANLIM TRADING SDN BHD [A/C I]"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-08-20T00:00:00"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-08-21T00:00:00"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "09:02:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "hafiz"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "VQP1678"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "RPACC (1)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "REP202608-0440"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "label": "Order Number",
+                    "value": "202607-4804"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "HANLIM TRADING SDN BHD [A/C III]"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-07-29T00:00:00"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-07-30T00:00:00"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "09:34:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "AZHAR"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "VQP1678"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "RPACC (1)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "202607-4804"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "label": "Order Number",
+                    "value": "REP202607-0401"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "HANLIM TRADING SDN BHD [A/C III]"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-07-20T00:00:00"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-07-20T00:00:00"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "14:26:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "DOCUMENTATION"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "Documentation"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "Documentation"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "RPACC (1), RPACC (1)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "REP202607-0401"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "label": "Order Number",
+                    "value": "REP202605-0187"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "HANLIM TRADING SDN BHD [A/C I]"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-05-13T00:00:00"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-05-14T00:00:00"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "09:25:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "SORENTO"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "AZHAR"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "VQP1678"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "RPACC (2)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "REP202605-0187"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "label": "Order Number",
+                    "value": "REP202606-0168"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "HANLIM TRADING SDN BHD [A/C I]"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-06-11T00:00:00"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "New Order"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "SPARE/P"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "RPACC (2)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "REP202606-0168"
+              }
+            ],
+            "last_updated_at": "2026-09-07T10:27:40.526001",
+            "lookup_companies": [
+              {
+                "id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "name": "Mocha"
+              },
+              {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Sorento"
+              }
+            ],
+            "result_type": "orders"
+          },
+          "tool": "crm_order_management_orders_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "hanlim customer"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "rpacc"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check delivery order for hanlim customer and product rpacc"
+      }
+    }
+  ]
+}

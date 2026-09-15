@@ -1,0 +1,456 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "outstanding for chin",
+              "type": "text"
+            },
+            "messageId": "console-check-536d17d33803",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. MBJ BINA JAYA MACHINERY & HARDWARE SDN BHD (MCH)\n4. PERNIAGAAN ALAY JAYA MACHINERY HARDWARE - [A/C I] (MCH)\n5. PERNIAGAAN MOZEK CHIN TAK SDN BHD (MCH)\n6. SK HARDWARE (KUCHING) SDN BHD - [A/C I] (MCH)\n7. GS HOME HARDWARE & MACHINERY SDN BHD - [IBORN] (MCH)\n8. KH HARDWARE & MACHINERY SDN BHD - [A/C I] (MCH)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "chin"
+          }
+        ],
+        "tokens": [
+          "chin"
+        ],
+        "unresolved_tokens": [
+          "chin"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:38:46.165825+09:00",
+        "turn_id": "57cad4d1-1de1-4e2a-8d0f-af873734de50"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "chin"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check outstanding sales orders for chin"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-7c211211177c",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 35,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "chin"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 35,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 35,
+              "source": "current_message",
+              "value": "outstanding"
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 35,
+            "expects": "pick_or_yes_no",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4"
+                ],
+                "filename": null,
+                "idx": 1,
+                "label": "CHIN CHUN HARDWARE SDN BHD (MCH)",
+                "product": "300-C043",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+                  "9288358f-7032-4dec-af46-65119eb611bb",
+                  "74fc2fcd-1e05-4c20-85cc-bcaa223c2bfa"
+                ],
+                "filename": null,
+                "idx": 2,
+                "label": "CHIN CHUN HOMEMART SDN BHD (MCH)",
+                "product": "300-C124",
+                "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "4535aa6f-5c6b-4fe0-8bf9-b80bbd05e1d4",
+                  "978d26d1-2d90-4d66-aaa3-2fc0d53ca900"
+                ],
+                "filename": null,
+                "idx": 3,
+                "label": "MBJ BINA JAYA MACHINERY & HARDWARE SDN BHD (MCH)",
+                "product": "300-M062",
+                "uuid": "4535aa6f-5c6b-4fe0-8bf9-b80bbd05e1d4"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "5ecb415b-0197-4651-9f1c-2e81796d3c8d"
+                ],
+                "filename": null,
+                "idx": 4,
+                "label": "PERNIAGAAN ALAY JAYA MACHINERY HARDWARE - [A/C I] (MCH)",
+                "product": "300-P109",
+                "uuid": "5ecb415b-0197-4651-9f1c-2e81796d3c8d"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "d34d8015-1564-4e19-a037-4a9a10d3228b",
+                  "0714f7df-a29d-4896-aaf6-a4a02433db0f"
+                ],
+                "filename": null,
+                "idx": 5,
+                "label": "PERNIAGAAN MOZEK CHIN TAK SDN BHD (MCH)",
+                "product": "300-P041",
+                "uuid": "d34d8015-1564-4e19-a037-4a9a10d3228b"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "f2692d14-8eea-4406-8348-abe23ce0a67b"
+                ],
+                "filename": null,
+                "idx": 6,
+                "label": "SK HARDWARE (KUCHING) SDN BHD - [A/C I] (MCH)",
+                "product": "300-S124",
+                "uuid": "f2692d14-8eea-4406-8348-abe23ce0a67b"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "0cba937e-6cee-45a9-891c-b76951d4375f"
+                ],
+                "filename": null,
+                "idx": 7,
+                "label": "GS HOME HARDWARE & MACHINERY SDN BHD - [IBORN] (MCH)",
+                "product": "300-G033",
+                "uuid": "0cba937e-6cee-45a9-891c-b76951d4375f"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "c3d6dc6b-0a05-4ab4-b924-d0b7ceb694e3"
+                ],
+                "filename": null,
+                "idx": 8,
+                "label": "KH HARDWARE & MACHINERY SDN BHD - [A/C I] (MCH)",
+                "product": "300-K070",
+                "uuid": "c3d6dc6b-0a05-4ab4-b924-d0b7ceb694e3"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": [],
+              "offer": {
+                "domain": "order",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "customer_service",
+                    "team": "customer_service"
+                  }
+                ],
+                "team": "customer_service"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN]\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:39:04.406362+09:00",
+        "turn_id": "5c024c2e-2c08-4b5c-9ff1-61de00101845"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick customer option 1"
+      }
+    }
+  ]
+}

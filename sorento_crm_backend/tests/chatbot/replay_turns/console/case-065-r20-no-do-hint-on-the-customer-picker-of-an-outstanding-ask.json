@@ -1,0 +1,795 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "outstanding dealer quantity for chin chun product SRTKT39SS in 2026",
+              "type": "text"
+            },
+            "messageId": "console-check-6bd89e64fad8",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH, SRT)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "chin chun"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTKT39SS"
+          }
+        ],
+        "tokens": [
+          "chin chun",
+          "SRTKT39SS"
+        ],
+        "unresolved_tokens": [
+          "chin chun",
+          "SRTKT39SS"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:04:28.238705+09:00",
+        "turn_id": "253d5157-20be-4e28-8d34-2da9c6728613"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": "2026-12-31",
+        "date_filter_start": "2026-01-01",
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "chin chun"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTKT39SS"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check outstanding dealer quantity for chin chun product SRTKT39SS in 2026"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-4ff35fce7b0e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [
+            "dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "chin chun"
+              }
+            },
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": {
+                "end": "2026-12-31",
+                "mode": null,
+                "start": "2026-01-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTKT39SS"
+                }
+              ]
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 15,
+            "expects": "pick_or_yes_no",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014",
+                  "3ebe7f85-3798-42b3-8c89-e11ac5056c1e"
+                ],
+                "filename": null,
+                "idx": 1,
+                "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                "product": "300-C043",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+                  "9288358f-7032-4dec-af46-65119eb611bb",
+                  "74fc2fcd-1e05-4c20-85cc-bcaa223c2bfa",
+                  "b8ad73b4-106d-472c-8126-48ec4b48d301",
+                  "423b2146-bc9d-4988-9a30-cec00ca3707e"
+                ],
+                "filename": null,
+                "idx": 2,
+                "label": "CHIN CHUN HOMEMART SDN BHD (MCH, SRT)",
+                "product": "300-C124",
+                "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                  "70cf8cc0-88c2-4a7a-bc5b-3f7ee3804e52",
+                  "b72c62bc-6dc2-4ecf-98c2-f23d5ab8c4f1"
+                ],
+                "filename": null,
+                "idx": 3,
+                "label": "CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
+                "product": "300-C001",
+                "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": [
+                {
+                  "canonical_code": "SRTKT39SS",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTKT39SS",
+                  "uuid": "788d7e3d-687d-47fc-a9bf-f8d74c1fac1d"
+                }
+              ],
+              "offer": {
+                "domain": "order",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "customer_service",
+                    "team": "customer_service"
+                  }
+                ],
+                "team": "customer_service"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTKT39SS\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III], CHIN CHUN HARDWARE SDN BHD [A/C IV]\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:04:39.164060+09:00",
+        "turn_id": "50ff211e-aab8-4153-9908-c3c2a3092691"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick the first customer option"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "all",
+              "type": "text"
+            },
+            "messageId": "console-check-2f6744562217",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "reuse",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 16,
+              "source": "pick",
+              "value": {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "family_uuids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014",
+                  "3ebe7f85-3798-42b3-8c89-e11ac5056c1e"
+                ],
+                "hint": "customer",
+                "ordinal": 1,
+                "raw": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              }
+            },
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "reuse",
+              "value": {
+                "end": "2026-12-31",
+                "mode": null,
+                "start": "2026-01-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 16,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "reuse",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 16,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTKT39SS",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTKT39SS",
+                  "uuid": "788d7e3d-687d-47fc-a9bf-f8d74c1fac1d"
+                }
+              ]
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 15,
+              "source": "current_message",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 16,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                  "a6a2f62a-eeef-48b0-a032-aa926de57199",
+                  "b7289132-29f0-47af-8da5-7726705a3cd4",
+                  "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+                  "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+                  "78dab676-49c4-476f-a406-5644cf81f014",
+                  "3ebe7f85-3798-42b3-8c89-e11ac5056c1e"
+                ],
+                "date_filter_end": "2026-12-31",
+                "date_filter_start": "2026-01-01",
+                "location_token": null,
+                "product_code": "SRTKT39SS",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+          "3ebe7f85-3798-42b3-8c89-e11ac5056c1e",
+          "78dab676-49c4-476f-a406-5644cf81f014",
+          "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+          "a6a2f62a-eeef-48b0-a032-aa926de57199",
+          "b7289132-29f0-47af-8da5-7726705a3cd4",
+          "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTKT39SS\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III], CHIN CHUN HARDWARE SDN BHD [A/C IV]\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nDelivery orders: 1\nDO qty: 5\nDelivered: 0\nOutstanding: 5\nDO date range: 07/09/2026\n*_By location_*\nBRW: 5 (O/S: 5)\n\nReply 1 for the delivery order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "order_date_from",
+              "order_date_to",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:04:49.697300+09:00",
+        "turn_id": "8ad772a7-c277-421a-9f3b-4bc29f33c92d"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "dealer"
+            ],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+              "a6a2f62a-eeef-48b0-a032-aa926de57199",
+              "b7289132-29f0-47af-8da5-7726705a3cd4",
+              "e8ef061b-3937-4b23-8c06-c8d8ddc784c5",
+              "8690d69e-a4f6-4889-9c4f-f15a3e820538",
+              "78dab676-49c4-476f-a406-5644cf81f014",
+              "3ebe7f85-3798-42b3-8c89-e11ac5056c1e"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "order_date_from": "2026-01-01",
+            "order_date_to": "2026-12-31",
+            "product_code": "SRTKT39SS",
+            "scope": "both",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTKT39SS\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III], CHIN CHUN HARDWARE SDN BHD [A/C IV]\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nDelivery orders: 1\nDO qty: 5\nDelivered: 0\nOutstanding: 5\nDO date range: 07/09/2026\n*_By location_*\nBRW: 5 (O/S: 5)\n\nReply 1 for the delivery order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": "all",
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "clear",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          3
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose both outstanding document types"
+      }
+    }
+  ]
+}

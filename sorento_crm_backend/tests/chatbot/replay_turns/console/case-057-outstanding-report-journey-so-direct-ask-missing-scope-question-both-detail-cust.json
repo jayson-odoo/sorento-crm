@@ -1,0 +1,1751 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "Srtwt7443 sales order outstanding for IB",
+              "type": "text"
+            },
+            "messageId": "console-check-e4389a8efeec",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7443\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 17\nOrdered: 3,545\nTransferred to DO: 15\nOutstanding: 3,530\nOrder date range: 20/08/2024 to 03/08/2026\n*_By location_*\nBRW-IB: 3,545 (O/S: 3,530)\n*_By customer_*\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "location_token",
+              "product_code",
+              "scope",
+              "space_id",
+              "view",
+              "warehouse_codes"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "Srtwt7443"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "IB"
+          }
+        ],
+        "tokens": [
+          "Srtwt7443",
+          "IB"
+        ],
+        "unresolved_tokens": [
+          "Srtwt7443",
+          "IB"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:59:27.154349+09:00",
+        "turn_id": "12606ee1-b5cb-4112-896b-ee822fd64c9d"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 17,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 17,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "location_token": "IB",
+            "product_code": "SRTWT7443",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render",
+            "warehouse_codes": [
+              "WH3-IB",
+              "MWH-IB",
+              "DC1-IB",
+              "BRW-IB",
+              "RSW-IB"
+            ]
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT7443\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 17\nOrdered: 3,545\nTransferred to DO: 15\nOutstanding: 3,530\nOrder date range: 20/08/2024 to 03/08/2026\n*_By location_*\nBRW-IB: 3,545 (O/S: 3,530)\n*_By customer_*\nEMB EMPRESS (MALAYSIA) SDN BHD (PROJECT): 1,820 (O/S: 1,820)\nAPEX CONNECTION SDN BHD (PROJECT-CASH): 769 (O/S: 769)\nIDEAL BATH SDN BHD: 497 (O/S: 482)\nPEMBINAAN INFRA E&J SDN BHD (PROJECT): 410 (O/S: 410)\nCMPC ENTERPRISE (PROJECT-CASH): 40 (O/S: 40)\nKENWEALTH TRADING SDN BHD (PROJECT): 6 (O/S: 6)\nCHINA CONSTRUCTION ENGINEERING (S.E.A.) MALAYSIA SDN BHD (PROJECT): 3 (O/S: 3)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "Srtwt7443"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "warehouse",
+            "raw": "IB"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check the outstanding sales order for Srtwt7443 at IB"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT7445 outstanding in 2026",
+              "type": "text"
+            },
+            "messageId": "console-check-76eb414da516",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": "so_outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "Srtwt7443"
+                }
+              ]
+            },
+            "warehouse": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "warehouse",
+                "raw": "IB"
+              }
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 2,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales order list",
+                "value": "so"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": "IB",
+                "offer_text": "Reply 1 for the sales order list.",
+                "product_code": "SRTWT7443",
+                "scope": "so",
+                "warehouse_codes": [
+                  "WH3-IB",
+                  "MWH-IB",
+                  "DC1-IB",
+                  "BRW-IB",
+                  "RSW-IB"
+                ]
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7445\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT7445"
+          }
+        ],
+        "tokens": [
+          "SRTWT7445"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7445"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:59:37.741924+09:00",
+        "turn_id": "25fcf426-3311-40d1-9da5-f5e7b7e9136f"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": "2026-12-31",
+        "date_filter_start": "2026-01-01",
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7445"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check outstanding sales orders for SRTWT7445 in 2026"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "3",
+              "type": "text"
+            },
+            "messageId": "console-check-034ca80bc42c",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "current_message",
+              "value": {
+                "end": "2026-12-31",
+                "mode": null,
+                "start": "2026-01-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7445"
+                }
+              ]
+            },
+            "warehouse": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "warehouse",
+                "raw": "IB"
+              }
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 3,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": "2026-12-31",
+                "date_filter_start": "2026-01-01",
+                "location_token": "IB",
+                "product_code": "SRTWT7445",
+                "warehouse_codes": [
+                  "WH3-IB",
+                  "MWH-IB",
+                  "DC1-IB",
+                  "BRW-IB",
+                  "RSW-IB"
+                ]
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7445\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nNo outstanding delivery order.\n\nWould you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "location_token",
+              "order_date_from",
+              "order_date_to",
+              "product_code",
+              "scope",
+              "space_id",
+              "view",
+              "warehouse_codes"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:59:48.163629+09:00",
+        "turn_id": "591fd4d7-e757-4264-8a26-63fffc3c4298"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "location_token": "IB",
+            "order_date_from": "2026-01-01",
+            "order_date_to": "2026-12-31",
+            "product_code": "SRTWT7445",
+            "scope": "both",
+            "space_id": "364817",
+            "view": "render",
+            "warehouse_codes": [
+              "WH3-IB",
+              "MWH-IB",
+              "DC1-IB",
+              "BRW-IB",
+              "RSW-IB"
+            ]
+          },
+          "envelope": {
+            "has_result": false,
+            "response": "Product: SRTWT7445\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nNo outstanding delivery order.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          3
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose both sales orders and delivery orders for the outstanding scope"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-285773e0b3b1",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": {
+                "end": "2026-12-31",
+                "mode": null,
+                "start": "2026-01-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "pick",
+              "value": "outstanding_both"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWT7445",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7445"
+                }
+              ]
+            },
+            "warehouse": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "warehouse",
+                "raw": "IB"
+              }
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 4,
+            "expects": "yes_no",
+            "kind": "member_offer",
+            "options": [
+              {
+                "brand_code": null,
+                "companies": [],
+                "company_id": null,
+                "company_ids": [
+                  null
+                ],
+                "company_name": null,
+                "domain": "order",
+                "idx": 1,
+                "label": "Maryam Ariffin",
+                "respond_user_id": "1144607",
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182"
+              },
+              {
+                "brand_code": null,
+                "companies": [],
+                "company_id": null,
+                "company_ids": [
+                  null
+                ],
+                "company_name": null,
+                "domain": "order",
+                "idx": 2,
+                "label": "Cyndi",
+                "respond_user_id": "1144556",
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9"
+              },
+              {
+                "brand_code": null,
+                "companies": [],
+                "company_id": null,
+                "company_ids": [
+                  null
+                ],
+                "company_name": null,
+                "domain": "order",
+                "idx": 3,
+                "label": "Aisyah",
+                "respond_user_id": "1144561",
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b"
+              },
+              {
+                "brand_code": null,
+                "companies": [],
+                "company_id": null,
+                "company_ids": [
+                  null
+                ],
+                "company_name": null,
+                "domain": "order",
+                "idx": 4,
+                "label": "Balqis",
+                "respond_user_id": "1144558",
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06"
+              },
+              {
+                "brand_code": null,
+                "companies": [],
+                "company_id": null,
+                "company_ids": [
+                  null
+                ],
+                "company_name": null,
+                "domain": "order",
+                "idx": 5,
+                "label": "Niki",
+                "respond_user_id": "1144554",
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd"
+              },
+              {
+                "brand_code": null,
+                "companies": [],
+                "company_id": null,
+                "company_ids": [
+                  null
+                ],
+                "company_name": null,
+                "domain": "order",
+                "idx": 6,
+                "label": "Nurain",
+                "respond_user_id": "1144604",
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "roster_plan": [
+                {
+                  "brand_code": null,
+                  "company_id": null,
+                  "company_name": null,
+                  "plan_idx": 0
+                }
+              ],
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "assign_conversation",
+          "add_comment",
+          "send_message"
+        ],
+        "branch_kind": "out_of_scope",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": null,
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:59:58.256600+09:00",
+        "turn_id": "a30b6aac-3691-465d-8dca-ad342faf8717"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick the first offered person to route to"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI) sales order outstanding SRTWT7445",
+              "type": "text"
+            },
+            "messageId": "console-check-7341ce00eabb",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "reuse",
+              "value": {
+                "end": "2026-12-31",
+                "mode": null,
+                "start": "2026-01-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 5,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "reuse",
+              "value": "outstanding_both"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWT7445",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7445"
+                }
+              ]
+            },
+            "warehouse": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "warehouse",
+                "raw": "IB"
+              }
+            }
+          },
+          "ideation": null,
+          "open_question": null
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "64d9432e-d969-4c1a-9539-af52877af64f"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\nWould you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "location_token",
+              "order_date_from",
+              "order_date_to",
+              "product_code",
+              "scope",
+              "space_id",
+              "view",
+              "warehouse_codes"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)",
+                "entity_type": "customer",
+                "uuid": "64d9432e-d969-4c1a-9539-af52877af64f"
+              }
+            ],
+            "resolved": true,
+            "token": "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT7445"
+          }
+        ],
+        "tokens": [
+          "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)",
+          "SRTWT7445"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7445"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:00:08.533287+09:00",
+        "turn_id": "dae281f6-4a09-43af-91aa-2e2f4d3c0143"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 10,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 10,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "64d9432e-d969-4c1a-9539-af52877af64f"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "location_token": "IB",
+            "order_date_from": "2026-01-01",
+            "order_date_to": "2026-12-31",
+            "product_code": "SRTWT7445",
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render",
+            "warehouse_codes": [
+              "WH3-IB",
+              "MWH-IB",
+              "DC1-IB",
+              "BRW-IB",
+              "RSW-IB"
+            ]
+          },
+          "envelope": {
+            "has_result": false,
+            "response": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7445"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the outstanding sales order for SRTWT7445 for FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTWT02 outstanding both",
+              "type": "text"
+            },
+            "messageId": "console-check-33f150901b9a",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 6,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)"
+              }
+            },
+            "date_window": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "reuse",
+              "value": {
+                "end": "2026-12-31",
+                "mode": null,
+                "start": "2026-01-01"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 6,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 6,
+              "source": "current_message",
+              "value": "so_outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 6,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT7445"
+                }
+              ]
+            },
+            "warehouse": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "warehouse",
+                "raw": "IB"
+              }
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 6,
+            "expects": "yes_no",
+            "kind": "member_offer",
+            "options": [
+              {
+                "brand_code": null,
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 1,
+                "label": "Maryam Ariffin",
+                "respond_user_id": "1144607",
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182"
+              },
+              {
+                "brand_code": null,
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 2,
+                "label": "Cyndi",
+                "respond_user_id": "1144556",
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9"
+              },
+              {
+                "brand_code": null,
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 3,
+                "label": "Aisyah",
+                "respond_user_id": "1144561",
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b"
+              },
+              {
+                "brand_code": null,
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 4,
+                "label": "Balqis",
+                "respond_user_id": "1144558",
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06"
+              },
+              {
+                "brand_code": null,
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 5,
+                "label": "Niki",
+                "respond_user_id": "1144554",
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd"
+              },
+              {
+                "brand_code": null,
+                "companies": [
+                  "Sorento"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "domain": "order",
+                "idx": 6,
+                "label": "Nurain",
+                "respond_user_id": "1144604",
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75"
+              }
+            ],
+            "payload": {
+              "companies": [
+                {
+                  "brand_code": null,
+                  "codes": [
+                    "300-F026",
+                    "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)",
+                    "SRTWT7445",
+                    "SRTWT7445-LV-GM",
+                    "SRTWT7445-LV",
+                    "SRTWT7445-NL",
+                    "SRTWT7445-LV-BL-NEW",
+                    "SRTWT7445-NEW",
+                    "SRTWT7445-LV-NEW",
+                    "SRTWT7445-LV-WEPLS",
+                    "SRTWT7445-LV-BL"
+                  ],
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "labels": [
+                    "FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)",
+                    "SRTWT7445",
+                    "SRTWT7445-LV-GM",
+                    "SRTWT7445-LV",
+                    "SRTWT7445-NL",
+                    "SRTWT7445-LV-BL-NEW",
+                    "SRTWT7445-NEW",
+                    "SRTWT7445-LV-NEW",
+                    "SRTWT7445-LV-WEPLS",
+                    "SRTWT7445-LV-BL"
+                  ]
+                }
+              ],
+              "domain": "order",
+              "roster_plan": [
+                {
+                  "brand_code": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "plan_idx": 0
+                }
+              ],
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473558"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT02\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nNo outstanding delivery order.\n\nWould you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Ms Bay\n2. Nicky\n3. Kah Xin\n*Sorento:*\n4. Maryam Ariffin\n5. Cyndi\n6. Aisyah\n7. Balqis\n8. Niki\n9. Nurain\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "location_token",
+              "order_date_from",
+              "order_date_to",
+              "product_code",
+              "scope",
+              "space_id",
+              "view",
+              "warehouse_codes"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "SRTWT02"
+          }
+        ],
+        "tokens": [
+          "SRTWT02"
+        ],
+        "unresolved_tokens": [
+          "SRTWT02"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:00:20.032568+09:00",
+        "turn_id": "85b6e2ec-d94f-4050-914c-e147c5ccab98"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 17,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 17,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "location_token": "IB",
+            "order_date_from": "2026-01-01",
+            "order_date_to": "2026-12-31",
+            "product_code": "SRTWT02",
+            "scope": "both",
+            "space_id": "364817",
+            "view": "render",
+            "warehouse_codes": [
+              "WH3-IB",
+              "MWH-IB",
+              "DC1-IB",
+              "BRW-IB",
+              "RSW-IB"
+            ]
+          },
+          "envelope": {
+            "has_result": false,
+            "response": "Product: SRTWT02\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nNo outstanding delivery order.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT02"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding_both",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check outstanding both for SRTWT02"
+      }
+    }
+  ]
+}

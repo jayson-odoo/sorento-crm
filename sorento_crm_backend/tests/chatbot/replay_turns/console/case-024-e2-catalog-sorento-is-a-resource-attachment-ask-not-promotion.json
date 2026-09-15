@@ -1,0 +1,280 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "Catalog Sorento",
+              "type": "text"
+            },
+            "messageId": "console-check-cf91020061b5",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "102d1278-7c18-461c-8400-43415946e882",
+          "9a379ec6-a1fe-483f-9bd8-dc2c6e10f459"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "I have attached the file(s) below.\n\n1. *File Name:* Mocha Catalogue FA 300924.pdf\n*Company:* Mocha\n*Uploaded:* 2026-08-12\n\n2. *File Name:* SORENTO CATALOGUE 2024 SEARCHABLE_compressed.pdf\n*Company:* Sorento\n*Uploaded:* 2026-05-15\n\n_Data last updated: 12/08/2026 17:01:17_\n\nTip: looking for a specific detail like material or finish? Search the *product code* inside the catalogue and you'll find all its attributes there \ud83d\udc4d",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "attachment_ids",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_resource_attachments_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "catalogue",
+                "entity_type": "attachment",
+                "uuid": "102d1278-7c18-461c-8400-43415946e882"
+              }
+            ],
+            "resolved": true,
+            "token": "catalogue"
+          }
+        ],
+        "tokens": [
+          "Catalog Sorento"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:52:34.894268+09:00",
+        "turn_id": "3fdb3259-111f-492b-8382-231b6aac284e"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "attachment_ids": [
+              "9a379ec6-a1fe-483f-9bd8-dc2c6e10f459",
+              "102d1278-7c18-461c-8400-43415946e882"
+            ],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [
+              {
+                "attachmentType": null,
+                "filename": "Mocha Catalogue FA 300924.pdf",
+                "mimeType": "application/pdf",
+                "uploadedAt": "2026-08-12T17:01:17.698886",
+                "url": "https://cdn-sorento.com/direct_access/102d1278-7c18-461c-8400-43415946e882/Mocha Catalogue FA 300924.pdf"
+              },
+              {
+                "attachmentType": null,
+                "filename": "SORENTO CATALOGUE 2024 SEARCHABLE_compressed.pdf",
+                "mimeType": "application/pdf",
+                "uploadedAt": "2026-05-15T11:08:54.368553",
+                "url": "https://cdn-sorento.com/catalogue/9a379ec6-a1fe-483f-9bd8-dc2c6e10f459/SORENTO CATALOGUE 2024 SEARCHABLE_compressed.pdf"
+              }
+            ],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "I have attached the file(s) below.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "key": "original_filename",
+                    "label": "File Name",
+                    "value": "Mocha Catalogue FA 300924.pdf"
+                  },
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Mocha"
+                  },
+                  {
+                    "key": "uploaded_at",
+                    "label": "Uploaded",
+                    "value": "2026-08-12"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "Mocha Catalogue FA 300924.pdf"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "original_filename",
+                    "label": "File Name",
+                    "value": "SORENTO CATALOGUE 2024 SEARCHABLE_compressed.pdf"
+                  },
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "uploaded_at",
+                    "label": "Uploaded",
+                    "value": "2026-05-15"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SORENTO CATALOGUE 2024 SEARCHABLE_compressed.pdf"
+              }
+            ],
+            "last_updated_at": "2026-08-12T17:01:17.698886",
+            "result_type": "attachments"
+          },
+          "tool": "crm_resource_attachments_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "resource_attachment",
+        "entities": [
+          {
+            "canonical_code": "catalogue",
+            "confident": true,
+            "current_message": true,
+            "hint": "attachment",
+            "raw": "Catalog Sorento"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "get_resource_attachment",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to get the Sorento catalog"
+      }
+    }
+  ]
+}

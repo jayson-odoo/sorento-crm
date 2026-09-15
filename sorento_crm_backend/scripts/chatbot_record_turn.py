@@ -420,7 +420,7 @@ def main(argv: list[str] | None = None) -> int:
             ids = [i.strip() for i in args.turn_ids.split(",") if i.strip()]
             by_id: dict[str, Any] = {}
             rows = conn.execute(
-                text(f"SELECT {_ROW_COLUMNS} FROM chatbot.turns WHERE id = ANY(:ids)"),
+                text(f"SELECT {_ROW_COLUMNS} FROM chatbot.turns WHERE id::text = ANY(:ids)"),
                 {"ids": ids},
             ).fetchall()
             for r in rows:

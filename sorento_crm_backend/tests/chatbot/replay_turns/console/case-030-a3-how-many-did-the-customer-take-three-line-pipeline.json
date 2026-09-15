@@ -1,0 +1,584 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "how many did KENWEALTH TRADING take of C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-4007251e7e8a",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "3b90a274-d51a-4c32-9f21-da2f1b1c37f7",
+          "50a165c0-68c8-488e-b3ce-ea1427417ceb",
+          "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Customer: KENWEALTH TRADING\nProduct: C-FH14\nDates: all dates\n\nHere are the orders I found.\n\n*Customer:* KENWEALTH TRADING SDN BHD (PROJECT)\n*Product Code:* C-FH14\n*SO:* 9\n*SO Date:* 10/04/2025 - 03/08/2026\n*Ordered:* 3805\n*Transferred to DO:* 3778\n*SO Outstanding:* 27\n*DO:* 4\n*DO Date:* 22/05/2026 - 23/07/2026\n*Delivered:* 276\n*Delivery Date:* 21/05/2026 - 22/07/2026\n*DO Outstanding:* 0\n\n_Data last updated: 04/09/2026 18:58:47_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "include_pipeline",
+              "include_summary",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_order_management_orders_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "KENWEALTH TRADING",
+                "entity_type": "customer",
+                "uuid": "3b90a274-d51a-4c32-9f21-da2f1b1c37f7"
+              }
+            ],
+            "resolved": true,
+            "token": "KENWEALTH TRADING"
+          },
+          {
+            "matches": [
+              {
+                "canonical_code": "C-FH14",
+                "entity_type": "product",
+                "uuid": "50a165c0-68c8-488e-b3ce-ea1427417ceb"
+              }
+            ],
+            "resolved": true,
+            "token": "C-FH14"
+          }
+        ],
+        "tokens": [
+          "KENWEALTH TRADING",
+          "C-FH14"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:53:52.889889+09:00",
+        "turn_id": "76fb8552-1122-45c2-b56b-98d53b6f360c"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 3,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 3,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "50a165c0-68c8-488e-b3ce-ea1427417ceb",
+              "3b90a274-d51a-4c32-9f21-da2f1b1c37f7"
+            ],
+            "date_mode": null,
+            "include_pipeline": true,
+            "include_summary": true,
+            "is_active": null,
+            "product_ids": [
+              "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "has_result": true,
+            "intro": "Here are the orders I found.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "label": "Order Number",
+                    "value": "PS202607-0410"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "KENWEALTH TRADING SDN BHD (PROJECT)"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-07-22"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-07-22"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "19:39:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "SUNCREST"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "KAMARUL"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "JRS7743"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "CGB9032B (39), SRTWHBWP (39), TPE-9204 (39), B2155-NL-BLUE (39), C-FH14 (39), TPE-9204 (13), B2155-NL-BLUE (13), C-FH14 (13), CGB9032B (30), SRTWHBWP (30), TPE-9204 (30), B2155-NL-BLUE (30), C-FH14 (30), TPE-9204 (10), B2155-NL-BLUE (10), C-FH14 (10)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "PS202607-0410"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Order Number",
+                    "value": "PS202607-0444"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "KENWEALTH TRADING SDN BHD (PROJECT)"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-07-23"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-07-22"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "19:39:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "SUNCREST"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "KAMARUL"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "JRS7743"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "SRTWB246 (13), SRTSC07 (13), C-FH14 (13), SRTWB246 (10), SRTSC07 (10), C-FH14 (10)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "PS202607-0444"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Order Number",
+                    "value": "PS202606-0377"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "KENWEALTH TRADING SDN BHD (PROJECT)"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-06-22"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-06-19"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "15:34:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "SUNCREST"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "RAJIV"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "NDN7743"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "SRTWCX7405-RL-S-PJ (52), SRTWCY7405-PJ (52), SRTWC7405-SC (52), WESERP10B (52), B2155-NL-BLUE (52), C-FH14 (52), SRTWCX7405-RL-S-PJ (40), SRTWCY7405-PJ (40), SRTWC7405-SC (40), WESERP10B (40), B2155-NL-BLUE (40), C-FH14 (40)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "PS202606-0377"
+              },
+              {
+                "fields": [
+                  {
+                    "label": "Order Number",
+                    "value": "PS202605-0431"
+                  },
+                  {
+                    "label": "Customer",
+                    "value": "KENWEALTH TRADING SDN BHD (PROJECT)"
+                  },
+                  {
+                    "label": "Order Date",
+                    "value": "2026-05-22"
+                  },
+                  {
+                    "label": "Actual Delivery Date",
+                    "value": "2026-05-21"
+                  },
+                  {
+                    "label": "Status",
+                    "value": "Picked Up / In Transit"
+                  },
+                  {
+                    "label": "Pickup Time",
+                    "value": "16:30:00"
+                  },
+                  {
+                    "label": "Transporter",
+                    "value": "GLORY MOTION"
+                  },
+                  {
+                    "label": "Driver",
+                    "value": "RIZAL"
+                  },
+                  {
+                    "label": "Lorry Plate",
+                    "value": "JYH1385"
+                  },
+                  {
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "label": "Products",
+                    "value": "CB2807-DIY (39), C-FH14 (39), CB55CR-PJ (52), CB1178A-SS-NEW (52), CB313 (52), SRT5732 (13), CB6633-PP (65), CB2807-DIY (30), C-FH14 (30), CB55CR-PJ (40), CB1178A-SS-NEW (40), CB313 (40), SRT5732 (10), CB6633-PP (50)"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "PS202605-0431"
+              }
+            ],
+            "last_updated_at": "2026-09-04T18:58:47.743789",
+            "result_type": "orders",
+            "summary": {
+              "customer_count": 1,
+              "customers": [
+                "KENWEALTH TRADING SDN BHD (PROJECT)"
+              ],
+              "delivered_count": 4,
+              "delivered_from": "2026-05-21",
+              "delivered_to": "2026-07-22",
+              "groups": [
+                {
+                  "customer": "KENWEALTH TRADING SDN BHD (PROJECT)",
+                  "delivered_from": "2026-05-21",
+                  "delivered_quantity": 276,
+                  "delivered_to": "2026-07-22",
+                  "order_count": 4,
+                  "order_date_from": "2026-05-22",
+                  "order_date_to": "2026-07-23",
+                  "pending_quantity": 0,
+                  "product_code": "C-FH14",
+                  "so_count": 9,
+                  "so_date_from": "2025-04-10",
+                  "so_date_to": "2026-08-03",
+                  "so_ordered_qty": 3805,
+                  "so_outstanding_qty": 27,
+                  "so_transferred_qty": 3778
+                }
+              ],
+              "order_count": 4,
+              "pending_count": 0,
+              "products": [
+                {
+                  "customer_count": 1,
+                  "delivered_from": "2026-05-21",
+                  "delivered_quantity": 276,
+                  "delivered_to": "2026-07-22",
+                  "order_count": 4,
+                  "order_date_from": "2026-05-22",
+                  "order_date_to": "2026-07-23",
+                  "pending_quantity": 0,
+                  "product_code": "C-FH14",
+                  "so_count": 9,
+                  "so_date_from": "2025-04-10",
+                  "so_date_to": "2026-08-03",
+                  "so_ordered_qty": 3805,
+                  "so_outstanding_qty": 27,
+                  "so_transferred_qty": 3778
+                }
+              ],
+              "row_count": 4,
+              "scope": "filter",
+              "so_outstanding_count": 7,
+              "so_outstanding_qty": 27
+            },
+            "summary_items": [
+              {
+                "fields": [
+                  {
+                    "key": "customer",
+                    "label": "Customer",
+                    "value": "KENWEALTH TRADING SDN BHD (PROJECT)"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "so_count",
+                    "label": "SO",
+                    "value": 9
+                  },
+                  {
+                    "key": "so_date",
+                    "label": "SO Date",
+                    "value": "10/04/2025 \u2013 03/08/2026"
+                  },
+                  {
+                    "key": "so_ordered_qty",
+                    "label": "Ordered",
+                    "value": 3805
+                  },
+                  {
+                    "key": "so_transferred_qty",
+                    "label": "Transferred to DO",
+                    "value": 3778
+                  },
+                  {
+                    "key": "so_outstanding_qty",
+                    "label": "SO Outstanding",
+                    "value": 27
+                  },
+                  {
+                    "key": "order_count",
+                    "label": "DO",
+                    "value": 4
+                  },
+                  {
+                    "key": "order_date",
+                    "label": "DO Date",
+                    "value": "22/05/2026 \u2013 23/07/2026"
+                  },
+                  {
+                    "key": "delivered_quantity",
+                    "label": "Delivered",
+                    "value": 276
+                  },
+                  {
+                    "key": "delivered_between",
+                    "label": "Delivery Date",
+                    "value": "21/05/2026 \u2013 22/07/2026"
+                  },
+                  {
+                    "key": "pending_quantity",
+                    "label": "DO Outstanding",
+                    "value": 0
+                  }
+                ],
+                "title": "KENWEALTH TRADING SDN BHD (PROJECT) \u00b7 C-FH14"
+              }
+            ]
+          },
+          "tool": "crm_order_management_orders_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "KENWEALTH TRADING"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to find how many of C-FH14 KENWEALTH TRADING took"
+      }
+    }
+  ]
+}

@@ -1,0 +1,733 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "outstanding dealer quantity for fullshun",
+              "type": "text"
+            },
+            "messageId": "console-check-7157399be783",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. FULLSHUN SANITARYWARE SDN BHD (SRT)\n2. FULLSHUN BATH CONCEPT SDN BHD (PROJECT) (SRT)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "fullshun"
+          }
+        ],
+        "tokens": [
+          "fullshun"
+        ],
+        "unresolved_tokens": [
+          "fullshun"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:02:59.612626+09:00",
+        "turn_id": "28be7ddb-4ec8-4457-8b48-722b67afea24"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "fullshun"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check the outstanding dealer quantity for fullshun"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-check-d8c67f303847",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [
+            "dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "current_message",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "fullshun"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "current_message",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 7,
+            "expects": "pick_or_yes_no",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+                  "c971fd31-1535-4b52-841c-8241c7bc357a",
+                  "026977c4-9f09-408f-8039-95252b68511d",
+                  "84611b0d-7ad1-478d-aee6-08395af886a4",
+                  "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+                  "108e7169-3570-49a8-b0d0-695a76de430a",
+                  "cdabd5e7-a348-46ce-8661-491eae2a975b",
+                  "5525f716-fe4b-4894-8f58-214218854d51",
+                  "7a58be74-d9af-4fc1-bddc-243579ebd975",
+                  "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+                  "64d9432e-d969-4c1a-9539-af52877af64f",
+                  "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+                  "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c",
+                  "9ae85807-9761-40fb-8649-b9f3c89b9ada"
+                ],
+                "filename": null,
+                "idx": 1,
+                "label": "FULLSHUN SANITARYWARE SDN BHD (SRT)",
+                "product": "300-F017",
+                "uuid": "c44c2aff-7f36-40d2-ab20-81721ac51fff"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "family_uuids": [
+                  "508936e2-7b20-4ec3-bfd2-133f5a025d5e"
+                ],
+                "filename": null,
+                "idx": 2,
+                "label": "FULLSHUN BATH CONCEPT SDN BHD (PROJECT) (SRT)",
+                "product": "300-F059",
+                "uuid": "508936e2-7b20-4ec3-bfd2-133f5a025d5e"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": [],
+              "offer": {
+                "domain": "order",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "customer_service",
+                    "team": "customer_service"
+                  }
+                ],
+                "team": "customer_service"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: all\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:03:11.159324+09:00",
+        "turn_id": "a3eab184-5a93-4c43-a58d-974e7e98dd34"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick option 1 from the customer list"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "3",
+              "type": "text"
+            },
+            "messageId": "console-check-bf08e4554b58",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "attributes": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "reuse",
+              "value": [
+                "quantity"
+              ]
+            },
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 8,
+              "source": "pick",
+              "value": {
+                "canonical_code": "300-F017",
+                "confident": true,
+                "current_message": true,
+                "family_uuids": [
+                  "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+                  "c971fd31-1535-4b52-841c-8241c7bc357a",
+                  "026977c4-9f09-408f-8039-95252b68511d",
+                  "84611b0d-7ad1-478d-aee6-08395af886a4",
+                  "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+                  "108e7169-3570-49a8-b0d0-695a76de430a",
+                  "cdabd5e7-a348-46ce-8661-491eae2a975b",
+                  "5525f716-fe4b-4894-8f58-214218854d51",
+                  "7a58be74-d9af-4fc1-bddc-243579ebd975",
+                  "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+                  "64d9432e-d969-4c1a-9539-af52877af64f",
+                  "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+                  "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c",
+                  "9ae85807-9761-40fb-8649-b9f3c89b9ada"
+                ],
+                "hint": "customer",
+                "ordinal": 1,
+                "raw": "FULLSHUN SANITARYWARE SDN BHD (SRT)",
+                "uuid": "c44c2aff-7f36-40d2-ab20-81721ac51fff"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 8,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "reuse",
+              "value": "outstanding"
+            },
+            "tier": {
+              "set_at": null,
+              "set_at_turn": 7,
+              "source": "current_message",
+              "value": [
+                "dealer"
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 8,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Sales orders",
+                "value": "so"
+              },
+              {
+                "domain": "order",
+                "idx": 2,
+                "label": "Delivery orders",
+                "value": "do"
+              },
+              {
+                "domain": "order",
+                "idx": 3,
+                "label": "Both",
+                "value": "both"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+                  "c971fd31-1535-4b52-841c-8241c7bc357a",
+                  "026977c4-9f09-408f-8039-95252b68511d",
+                  "84611b0d-7ad1-478d-aee6-08395af886a4",
+                  "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+                  "108e7169-3570-49a8-b0d0-695a76de430a",
+                  "cdabd5e7-a348-46ce-8661-491eae2a975b",
+                  "5525f716-fe4b-4894-8f58-214218854d51",
+                  "7a58be74-d9af-4fc1-bddc-243579ebd975",
+                  "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+                  "64d9432e-d969-4c1a-9539-af52877af64f",
+                  "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+                  "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c",
+                  "9ae85807-9761-40fb-8649-b9f3c89b9ada"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": null,
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473718"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "026977c4-9f09-408f-8039-95252b68511d",
+          "108e7169-3570-49a8-b0d0-695a76de430a",
+          "5525f716-fe4b-4894-8f58-214218854d51",
+          "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+          "64d9432e-d969-4c1a-9539-af52877af64f",
+          "7a58be74-d9af-4fc1-bddc-243579ebd975",
+          "84611b0d-7ad1-478d-aee6-08395af886a4",
+          "9ae85807-9761-40fb-8649-b9f3c89b9ada",
+          "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+          "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+          "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+          "c971fd31-1535-4b52-841c-8241c7bc357a",
+          "cdabd5e7-a348-46ce-8661-491eae2a975b",
+          "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: all\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 143\nOrdered: 1,120\nTransferred to DO: 0\nOutstanding: 1,120\nOrder date range: 06/01/2026 to 03/09/2026\n*_By location_*\nBRW: 1,117 (O/S: 1,117)\nBRW-RSV: 1 (O/S: 1)\nMWH-RSV: 1 (O/S: 1)\nSPARE/P: 1 (O/S: 1)\n*_By product_*\nSRT6643-GM: 60 (O/S: 60)\nSRT6531-DIY: 30 (O/S: 30)\nSRT6641: 30 (O/S: 30)\nSRTWT7445-NEW: 27 (O/S: 27)\nSRT756-32-CR: 25 (O/S: 25)\nCB89-CR-DIY: 24 (O/S: 24)\nSRTWT6232-GM: 24 (O/S: 24)\nSRTSCBD319-UF: 22 (O/S: 22)\nSRT321-CR: 21 (O/S: 21)\nSRTWT5840-GM: 21 (O/S: 21)\nSRTFH12-HD-DIY: 20 (O/S: 20)\nWESERP10B: 20 (O/S: 20)\nSRT79-SS-GM: 19 (O/S: 19)\nSRTW2600: 19 (O/S: 19)\nSRTWT5879-GM: 16 (O/S: 16)\nSRTWT7445-LV-BL-NEW: 16 (O/S: 16)\nSRTBF31611: 15 (O/S: 15)\nSRTMCB31611: 15 (O/S: 15)\nSRTSC01: 15 (O/S: 15)\nSRT3342-5-GM: 14 (O/S: 14)\nSRTBF11841: 14 (O/S: 14)\nSRTWT6203-GM: 14 (O/S: 14)\nSRT95SS-GY: 13 (O/S: 13)\nSRTSCBD315: 12 (O/S: 12)\nSRTWT7443: 12 (O/S: 12)\nSRT320-FRG: 11 (O/S: 11)\nSRT6642-BL: 11 (O/S: 11)\nSRTBF31610: 11 (O/S: 11)\nSRTKS8047-NEW: 11 (O/S: 11)\nSRTMCB31610: 11 (O/S: 11)\nSRTWC8354-SH-UF: 11 (O/S: 11)\nACC-SRT1021: 10 (O/S: 10)\nBT009: 10 (O/S: 10)\nFG-CW09: 10 (O/S: 10)\nSRT2565: 10 (O/S: 10)\nSRTMRL101: 10 (O/S: 10)\nSRTW1600-SS-CR: 10 (O/S: 10)\nSRTWT5866-RG: 10 (O/S: 10)\nSRTWT6211: 10 (O/S: 10)\nSRTBF12612: 9 (O/S: 9)\nSRTKS6041: 9 (O/S: 9)\nSRTWT2634: 9 (O/S: 9)\nSRTWT6216-GM: 9 (O/S: 9)\nSRTWT8224: 9 (O/S: 9)\nSRTBK7005: 8 (O/S: 8)\nSRTMRL505: 8 (O/S: 8)\nSRTWT6821-GM: 8 (O/S: 8)\nSRT2405-CR: 7 (O/S: 7)\nSRT93-BL: 7 (O/S: 7)\nSRTBF31516-NEW: 7 (O/S: 7)\nSRTKT1871SS: 7 (O/S: 7)\nSRTSA701-GM: 7 (O/S: 7)\nSRTSH7110-GM: 7 (O/S: 7)\nSRTWB7237: 7 (O/S: 7)\nSRTWC8517-SH-UF-NEW: 7 (O/S: 7)\nSRTBF11705-NEW: 6 (O/S: 6)\nSRTBF12611: 6 (O/S: 6)\nSRTBF31612: 6 (O/S: 6)\nSRTMCB22611: 6 (O/S: 6)\nSRTMCB31612: 6 (O/S: 6)\nSRTMCB6088-BL: 6 (O/S: 6)\nSRTWT6813: 6 (O/S: 6)\nSRTWT6838-RG: 6 (O/S: 6)\nSRTWT7202: 6 (O/S: 6)\nSRTWT8202: 6 (O/S: 6)\nSRT2413-RG: 5 (O/S: 5)\nSRT756-32-GM: 5 (O/S: 5)\nSRT9532-BL: 5 (O/S: 5)\nSRTBF11413-NEW: 5 (O/S: 5)\nSRTBF11415-NEW: 5 (O/S: 5)\nSRTBF11503: 5 (O/S: 5)\nSRTBF11622: 5 (O/S: 5)\nSRTMR607-RG: 5 (O/S: 5)\nSRTSS5650-GM: 5 (O/S: 5)\nSRTWT182-GM: 5 (O/S: 5)\nSRTWT5803: 5 (O/S: 5)\nSRTWT5879-FRG: 5 (O/S: 5)\nFG-CW06: 4 (O/S: 4)\nFG-CW08: 4 (O/S: 4)\nSRT393B-18: 4 (O/S: 4)\nSRTFH15-BL-DIY: 4 (O/S: 4)\nSRTFT203-NEW: 4 (O/S: 4)\nSRTMCB22612: 4 (O/S: 4)\nSRTMCB6083-BL: 4 (O/S: 4)\nSRTMCB8083-BL: 4 (O/S: 4)\nSRTSA725A-RG: 4 (O/S: 4)\nSRTSS7700-GM: 4 (O/S: 4)\nSRTW1300-SS-FRG: 4 (O/S: 4)\nSRTWB242: 4 (O/S: 4)\nSRTWT4010: 4 (O/S: 4)\nSRTWT4015: 4 (O/S: 4)\nSRTWT6214-MBL: 4 (O/S: 4)\nSRTWT6801: 4 (O/S: 4)\nSRTWT9124: 4 (O/S: 4)\nSRTWT9606-GM: 4 (O/S: 4)\nBRC22776W-1-MY: 3 (O/S: 3)\nSRTBF11416-NEW: 3 (O/S: 3)\nSRTBF12610: 3 (O/S: 3)\nSRTKT71SS: 3 (O/S: 3)\nSRTMCB6084-WH: 3 (O/S: 3)\nSRTMCB6089-WH: 3 (O/S: 3)\nSRTMRL708: 3 (O/S: 3)\nSRTPP3-30PC: 3 (O/S: 3)\nSRTW5000: 3 (O/S: 3)\nSRTWF12C-NEW: 3 (O/S: 3)\nSRTWT162-QT: 3 (O/S: 3)\nSRTWT5608-GY: 3 (O/S: 3)\nSRTWT5903: 3 (O/S: 3)\nSRTWT7445: 3 (O/S: 3)\nSRTWT8262-FRG: 3 (O/S: 3)\nSRTWT8301-GMB: 3 (O/S: 3)\nSRT1369-1-GY: 2 (O/S: 2)\nSRT384-4: 2 (O/S: 2)\nSRTBF11833: 2 (O/S: 2)\nSRTFC2031: 2 (O/S: 2)\nSRTKS2406: 2 (O/S: 2)\nSRTMCB21621: 2 (O/S: 2)\nSRTSA401: 2 (O/S: 2)\nSRTSH4110: 2 (O/S: 2)\nSRTSS4400: 2 (O/S: 2)\nSRTWB1086: 2 (O/S: 2)\nSRTWB1421-BW: 2 (O/S: 2)\nSRTWB1544: 2 (O/S: 2)\nSRTWC8608-SC: 2 (O/S: 2)\nSRTWCX8608-RL: 2 (O/S: 2)\nSRTWCY8608: 2 (O/S: 2)\nSRTWT51012: 2 (O/S: 2)\nSRTWT51021-BL: 2 (O/S: 2)\nSRTWT5877-GY: 2 (O/S: 2)\nSRTWT6201: 2 (O/S: 2)\nSRTWT7015-GM: 2 (O/S: 2)\nSRTWT7203: 2 (O/S: 2)\nSRTWT7445-LV-NEW: 2 (O/S: 2)\nSRTWT9121-GM: 2 (O/S: 2)\nSRTWT9124-GM: 2 (O/S: 2)\nBRSHD1252CP-ENG: 1 (O/S: 1)\nBRWTF1428563CP-9-ENG: 1 (O/S: 1)\nBRWTP70301CP-ENG: 1 (O/S: 1)\nFG-CW13: 1 (O/S: 1)\nSRT320-GY: 1 (O/S: 1)\nSRTBT1862-17: 1 (O/S: 1)\nSRTBT1863-17: 1 (O/S: 1)\nSRTBT2872-15: 1 (O/S: 1)\nSRTBT2872-17: 1 (O/S: 1)\nSRTJC2024: 1 (O/S: 1)\nSRTJC802A-1800: 1 (O/S: 1)\nSRTKS2426-BL: 1 (O/S: 1)\nSRTKS6145-NEW: 1 (O/S: 1)\nSRTKT1861SS: 1 (O/S: 1)\nSRTKT38SS: 1 (O/S: 1)\nSRTKT71SS-GM: 1 (O/S: 1)\nSRTMCB5060-BL: 1 (O/S: 1)\nSRTMR502-BL: 1 (O/S: 1)\nSRTMR602-BL: 1 (O/S: 1)\nSRTMRL709: 1 (O/S: 1)\nSRTPCAT125: 1 (O/S: 1)\nSRTPP3-40PC: 1 (O/S: 1)\nSRTSA725A-FRG: 1 (O/S: 1)\nSRTSC12-FRG: 1 (O/S: 1)\nSRTSCBD331-UF: 1 (O/S: 1)\nSRTSH2626-RG: 1 (O/S: 1)\nSRTSS3262-RG: 1 (O/S: 1)\nSRTWB1419: 1 (O/S: 1)\nSRTWB1421-BL: 1 (O/S: 1)\nSRTWB304: 1 (O/S: 1)\nSRTWB5503-MW: 1 (O/S: 1)\nSRTWB8001: 1 (O/S: 1)\nSRTWB9011-MK: 1 (O/S: 1)\nSRTWC8319-P-SH-UF: 1 (O/S: 1)\nSRTWCFT200-OP: 1 (O/S: 1)\nSRTWT4012: 1 (O/S: 1)\nSRTWT4014: 1 (O/S: 1)\nSRTWT5827: 1 (O/S: 1)\nSRTWT5831-BL: 1 (O/S: 1)\nSRTWT6806: 1 (O/S: 1)\nSRTWT7443-GM: 1 (O/S: 1)\nSRTWT8252-GM: 1 (O/S: 1)\nSRTWT8267-GM: 1 (O/S: 1)\n\n*Delivery order outstanding*\nDelivery orders: 64\nDO qty: 1,091\nDelivered: 0\nOutstanding: 1,091\nDO date range: 20/04/2026 to 07/09/2026\n*_By location_*\nBRW: 1,058 (O/S: 1,058)\nBRW-RSV: 21 (O/S: 21)\nSPARE/P: 10 (O/S: 10)\nREPAIR: 2 (O/S: 2)\n*_By product_*\nWESERP10B: 105 (O/S: 105)\nSRTWC8354-SH: 57 (O/S: 57)\nSRTBK7005: 46 (O/S: 46)\nSRTW5000: 45 (O/S: 45)\nSRT320-GM: 30 (O/S: 30)\nSRT6643-GM: 30 (O/S: 30)\nSRTFT208-GM: 30 (O/S: 30)\nSRTPCAT122: 30 (O/S: 30)\nSRTKT71SS: 24 (O/S: 24)\nSRT369-5-GM: 22 (O/S: 22)\nSRTSCBD701: 22 (O/S: 22)\nSRTWT1805: 20 (O/S: 20)\nSRT6532-BL-DIY: 19 (O/S: 19)\nSRTWT7443: 18 (O/S: 18)\nSRTWT904: 18 (O/S: 18)\nSRTWC286-SH: 17 (O/S: 17)\nFG-CW09: 15 (O/S: 15)\nSRTWT8239-GM: 15 (O/S: 15)\nSRT6641: 14 (O/S: 14)\nSRTKT71SS-GM: 14 (O/S: 14)\nFG-CW10: 12 (O/S: 12)\nSRTWT5879-GM: 12 (O/S: 12)\nSRTWT902: 12 (O/S: 12)\nSRT6543-BL-DIY: 11 (O/S: 11)\nSRTWC286-SH-150: 11 (O/S: 11)\nSRT2303-HP: 10 (O/S: 10)\nSRT2408-GM: 10 (O/S: 10)\nSRT6542-DIY: 10 (O/S: 10)\nSRT769-GM: 10 (O/S: 10)\nSRTSS3230: 10 (O/S: 10)\nSRTSWT3009-GM: 10 (O/S: 10)\nSRTWT5844-GM: 10 (O/S: 10)\nSRTWT5866-GM: 10 (O/S: 10)\nSRTWT7445-LV: 10 (O/S: 10)\nSRTWT811-GM: 10 (O/S: 10)\nSRTKS6047-NEW: 8 (O/S: 8)\nSRTKT1633SS-BL: 8 (O/S: 8)\nSRTWC8152-SH-300: 8 (O/S: 8)\nSRTWT6232-GM: 8 (O/S: 8)\nSRTWT6225-GM: 7 (O/S: 7)\nFG-CW08: 6 (O/S: 6)\nRPACC: 6 (O/S: 6)\nSRTKS6047-BL-NEW: 6 (O/S: 6)\nSRTKS6547-BL: 6 (O/S: 6)\nSRTKS6647-BL: 6 (O/S: 6)\nSRTKS7547-NEW: 6 (O/S: 6)\nSRTKS8047-BL-NEW: 6 (O/S: 6)\nSRTSCBD702: 6 (O/S: 6)\nSRTSS5729-GM: 6 (O/S: 6)\nSRTWT8224: 6 (O/S: 6)\nSRTWT8252-GM: 6 (O/S: 6)\nSRTWT8259-GM: 6 (O/S: 6)\nSRT2302-HP: 5 (O/S: 5)\nSRT2405-RG: 5 (O/S: 5)\nSRT2408-CR: 5 (O/S: 5)\nSRT2563-GM: 5 (O/S: 5)\nSRT320-CR: 5 (O/S: 5)\nSRTBF11413: 5 (O/S: 5)\nSRTBF11837: 5 (O/S: 5)\nSRTFV1001: 5 (O/S: 5)\nSRTKS2406: 5 (O/S: 5)\nSRTKS7547-BL-NEW: 5 (O/S: 5)\nSRTSS3240: 5 (O/S: 5)\nSRTSS3260: 5 (O/S: 5)\nSRTSS5650-GM: 5 (O/S: 5)\nSRTSS5660: 5 (O/S: 5)\nSRTSS5726-GM: 5 (O/S: 5)\nSRTUB6203-BI: 5 (O/S: 5)\nSRTW2600: 5 (O/S: 5)\nSRTWC200-S-150-UF-RL: 5 (O/S: 5)\nSRTWC286-SH-200: 5 (O/S: 5)\nSRTWT1806: 5 (O/S: 5)\nSRTBF11621: 4 (O/S: 4)\nSRTKS6041: 4 (O/S: 4)\nSRTMCB21621: 4 (O/S: 4)\nSRTWT8302-GMB: 4 (O/S: 4)\nSRTWT8303-RG: 4 (O/S: 4)\nSRTBF11705: 3 (O/S: 3)\nSRTKT72SS: 3 (O/S: 3)\nSRTMCB8083-BL: 3 (O/S: 3)\nSRTSH2625-BL: 3 (O/S: 3)\nSRTSH2626-GRY: 3 (O/S: 3)\nSRTSSB9360-GM: 3 (O/S: 3)\nSRTWB1610: 3 (O/S: 3)\nSRTWT6821-GM: 3 (O/S: 3)\nSRTWT8301-RG: 3 (O/S: 3)\nFG-CW13: 2 (O/S: 2)\nSRTBF31416: 2 (O/S: 2)\nSRTFV2001: 2 (O/S: 2)\nSRTKS7081: 2 (O/S: 2)\nSRTKS7846: 2 (O/S: 2)\nSRTKS8151: 2 (O/S: 2)\nSRTKT1632SS: 2 (O/S: 2)\nSRTKT68SS-FRG: 2 (O/S: 2)\nSRTKT71SS-BL: 2 (O/S: 2)\nSRTMCB21412: 2 (O/S: 2)\nSRTMCB8071-BL: 2 (O/S: 2)\nSRTSP224: 2 (O/S: 2)\nSRTW1200-BL: 2 (O/S: 2)\nSRTWC8366-200-RL-UF: 2 (O/S: 2)\nSRTWC8366-RL-UF: 2 (O/S: 2)\nSRTWT7412: 2 (O/S: 2)\nACC-SRT1013: 1 (O/S: 1)\nACC-SRT1016: 1 (O/S: 1)\nSRT78-BL: 1 (O/S: 1)\nSRT95SS-FRG: 1 (O/S: 1)\nSRTBF11622: 1 (O/S: 1)\nSRTBF11714: 1 (O/S: 1)\nSRTBF11833: 1 (O/S: 1)\nSRTBF12612: 1 (O/S: 1)\nSRTKS2405: 1 (O/S: 1)\nSRTKS2425-BL: 1 (O/S: 1)\nSRTKS2426-BL: 1 (O/S: 1)\nSRTKS2432: 1 (O/S: 1)\nSRTKS2432-BL: 1 (O/S: 1)\nSRTKS2433: 1 (O/S: 1)\nSRTKS2433-BL: 1 (O/S: 1)\nSRTKS2434: 1 (O/S: 1)\nSRTKS2434-BL: 1 (O/S: 1)\nSRTKS6647: 1 (O/S: 1)\nSRTKS7846-BL: 1 (O/S: 1)\nSRTKS8053-BL: 1 (O/S: 1)\nSRTKS8151-BL: 1 (O/S: 1)\nSRTKS8848: 1 (O/S: 1)\nSRTKS8848-BL: 1 (O/S: 1)\nSRTKT1631SS: 1 (O/S: 1)\nSRTKT1635SS-GM: 1 (O/S: 1)\nSRTKT1862SS: 1 (O/S: 1)\nSRTKT70SS-GY: 1 (O/S: 1)\nSRTKT71SS-GY: 1 (O/S: 1)\nSRTKT73SS-BL: 1 (O/S: 1)\nSRTKT74SS-GM: 1 (O/S: 1)\nSRTMCB22612: 1 (O/S: 1)\nSRTMCB6083-BL: 1 (O/S: 1)\nSRTMCB6088-BL: 1 (O/S: 1)\nSRTMCB6089-WH: 1 (O/S: 1)\nSRTSCBD320: 1 (O/S: 1)\nSRTSCBD331-UF: 1 (O/S: 1)\nSRTSCBD337-UF: 1 (O/S: 1)\nSRTSH2625-GM: 1 (O/S: 1)\nSRTW5102-BL: 1 (O/S: 1)\nSRTWB1544-BL: 1 (O/S: 1)\nSRTWB241: 1 (O/S: 1)\nSRTWB7109: 1 (O/S: 1)\nSRTWC7614-RL: 1 (O/S: 1)\nSRTWC8066-S-200-NEW: 1 (O/S: 1)\nSRTWC8066-S-MBL: 1 (O/S: 1)\nSRTWC8354-SH-150: 1 (O/S: 1)\nSRTWC8605-SC-RL: 1 (O/S: 1)\nSRTWT51012: 1 (O/S: 1)\nSRTWT5827: 1 (O/S: 1)\nSRTWT5830-BL: 1 (O/S: 1)\nSRTWT6203-GM: 1 (O/S: 1)\nSRTWT8264-GM: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:03:22.026600+09:00",
+        "turn_id": "8c8b96ef-e625-47d1-afca-ddb463fa530e"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "dealer"
+            ],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "c44c2aff-7f36-40d2-ab20-81721ac51fff",
+              "c971fd31-1535-4b52-841c-8241c7bc357a",
+              "026977c4-9f09-408f-8039-95252b68511d",
+              "84611b0d-7ad1-478d-aee6-08395af886a4",
+              "9f0c2dea-4273-4f94-b917-8a93e11e9bab",
+              "108e7169-3570-49a8-b0d0-695a76de430a",
+              "cdabd5e7-a348-46ce-8661-491eae2a975b",
+              "5525f716-fe4b-4894-8f58-214218854d51",
+              "7a58be74-d9af-4fc1-bddc-243579ebd975",
+              "5fd0770b-6a12-44e6-b7ca-c88ef6c1ef20",
+              "64d9432e-d969-4c1a-9539-af52877af64f",
+              "9ca6568c-6d2d-40de-bfdb-220ab1172a33",
+              "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c",
+              "9ae85807-9761-40fb-8649-b9f3c89b9ada"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "scope": "both",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 9637,
+            "head": "{\"result_type\": \"outstanding_report\", \"response\": \"Product: all\\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\\nLocation: all\\nOrder date: all\\n\\n*Sales order outstanding*\\nSales orders: 143\\nOrdered: 1,120\\nTransferred to DO: 0\\nOutstanding: 1,120\\nOrder date range: 06/01/2026 to 03/09/2026\\n*_By location_*\\nBRW: 1,117 (O/S: 1,117)\\nBRW-RSV: 1 (O/S: 1)\\nMWH-RSV: 1 (O/S: 1)\\nSPARE/P: 1 (O/S: 1)\\n*_By product_*\\nSRT6643-GM: 60 (O/S: 60)\\nSRT6531-DIY: 30 (O/S: 30)\\nSRT6641: 30 (O/S: 30)\\nSRTWT7445-NEW: 27 (O/S: 27)\\nSRT756-32-CR: 25 (O/S: 25)\\nCB89-CR-DIY: 24 (O/S: 24)\\nSRTWT6232-GM: 24 (O/S: 24)\\nSRTSCBD319-UF: 22 (O/S: 22)\\nSRT321-CR: 21 (O/S: 21)\\nSRTWT5840-GM: 21 (O/S: 21)\\nSRTFH12-HD-DIY: 20 (O/S: 20)\\nWESERP10B: 20 (O/S: 20)\\nSRT79-SS-GM: 19 (O/S: 19)\\nSRTW2600: 19 (O/S: 19)\\nSRTWT5879-GM: 16 (O/S: 16)\\nSRTWT7445-LV-BL-NEW: 16 (O/S: 16)\\nSRTBF31611: 15 (O/S: 15)\\nSRTMCB31611: 15 (O/S: 15)\\nSRTSC01: 15 (O/S: 15)\\nSRT3342-5-GM: 14 (O/S: 14)\\nSRTBF11841: 14 (O/S: 14)\\nSRTWT6203-GM: 14 (O/S: 14)\\nSRT95SS-GY: 13 (O/S: 13)\\nSRTSCBD315: 12 (O/S: 12)\\nSRTWT7443: 12 (O/S: 12)\\nSRT320-FRG: 11 (O/S: 11)\\nSRT6642-BL: 11 (O/S: 11)\\nSRTBF31610: 11 (O/S: 11)\\nSRTKS8047-NEW: 11 (O/S: 11)\\nSRTMCB31610: 11 (O/S: 11)\\nSRTWC8354-SH-UF: 11 (O/S: 11)\\nACC-SRT1021: 10 (O/S: 10)\\nBT009: 10 (O/S: 10)\\nFG-CW09: 10 (O/S: 10)\\nSRT2565: 10 (O/S: 10)\\nSRTMRL101: 10 (O/S: 10)\\nSRTW1600-SS-CR: 10 (O/S: 10)\\nSRTWT5866-RG: 10 (O/S: 10)\\nSRTWT6211: 10 (O/S: 10)\\nSRTBF12612: 9 (O/S: 9)\\nSRTKS6041: 9 (O/S: 9)\\nSRTWT2634: 9 (O/S: 9)\\nSRTWT6216-GM: 9 (O/S: 9)\\nSRTWT8224: 9 (O/S: 9)\\nSRTBK7005: 8 (O/S: 8)\\nSRTMRL505: 8 (O/S: 8)\\nSRTWT6821-GM: 8 (O/S: 8)\\nSRT2405-CR: 7 (O/S: 7)\\nSRT93-BL: 7 (O/S: 7)\\nSRTBF31516-NEW: 7 (O/S: 7)\\nSRTKT1871SS: 7 (O/S: 7)\\nSRTSA701-GM: 7 (O/S: 7)\\nSRTSH7110-GM: 7 (O/S: 7)\\nSRTWB7237: 7 (O/S: 7)\\nSRTWC8517-SH-UF-NEW: 7 (O/S: 7)\\nSRTBF11705-NEW: 6 (O/S: 6)\\nSRTBF12611: 6 (O/S: 6)\\nSRTBF31612: 6 (O/S: 6)\\nSRTMCB22611: 6 (O/S: 6)\\nSRTMCB31612: 6 (O/S: 6)\\nSRTMCB6088-BL: 6 (O/S: 6)\\nSRTWT6813: 6 (O/S: 6)\\nSRTWT6838-RG: 6 (O/S: 6)\\nSRTWT7202: 6 (O/S: 6)\\nSRTWT8202: 6 (O/S: 6)\\nSRT2413-RG: 5 (O/S: 5)\\nSRT756-32-GM: 5 (O/S: 5)\\nSRT9532-BL: 5 (O/S: 5)\\nSRTBF11413-NEW: 5 (O/S: 5)\\nSRTBF11415-NEW: 5 (O/S: 5)\\nSRTBF11503: 5 (O/S: 5)\\nSRTBF11622: 5 (O/S: 5)\\nSRTMR607-RG: 5 (O/S: 5)\\nSRTSS5650-GM: 5 (O/S: 5)\\nSRTWT182-GM: 5 (O/S: 5)\\nSRTWT5803: 5 (O/S: 5)\\nSRTWT5879-FRG: 5 (O/S: 5)\\nFG-CW06: 4 (O/S: 4)\\nFG-CW08: 4 (O/S: 4)\\nSRT393B-18: 4 (O/S: 4)\\nSRTFH15-BL-DIY: 4 (O/S: 4)\\nSRTFT203-NEW: 4 (O/S: 4)\\nSRTMCB22612: 4 (O/S: 4)\\nSRTMCB6083-BL: 4 (O/S: 4)\\nSRTMCB8083-BL: 4 (O/S: 4)\\nSRTSA725A-RG: 4 (O/S: 4)\\nSRTSS7700-GM: 4 (O/S: 4)\\nSRTW1300-SS-FRG: 4 (O/S: 4)\\nSRTWB242: 4 (O/S: 4)\\nSRTWT4010: 4 (O/S: 4)\\nSRTWT4015: 4 (O/S: 4)\\nSRTWT6214-MBL: 4 (O/S: 4)\\nSRTWT6801: 4 (O/S: 4)\\nSRTWT9124: 4 (O/S: 4)\\nSRTWT9606-GM: 4 (O/S: 4)\\nBRC22776W-1-MY: 3 (O/S: 3)\\nSRTBF11416-NEW: 3 (O/S: 3)\\nSRTBF12610: 3 (O/S: 3)\\nSRTKT71SS: 3 (O/S: 3)\\nSRTMCB6084-WH: 3 (O/S: 3)\\nSRTMCB6089-WH: 3 (O/S: 3)\\nSRTMRL708: 3 (O/S: 3)\\nSRTPP3-30PC: 3 (O/S: 3)\\nSRTW5000: 3 (O/S: 3)\\nSRTWF12C-NEW: 3 (O/S: 3)\\nSRTWT162-QT: 3 (O/S: 3)\\nSRTWT5608-GY: 3 (O/S: 3)\\nSRTWT5903: 3 (O/S: 3)\\nSRTWT7445: 3 (O/S: 3)\\nSRTWT8262-FRG: 3 (O/S: 3)\\nSRTWT8301-GMB: 3 (O/S: 3)\\nSRT1369-1-GY: 2 (O/S: 2)\\nSRT384-4: 2 (O/S: 2)\\nSRTBF11833: 2 (O/S: 2)\\nSRTFC2031: 2 (O/S: 2)\\nSRTKS2406: 2 (O/S: 2)\\nSRTMCB21621: 2 (O/S: 2)\\nSRTSA401: 2 (O/S: 2)\\nSRTSH4110: 2 (O/S: 2)\\nSRTSS4400: 2 (O/S: 2)\\nSRTWB1086: 2 (O/S: 2)\\nSRTWB1421-BW: 2 (O/S: 2)\\nSRTWB1544: 2 (O/S: 2)\\nSRTWC8608-SC: 2 (O/S: 2)\\nSRTWCX8608-RL: 2 (O/S: 2)\\nSRTWCY8608: 2 (O/S: 2)\\nSRTWT51012: 2 (O/S: 2)\\nSRTWT51021-BL: 2 (O/S: 2)\\nSRTWT5877-GY: 2 (O/S: 2)\\nSRTWT6201: 2 (O/S: 2)\\nSRTWT7015-GM: 2 (O/S: 2)\\nSRTWT7203: 2 (O/S: 2)\\nSRTWT7445-LV-NEW: 2 (O/S: 2)\\nSRTWT9121-GM: 2 (O/S: 2)\\nSRTWT9124-GM: 2 (O/S: 2)\\nBRSHD1252CP-ENG: 1 (O/S: 1)\\nBRWTF1428563CP-9-ENG: 1 (O/S: 1)\\nBRWTP70301CP-ENG: 1 (O/S: 1)\\nFG-CW13: 1 (O/S: 1)\\nSRT320-GY: 1 (O/S: 1)\\nSRTBT1862-17: 1 (O/S: 1)\\nSRTBT1863-17: 1 (O/S: 1)\\nSRTBT2872-15: 1 (O/S: 1)\\nSRTBT2872-17: 1 (O/S: 1)\\nSRTJC2024: 1 (O/S: 1)\\nSRTJC802A-1800: 1 (O/S: 1)\\nSRTKS2426-BL: 1 (O/S: 1)\\nSRTKS6145-NEW: 1 (O/S: 1)\\nSRTKT1861SS: 1 (O/S: 1)\\nSRTKT38SS: 1 (O/S: 1)\\nSRTKT71SS-GM: 1 (O/S: 1)\\nSRTMCB5060-BL: 1 (O/S: 1)\\nSRTMR502-BL: 1 (O/S: 1)\\nSRTMR602-BL: 1 (O/S: 1)\\nSRTMRL709: 1 (O/S: 1)\\nSRTPCAT125: 1 (O/S: 1)\\nSRTPP3-40PC: 1 (O/S: 1)\\nSRTSA725A-FRG: 1 (O/S: 1)\\nSRTSC12-FRG: 1 (O/S: 1)\\nSRTSCBD331-UF: 1 (O/S: 1)\\nSRTSH2626-RG: 1 (O/S: 1)\\nSRTSS3262-RG: 1 (O/S: 1)\\nSRTWB1419: 1 (O/S: 1)\\nSRTWB1421-BL: 1 (O/S: 1)\\nSRTWB304: 1 (O/S: 1)\\nSRTWB5503-MW: 1 (O/S: 1)\\nSRTWB8001: 1 (O/S: 1)\\nSRTWB9011-MK: 1 (O/S: 1)\\nSRTWC8319-P-SH-UF: 1 (O/S: 1)\\nSRTWCFT200-OP: 1 (O/S: 1)\\nSRTWT4012: 1 (O/S: 1)\\nSRTWT4014: 1 (O/S: 1)\\nSRTWT5827: 1 (O/S: 1)\\nSRTWT5831-BL: 1 (O/S: 1)\\nSRTWT6806: 1 (O/S: 1)\\nSRTWT7443-GM: 1 (O/S: 1)\\nSRTWT8252-GM: 1 (O/S: 1)\\nSRTWT8267-GM: 1 (O/S: 1)\\n\\n*Delivery order outstanding*\\nDelivery orders: 64\\nDO qty: 1,091\\nDelivered: 0\\nOutstanding: 1,091\\nDO date range: 20/04/2026 to 07/09/2026\\n*_By location_*\\nBRW: 1,058 (O/S: 1,058)\\nBRW-RSV: 21 (O/S: 21)\\nSPARE/P: 10 (O/S: 10)\\nREPAIR: 2 (O/S: 2)\\n*_By product_*\\nWESERP10B: 105 (O/S: 105)\\nSRTWC8354-SH: 57 (O/S: 57)\\nSRTBK7005: 46 (O/S: 46)\\nSRTW5000: 45 (O/S: 45)\\nSRT320-GM: 30 (O/S: 30)\\nSRT6643-GM: 30 (O/S: 30)\\nSRTFT208-GM: 30 (O/S: 30)\\nSRTPCAT122: 30 (O/S: 30)\\nSRTKT71SS: 24 (O/S: 24)\\nSRT369-5-GM: 22 (O/S: 22)\\nSRTSCBD701: 22 (O/S: 22)\\nSRTWT1805: 20 (O/S: 20)\\nSRT6532-BL-DIY: 19 (O/S: 19)\\nSRTWT7443: 18 (O/S: 18)\\nSRTWT904: 18 (O/S: 18)\\nSRTWC286-SH: 17 (O/S: 17)\\nFG-CW09: 15 (O/S: 15)\\nSRTWT8239-GM: 15 (O/S: 15)\\nSRT6641: 14 (O/S: 14)\\nSRTKT71SS-GM: 14 (O/S: 14)\\nFG-CW10: 12 (O/S: 12)\\nSRTWT5879-GM: 12 (O/S: 12)\\nSRTWT902: 12 (O/S: 12)\\nSRT6543-BL-DIY: 11 (O/S: 11)\\nSRTWC286-SH-150: 11 (O/S: 11)\\nSRT2303-HP: 10 (O/S: 10)\\nSRT2408-GM: 10 (O/S: 10)\\nSRT6542-DIY: 10 (O/S: 10)\\nSRT769-GM: 10 (O/S: 10)\\nSRTSS3230: 10 (O/S: 10)\\nSRTSWT3009-GM: 10 (O/S: 10)\\nSRTWT5844-GM: 10 (O/S: 10)\\nSRTWT5866-GM: 10 (O/S: 10)\\nSRTWT7445-LV: 10 (O/S: 10)\\nSRTWT811-GM: 10 (O/S: 10)\\nSRTKS6047-NEW: 8 (O/S: 8)\\nSRTKT1633SS-BL: 8 (O/S: 8)\\nSRTWC8152-SH-300: 8 (O/S: 8)\\nSRTWT6232-GM: 8 (O/S: 8)\\nSRTWT6225-GM: 7 (O/S: 7)\\nFG-CW08: 6 (O/S: 6)\\nRPACC: 6 (O/S: 6)\\nSRTKS6047-BL-NEW: 6 (O/S: 6)\\nSRTKS6547-BL: 6 (O/S: 6)\\nSRTKS6647-BL: 6 (O/S: 6)\\nSRTKS7547-NEW: 6 (O/S: 6)\\nSRTKS8047-BL-NEW: 6 (O/S: 6)\\nSRTSCBD702: 6 (O/S: 6)\\nSRTSS5729-GM: 6 (O/S: 6)\\nSRTWT8224: 6 (O/S: 6)\\nSRTWT8252-GM: 6 (O/S: 6)\\nSRTWT8259-GM: 6 (O/S: 6)\\nSRT2302-HP: 5 (O/S: 5)\\nSRT2405-RG: 5 (O/S: 5)\\nSRT2408-CR: 5 (O/S: 5)\\nSRT2563-GM: 5 (O/S: 5)\\nSRT320-CR: 5 (O/S: 5)\\nSRTBF11413: 5 (O/S: 5)\\nSRTBF11837: 5 (O/S: 5)\\nSRTFV1001: 5 (O/S: 5)\\nSRTKS2406: 5 (O/S: 5)\\nSRTKS7547-BL-NEW: 5 (O/S: 5)\\nSRTSS3240: 5 (O/S: 5)\\nSRTSS3260: 5 (O/S: 5)\\nSRTSS5650-GM: 5 (O/S: 5)\\nSRTSS5660: 5 (O/S: 5)\\nSRTSS5726-GM: 5 (O/S: 5)\\nSRTUB6203-BI: 5 (O/S: 5)\\nSRTW2600: 5 (O/S: 5)\\nSRTWC200-S-150-UF-RL: 5 (O/S: 5)\\nSRTWC286-SH-200: 5 (O/S: 5)\\nSRTWT1806: 5 (O/S: 5)\\nSRTBF11621: 4 (O/S: 4)\\nSRTKS6041: 4 (O/S: 4)\\nSRTMCB21621: 4 (O/S: 4)\\nSRTWT8302-GMB: 4 (O/S: 4)\\nSRTWT8303-RG: 4 (O/S: 4)\\nSRTBF11705: 3 (O/S: 3)\\nSRTKT72SS: 3 (O/S: 3)\\nSRTMCB8083-BL: 3 (O/S: 3)\\nSRTSH2625-BL: 3 (O/S: 3)\\nSRTSH2626-GRY: 3 (O/S: 3)\\nSRTSSB9360-GM: 3 (O/S: 3)\\nSRTWB1610: 3 (O/S: 3)\\nSRTWT6821-GM: 3 (O/S: 3)\\nSRTWT8301-RG: 3 (O/S: 3)\\nFG-CW13: 2 (O/S: 2)\\nSRTBF31416: 2 (O/S: 2)\\nSRTFV2001: 2 (O/S: 2)\\nSRTKS7081: 2 (O/S: 2)\\nSRTKS7846: 2 (O/S: 2)\\nSRTKS8151: 2 (O/S: 2)\\nSRTKT1632SS: 2 (O/S: 2)\\nSRTKT68SS-FRG: 2 (O/S: 2)\\nSRTKT71SS-BL: 2 (O/S: 2)\\nSRTMCB21412: 2 (O/S: 2)\\nSRTMCB8071-BL: 2 (O/S: 2)\\nSRTSP224: 2 (O/S: 2)\\nSRTW1200-BL: 2 (O/S: 2)\\nSRTWC8366-200-RL-UF: 2 (O/S: 2)\\nSRTWC8366-RL-UF: 2 (O/S: 2)\\nSRTWT7412: 2 (O/S:",
+            "truncated": true
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          3
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to choose both sales orders and delivery orders for the outstanding scope"
+      }
+    }
+  ]
+}

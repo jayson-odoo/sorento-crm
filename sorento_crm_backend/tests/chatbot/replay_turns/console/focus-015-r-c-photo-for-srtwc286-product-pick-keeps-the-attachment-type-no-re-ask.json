@@ -1,0 +1,906 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "photo for srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-check-3b3f7f2b9e09",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "product_attachment search needs to be more specific. Multiple matches found. Please choose:\n1. SRTWC286-SH-200 - no Product Photos\n2. SRTWC286-SH-P - no Product Photos\n3. SRTWC286-SH-PP - no Product Photos\n4. SRTWC286-SH - has Product Photos\n5. SRTWC286-SH-UF - no Product Photos\n6. SRTWC286-SH-NEW-150 - no Product Photos\n7. SRTWC286-SH-150 - no Product Photos\n8. SRTWC286-SH-NEW-P - no Product Photos\n9. SRTWC286-SH-NEW-200 - no Product Photos\n10. SRTWC286-SH-NEW - no Product Photos",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "srtwc286"
+          },
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "photo"
+          }
+        ],
+        "tokens": [
+          "srtwc286",
+          "photo"
+        ],
+        "unresolved_tokens": [
+          "srtwc286",
+          "photo"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:41:44.242582+09:00",
+        "turn_id": "af57d5fb-71df-4c0d-85fa-4f8f7ade18bb"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "product_attachment",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc286"
+          },
+          {
+            "canonical_code": "photo",
+            "confident": true,
+            "current_message": true,
+            "hint": "attachment_type",
+            "raw": "photo"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product_attachment",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to get the photo for srtwc286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "4",
+              "type": "text"
+            },
+            "messageId": "console-check-badb900cebdb",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 45,
+              "source": "current_message",
+              "value": [
+                "product_attachment"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 45,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "srtwc286"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 45,
+            "expects": "pick_or_yes_no",
+            "kind": "product_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 1,
+                "label": "SRTWC286-SH-200",
+                "product": "SRTWC286-SH-200",
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 2,
+                "label": "SRTWC286-SH-P",
+                "product": "SRTWC286-SH-P",
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 3,
+                "label": "SRTWC286-SH-PP",
+                "product": "SRTWC286-SH-PP",
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 4,
+                "label": "SRTWC286-SH",
+                "product": "SRTWC286-SH",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 5,
+                "label": "SRTWC286-SH-UF",
+                "product": "SRTWC286-SH-UF",
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 6,
+                "label": "SRTWC286-SH-NEW-150",
+                "product": "SRTWC286-SH-NEW-150",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 7,
+                "label": "SRTWC286-SH-150",
+                "product": "SRTWC286-SH-150",
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 8,
+                "label": "SRTWC286-SH-NEW-P",
+                "product": "SRTWC286-SH-NEW-P",
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 9,
+                "label": "SRTWC286-SH-NEW-200",
+                "product": "SRTWC286-SH-NEW-200",
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 10,
+                "label": "SRTWC286-SH-NEW",
+                "product": "SRTWC286-SH-NEW",
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+              }
+            ],
+            "payload": {
+              "domain": "product_attachment",
+              "keep": [
+                {
+                  "canonical_code": "Product Photos",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "attachment_type",
+                  "raw": "Product Photos",
+                  "uuid": "90e76894-8384-4186-a3f7-ef73667726ff"
+                }
+              ],
+              "offer": {
+                "domain": "product_attachment",
+                "options": [
+                  {
+                    "idx": 1,
+                    "label": "marketing_product",
+                    "team": "marketing_product"
+                  }
+                ],
+                "team": "marketing_product"
+              }
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+          "90e76894-8384-4186-a3f7-ef73667726ff"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWC286-SH\n*Attachment Type:* Product Photos\n*File Name:* SRTWC286-SH.jpg\n\n_Data last updated: 29/04/2026 08:35:37_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "attachment_type_ids",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_master_product_attachments_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:42:01.332515+09:00",
+        "turn_id": "b50f947d-fbc9-420f-8fbb-b03d934b7d61"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "attachment_type_ids": [
+              "90e76894-8384-4186-a3f7-ef73667726ff"
+            ],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [
+              {
+                "attachmentType": "Product Photos",
+                "filename": "SRTWC286-SH.jpg",
+                "mimeType": "image/jpeg",
+                "uploadedAt": "2026-04-29T08:35:37.009894",
+                "url": "https://cdn-sorento.com/product_attachments/5c836d29-71ad-4d78-b802-963823162ca0/SRTWC286-SH.jpg"
+              }
+            ],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "I have attached the file(s) below.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH"
+                  },
+                  {
+                    "label": "Attachment Type",
+                    "value": "Product Photos"
+                  },
+                  {
+                    "label": "File Name",
+                    "value": "SRTWC286-SH.jpg"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTWC286-SH"
+              }
+            ],
+            "last_updated_at": "2026-04-29T08:35:37.009894",
+            "result_type": "product_attachments"
+          },
+          "tool": "crm_master_product_attachments_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          4
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick option 4 from the open product list"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "2",
+              "type": "text"
+            },
+            "messageId": "console-check-abb1193a5021",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 46,
+              "source": "pick",
+              "value": [
+                "product_attachment"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 46,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWC286-SH",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "ordinal": 4,
+                  "raw": "SRTWC286-SH",
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 45,
+            "expects": "pick",
+            "kind": "product_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 1,
+                "label": "SRTWC286-SH-200",
+                "product": "SRTWC286-SH-200",
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 2,
+                "label": "SRTWC286-SH-P",
+                "product": "SRTWC286-SH-P",
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 3,
+                "label": "SRTWC286-SH-PP",
+                "product": "SRTWC286-SH-PP",
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 4,
+                "label": "SRTWC286-SH",
+                "product": "SRTWC286-SH",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 5,
+                "label": "SRTWC286-SH-UF",
+                "product": "SRTWC286-SH-UF",
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 6,
+                "label": "SRTWC286-SH-NEW-150",
+                "product": "SRTWC286-SH-NEW-150",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 7,
+                "label": "SRTWC286-SH-150",
+                "product": "SRTWC286-SH-150",
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 8,
+                "label": "SRTWC286-SH-NEW-P",
+                "product": "SRTWC286-SH-NEW-P",
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 9,
+                "label": "SRTWC286-SH-NEW-200",
+                "product": "SRTWC286-SH-NEW-200",
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+              },
+              {
+                "attachment_type": null,
+                "domain": "product_attachment",
+                "entity_type": "product",
+                "filename": null,
+                "idx": 10,
+                "label": "SRTWC286-SH-NEW",
+                "product": "SRTWC286-SH-NEW",
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+              }
+            ],
+            "payload": {
+              "domain": "product_attachment",
+              "keep": [
+                {
+                  "canonical_code": "Product Photos",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "attachment_type",
+                  "raw": "Product Photos",
+                  "uuid": "90e76894-8384-4186-a3f7-ef73667726ff"
+                }
+              ]
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789475344"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "90e76894-8384-4186-a3f7-ef73667726ff",
+          "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Here's what you want:\n\u2022 product: SRTWC286-SH-P\n\u2022 attachment_type: Product Photos\n\nBut no Product Photos matched these. Would you like me to escalate to marketing product team?",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "attachment_type_ids",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_master_product_attachments_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T21:42:18.514100+09:00",
+        "turn_id": "54948335-3061-4a6a-bb76-05905765663c"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 2,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 2,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "attachment_type_ids": [
+              "90e76894-8384-4186-a3f7-ef73667726ff"
+            ],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "alternatives": [
+              {
+                "display": "SRTWC286-SH",
+                "id": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                "is_variant": false,
+                "sim": 0.769,
+                "value": "SRTWC286-SH"
+              },
+              {
+                "display": "SRTWC287A",
+                "id": "0ebe8fd2-1c48-4eca-90d6-05760301ac76",
+                "is_variant": false,
+                "sim": 0.467,
+                "value": "SRTWC287A"
+              }
+            ],
+            "attachments": [],
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": null,
+            "relaxed_axis": "entity",
+            "result_type": "product_attachments"
+          },
+          "tool": "crm_master_product_attachments_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          2
+        ],
+        "reference_target": "dym",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to pick option 2 from the open question"
+      }
+    }
+  ]
+}

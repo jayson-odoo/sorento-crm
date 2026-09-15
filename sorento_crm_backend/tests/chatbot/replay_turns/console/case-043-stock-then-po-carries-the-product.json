@@ -1,0 +1,707 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-4effdacb316e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Stock details found for the requested products.\n\n1. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 14\n*Outstanding:* 10\n\n2. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 2\n*Outstanding:* 2\n\n3. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 6638\n*Outstanding:* 49224\n\n4. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 8540\n*Outstanding:* 15724\n\n5. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 560\n*Outstanding:* 4968\n\n6. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 1589\n*Outstanding:* 2450\n\n7. *Product Code:* C-FH14\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 106\n*Outstanding:* 268\n\n_Data last updated: 04/09/2026 17:30:59_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_sellable",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_inventory_stock_balance_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "C-FH14",
+                "entity_type": "product",
+                "uuid": "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+              }
+            ],
+            "resolved": true,
+            "token": "C-FH14"
+          }
+        ],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:56:13.862063+09:00",
+        "turn_id": "c5dd2c63-8d53-4f83-b2b0-af78758159c4"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "include_sellable": true,
+            "is_active": null,
+            "product_ids": [
+              "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "Stock details found for the requested products.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 14
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 10
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-AM"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 2
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 2
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-BB"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 6638
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 49224
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-IB"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 8540
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 15724
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-IR"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 560
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 4968
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-NTC"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 1589
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 2450
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "C-FH14"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-SMC"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 106
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 268
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "C-FH14"
+              }
+            ],
+            "last_updated_at": "2026-09-04T17:30:59.549278",
+            "restricted_fields": {
+              "open_so_qty": "inventory.sellable"
+            },
+            "result_type": "stock",
+            "stock_visibility": {
+              "hide_zero_locations": true,
+              "mode": "detailed",
+              "source": "contact",
+              "warehouse_codes": null
+            }
+          },
+          "tool": "crm_inventory_stock_balance_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check stock for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "any PO for it?",
+              "type": "text"
+            },
+            "messageId": "console-check-1310a4e9c3a3",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 27,
+              "source": "current_message",
+              "value": [
+                "inventory"
+              ]
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 27,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "C-FH14"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": null
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "ca4e0348-e240-44a5-8947-a48fcdc9e1ca"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789473093"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Here is the PO placed I found.\n\n1. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 135\n*Outstanding Qty:* 135\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n2. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 31\n*Outstanding Qty:* 31\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n3. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n4. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n5. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 1065\n*Outstanding Qty:* 1065\n*PO Date:* 2026-07-10\n*Location:* BRW\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n6. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 14\n*Outstanding Qty:* 14\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n7. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 10\n*Outstanding Qty:* 10\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n8. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 8\n*Outstanding Qty:* 8\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n9. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 14\n*Outstanding Qty:* 14\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n10. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 8\n*Outstanding Qty:* 8\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n11. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 564\n*Outstanding Qty:* 564\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n12. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 11\n*Outstanding Qty:* 11\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n13. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 21\n*Outstanding Qty:* 21\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n14. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n15. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n16. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 9\n*Outstanding Qty:* 9\n*PO Date:* 2026-07-10\n*Location:* BRW-NTC\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n17. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 62\n*Outstanding Qty:* 62\n*PO Date:* 2026-07-10\n*Location:* BRW-IR\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n18. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 40\n*Outstanding Qty:* 40\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n19. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n20. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 10\n*Outstanding Qty:* 10\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n21. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 100\n*Outstanding Qty:* 100\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n22. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 16\n*Outstanding Qty:* 16\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n23. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 28\n*Outstanding Qty:* 28\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n24. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n25. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 240\n*Outstanding Qty:* 240\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n26. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 160\n*Outstanding Qty:* 160\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n27. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 3\n*Outstanding Qty:* 3\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n28. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 37\n*Outstanding Qty:* 37\n*PO Date:* 2026-07-10\n*Location:* BRW-SMC\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n29. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 18\n*Outstanding Qty:* 18\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n30. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 30\n*Outstanding Qty:* 30\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n31. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 6\n*Outstanding Qty:* 6\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n32. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n33. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 4\n*Outstanding Qty:* 4\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n34. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n35. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 6\n*Outstanding Qty:* 6\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n36. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n37. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 4\n*Outstanding Qty:* 4\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n38. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n39. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 4\n*Outstanding Qty:* 4\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n40. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 6\n*Outstanding Qty:* 6\n*PO Date:* 2026-07-10\n*Location:* BRW-BB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n41. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 4\n*Outstanding Qty:* 4\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n42. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 30\n*Outstanding Qty:* 30\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n43. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 64\n*Outstanding Qty:* 64\n*PO Date:* 2026-07-10\n*Location:* BRW-SMC\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n44. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 250\n*Outstanding Qty:* 250\n*PO Date:* 2026-07-10\n*Location:* BRW-NTC\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n45. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 36\n*Outstanding Qty:* 36\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n46. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 36\n*Outstanding Qty:* 36\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n47. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 15\n*Outstanding Qty:* 15\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n48. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 30\n*Outstanding Qty:* 30\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n49. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 15\n*Outstanding Qty:* 15\n*PO Date:* 2026-07-10\n*Location:* BRW-IB\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD\n\n50. *PO Number:* 202607-S0031\n*Product Code:* C-FH14\n*Ordered Qty:* 9\n*Outstanding Qty:* 9\n*PO Date:* 2026-07-10\n*Location:* BRW-IR\n*Supplier:* XIAMEN TAIYANG TECHNOLOGY CO.,LTD",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_procurement_po_placed_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "it",
+                "entity_type": "product",
+                "uuid": "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+              }
+            ],
+            "resolved": true,
+            "token": "it"
+          }
+        ],
+        "tokens": [
+          "it"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 20,
+        "recorded_at": "2026-09-15T20:56:24.324123+09:00",
+        "turn_id": "1911c00f-727d-45e6-b396-15a07ecad5cd"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "d2a1fc8b-f8c2-4242-98ae-9f66b7bdc140"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "bytes": 33465,
+            "head": "{\"result_type\": \"purchase_orders_placed\", \"intro\": \"Here is the PO placed I found.\", \"items\": [{\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"135\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"135\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"31\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"31\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"2\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"2\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"2\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"2\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"1065\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"1065\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"14\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"14\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"10\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"10\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"8\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"8\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"14\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"14\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"8\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"8\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"564\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"564\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-BB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"product_code\", \"label\": \"Product Code\", \"value\": \"C-FH14\"}, {\"key\": \"ordered_qty\", \"label\": \"Ordered Qty\", \"value\": \"11\"}, {\"key\": \"outstanding_qty\", \"label\": \"Outstanding Qty\", \"value\": \"11\"}, {\"key\": \"po_date\", \"label\": \"PO Date\", \"value\": \"2026-07-10\"}, {\"key\": \"location\", \"label\": \"Location\", \"value\": \"BRW-IB\"}, {\"key\": \"supplier\", \"label\": \"Supplier\", \"value\": \"XIAMEN TAIYANG TECHNOLOGY CO.,LTD\"}], \"flags\": {\"discontinued\": false, \"expired\": false, \"expiring_soon\": false, \"unallocated\": false, \"partially_allocated\": false}, \"kind\": \"po\"}, {\"title\": \"202607-S0031\", \"fields\": [{\"key\": \"po_number\", \"label\": \"PO Number\", \"value\": \"202607-S0031\"}, {\"key\": \"produ",
+            "truncated": true
+          },
+          "tool": "crm_procurement_po_placed_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "purchase_order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": false,
+            "current_message": false,
+            "hint": "product",
+            "raw": "it"
+          }
+        ],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check whether there is a purchase order for the previously requested product"
+      }
+    }
+  ]
+}
