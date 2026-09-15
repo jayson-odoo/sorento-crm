@@ -100,6 +100,28 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+describe('accessibility (live finding, Radix "Missing Description")', () => {
+  it('the dialog carries a real aria-describedby, not a dangling one', () => {
+    open();
+
+    const dialog = document.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    const describedBy = dialog?.getAttribute('aria-describedby');
+    expect(describedBy).toBeTruthy();
+    expect(document.getElementById(describedBy as string)).not.toBeNull();
+  });
+
+  it('opening logs no Radix Description warning', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    open();
+
+    const messages = errorSpy.mock.calls.flat().join(' ');
+    expect(messages).not.toMatch(/description/i);
+    errorSpy.mockRestore();
+  });
+});
+
 describe('zoom (AC-S1-5)', () => {
   it('opens at Fit', () => {
     open();
