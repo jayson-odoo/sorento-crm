@@ -567,9 +567,26 @@ def reuse_alive(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
             o["_tier_carried"] = True
             _touch(focus, "tier", turn, out, rule="reuse_alive")
 
-    # order_status, on the same CONTINUATION predicate the attributes carry uses, because
-    # main carried it in the same `reuse` arm and for the same reason (R16).
-    if continuation and not jsc.truthy(o.get("order_status")):
+    # order_status, on the CONTINUATION predicate the attributes carry uses (R16, main's own
+    # `reuse` arm) OR on a PICK, whatever `entity_op` the model stamped on it (R-J, 15 Sep
+    # 2026). A numbered answer to the scope question arrives as `casual` with no status of
+    # its own, and the model emits it sometimes as `reuse` and sometimes as
+    # `replace_combine` - `ParseOutput`'s own default, and what R-D's live pick turn
+    # carried. Gated on `reuse` alone, the `replace_combine` spelling lost the status, the
+    # outstanding ask degraded into a plain order answer, and the scope question was never
+    # asked at all. A pick is an answer to the question that is open; it does not re-scope
+    # the conversation, so the status it was asked under stands either way.
+    # OR A PICK, whatever `entity_op` the model stamped on it. Keyed on the pick rather than
+    # on `_apply_outstanding_pending`'s markers deliberately: on the turn that answers the
+    # CUSTOMER picker the open question is that roster, not the report, so the head's
+    # outstanding reader bails before stamping anything - and that is exactly the turn R16
+    # describes ("the scope question resumed after a CUSTOMER pick"). A pick is an answer to
+    # whatever is open; it never re-scopes the conversation, so the status the conversation
+    # was asked under stands.
+    picked_something = jsc.js_number(jsc.get(o, "positions_resolved")) > 0 or (
+        jsc.is_array(o.get("reference_positions")) and len(o["reference_positions"]) > 0
+    )
+    if (continuation or picked_something) and not jsc.truthy(o.get("order_status")):
         alive = value_of(focus, "order_status")
         if jsc.truthy(alive):
             o["order_status"] = alive

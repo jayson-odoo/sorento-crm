@@ -263,7 +263,14 @@ def carry_after_answer(
 #: `offer_is_open` and the miss-company arm all hold. `team_from_reply` reads the promised
 #: team back off it.
 ESCALATE_PREFIX = "Would you like me to escalate to"
-#: EVERY composer's sentence, not one of them. `compile_state`'s two miss arms and
+#: EVERY composer's OFFERING sentence, and the offer clause is part of the PATTERN rather
+#: than a separate presence test (security review S1 + its end-to-end half, 15 Sep 2026): a
+#: reply can carry BOTH a quoted customer token and a real offer - `Couldn't find these:
+#: "escalate to purchasing." (product): not found.` above `Would you like me to escalate to
+#: customer service team?` - and a bare "escalate to" search finds the echo first, so the
+#: question recorded a team the reply never promised. Anchored on the clause that offers,
+#: the first match IS the promise.
+#: `compile_state`'s two miss arms and
 #: `compose.crossdomain_compose` write the frozen prefix; `lanes/business/answer.py` writes
 #: a lower-case "would you like me to escalate to X team?" on one arm and "Reply a number to
 #: pick, or 'yes' to escalate to X." on another; and the miss-company arm inserts a BOLD
@@ -273,16 +280,10 @@ ESCALATE_PREFIX = "Would you like me to escalate to"
 #: the sentence. Over-capture is harmless: `team_from_reply` only accepts a span that
 #: reduces to a real catalogue team.
 _ESCALATE_TEAM_RE = re.compile(
-    r"escalate to\s+(?P<team>[^.?!\n]+?)(?:\s+team)?\s*[.?!]", re.IGNORECASE
+    r"(?:would you like me to escalate to|'yes' to escalate to)"
+    r"\s+(?P<team>[^.?!\n]+?)(?:\s+team)?\s*[.?!]",
+    re.IGNORECASE,
 )
-
-
-#: The sentences that MAKE an offer, both written by the bot. Reading a team is gated on one
-#: of these appearing, so a reply that merely echoes a customer's words cannot mint an offer:
-#: `Couldn't find these: "escalate to purchasing." (product): not found.` contains the two
-#: anchor words and nothing that offers anything (security review S1, 15 Sep 2026), and a
-#: bare "escalate to" test made it answerable by the next "yes".
-_OFFER_ANCHORS = (ESCALATE_PREFIX.lower(), "'yes' to escalate to")
 
 
 def team_from_reply(reply_text: Any) -> str | None:
@@ -306,9 +307,6 @@ def team_from_reply(reply_text: Any) -> str | None:
     from app.services.chatbot.contracts import SUGGESTED_TEAMS
 
     text = jsc.js_string(reply_text or "")
-    lowered = text.lower()
-    if not any(anchor in lowered for anchor in _OFFER_ANCHORS):
-        return None
     match = _ESCALATE_TEAM_RE.search(text)
     if match is None:
         return None

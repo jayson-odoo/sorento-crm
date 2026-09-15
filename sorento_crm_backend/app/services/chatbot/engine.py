@@ -3574,8 +3574,24 @@ def _spend_the_answer(variables: dict[str, Any], parse: Any) -> bool:
         return False
     if not jsc.truthy(handler) or jsc.get(answer, "resolved") is not True:
         return False
+    # THE ANSWER IS SPENT ON THE QUESTION IT ANSWERED, NEVER OVER A NEW ONE (R-J, owner
+    # smoke on c95f811bb, turns b4863e5d -> a509fbb0 -> add34025). A turn can answer one
+    # question and ask another: picking a customer off the roster runs the report, which
+    # then asks "Outstanding for which document?" - and the tail had armed exactly that.
+    # Spending unconditionally wrote the roster back over it (`carry_after_answer` keeps a
+    # roster through its own pick, D19 rule 1), so the customer was shown the scope
+    # question while the bot waited on the customer list, and their "1" re-picked the
+    # customer and printed the same question again, forever.
+    #
+    # What is open RIGHT NOW is the tail's decision. This seam exists only for the lane that
+    # loses the flag (the escalation lane's own fragment), so it acts when the answered
+    # question is still what is open, and stands aside when the turn asked something new.
+    question_before = jsc.get(parse, "_open_question_before")
+    still_open = variables.get("open_question")
+    if jsc.truthy(still_open) and not open_question_mod.same_question(still_open, question_before):
+        return False
     variables["open_question"] = open_question_mod.carry_after_answer(
-        jsc.get(parse, "_open_question_before"), handler, answer
+        question_before, handler, answer
     )
     # A TURN THAT SPENDS AN OFFER DOES NOT OPEN ONE. The lane re-composes its own copy on
     # the answering turn - the miss lane prints its miss again, the ladder its rung - so the
