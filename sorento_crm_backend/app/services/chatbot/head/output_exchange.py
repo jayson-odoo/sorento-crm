@@ -1229,7 +1229,7 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     axis_keys = {_ce_key(e) for e in [*(products or []), *([customer] if customer else [])]}
     kept_off_axis = [
         e
-        for e in getattr(outcome, "keep", None) or []
+        for e in (outcome.keep or [])
         if isinstance(e, dict) and _ce_key(e) not in axis_keys
     ]
     entities = [
@@ -1301,7 +1301,7 @@ def _outstanding_subject_capable_axes() -> frozenset[str]:
     )
 
 
-_OUTSTANDING_SUBJECT_CAPABLE_AXES = _outstanding_subject_capable_axes()
+_OUTSTANDING_SUBJECT_CAPABLE_AXES = _outstanding_subject_capable_axes()  # one constant, one call
 
 
 def _outstanding_subject_axes(filters: Any) -> set[str]:
@@ -1375,7 +1375,7 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
         # narrowing it, so the turn stays the new ask today's code already calls it.
         return False
     for e in jsc.array(o.get("entities")):
-        if jsc.get(e, "current_message") is not True:
+        if jsc.get(e, "current_message") is False:
             continue  # the question's own subject, carried - not this turn's ask
         axis = _axis_for_hint(jsc.get(e, "hint"), None)
         if axis is None or axis in _OUTSTANDING_SUBJECT_CAPABLE_AXES:
@@ -1614,13 +1614,24 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
 
     named_entities = [e for e in jsc.array(o.get("entities")) if jsc.truthy(e)]
     names_entity = bool(named_entities)
+    # WHAT THIS MESSAGE NAMED, which is a different question from what the emission carries
+    # (reviewer B2, 15 Sep 2026). `named_entities` counts the CARRIED subject too - the
+    # product this question has been about all along, merged back in by the executor - so
+    # after R-H made the refinement test ignore carried entities, a turn that picked nothing
+    # and merely echoed that subject read as a refinement: "no" re-ran the report and left
+    # `outstanding_detail` armed instead of closing it. Arm 1 asks the narrower question;
+    # arm 2 keeps `names_entity`, because a turn that CARRIES a subject and names its own
+    # entity is still the new ask it always was.
+    names_own_entity = any(
+        jsc.get(e, "current_message") is not False for e in named_entities
+    )
     names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
     own_question = names_entity or jsc.truthy(o.get("domain_hint"))
 
     if not already_read:
         if (
             picked is None
-            and (names_own_dates or names_entity)
+            and (names_own_dates or names_own_entity)
             and _outstanding_keeps_subject(o, filters)
         ):
             o["outstanding_refined"] = True

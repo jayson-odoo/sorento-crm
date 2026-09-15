@@ -305,6 +305,18 @@ test" table carries the diagnosis; these are the independently-verifiable criter
   still a new ask and still drops the pending ("delivery status for hanlim" under a
   product-subject offer). Evidence: `test_outstanding_lane`, both the `domain_hint: null`
   and the live `domain_hint: "order"` shapes.
+- AC-1066 [T] A YES ANSWERS THE OFFER UNDER EVERY PROMPT VERSION, AND ON EVERY ARM. Wherever
+  a reply carries "Would you like me to escalate to <team> team?" and names a real team, the
+  offer is recorded on whatever question that turn leaves open - standalone, after a
+  cross-domain ladder, beside a did-you-mean roster, beside a multiple-matches picker, beside
+  a customer picker, beside an outstanding scope or detail question, beside a tier menu - and
+  a bare "yes" consumes it and routes to THAT team, a "no" strips it and leaves whatever else
+  was armed, and a number re-picks. The team is never a routing default while an offer is
+  open, and it is read from the printed sentence so the promise and the record cannot differ.
+  The yes/no is recognised from the parser's own flags, so it works on the live v1-shaped
+  prompt and not only under v3. A `member_offer` keeps its own re-prompt, and a roster with no
+  offer resolves nothing from an affirmative (D19). Evidence: the owner chain
+  cca6b365 -> 570610f0, plus the parametrized arm reds.
 
 ## Supersession map (growth-r1 section D)
 
