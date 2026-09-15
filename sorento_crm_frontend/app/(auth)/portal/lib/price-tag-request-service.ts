@@ -46,6 +46,39 @@
  *    way a line already resolves its own product's code and name, because the
  *    portal shows codes and never ids.
  * ===========================================================================
+ *
+ * ===========================================================================
+ * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1-D4,
+ * Phase 1 slices S1/S2 - MOCKED, no backend wired yet)
+ * ===========================================================================
+ * D1: the request-level `promotion_id` header select is retired; a promotion
+ * (or a hand-typed price) now lives on the LINE. `price_mode` stays on the
+ * header. D4: one pricing call answers every line at once.
+ *
+ * ---- BACKEND CONTRACT (Phase 2, not built - `lookupLinePricing` below is an
+ * in-memory stand-in with the SAME shape, per PLAN "API contract") ---------
+ *
+ *  POST /api/v1/public/portal/lookups/line-pricing
+ *    body  { price_mode: PriceMode, lines: [{ key, product_id, part_product_ids: string[],
+ *            candidate_product_ids: string[], promotion_id?: string | null }] }
+ *    ->    LinePricingResult[]  (one per input `key`, same order)
+ *
+ *    `list_price` = sum of list price over the parent + every RESOLVED part
+ *    (an unresolved candidate group contributes nothing). `promotion_options`
+ *    is every active promotion covering at least one product on the line,
+ *    sorted lowest tag total first; `auto_promotion_id` is that first id (or
+ *    null with none covering). `sell_price` is the total under `promotion_id`
+ *    when given, else under `auto_promotion_id`, else null. `parts_at_list`
+ *    names which part product ids print at list under that promotion (D3: a
+ *    promotion may cover the parent but not every part). `candidates` prices
+ *    every id in `candidate_product_ids` the same way, for the part row's
+ *    "CODE  RM x" copy (S2).
+ *
+ *  Line create/update/response gains `promotion_id`, `promotion_name`,
+ *  `manual_sell_price`, `list_price`, `sell_price`, `sell_price_basis`
+ *  (`manual` | `promotion` | `list`); the request-level `promotion_id` /
+ *  `promotion_name` are dropped (backfilled into lines first).
+ * ===========================================================================
  */
 
 import { extractApiError } from '@/lib/api-client';
@@ -137,6 +170,15 @@ export interface PriceTagRequestLine {
   parts?: PriceTagRequestLinePart[];
   /** What actually prints for this line: one tag by default, N after a split. */
   tags?: PriceTagRequestTag[];
+  // ---- D1 (Phase 2, not wired yet): the line's own promotion / manual price.
+  // Optional so a server that predates the migration keeps validating; the
+  // form falls back to `lookupLinePricing` (mocked) while these are absent.
+  promotion_id?: string | null;
+  promotion_name?: string | null;
+  manual_sell_price?: number | null;
+  list_price?: number | null;
+  sell_price?: number | null;
+  sell_price_basis?: 'manual' | 'promotion' | 'list' | null;
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -391,6 +433,40 @@ export async function lookupProductCombos(
     `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
   );
   return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
+}
+
+// ---------------------------------------------------------------------------
+// Line pricing (D1-D4, Phase 1 mock - see the contract block at the top of
+// this file)
+// ---------------------------------------------------------------------------
+
+export type {
+  LinePricingCandidate,
+  LinePricingLineInput,
+  LinePricingPromotionOption,
+  LinePricingResult,
+  SellPriceBasis,
+} from '@/lib/dealer-kit/mock-line-pricing';
+import { computeLinePricing } from '@/lib/dealer-kit/mock-line-pricing';
+import type {
+  LinePricingLineInput as LinePricingLineInputT,
+  LinePricingResult as LinePricingResultT,
+} from '@/lib/dealer-kit/mock-line-pricing';
+
+/**
+ * One pricing call for every line (D4). MOCK ONLY (Phase 1) - resolves
+ * synchronously wrapped in a promise so the form's calling shape (await,
+ * loading-free since the state is derived) matches the real route's once it
+ * lands in Phase 2. No network call, no persistence. The computation itself
+ * is shared with the CRM detail page's own mock
+ * (`lib/dealer-kit/mock-line-pricing.ts`), so a product prices the same on
+ * both sides of the same request.
+ */
+export async function lookupLinePricing(
+  priceMode: PriceMode,
+  lines: LinePricingLineInputT[],
+): Promise<LinePricingResultT[]> {
+  return computeLinePricing(priceMode, lines);
 }
 
 // ---------------------------------------------------------------------------

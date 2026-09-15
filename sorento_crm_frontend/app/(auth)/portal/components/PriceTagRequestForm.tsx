@@ -61,14 +61,15 @@ import type {
   DebtorOption,
   LinePartCandidate,
   ProductComboOption,
-  PromotionOption,
   PriceMode,
   TagItemOption,
+  LinePricingResult,
+  LinePricingLineInput,
 } from '../lib/price-tag-request-service';
 import {
   lookupDebtors,
   lookupProductCombos,
-  lookupPromotions,
+  lookupLinePricing,
   lookupTagItems,
   getRequest,
   createRequest,
@@ -164,6 +165,20 @@ interface DraftLine {
    *  a warning. Answered by the same lookup. */
   host_guarded: boolean;
   parts: DraftPart[];
+  // ---- D1/D2/S1: line-level promotion and price (Phase 1, mocked pricing). ----
+  /** Null = no promotion chosen (either nothing covers this line yet, or the
+   *  salesperson explicitly cleared it - see `promotion_locked`). */
+  promotion_id: string | null;
+  /** Set the first time the salesperson interacts with the line's Promotion
+   *  select (pick OR clear), so the one-time auto pick (AC-S1-4) never
+   *  overwrites a deliberate choice, including "none" (AC-S1-7). */
+  promotion_locked: boolean;
+  /** A hand-typed selling price, only meaningful while `promotion_id` is
+   *  null (AC-S1-6). Mutually exclusive with `promotion_id` (AC-S1-7). */
+  manual_sell_price: number | null;
+  /** The last `lookupLinePricing` answer for this line's key, or null before
+   *  the first response lands. */
+  pricing: LinePricingResult | null;
 }
 
 let partKeySeq = 0;
@@ -247,6 +262,34 @@ function packageWarningFor(line: DraftLine): string | null {
   return missing.length > 0 ? `Missing: ${missing.join(', ')}` : null;
 }
 
+/** AC-S1-2: an unresolved choice group prices as nothing, and the List price
+ *  cell says so rather than silently under-counting. */
+function hasOpenGroup(line: DraftLine): boolean {
+  return line.parts.some((part) => !part.product_id && part.candidates.length > 0);
+}
+
+/** RM amounts round to whole ringgit everywhere on this form (mock pricing
+ *  never produces sen). */
+function formatRM(value: number | null | undefined): string {
+  if (value == null) return '-';
+  return `RM ${value.toLocaleString('en-MY')}`;
+}
+
+/** AC-S1-8: "the cell's title reads which parts are at list" - the codes a
+ *  promotion did not cover, resolved from the line's own part rows (plus the
+ *  host itself, which a title never needs to name since the cell it sits in
+ *  already says the line is not fully covered by naming what IS missing). */
+function partsAtListTitle(
+  line: DraftLine,
+  pricing: LinePricingResult | null | undefined,
+): string | undefined {
+  if (!pricing || pricing.parts_at_list.length === 0) return undefined;
+  const codes = pricing.parts_at_list
+    .map((productId) => line.parts.find((p) => p.product_id === productId)?.code)
+    .filter((code): code is string => !!code);
+  return codes.length > 0 ? `At list price: ${codes.join(', ')}` : undefined;
+}
+
 /**
  * A new row starts empty and TYPELESS in spirit: the Item picker decides whether
  * it is a product or a set (D47), so the dealer never has to. `product` is only
@@ -269,6 +312,10 @@ function emptyDraftLine(): DraftLine {
     combos_loaded: false,
     host_guarded: false,
     parts: [],
+    promotion_id: null,
+    promotion_locked: false,
+    manual_sell_price: null,
+    pricing: null,
   };
 }
 
@@ -311,6 +358,13 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
       role: part.role,
       candidates: part.candidates ?? [],
     })),
+    // D1 (Phase 2, not wired yet): a server that already carries these wins;
+    // a pre-migration server (Phase 1) leaves them null and the line waits
+    // for `lookupLinePricing`'s auto pick like a brand new line does.
+    promotion_id: line.promotion_id ?? null,
+    promotion_locked: line.promotion_id != null,
+    manual_sell_price: line.manual_sell_price ?? null,
+    pricing: null,
   };
 }
 
@@ -424,10 +478,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   /** True once the debtor lookup has ANSWERED. An empty list before it has is
    *  just "not back yet", and must not read as "you are not linked". */
   const [debtorsLoaded, setDebtorsLoaded] = useState(false);
-  const [promotions, setPromotions] = useState<PromotionOption[]>([]);
 
   // ---- Form state ----
   const [debtorCode, setDebtorCode] = useState('');
+  // D1 (PLAN-price-tag-line-promo-combo-subject.md): the request-level
+  // promotion is retired from the UI - a promotion now lives per LINE (see
+  // `DraftLine.promotion_id`). This still rides the existing request payload
+  // field so a request created under the old flow keeps whatever it already
+  // had, but nothing on the form sets it anymore.
   const [promotionId, setPromotionId] = useState<string>('');
   // Header price mode (D5): replaces the per-line "Promo price" switch.
   // Selling requires a promotion, so clearing the promotion while Selling is
@@ -608,24 +666,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     () => debtors.find((d) => d.code === debtorCode)?.name ?? null,
     [debtors, debtorCode],
   );
-  const selectedPromotionName = useMemo(
-    () => promotions.find((p) => p.id === promotionId)?.name ?? null,
-    [promotions, promotionId],
-  );
   const fileCount = attachments.length + pendingFiles.length;
 
-  // Collapsed-header one-liners (AC-P9); empty sections show none.
+  // Collapsed-header one-liners (AC-P9); empty sections show none. D1: the
+  // summary no longer names a single promotion - each line may carry its
+  // own now.
   const sectionSummaries: Record<SectionKey, string | null> = {
     customer: selectedDebtorName,
     sales_order:
       lines.length > 0 || fileCount > 0
         ? `${lines.length} line${lines.length === 1 ? '' : 's'}, ${fileCount} file${fileCount === 1 ? '' : 's'}`
         : null,
-    price: !priceModeChosen
-      ? null
-      : priceMode === 'selling'
-        ? `Selling price${selectedPromotionName ? ` - ${selectedPromotionName}` : ''}`
-        : 'List price',
+    price: !priceModeChosen ? null : priceMode === 'selling' ? 'Selling price' : 'List price',
     need_by:
       neededByDate || notes.trim()
         ? [neededByDate || null, notes.trim() ? 'notes' : null]
@@ -664,7 +716,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setDebtorsLoaded(false);
         toast.error('Failed to load debtors');
       });
-    lookupPromotions().then(setPromotions);
+    // D1: promotions are no longer looked up for the whole request - each
+    // line asks `lookupLinePricing` for the ones that cover IT (S1 effect
+    // below).
   }, []);
 
   // ---- Load existing request ----
@@ -706,6 +760,120 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // an unrelated re-render into a refetch loop.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId]);
+
+  // ---- Line pricing, edit form (D1/D4/S1, mocked - `lookupLinePricing`'s
+  // own header documents the eventual real contract) ----
+  //
+  // One call for every priced line, keyed by the line's own client key. A
+  // set line, or a line with no product yet, asks nothing. Recomputes
+  // whenever a line's product, parts or chosen promotion change - captured
+  // as a signature string so an unrelated edit (quantity, remarks) does not
+  // refetch what would come back identical.
+  const linesRef = useRef<DraftLine[]>(lines);
+  useEffect(() => {
+    linesRef.current = lines;
+  }, [lines]);
+  const [linePricing, setLinePricing] = useState<Record<string, LinePricingResult>>({});
+  const pricingSignature = useMemo(
+    () =>
+      JSON.stringify(
+        lines.map((l) => [
+          l.key,
+          l.line_type,
+          l.product_id,
+          l.parts.map((p) => [p.product_id, p.candidates.map((c) => c.product_id)]),
+          l.promotion_id,
+        ]),
+      ),
+    [lines],
+  );
+  useEffect(() => {
+    const inputs: LinePricingLineInput[] = linesRef.current
+      .filter((l) => l.line_type === 'product' && l.product_id)
+      .map((l) => ({
+        key: l.key,
+        product_id: l.product_id,
+        part_product_ids: l.parts
+          .filter((p) => p.product_id)
+          .map((p) => p.product_id as string),
+        candidate_product_ids: l.parts.flatMap((p) =>
+          p.candidates.map((c) => c.product_id),
+        ),
+        promotion_id: l.promotion_id,
+      }));
+    if (inputs.length === 0) {
+      setLinePricing({});
+      return;
+    }
+    let cancelled = false;
+    lookupLinePricing(priceMode, inputs).then((results) => {
+      if (cancelled) return;
+      setLinePricing(Object.fromEntries(results.map((r) => [r.key, r])));
+      // D2 (AC-S1-4): pre-fill the line's promotion with the lowest-total
+      // covering one, but only once - a line the salesperson has already
+      // picked or explicitly cleared (`promotion_locked`) never gets
+      // overwritten, and a manual price already typed wins outright.
+      setLines((prev) =>
+        prev.map((l) => {
+          const result = results.find((r) => r.key === l.key);
+          if (
+            !result ||
+            l.promotion_locked ||
+            l.promotion_id ||
+            l.manual_sell_price != null ||
+            !result.auto_promotion_id
+          ) {
+            return l;
+          }
+          return { ...l, promotion_id: result.auto_promotion_id };
+        }),
+      );
+    });
+    return () => {
+      cancelled = true;
+    };
+    // `linesRef.current` is read fresh inside rather than closed over, so
+    // `lines` itself is deliberately not a dependency - `pricingSignature`
+    // already fires this whenever a pricing-relevant field changes.
+  }, [priceMode, pricingSignature]);
+
+  // ---- Line pricing, read-only view (AC-S1-10) - same mock, fed the
+  // submitted request's own lines the moment it loads. No per-line
+  // promotion is stored server-side yet (Phase 2), so every line auto-picks
+  // the way a brand new line does. ----
+  const [readLinePricing, setReadLinePricing] = useState<
+    Record<string, LinePricingResult>
+  >({});
+  useEffect(() => {
+    if (!request || request.lines.length === 0) {
+      setReadLinePricing({});
+      return;
+    }
+    const inputs: LinePricingLineInput[] = request.lines
+      .filter((l) => l.line_type === 'product' && l.product_id)
+      .map((l) => ({
+        key: l.id,
+        product_id: l.product_id,
+        part_product_ids: (l.parts ?? [])
+          .filter((p) => p.product_id)
+          .map((p) => p.product_id as string),
+        candidate_product_ids: [],
+        promotion_id: l.promotion_id ?? null,
+      }));
+    if (inputs.length === 0) {
+      setReadLinePricing({});
+      return;
+    }
+    let cancelled = false;
+    lookupLinePricing(request.price_mode ?? 'list', inputs).then((results) => {
+      if (!cancelled) {
+        setReadLinePricing(Object.fromEntries(results.map((r) => [r.key, r])));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [request]);
 
   // ---- Duplicate (D-D1): `?from=<id>` copies header fields + lines into a
   // NEW draft. Attachments stay empty (Sales Order files are not copied);
@@ -762,16 +930,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         description: d.code,
       })),
     [debtors],
-  );
-
-  // ---- Promotion options ----
-  const promotionOptions = useMemo<SearchableSelectOption[]>(
-    () =>
-      promotions.map((p) => ({
-        value: p.id,
-        label: p.name,
-      })),
-    [promotions],
   );
 
   // ---- Item options: sets and products in ONE list (D47) ----
@@ -888,6 +1046,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           combos_loaded: false,
           host_guarded: false,
           parts: [],
+          promotion_id: null,
+          promotion_locked: false,
+          manual_sell_price: null,
+          pricing: null,
         });
         addedCount += 1;
       });
@@ -1022,6 +1184,38 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     );
   }, []);
 
+  /** The line's Promotion select (AC-S1-3..S1-7). Picking one clears any
+   *  manual price (they are mutually exclusive, D2); clearing it (empty
+   *  string, `SearchableSelect`'s own clear) restores the manual input,
+   *  empty. Either way the pick is now deliberate, so future pricing
+   *  answers never auto-fill over it again. */
+  const choosePromotion = useCallback((key: string, promotionId: string) => {
+    setLines((prev) =>
+      prev.map((l) =>
+        l.key === key
+          ? {
+              ...l,
+              promotion_id: promotionId || null,
+              promotion_locked: true,
+              manual_sell_price: null,
+            }
+          : l,
+      ),
+    );
+  }, []);
+
+  /** The "Type a price" input, only shown while the line has no promotion
+   *  (AC-S1-6). Empty clears it back to nothing typed. */
+  const setManualSellPrice = useCallback((key: string, value: string) => {
+    setLines((prev) =>
+      prev.map((l) =>
+        l.key === key
+          ? { ...l, manual_sell_price: value === '' ? null : Number(value) }
+          : l,
+      ),
+    );
+  }, []);
+
   /** Staged removal (AC-S2-4): the part row is unsaved form state, not a record,
    *  so it goes on the click with no countdown and no confirm - the same way a
    *  line row already does. */
@@ -1148,6 +1342,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           combos_loaded: false,
           host_guarded: false,
           parts: [],
+          // So did any price basis - it was for the product that left.
+          promotion_id: null,
+          promotion_locked: false,
+          manual_sell_price: null,
+          pricing: null,
         });
         return;
       }
@@ -1186,6 +1385,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         combos_loaded: isSet,
         host_guarded: false,
         parts: [],
+        // A different product invalidates any promotion or manual price the
+        // old one carried - the pricing effect re-asks for the new one.
+        promotion_id: null,
+        promotion_locked: false,
+        manual_sell_price: null,
+        pricing: null,
       });
     },
     [updateLine, lines],
@@ -1824,6 +2029,50 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                             {line.remarks || '-'}
                           </td>
                         </tr>
+                        {/* AC-S1-10: List price always; Promotion + Selling
+                            price in Selling mode. Same mocked pricing the
+                            edit form reads (`readLinePricing`, keyed by
+                            line id here). */}
+                        {line.line_type === 'product' && line.product_id && (
+                          <tr className="align-top">
+                            <td colSpan={4} className="px-2 pb-2 pl-9">
+                              <div className="flex flex-wrap items-center gap-4 border-l-2 border-border pl-3">
+                                <div>
+                                  <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+                                    List price
+                                  </div>
+                                  <div className="text-sm font-medium">
+                                    {formatRM(readLinePricing[line.id]?.list_price)}
+                                  </div>
+                                </div>
+                                {(request.price_mode ?? 'list') === 'selling' && (
+                                  <>
+                                    <div>
+                                      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+                                        Promotion
+                                      </div>
+                                      <div className="text-sm font-medium">
+                                        {readLinePricing[line.id]?.promotion_options.find(
+                                          (o) =>
+                                            o.id ===
+                                            readLinePricing[line.id]?.auto_promotion_id,
+                                        )?.description ?? '-'}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+                                        Selling price
+                                      </div>
+                                      <div className="text-sm font-medium">
+                                        {formatRM(readLinePricing[line.id]?.sell_price)}
+                                      </div>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         {/* The package under the line, exactly as it was asked
                             for (AC-S2-8): the parts that go on the tag, and each
                             group still left open. */}
@@ -1893,14 +2142,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 : 'List price'}
             </p>
           </div>
-          {(request.price_mode ?? 'list') === 'selling' && (
-            <div className="space-y-1.5">
-              <Label>Promotion</Label>
-              <p className="text-sm font-medium py-2">
-                {request.promotion_name ?? '-'}
-              </p>
-            </div>
-          )}
+          {/* D1: a promotion is per LINE now (see the Lines table above) -
+              there is no single request-level promotion to name here any
+              more. */}
         </FormSection>
 
         <FormSection
@@ -2264,6 +2508,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       key={line.key}
                       line={line}
                       index={index}
+                      priceMode={priceMode}
+                      pricing={linePricing[line.key] ?? null}
                       fetchItemOptions={fetchItemOptions}
                       fetchPartOptions={fetchPartOptions}
                       onItemSelect={handleItemSelect}
@@ -2274,6 +2520,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       onRemovePart={removePart}
                       onAddPart={addPart}
                       onRestoreParts={restoreParts}
+                      onChoosePromotion={choosePromotion}
+                      onManualSellPriceChange={setManualSellPrice}
                     />
                   ))}
                 </tbody>
@@ -2294,10 +2542,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         </div>
       </FormSection>
 
-      {/* Price - mode first, promotion second (D-P2, owner ruling): Selling
-          is never disabled, and its optional Promotion picker lives here,
-          not in its own section. Choosing either mode opens Additional
-          Information (AC-P8). */}
+      {/* Price - mode only (D1/AC-S1-3, owner ruling 15 Sep): Selling is
+          never disabled; its Promotion picker moved onto each line in the
+          table above (AC-S1-3), one line can no longer share a single
+          request-level promotion with another. Choosing either mode opens
+          Additional Information (AC-P8). */}
       <FormSection
         title="Price"
         titleId="price-section-title"
@@ -2326,8 +2575,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               onClick={() => {
                 setPriceModeChosen(true);
                 setPriceMode('list');
-                // Switching to List hides Promotion and clears it (D-P2).
-                setPromotionId('');
                 // Direct call (review round 2): `setPriceMode('list')` is a
                 // no-op on a fresh form (priceMode is already 'list'), so
                 // React bails out of re-rendering and the auto-open effect
@@ -2358,20 +2605,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             </button>
           </div>
         </div>
-
-        {priceMode === 'selling' && (
-          <div className="space-y-1.5">
-            <Label htmlFor="promotion">Promotion (optional)</Label>
-            <SearchableSelect
-              id="promotion"
-              value={promotionId}
-              onChange={setPromotionId}
-              options={promotionOptions}
-              placeholder="Select a promotion (optional)..."
-              clearable
-            />
-          </div>
-        )}
       </FormSection>
 
       {/* Additional Information - Need by and Notes, both optional
@@ -2532,6 +2765,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 interface LineRowProps {
   line: DraftLine;
   index: number;
+  priceMode: PriceMode;
+  /** S1/S2: this line's latest `lookupLinePricing` answer, or null before
+   *  the first one lands (no product yet, or still in flight). */
+  pricing: LinePricingResult | null;
   fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
   fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
@@ -2542,6 +2779,20 @@ interface LineRowProps {
   onRemovePart: (key: string, partKey: string) => void;
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
   onRestoreParts: (key: string) => void;
+  onChoosePromotion: (key: string, promotionId: string) => void;
+  onManualSellPriceChange: (key: string, value: string) => void;
+}
+
+/** AC-S2-1: "CODE  RM x" - x is the candidate's price under `pricing`
+ *  (already resolved to list or offer by `lookupLinePricing`). Falls back to
+ *  the bare code while pricing has not answered yet. */
+function candidateOptionLabel(
+  candidate: LinePartCandidate,
+  pricing: LinePricingResult | null,
+): string {
+  const price = pricing?.candidates.find((c) => c.product_id === candidate.product_id);
+  const code = candidate.code || candidate.name;
+  return price ? `${code}  ${formatRM(price.sell_price)}` : code;
 }
 
 /** One part row under a line: a fixed or hand-added product, or an open group. */
@@ -2549,12 +2800,14 @@ function PartRow({
   lineKey,
   lineIndex,
   part,
+  pricing,
   onResolvePart,
   onRemovePart,
 }: {
   lineKey: string;
   lineIndex: number;
   part: DraftPart;
+  pricing: LinePricingResult | null;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
@@ -2578,7 +2831,7 @@ function PartRow({
                   onChange={(value) => onResolvePart(lineKey, part.key, value)}
                   options={part.candidates.map((candidate) => ({
                     value: candidate.product_id,
-                    label: candidate.name || candidate.code,
+                    label: candidateOptionLabel(candidate, pricing),
                     description: candidate.code,
                   }))}
                   placeholder={`Not sure, any of ${part.candidates.length}`}
@@ -2625,6 +2878,8 @@ function PartRow({
 function LineRow({
   line,
   index,
+  priceMode,
+  pricing,
   fetchItemOptions,
   fetchPartOptions,
   onItemSelect,
@@ -2635,6 +2890,8 @@ function LineRow({
   onRemovePart,
   onAddPart,
   onRestoreParts,
+  onChoosePromotion,
+  onManualSellPriceChange,
 }: LineRowProps) {
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
@@ -2654,6 +2911,21 @@ function LineRow({
         description: `${isSet ? 'Set' : 'Product'}${line.code ? ` - ${line.code}` : ''}`,
       }
     : undefined;
+
+  // ---- S1/S2: price cells (product lines only - a set is priced whole,
+  // no combo/promotion concept applies to it). ----
+  const showPricing = !isSet && !!line.product_id;
+  const promotionOptions: SearchableSelectOption[] = (pricing?.promotion_options ?? []).map(
+    (option) => ({
+      value: option.id,
+      label: `${option.description} - ${formatRM(option.sell_price)}`,
+    }),
+  );
+  // The last open (unresolved) part row - AC-S2-3's copy sits under it,
+  // once per line.
+  const lastOpenPartKey = [...line.parts]
+    .reverse()
+    .find((part) => !part.product_id && part.candidates.length > 1)?.key;
 
   return (
     <>
@@ -2721,6 +2993,81 @@ function LineRow({
           </td>
         </tr>
       )}
+      {/* S1: List price always; Promotion + Selling price in Selling mode
+          only (AC-S1-1/S1-3). A block under the Item cell, not extra table
+          columns, so it wraps under the item at 375px instead of widening
+          the fixed-layout table (AC-S1-11). */}
+      {showPricing && (
+        <tr className="align-top">
+          <td colSpan={5} className="px-2 pb-2 pl-9">
+            <div className="flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
+              <div className="min-w-[110px]">
+                <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+                  List price
+                </div>
+                <div className="text-sm font-medium">
+                  {formatRM(pricing?.list_price)}
+                  {hasOpenGroup(line) ? (
+                    <span className="ml-1 text-xs text-muted-foreground">
+                      + option
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              {priceMode === 'selling' && (
+                <>
+                  <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
+                    <Label
+                      className="text-2xs uppercase tracking-wide text-muted-foreground"
+                      htmlFor={`promotion-${line.key}`}
+                    >
+                      Promotion
+                    </Label>
+                    <SearchableSelect
+                      id={`promotion-${line.key}`}
+                      clearable
+                      truncateTriggerLabel
+                      value={line.promotion_id ?? ''}
+                      onChange={(value) => onChoosePromotion(line.key, value)}
+                      options={promotionOptions}
+                      placeholder="No covering promotion"
+                      emptyMessage="No promotion covers this line."
+                      size="sm"
+                    />
+                  </div>
+                  <div className="min-w-[110px]">
+                    <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+                      Selling price
+                    </div>
+                    {line.promotion_id ? (
+                      <div
+                        className="text-sm font-medium"
+                        title={partsAtListTitle(line, pricing)}
+                      >
+                        {formatRM(pricing?.sell_price)}
+                      </div>
+                    ) : (
+                      <Input
+                        type="number"
+                        inputMode="decimal"
+                        min={0}
+                        variant="sm"
+                        className="w-28"
+                        value={line.manual_sell_price ?? ''}
+                        onChange={(e) =>
+                          onManualSellPriceChange(line.key, e.target.value)
+                        }
+                        placeholder="Type a price"
+                        aria-label={`Selling price for line ${index + 1}`}
+                      />
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
       {showPackage && (
         <tr className="align-top">
           <td colSpan={5} className="px-2 pb-2 pl-9">
@@ -2743,14 +3090,26 @@ function LineRow({
         </tr>
       )}
       {line.parts.map((part) => (
-        <PartRow
-          key={part.key}
-          lineKey={line.key}
-          lineIndex={index}
-          part={part}
-          onResolvePart={onResolvePart}
-          onRemovePart={onRemovePart}
-        />
+        <Fragment key={part.key}>
+          <PartRow
+            lineKey={line.key}
+            lineIndex={index}
+            part={part}
+            pricing={pricing}
+            onResolvePart={onResolvePart}
+            onRemovePart={onRemovePart}
+          />
+          {/* AC-S2-3: once per line, under the LAST unresolved row. */}
+          {part.key === lastOpenPartKey && (
+            <tr>
+              <td colSpan={5} className="px-2 pb-2 pl-9">
+                <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
+                  Marketing will prepare one tag per option.
+                </p>
+              </td>
+            </tr>
+          )}
+        </Fragment>
       ))}
       {showParts && (
         <tr className="align-top">
