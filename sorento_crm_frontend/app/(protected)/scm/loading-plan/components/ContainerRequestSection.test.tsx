@@ -588,6 +588,8 @@ describe('ContainerRequestSection - the grid', () => {
   });
 
   it('the formula tooltip explains the ENGINE figure, not the typed one', () => {
+    // S3 review round: the hover sits on the Suggested qty cell (the one showing engine_qty),
+    // never on the Requested qty input beside it.
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [row({ suggested_qty: 25, engine_qty: 10 })],
@@ -595,7 +597,10 @@ describe('ContainerRequestSection - the grid', () => {
     };
     renderSection();
 
-    expect(screen.getByDisplayValue('25').getAttribute('title')).toContain('= 10');
+    const bodyRow = screen.getByRole('button', { name: /ITEM-1/ }).closest('tr') as HTMLElement;
+    const suggestedCell = within(bodyRow).getAllByRole('cell')[2];
+    expect(within(suggestedCell).getByText('10').getAttribute('title')).toContain('= 10');
+    expect(screen.getByDisplayValue('25').getAttribute('title')).toBeNull();
   });
 
   it('a set row wears a Set badge and names the member its figures come from (AC-F12.3)', () => {
@@ -731,6 +736,10 @@ describe('ContainerRequestSection - one grid, no fold (S2, AC-F1..AC-F5)', () =>
     const rankCell = within(heldRow).getAllByRole('cell')[0];
     // Blank rank: a dash, no number, and none of the rank-factors affordance a ranked row has.
     expect(rankCell.textContent?.trim()).toBe('-');
+
+    // The Suggested qty cell carries the same muting - the split (S3) must not lose it.
+    const suggestedCell = within(heldRow).getAllByRole('cell')[2];
+    expect(within(suggestedCell).getByText('10')).toHaveClass('text-muted-foreground/60');
   });
 
   it('counts the ranked and the held rows together in the pager (AC-F3)', () => {

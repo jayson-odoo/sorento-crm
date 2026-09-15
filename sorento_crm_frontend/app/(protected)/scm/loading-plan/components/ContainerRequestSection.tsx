@@ -128,6 +128,19 @@ export function holdingSortValue(row: ContainerRequestRow): number {
 }
 
 /**
+ * The netting rule with this row's own numbers in it (F2): what `engine_qty` IS, on the cell
+ * that shows it - "= <engine_qty>" is the last term in the string, on the Suggested qty cell,
+ * never on the Requested qty input beside it (review round, S3: the hover explains the ENGINE
+ * figure, and only the read-only cell shows that figure).
+ */
+function engineQtyFormulaTitle(row: ContainerRequestRow): string {
+  // R6: the fourth term, mocked off `incoming_pl` until Phase 2 sends the real figure (the
+  // part of it not yet turned into an SPO).
+  const incomingPlUnallocated = row.incoming_pl_unallocated ?? row.incoming_pl;
+  return `${fmtInt(row.open_so_need)} need - ${fmtInt(row.on_hand)} on hand - ${fmtInt(row.incoming_spo)} incoming SPO - ${fmtInt(incomingPlUnallocated)} incoming PL (not yet on an SPO) = ${fmtInt(row.engine_qty)}`;
+}
+
+/**
  * Whether the Product cell's subtitle says something the code does not (AC-N1). Most of this
  * supplier's rows carry a `product_name` equal to their own `item_code`, so printing it again
  * underneath reads as a defect, not a fact - same rule as the order-inquiry worklist
@@ -307,8 +320,8 @@ export function ContainerRequestSection({
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [view, setView] = useState<'table' | 'schedule'>('table');
-  // AC-N3: client-side, every row is already on the client. Filters the ranked table, the
-  // folded rows and the Schedule view alike; the stat cards and Save (N) read `rows` unfiltered.
+  // AC-N3: client-side, every row is already on the client. Filters the grid and the Schedule
+  // view alike; the stat cards and Save (N) read `rows` unfiltered.
   const [searchQuery, setSearchQuery] = useState('');
   const [matrixAxis, setMatrixAxis] = useState<ContainerRequestMatrixAxis>('product');
   const [matrixGranularity, setMatrixGranularity] =
@@ -404,24 +417,14 @@ export function ContainerRequestSection({
   // see and change her mind about it, it just does not go on the document.
   //
   // AC-Q4: a cancelled plan is a record of what was asked, not a form - there is no input left
-  // to disable, so it renders as plain text instead. Same formula title either way: the
-  // number reads differently, the reasoning behind it does not.
+  // to disable, so it renders as plain text instead. No formula title here either way (review
+  // round, S3): the hover that explains the arithmetic belongs on the Suggested qty cell that
+  // shows `engine_qty`, not on this one's typed override.
   const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
     const original = ctx.row.original;
-    // R6: the fourth term, mocked off `incoming_pl` until Phase 2 sends the real figure
-    // (the part of it not yet turned into an SPO).
-    const incomingPlUnallocated = original.incoming_pl_unallocated ?? original.incoming_pl;
     const value = qtyForRef.current(original);
-    // The netting rule with this row's own numbers in it (F2): what the figure IS, on the
-    // figure, so nobody has to remember whether the packing list was subtracted. `engine_qty`,
-    // never the edited figure: it is the formula's own answer.
-    const title = `${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO - ${fmtInt(incomingPlUnallocated)} incoming PL (not yet on an SPO) = ${fmtInt(original.engine_qty)}`;
     if (readOnlyRef.current) {
-      return (
-        <span className="tabular-nums" title={title}>
-          {fmtInt(value)}
-        </span>
-      );
+      return <span className="tabular-nums">{fmtInt(value)}</span>;
     }
     return (
       <Input
@@ -429,7 +432,6 @@ export function ContainerRequestSection({
         min={0}
         className="h-8 w-24 tabular-nums"
         value={value}
-        title={title}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           onQtyChangeRef.current(original.row_key, next);
@@ -589,7 +591,10 @@ export function ContainerRequestSection({
           const original = row.original;
           const muted = original.has_demand === false;
           return (
-            <span className={cn('tabular-nums', muted && 'text-muted-foreground/60')}>
+            <span
+              className={cn('tabular-nums', muted && 'text-muted-foreground/60')}
+              title={engineQtyFormulaTitle(original)}
+            >
               {fmtInt(original.engine_qty)}
             </span>
           );

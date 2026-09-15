@@ -154,6 +154,26 @@ def test_ac_m5_a_rows_own_value_outside_the_merge_is_never_overwritten():
     assert own.cbm_per_unit == 0.05
 
 
+def test_ac_m5b_a_merge_anchored_on_the_header_never_fills():
+    # Reviewer's finding: a 品名 HEADER cell merged down into its own column's first data rows
+    # anchors the merge on the header row itself. Filling from it would stamp the literal
+    # caption "品名" into every covered data row instead of leaving them with no text - the
+    # header is never a model's own value.
+    data = merged_workbook(
+        [
+            ["型号", "品名", "包装好库存"],
+            ["SRTWB501", None, 10],
+            ["SRTWB502", None, 20],
+        ],
+        merges=["B1:B3"],
+    )
+
+    out = read_workbook(data, resolver())
+
+    family = [by_code(out.rows, c) for c in ("SRTWB501", "SRTWB502")]
+    assert [r.product_name for r in family] == [None, None]
+
+
 def test_ac_m6_an_unmerged_sheet_parses_exactly_as_before():
     # A merge exists elsewhere in the sheet (the title spans the header width, as every real
     # stock list does) but none of the three data rows are merged, so each keeps its own text.
