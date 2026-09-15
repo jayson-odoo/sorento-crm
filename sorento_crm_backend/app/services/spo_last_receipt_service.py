@@ -281,10 +281,14 @@ def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
     same `visible_line_clauses()` (a retired, never-received line still cannot answer; a
     retired line WITH a receipt can - #753), same explicit company predicate on
     `SPOAllocation` (`.subquery()` loses the session's `with_loader_criteria` listener, the
-    module docstring's own reason). `qty` is `allocated_quantity` - the SPO's OWN ordered
-    quantity, the figure the MCP row itself prints as "SPO quantity" - never
-    `quantity_received`: the owner's ruling surfaces an unreceived line too, and reading
-    "received if any else ordered" would hide which one a cell states.
+    module docstring's own reason), PLUS a join to `Product` so that listener also scopes
+    the PRODUCT - a caller can name a `product_id` outside the scope, and the line's own
+    `company_id` matching the scope is not enough on its own (measured: a Mocha product
+    with a Sorento-owned line leaked through under a Sorento scope until this join was
+    added). `qty` is `allocated_quantity` - the SPO's OWN ordered quantity, the figure the
+    MCP row itself prints as "SPO quantity" - never `quantity_received`: the owner's
+    ruling surfaces an unreceived line too, and reading "received if any else ordered"
+    would hide which one a cell states.
     """
     if not product_ids:
         return {}
@@ -324,6 +328,15 @@ def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
             sub.c.allocated_quantity,
             sub.c.spo_date,
         )
+        # JOIN `Product` even though none of its columns are selected: the explicit
+        # predicate above scopes the LINE, but a caller can pass a product_id outside the
+        # scope (a product belonging to another company) and the line's own company_id can
+        # still match - measured, `test_last_receipt_map_company_scoped`'s positive-scope
+        # case leaked a Mocha product's Sorento-owned line under a Sorento scope. Naming
+        # `Product` as an entity here lets the session's `do_orm_execute` listener inject
+        # its OWN `with_loader_criteria(Product, ...)`, the same way `last_receipt_rows`'s
+        # per-product branch gets it for free by selecting Product columns.
+        .join(Product, Product.id == sub.c.product_id)
         .filter(sub.c.rn == 1)
         .all()
     )
