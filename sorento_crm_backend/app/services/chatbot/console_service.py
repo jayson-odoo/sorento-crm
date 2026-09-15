@@ -105,13 +105,25 @@ class ConsoleTurnResult:
 
 
 def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
-    """The contact's most recent stored envelope, as the shape to borrow.
+    """The contact's most recent REAL INBOUND envelope, as the shape to borrow.
 
     Raises rather than inventing one: a hand-built envelope missing a field the engine
     reads at `received` fails there, and a console whose failures are its own bug is worse
     than no console. The phone is filled in from `respond_contacts` when the borrowed
     envelope carries none, the same backfill `chatbot_console_check.py::_base_envelope`
     does - the escalation lane's assignee read is a 400 without it.
+
+    **Only a `webhook` ingress row that is not a test.** A console turn stores its OWN
+    envelope back onto `chatbot.turns`, so borrowing "the newest row of any kind" makes
+    the console borrow from itself: one hand-built or in-process envelope with a thin
+    `contact` block poisons every console turn for that contact afterwards, and the
+    fields it is missing are read as ABSENT rather than as never-recorded. Measured on
+    the hand-pass clone (16 Sep 2026): an in-process smoke turn wrote
+    `contact.custom_fields: []`, so `engine._stock_check_denied` read `is_allowed_stock`
+    as missing on every console turn since and "check stock srtwc286" answered with the
+    demand-quantity ask instead of the stock. Contract 61/62 is right; what was wrong is
+    that the console was replaying a synthetic envelope as if respond.io had sent it.
+    The last real inbound envelope for that contact carries the field.
 
     **Through the ORM model, not raw SQL naming the `chatbot` schema.** A schema-qualified
     `FROM chatbot.turns` bypasses `search_path` entirely, so under a test's translated
@@ -122,7 +134,12 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     """
     row = (
         db.query(ChatbotTurn)
-        .filter(ChatbotTurn.contact_respond_id == str(contact_respond_id), ChatbotTurn.envelope.isnot(None))
+        .filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.envelope.isnot(None),
+            ChatbotTurn.ingress == "webhook",
+            ChatbotTurn.is_test.is_(False),
+        )
         .order_by(ChatbotTurn.created_at.desc())
         .first()
     )
