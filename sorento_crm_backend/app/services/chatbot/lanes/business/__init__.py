@@ -1377,6 +1377,15 @@ def complete_answer(
     entities_names = aggregate.get("name") if aggregate is not None else None
 
     fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
+    # THE OFFER THIS TURN PRINTED, recorded by whoever printed it (owner ruling, 15 Sep
+    # 2026, review S-1 / S-2). One recorder per turn, handed to each composer that can
+    # print the escalate sentence; the composers write the team into it at the point they
+    # print it (`answer._offering`) and nothing is added to their own node outputs, so no
+    # capture moves. The tail reads it off this fragment and records the offer from it -
+    # never from the composed text, where a customer's echoed token is indistinguishable
+    # from the bot's own promise.
+    offer_rec: dict[str, Any] = {}
+    fragments["escalate_offer"] = offer_rec
     lane_item: dict[str, Any]
 
     # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a
@@ -1473,6 +1482,7 @@ def complete_answer(
             # (`has_result is False`). Omitting it left `build_result` at `None` and the
             # gate short-circuited, so a partially-typed variant code never got its
             # sibling-family offer even though every other condition held.
+            offer_rec=offer_rec,
             build_result={"has_result": False},
         )
 
@@ -1488,7 +1498,7 @@ def complete_answer(
             not_allowed_check_stock=bool(payload.get("not_allowed_check_stock")),
         )
         promo = answer_mod.promo_picker(
-            validated, parser=parser, resolved=resolved, gate=gate
+            validated, parser=parser, resolved=resolved, gate=gate, offer_rec=offer_rec
         )
         # n8n feeds `crossdomain-zeroset` the PROMO-PICKER's output; this feeds it the
         # VALIDATOR item. Equivalent only because `promo_picker` returns its input
@@ -1568,6 +1578,7 @@ def complete_answer(
                 answer_mod=answer_mod,
                 dry_run=dry_run,
                 build_result=result_item.get("result"),
+                offer_rec=offer_rec,
             )
 
     # The row was closed `delegated` at `routed` by the caller before this function ran
@@ -1687,6 +1698,7 @@ def _run_miss_half(
     answer_mod: Any,
     dry_run: bool,
     build_result: Any = None,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`not-found-error-message` -> `sub-miss-suggest` -> `build-suggest-offer` ->
     `tag-not-found`.
@@ -1697,7 +1709,7 @@ def _run_miss_half(
     the composer's own output untagged, so what the tail grades is unchanged.
     """
     not_found = answer_mod.not_found_error_message(
-        payload, parser=parser, resolved=resolved, gate=gate
+        payload, parser=parser, resolved=resolved, gate=gate, offer_rec=offer_rec
     )
     fragments["not_found"] = not_found
 
@@ -1712,6 +1724,7 @@ def _run_miss_half(
         space_id=space_id,
         execution_id=execution_id,
         dry_run=dry_run,
+        offer_rec=offer_rec,
     )
     fragments["suggest_offer"] = offer
     return {**offer, "branch_kind": "not_found"}

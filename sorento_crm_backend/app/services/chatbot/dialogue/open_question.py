@@ -110,6 +110,18 @@ KIND_SPEC: dict[str, dict[str, Any]] = {
 # assigns a human to somebody who already declined (`tail/compile_state._picker_carry`).
 ROSTER_KINDS = ("product_pick", "customer_pick", "tier_pick")
 
+# The kinds this module ARMS but does not RESOLVE (see `KIND_SPEC` above): a turn taken
+# under one of them has three readings - answered, refined, walked away from - that a pick
+# handler has no vocabulary for, so `head/output_exchange._apply_outstanding_pending`
+# reads the position instead and maps it to a SCOPE. Named here rather than repeated at
+# each reader, because "who resolves this kind" is a fact about the kind.
+#
+# Their rows are MENU LABELS ("Sales orders", "Both", "Delivery order list"), not tokens,
+# which is the second thing every reader has to know: minting an entity out of one sent
+# "Delivery order list" to the resolver, where "list" matched six SPECIA-LIST customers
+# and the report re-ran over companies nobody had named (R-B, then R-M on the other arm).
+HEAD_RESOLVED_KINDS = ("outstanding_scope", "outstanding_detail")
+
 
 # The three legacy JOIN MAPS are gone with `from_state` (L1-S3d step 4):
 # `KIND_BY_SELECTION_CONTEXT`, `KIND_BY_PENDING_KIND` and `SELECTION_CONTEXT_BY_KIND`
@@ -287,34 +299,41 @@ _ESCALATE_TEAM_RE = re.compile(
 
 
 def team_from_reply(reply_text: Any) -> str | None:
-    """The team THE CUSTOMER WAS PROMISED, read off the sentence they will read.
+    """The team a reply's offering sentence NAMES - the PARITY reader, not the source.
 
-    ONE SOURCE for one fact (owner ruling, 15 Sep 2026). The printed sentence and the
-    recorded offer used to come from different places - the text from `roster_plan[0].team`
-    / `qf.routing.suggested_team` in `_miss_company_routing`, the record from
-    `_escalation_team`, which prefers `gate.company_team` - so a reply could promise one
-    team while the stored offer routed to another (security review, same day). Reading the
-    team back off the final text makes that impossible: whatever was said IS what a yes
-    assigns.
+    **Not the source any more** (owner ruling, 15 Sep 2026, review S-1 / S-2). It was: the
+    printed sentence and the recorded offer used to be derived separately - the text from
+    `roster_plan[0].team` / `qf.routing.suggested_team` in `_miss_company_routing`, the
+    record from `_escalation_team`, which prefers `gate.company_team` - so a reply could
+    promise one team while the stored offer routed to another, and reading the team back
+    off the final text closed that gap. Then the text turned out to be unreadable as a
+    source at all: the customer's own token is echoed into the same reply by `raw_of_tok`
+    and `_partial_dym_block`, it can carry the whole offering clause ("would you like me to
+    escalate to purchasing team."), and it lands either side of the bot's own sentence - so
+    neither the first nor the last "escalate to" in the text is reliably the promise. The
+    offer is now recorded by the composer that PRINTS it (`answer._offering`, the two miss
+    arms' `turn_state["offer_team"]`, `crossdomain_compose`'s own offer), and this function
+    is what the tests compare printed against recorded with.
 
-    This parses the BOT's own frozen sentence, never the customer's words, so it is not the
+    **Echo-only safety no longer rests on this returning None** (S-3). It returns None for
+    an echo that never reduces to a catalogue team, and it does NOT for an echo that quotes
+    a real team back (one of the three measured tokens did, two did not). What makes an
+    echo harmless is that nothing is recorded unless a composer says it printed an offer -
+    by construction, not by this reader's luck.
+
+    It parses the BOT's own frozen sentence, never the customer's words, so it is not the
     word-list-over-customer-text D11 forbids. Display form is `_prettyTeam`'s (underscores
     to spaces) so the reverse is spaces to underscores, and a COMPANY may sit in front of
     the team ("escalate to Mocha warehouse team?"), so leading words are dropped one at a
     time until what remains is a real catalogue team. No company list, and nothing invented:
     an unmatched phrase returns None.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     text = jsc.js_string(reply_text or "")
-    # THE LAST MATCH, not the first (final review B-1, 15 Sep 2026). Anchoring on the
-    # offering clause was not enough: a customer's token can BE that clause - measured end
-    # to end with `or 'yes' to escalate to warehouse.` and `would you like me to escalate to
-    # purchasing team.`, echoed by `compile_state`'s and `answer.py`'s `raw_of_tok` ABOVE
-    # the real offer - and the first match is then the echo, so the reply promised customer
-    # service while the question recorded warehouse. Every composer appends its offering
-    # clause at the END, so the last span that reduces to a catalogue team is the promise;
-    # a reply that only echoes has no such span after it and returns None.
+    # THE LAST MATCH, not the first. Every composer appends its offering clause at the END,
+    # so where a reply carries both an echoed token and the bot's own sentence the last span
+    # that reduces to a catalogue team is the bot's. Measured on three live tokens
+    # (`escalate to purchasing.`, `or 'yes' to escalate to warehouse.`, `would you like me
+    # to escalate to purchasing team.`) quoted back above a real customer-service offer.
     match = None
     for candidate in _ESCALATE_TEAM_RE.finditer(text):
         if _catalogue_team(candidate.group("team")) is not None:
@@ -351,10 +370,10 @@ def _catalogue_team(span: Any) -> str | None:
 def record_offer(
     question: Any,
     *,
-    reply_text: Any,
     turn_no: int,
+    team: Any = None,
+    reply_text: Any = None,
     domain: Any = None,
-    fallback_team: Any = None,
 ) -> Any:
     """THE escalate offer, recorded on whatever question the turn leaves open. ONE RULE,
     ONE IMPLEMENTATION (owner ruling, 15 Sep 2026: "our fix needs to be general and not
@@ -383,8 +402,20 @@ def record_offer(
     the plain one-team yes/no (D5); and any OTHER question the turn armed is left exactly as
     it is, because a team clarify, a company clarify or a member offer is already what the
     customer is being asked and the escalate yes/no has nothing to add to it.
+
+    **`team` IS THE SOURCE, and it comes from whoever PRINTED the sentence** (owner ruling,
+    15 Sep 2026, review S-1 / S-2). It used to be read back out of `reply_text`, which
+    cannot be done safely: the customer's own token is echoed into the same reply
+    (`raw_of_tok`, `_partial_dym_block`) and lands either side of the bot's sentence, so
+    neither the first nor the last "escalate to" in the text is reliably the promise.
+    `team_from_reply` survives as the PARITY reader the tests compare printed against
+    recorded with, and `reply_text` here is the direct-unit-call shape that uses it; no
+    production caller passes it, and there is deliberately no text fallback for one that
+    forgets the team - a composer that prints without recording un-arms its own offer,
+    which is what the per-composer parity tests exist to catch loudly.
     """
-    team = team_from_reply(reply_text) or fallback_team
+    if not jsc.truthy(team):
+        team = team_from_reply(reply_text)
     if not jsc.truthy(team):
         return question
     if isinstance(question, dict) and question.get("kind") and question.get("kind") not in ROSTER_KINDS:

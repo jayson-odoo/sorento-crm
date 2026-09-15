@@ -253,7 +253,7 @@ console.
   under Cross-domain, and the Focus panel lists `domains` in order. Evidence: agent-browser
   run over a fan-out console turn.
 
-## Owner merge test, 15 Sep 2026 (AC-1060 to AC-1068)
+## Owner merge test, 15 Sep 2026 (AC-1060 to AC-1070)
 
 Added after the owner's console pass on the merged head (`d4ae8203b`), which found six
 defects at the pick seam and one pre-existing arm. The plan's "Found during owner merge
@@ -328,8 +328,13 @@ test" table carries the diagnosis; these are the independently-verifiable criter
   the rows come off the question, the same frozen list the position is resolved against -
   and the line is ADDITIVE: the block the promoted prompt already reads does not move.
   The same turn records `understood.facts.open_question_options`, so "it was never told"
-  and "it was told and did not take it" stay separable. Evidence: turns ab73f52b /
-  8440c1ff / 3fd0d37c, the per-kind block reds, and the v1 parity test.
+  and "it was told and did not take it" stay separable. A question carrying a riding
+  escalate offer is STILL that question: it keeps its rows, and the `Pending:` line names
+  the roster rather than the yes/no on it (D19 rule 3 - a number re-picks, a yes answers
+  the offer), which is what the second round of this criterion was about. A plain one-team
+  offer numbers nothing and sends no rows. Evidence: turns ab73f52b / 8440c1ff / 3fd0d37c
+  and 34000918, the per-kind block reds over 0, 1 and 2 casual turns with an offer riding,
+  and the v1 parity test.
 - AC-1068 [T] A RE-PROMPT KEEPS ITS FROZEN OPTIONS AND ITS RECORDED TEAM. When a turn asks
   the question that is already open again - any kind, expecting the same answer - the rows
   the customer was shown and the team they were promised survive it: the re-prompt derives
@@ -340,6 +345,31 @@ test" table carries the diagnosis; these are the independently-verifiable criter
   and a "yes" would have gone to the wrong team. The clock does not restart either. A live
   question with no rows still re-prompts with none. Evidence: the sticky-roster reds over
   0, 1 and 2 intervening casual turns, on every kind.
+
+- AC-1069 [T] A POSITION IS READ BY WHOEVER OWNS THE QUESTION, AND ONLY ONCE. Under a
+  question the HEAD resolves - the outstanding report's scope and detail asks, which have
+  no handler in `dialogue/open_question.resolve` by design - a position is mapped to a
+  SCOPE and never converted into an entity: those rows are menu labels ("Sales orders",
+  "Delivery order list"), and minting one into the turn's entities sent it to the resolver,
+  where "list" matched every SPECIALIST customer and the report re-ran over companies
+  nobody had named. What a turn taken under one of those questions MEANS is decided by what
+  the message NAMES, never by a position the model volunteered beside it: a message naming
+  only axes this report can never take as its subject is the refinement it looks like; a
+  pick that lands on a row still answers, with any off-subject filter the same message
+  named overlaid ("2 in 2026", "2, only BRW"); and a subject-capable entity is a new ask.
+  Evidence: live turn 0b610e47, the four parametrized R-M reds, and
+  `TestScopeAnswerRunsReportWithCarriedFilters`.
+- AC-1070 [T] WHOEVER PRINTS THE OFFER SENTENCE RECORDS THE OFFER. Every composer that
+  appends "Would you like me to escalate to <team> team?" (or the lower-case and
+  "or 'yes' to escalate to X." variants) records the team where it prints it, and the
+  recorded offer is what a "yes" routes against - so the promise and the record cannot
+  differ, and a reply that also quotes the customer's own words back cannot be misread as
+  promising what they typed. This has to be the composer and not the text: an ANSWERED turn
+  prints the sentence with no branch flag set (a partial-promo or entitlement miss), and the
+  echoed token lands either side of the bot's own sentence. There is NO text fallback: a
+  composer that prints without recording un-arms its own offer, which is what the
+  per-composer parity guards exist to catch. Evidence: one guard per top-level composer
+  (printed == recorded, and a "yes" routes there), plus the eight arms of AC-1066.
 
 ## Supersession map (growth-r1 section D)
 

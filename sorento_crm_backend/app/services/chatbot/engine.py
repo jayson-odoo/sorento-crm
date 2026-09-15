@@ -440,14 +440,25 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
     gets that its next message is an answer to something.
     """
     question = variables.get("open_question")
-    # AN OFFER ON THE SCREEN IS WHAT THE BOT IS WAITING FOR (D19 rule 3, S6 review nit).
-    # A roster carrying an escalate offer keeps the ROSTER's kind, because the rows are
-    # still the rows; but this line is the only open-question signal a v1 / v2 prompt is
-    # given, and on that turn the thing the customer is most likely answering is the yes/no
-    # question the reply ended with. Naming the roster there would tell the model "a pick
-    # is expected" about a message that is about to say "yes".
-    if jsc.truthy(jsc.get(jsc.get(question, "payload"), "offer")):
-        return "team_pick"
+    # THE QUESTION THAT IS OPEN, WHATEVER RIDES ON IT (owner ruling, 15 Sep 2026, after the
+    # live smoke on 6584eb6e7). This used to answer `team_pick` for any question carrying a
+    # `payload.offer`, on the reasoning that a merged turn is most likely about to be
+    # answered "yes" - and it cost both halves of the line at once. Turn 34000918: the
+    # customer typed "10" over a live ten-row roster carrying a purchasing offer, the block
+    # said `Pending: the assistant is waiting for a team_pick reply.`, `_pending_options`
+    # read that same word against `_OPTION_PENDING_KINDS` and sent no rows, and the model
+    # came back `message_type: casual`, `reference_positions: []`, quoting the label back at
+    # us in its own `user_goal`: "trying to reply with a bare number while a team pick is
+    # pending". The one turn of that chain whose question had NO riding offer (7e14db69) is
+    # the one turn that was shown its ten rows.
+    #
+    # D19 rule 3 already rules what a merged question IS: the roster keeps its kind, its
+    # rows and its clock, and the offer only adds a yes and a no. `expects:
+    # pick_or_yes_no` is where "a yes is also acceptable" lives, and the v1 yes/no bridge
+    # reads the parser's own flags (`escalation.is_escalation_confirmation`,
+    # `is_affirmative`) rather than this label - so naming the offer here was a second,
+    # contrary answer to "which question is open", which is the two-sources defect this
+    # lane exists to end. A PLAIN offer still names itself: its kind IS `team_pick`.
     kind = jsc.get(question, "kind")
     return str(kind) if kind else None
 
@@ -3353,6 +3364,10 @@ FRAGMENT_FIELDS: tuple[str, ...] = (
     "crossdomain_render",
     "answer",
     "clarify",
+    # THE OFFER THIS TURN PRINTED, recorded by the composer that printed it (S-1, 15 Sep
+    # 2026). A fragment rather than a key on a composer's own output, so no graded node
+    # output moves; the tail reads the team off it instead of out of the reply text.
+    "escalate_offer",
 )
 
 
@@ -3634,6 +3649,7 @@ def _arm_cross_domain_offer(
     ctx: Mapping[str, Any],
     domain: Any,
     offer_open: bool = False,
+    offer_team: Any = None,
 ) -> None:
     """THE escalate offer, recorded as part of the ONE open question - every arm, one writer
     (owner ruling, 15 Sep 2026: "our fix needs to be general and not targeted to 1 scenario
@@ -3702,10 +3718,14 @@ def _arm_cross_domain_offer(
     if not offer_open and not jsc.truthy(jsc.get(offer, "team")):
         return
 
-    # THE PRINTED SENTENCE FIRST, because it is the promise the customer read (one source,
-    # see `open_question.team_from_reply`). `offer.team` is `crossdomain_compose`'s own and stays
-    # as the fallback for a composer that names a team the phrase does not spell out.
-    team = open_question_mod.team_from_reply(jsc.get(sealed, "text")) or jsc.get(offer, "team")
+    # THE TEAM COMES FROM WHOEVER PRINTED THE SENTENCE (owner ruling, 15 Sep 2026, review
+    # S-1 / S-2), and never from the text. `crossdomain_compose` appends its own sentence
+    # after the tail compiled, so when it did, `offer.team` is the printer's own record and
+    # the last sentence in the reply is its; otherwise the tail compiled the offer and
+    # `offer_team` carries what ITS composer printed. Reading the text cannot tell either
+    # from the customer's echoed token, which can land on both sides of the bot's own
+    # sentence (`raw_of_tok`, `_partial_dym_block`) - measured on three live tokens.
+    team = jsc.get(offer, "team") or offer_team
     if not jsc.truthy(team):
         return
     turn_no = int(jsc.js_number(jsc.get(parse, "_turn_no")) or 0)
@@ -3723,8 +3743,7 @@ def _arm_cross_domain_offer(
     if base is None and _is_a_roster(previous):
         base = previous
     question = open_question_mod.record_offer(
-        base, reply_text=sealed.get("text"), turn_no=turn_no, domain=domain,
-        fallback_team=team,
+        base, turn_no=turn_no, domain=domain, team=team,
     )
     if question is None or question is base:
         return
@@ -3836,9 +3855,20 @@ def run_tail(
         offer_out=xd_offer,
     )
     sealed = composed.get("reply") or {}
+    # WHAT THE LANE'S OWN COMPOSER PRINTED (owner ruling, 15 Sep 2026, review S-1):
+    # `answer.py`'s arms record the team where they print the sentence (`_offering`), and
+    # the record rides the fragment rather than any node's output, so no capture moves.
+    # It is applied HERE because this is the one arm that sees the FINAL reply and runs on
+    # every turn - including the ANSWERED turns whose printed offer no branch flag knows
+    # about, which is exactly the hole: a partial-promo or entitlement-miss reply ended
+    # with "Would you like me to escalate to X team?" while `offer_open` was false and
+    # `crossdomain_compose` had appended nothing, so the offer was never recorded and the
+    # customer's next "yes" resolved nothing (R-I's class, found by the reviewer).
+    declared_team = jsc.get(values["escalate_offer"], "team")
     _arm_cross_domain_offer(
         sealed, xd_offer, ctx=ctx, domain=compiled.answered_domain,
-        offer_open=bool(compiled.offer_open),
+        offer_open=bool(compiled.offer_open) or jsc.truthy(declared_team),
+        offer_team=declared_team or compiled.offer_team,
     )
     # A lane may have composed quick replies of its own before the tail ran: the
     # escalation clarifies name the teams so the answer is a tap, and the tail composes no

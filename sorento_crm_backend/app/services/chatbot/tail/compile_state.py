@@ -71,6 +71,9 @@ class CompiledState:
     item: dict[str, Any]
     answered_domain: str | None = None
     offer_open: bool = False
+    # WHO the offer this turn printed was for, from the composer that printed it (S-1).
+    # The engine's post-compose arm records the offer from this rather than from the text.
+    offer_team: Any = None
     # The rows `sub-sendmsg` renders (AC-207). A per-turn OUTPUT, not memory: the five-key
     # session does not carry them and the sender must still get them (L1-S3).
     result_set: Any = None
@@ -244,14 +247,15 @@ def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
     shape of this test and it missed the case the owner hit on 13 Sep, where the rows it
     brought were THIS TURN'S ANSWER (see `_re_armed`).
 
-    Nor is it asked whether the LABEL was born this turn or carried, and that is a
-    deliberate simplification rather than an oversight. The only roster `_ask_for_turn`
-    can build is the tier menu, whose rows are the tiers this CONTACT holds - the same
-    list every time it is composed within a conversation - so a re-ask cannot bring rows
-    the live roster does not already have. What it can bring is the ANSWER's rows, which
-    is the defect. A roster whose rows really are stale is cleared, not overwritten: by a
-    topic reset, by a message naming its own subject, or by the conversation closing
-    (`dialogue/clearing.py`).
+    Nor is it asked whether the LABEL was born this turn or carried, and the guarantee
+    that makes that safe is at the CALL SITE rather than in the kinds: this function is
+    consulted only when `not lane_asked` (below), i.e. when no lane composed a question of
+    its own and the label was re-derived from what the last turn left open. A re-derived
+    label can therefore only ever name the live question; the rows handed beside it are
+    whatever THIS turn printed, which is the defect (an empty list when no lane ran, the
+    ANSWER's own rows when one did). A live question whose rows really are stale is cleared
+    rather than overwritten - by a topic reset, by a message naming its own subject, or by
+    the conversation closing (`dialogue/clearing.py`).
 
     **EVERY KIND, not the roster kinds** (owner ruling, 15 Sep 2026: "our fix needs to be
     general and not targeted to 1 scenario only"). S6 wrote this test as a `ROSTER_KINDS`
@@ -273,10 +277,15 @@ def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
     the same question its own re-arm names. So the two must EXPECT the same answer -
     either literally, or both inside `_PICK_EXPECTS`.
 
-    And the live question must have ROWS, which is why nothing about the plain accept or
-    decline moves: an offer armed with no roster (`test_s3_canned_and_ideate.py::
+    And the live question must have ROWS, which is what a re-prompt can lose and nothing
+    else turns on: an offer armed with no roster (`test_s3_canned_and_ideate.py::
     TestOfferHold`'s own prior, and the miss-company plain arm it stands for) has no rows
-    to keep and its re-prompt is still `options: []`.
+    to keep and its re-prompt is still `options: []`. Where the live one DOES have rows
+    they are kept, `member_offer` included - `test_s5_escalation_seams.py::
+    test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state` is re-pinned to
+    that, because the clarify arm's re-offer is the same question over the same pool and
+    its own docstring always required the pool to survive ("the next turn resolves the
+    customer's '2' ... against exactly that pool").
     """
     if not isinstance(asked, dict) or not isinstance(previous, dict):
         return False
@@ -664,10 +673,9 @@ def _ask_for_turn(
         # keeps only the CONDITION it always had - the flag plus the frozen phrase.
         return oq.record_offer(
             None,
-            reply_text=reply_text,
             turn_no=turn_no,
             domain=domain,
-            fallback_team=team,
+            team=team,
         )
     return None
 
@@ -1448,6 +1456,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     turn_state: dict[str, Any] = {
         "answered_domain": answered_domain,
         "offer_open": False,
+        # The team the miss arms PRINT, recorded where they print it (S-1's rule).
+        "offer_team": None,
         "team_clarify_options": [],
     }
     _miss_company_routing(
@@ -1503,6 +1513,16 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # `open_question` below does that, with the rows the customer was shown frozen onto it,
     # and two records of one fact is the drift this lane exists to end.
     offer_open = bool(jsc.get(cat, "is_escalate_offer") is True or turn_state["offer_open"])
+    # ONE TEAM, FROM WHOEVER PRINTED THE SENTENCE (owner ruling, 15 Sep 2026, review S-1 /
+    # S-2). `turn_state["offer_team"]` is the miss arms' own record, written where they
+    # append the phrase a few hundred lines below; `_escalation_team` stays last for a
+    # catalog arm whose copy the CRM composed elsewhere, and it is the same derivation the
+    # composers use (`company_team`, then the parser's suggested team), which is why the
+    # per-arm parity tests hold on it. The LANE's own declaration - the composer that
+    # printed the sentence inside `answer.py` - is applied by the engine's post-compose arm
+    # instead of here: that arm sees the FINAL reply, runs on every turn, and is the gate
+    # that dropped an answered turn's offer in the first place (S-1).
+    offer_team = turn_state.get("offer_team") or _escalation_team(qf, gate)
 
     # ---- the question THIS turn asked, built where it was asked (L1-S3d) -- #
     asked_here = _ask_for_turn(
@@ -1602,10 +1622,9 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
             variables["open_question"] = (
                 pending_open_question.record_offer(
                     armed,
-                    reply_text=output.get("user_response"),
                     turn_no=turn_no,
                     domain=jsc.get(qf, "domain_hint"),
-                    fallback_team=_escalation_team(qf, gate),
+                    team=offer_team,
                 )
                 if offer_open
                 else armed
@@ -1674,6 +1693,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         item=strip_undefined({"reply": seal(output)}),
         answered_domain=turn_state["answered_domain"],
         offer_open=offer_open,
+        offer_team=offer_team,
         result_set=result_set,
     )
 
@@ -2902,6 +2922,7 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
         company = f"*{jsc.js_string(plan[0]['company_name'])}* " if (len(plan) == 1 and plan[0]["company_name"]) else ""
         phrase = f"{_FROZEN_ESCALATE_PREFIX} {company}{_pretty_team(team)} team?"
         turn_state["offer_open"] = True  # R3: the frozen phrase is appended right here
+        turn_state["offer_team"] = team  # ... and this arm is the one that knows its team
         output["user_response"] += f"\n\n{phrase}\n\n{jsc.get(mc_mem, 'miss_offer_text')}"
         previous = variables.get("response")
         variables["response"] = f"{previous if isinstance(previous, str) else ''}\n\n{phrase}".strip()
@@ -2941,6 +2962,7 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
         )
         phrase = f"{_FROZEN_ESCALATE_PREFIX} {company}{_pretty_team(team)} team?"
         turn_state["offer_open"] = True  # R3: the frozen phrase is appended right here
+        turn_state["offer_team"] = team  # ... and this arm is the one that knows its team
         output["user_response"] += f"\n\n{phrase}"
         previous = variables.get("response")
         variables["response"] = f"{previous if isinstance(previous, str) else ''}\n\n{phrase}".strip()

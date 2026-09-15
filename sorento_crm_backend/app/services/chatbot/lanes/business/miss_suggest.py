@@ -1364,6 +1364,7 @@ def run_miss_lane(
     space_id: Any = None,
     execution_id: Any = None,
     dry_run: bool = False,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`sub-miss-suggest` end to end, from `not-found-error-message`'s payload to the exit.
 
@@ -1401,6 +1402,7 @@ def run_miss_lane(
             sibling_probe=fragment.get("sibling-probe"),
             sibling_transform=fragment.get("sibling-transform"),
             execution_id=execution_id,
+            offer_rec=offer_rec,
         )
         return _attach_question(item, parser=parser, gate=gate)
 

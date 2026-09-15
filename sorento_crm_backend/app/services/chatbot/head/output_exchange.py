@@ -1688,11 +1688,19 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # the test, a bare pick names nothing and cannot reach the arm at all.
 
     if not already_read:
-        if (
-            picked is None
-            and (names_own_dates or names_own_entity)
-            and _outstanding_keeps_subject(o, filters)
-        ):
+        # WHAT THE MESSAGE NAMES DECIDES, and a stray position does not veto it (owner
+        # ruling, 15 Sep 2026; R-M, live turn 0b610e47). This arm required `picked is
+        # None`, so "only BRW" - which named a warehouse and nothing else - was
+        # disqualified from being the narrowing it plainly is because the v20 model had
+        # also stamped `reference_positions: [1]` on it ("trying to select the delivery
+        # order list and narrow it to BRW"), and arm 2 then closed the question as a new
+        # ask. The model stamps a position on a refinement as readily as on an answer, so
+        # keying the reading on one is the same class of defect as keying it on
+        # `domain_hint` (rule 3). `_outstanding_keeps_subject` is the test that already
+        # knows the difference: a warehouse or a date can never be this report's SUBJECT,
+        # while a customer or a product can - which is why D17 point 3 ("2" + "delivery to
+        # hanlim") still reaches arm 2 below and is still a new ask.
+        if (names_own_dates or names_own_entity) and _outstanding_keeps_subject(o, filters):
             o["outstanding_refined"] = True
             # The turn's OWN entities, frozen here and kept OFF `o["entities"]` (R17):
             # this is the offer-scoped copy the location resolver in `run_fetch` reads
@@ -1749,7 +1757,12 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             return
 
     refining = jsc.truthy(o.get("outstanding_refined"))
-    if not refining:
+    # A REFINEMENT THAT ALSO PICKED IS AN ANSWER WITH A NARROWER FILTER (same ruling).
+    # "2, only BRW" answers the scope question AND narrows the report in one message, so
+    # both halves land: the picked scope wins over the stored one below, the question is
+    # not re-asked, and the filter the turn named is overlaid the way any refinement's is.
+    # AC-1157 / AC-1158 are unchanged for a refinement that picked nothing.
+    if not refining or picked is not None:
         o["outstanding_answer_applied"] = True
     o["domain_hint"] = "order"
     o["message_type"] = "business_query"
@@ -1840,7 +1853,19 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     o["outstanding_carried_location_token"] = filters.get("location_token")
 
     if kind == "outstanding_scope":
-        if refining:
+        if refining and picked is not None:
+            # ANSWERED AND NARROWED IN ONE MESSAGE (owner ruling, 15 Sep 2026). "2, only
+            # BRW" answers the scope question AND narrows the report, and this is not a new
+            # rule: `TestScopeAnswerRunsReportWithCarriedFilters::
+            # test_a_date_in_the_answering_turn_wins_over_the_carried_one` has pinned "2 in
+            # 2026" as a pick whose own window wins since reviewer N2, so an off-subject
+            # ENTITY beside a pick can only behave the same way. The scope the turn PICKED
+            # wins over the one the report was stored with, the question is not re-asked,
+            # and the filter this turn named is overlaid the way any refinement's is (it
+            # rides `outstanding_refinement_entities`, frozen in arm 1 above, which is what
+            # `run_fetch`'s location resolver reads).
+            o["order_status"] = _ORDER_STATUS_BY_SCOPE[picked]
+        elif refining:
             # AC-1158: nothing is fetched - the scope question has not been answered
             # yet, it has only been narrowed. `order_status: "outstanding"` plus the
             # scope-ask flag is the SHAPE OF THE FIRST ASK, so `run_fetch` re-arms the
@@ -1860,7 +1885,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
         return
 
     # kind == "outstanding_detail" (AC-1138; R14 added the third option)
-    if refining:
+    if refining and picked is None:
         # AC-1157: the SAME report re-runs, for the SAME scope it was run for, with this
         # turn's filters overlaid - and with NO `detail` argument, because the customer
         # narrowed the report rather than asking for one of its lists. The hit arms a
@@ -2646,10 +2671,28 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     dym_numbered_multi_select()
 
     # -- REFERENCE POSITIONS -> ENTITIES ------------------------------------------------- #
+    # NOT FOR A QUESTION THE HEAD RESOLVES ITSELF (owner ruling, 15 Sep 2026; R-M, live
+    # turn 0b610e47). `outstanding_scope` / `outstanding_detail` have no handler in
+    # `dialogue/open_question.resolve` by design - `_apply_outstanding_pending` reads the
+    # position and maps it to a SCOPE - so converting it here is a second reader of the
+    # same position, and the row it lands on is a MENU LABEL rather than a token. "only
+    # BRW" over an open detail ask therefore ended with `entities: [{raw: "Delivery order
+    # list", hint: "order"}]`, the customer's own BRW overwritten at the `o["entities"] =
+    # [*resolved]` line below, and "list" matched every SPECIALIST customer - R-B's
+    # mechanism, surviving on the arm R-B did not close.
+    #
+    # The scope turn three seconds earlier escaped it only by accident: it took the ANSWER
+    # arm, so `_apply_outstanding_pending`'s SECOND pass re-asserted its reading and reset
+    # `entities` to `[]`, laundering the same mint. Any arm that returns early - a dropped
+    # pending returns at the top of that function - has no such laundering, so the gate has
+    # to be here, where the conversion is, and keyed on the live question rather than on
+    # `is_menu_label` (which only fires for an exact MENU_LABELS match on the raw text).
     if (
         not jsc.truthy(o.get("is_menu_label"))
         and jsc.is_array(o.get("reference_positions"))
         and len(o["reference_positions"]) > 0
+        and jsc.get(open_question_of(prev_state), "kind")
+        not in open_question_mod.HEAD_RESOLVED_KINDS
     ):
         last_set = (
             parent_input["referenced_result_set"]
