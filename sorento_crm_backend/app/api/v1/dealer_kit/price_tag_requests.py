@@ -469,17 +469,44 @@ def resolve_tag_pin(
                     )
                 )
             )
-            _snapshot_draft(
-                db,
-                page,
-                doc,
-                _user_id(user),
-                f"Before product update: {fields}" if fields else
-                "Before product update",
+            after_message = f"Product update: {fields}" if fields else "Product update"
+            # "Update all" is N sequential calls to this same route, one per
+            # tag - PT-202609-0015 also found that a batch read as a
+            # before/after pair PER TAG, so the second tag's own "before"
+            # duplicated the first tag's "after" (both snapshot every tag's
+            # pins, not just the one being touched). Continuing a batch - the
+            # immediately preceding version is itself an unclosed "after" -
+            # skips a fresh "before" and folds this tag's change into that
+            # SAME after version instead of adding a new one.
+            continuing_batch = bool(
+                latest and (latest.commit_message or "").startswith("Product update")
             )
-        tag.pinned_tag_data = tag_data_service.pin_payload(live)
-        tag.pinned_at = datetime.utcnow()
-        tag.data_change_ack_hash = None
+            if not continuing_batch:
+                _snapshot_draft(
+                    db,
+                    page,
+                    doc,
+                    _user_id(user),
+                    f"Before product update: {fields}" if fields else
+                    "Before product update",
+                )
+            tag.pinned_tag_data = tag_data_service.pin_payload(live)
+            tag.pinned_at = datetime.utcnow()
+            tag.data_change_ack_hash = None
+            # PT-202609-0015: Update only ever snapshotted the OLD pin - the
+            # new value it just wrote never landed in any version, so a later
+            # Restore to an earlier point could never bring it back. This is
+            # the AFTER half: the state the update above just produced.
+            if continuing_batch:
+                latest.doc = doc
+                latest.commit_message = after_message
+                latest.pinned_line_data = _pins_snapshot(db, page)
+            else:
+                _snapshot_draft(db, page, doc, _user_id(user), after_message)
+        else:
+            tag.pinned_tag_data = tag_data_service.pin_payload(live)
+            tag.pinned_at = datetime.utcnow()
+            tag.data_change_ack_hash = None
     else:
         # Keep: the TAG stays as it is. The hash of what was looked at is the
         # ack, so this exact change stops asking and the next one does not.
@@ -608,17 +635,31 @@ def restore_request_version(
             status_code=404, message="That version no longer exists.", code="NOT_FOUND"
         )
 
+    # Snapshot the state being LEFT, before anything below overwrites it
+    # (PT-202609-0015): the old behaviour re-snapshotted the TARGET version a
+    # second time under "Restored vN" - v<n> already exists as history, so
+    # that duplicated it and threw away whatever the live doc/pins held
+    # instead (an Update nobody had proofed yet, for one). This is the only
+    # place that state is ever going to be found again.
+    latest = _latest_version(db, page)
+    current_doc = (
+        page.draft_doc
+        or (latest.doc if latest else None)
+        or _default_tag_sheet_doc()
+    )
+    created = _snapshot_draft(
+        db, page, current_doc, _user_id(user), f"Before restore to v{version}"
+    )
+
     pins = row.pinned_line_data or {}
     for line in req.lines:
         for tag in line.tags or []:
             if tag.id in pins:
                 tag.pinned_tag_data = pins[tag.id]
                 tag.data_change_ack_hash = None
-    page.draft_doc = row.doc
-    db.flush()
-    created = _snapshot_draft(db, page, row.doc, _user_id(user), f"Restored v{version}")
-    # The restored document is the draft AND the newest version: the designer
-    # opens draft-first, and the history has to show what happened.
+    # The restored document is the draft: the designer opens draft-first, and
+    # this is what marketing was last looking at. No version is written for
+    # this half - v<n> already IS that state, sitting right there in history.
     page.draft_doc = row.doc
     db.flush()
     db.commit()
