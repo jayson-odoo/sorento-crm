@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 
 @dataclass(frozen=True)
@@ -90,3 +93,29 @@ class Policy:
             for row in kinds
         )
         return cls(domains=domain_rows, kinds=kind_rows, tier_order=tuple(tier_order or ()))
+
+
+def load_policy(db: "Session") -> Policy:
+    """The real loader: `chatbot_domains` + `chatbot_entity_kinds` + `system_settings.
+    chatbot_tier_order` (AC-1501/AC-1502/AC-1535) - loaded once per turn, frozen.
+
+    Raw SQL, not an ORM model: no `ChatbotDomain`/`ChatbotEntityKind` model exists yet
+    (S1's FE screens and S5's CRUD routes are the ones that will need one; S3's only
+    reader is this loader).
+    """
+    from sqlalchemy import text
+
+    domain_rows = db.execute(
+        text("SELECT * FROM chatbot_domains ORDER BY sort_order")
+    ).mappings().all()
+    kind_rows = db.execute(
+        text("SELECT * FROM chatbot_entity_kinds ORDER BY sort_order")
+    ).mappings().all()
+    tier_row = db.execute(text("SELECT chatbot_tier_order FROM system_settings LIMIT 1")).first()
+    tier_order = list(tier_row[0]) if tier_row and tier_row[0] else []
+
+    return Policy.from_rows(
+        domains=[dict(row) for row in domain_rows],
+        kinds=[dict(row) for row in kind_rows],
+        tier_order=tier_order,
+    )
