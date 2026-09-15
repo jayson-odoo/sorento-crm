@@ -35,8 +35,11 @@ from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
+    PickingHeader,
+    PickingLine,
     PurchaseOrder,
     PurchaseOrderLine,
+    SPOAllocation,
     Supplier,
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
@@ -1345,3 +1348,172 @@ def test_legacy_run_dealer_outstanding_keeps_the_so_book_read(db, chain):
         OrderSummaryRow.run_id == f["run"].id, OrderSummaryRow.product_id == f["product"].id,
     ).one()
     assert float(row.dealer_outstanding) == 40.0
+
+
+# =========================================================================== #
+# PLAN-low-stock-last-in-and-list-scope.md, S1 - last in from the newest VISIBLE SPO
+# line, received or not (owner ruling, second round, 15 Sep 2026: "even haven't GR we
+# also show as last in"). RED today: `_last_receipt_map` still reads
+# `picking_lines`/`picking_headers`.
+# =========================================================================== #
+
+
+def test_last_receipt_map_ignores_goods_received_pickings(db, chain):
+    """AC-52: `picking_lines`/`picking_headers` are no longer read for last in - a
+    product with a goods_received picking line and NO `spo_allocations` line at all
+    must freeze/print blank, never the picking line's date/qty."""
+    f = chain
+    header = PickingHeader(
+        id=_u(), picking_number=_code("GRN")[:50],
+        picking_type="goods_received", picking_date=date.today() - timedelta(days=2),
+    )
+    db.add(header)
+    db.flush()
+    db.add(PickingLine(
+        id=_u(), picking_header_id=header.id, product_id=f["product"].id,
+        quantity_expected=50, quantity_picked=50, qty_accepted=50,
+        destination_warehouse_id=f["bin"].id,
+    ))
+    db.flush()
+
+    result = svc._last_receipt_map(db, [str(f["product"].id)])
+    assert result == {}, (
+        f"a goods_received picking line with no spo_allocations line must not answer "
+        f"last in: {result}"
+    )
+
+
+def test_last_receipt_map_tiebreak_created_at(db, chain):
+    """AC-53: two lines sharing the same key date - `created_at DESC` breaks the tie."""
+    f = chain
+    same_date = date(2026, 8, 10)
+    older = SPOAllocation(
+        id=_u(), spo_number=_code("SPO-OLDER")[:50], product_id=f["product"].id,
+        allocated_quantity=10, quantity_received=10, expected_date=same_date,
+    )
+    db.add(older)
+    db.flush()
+    db.query(SPOAllocation).filter(SPOAllocation.id == older.id).update(
+        {"created_at": datetime(2026, 8, 1, 0, 0, 0)}
+    )
+    newer = SPOAllocation(
+        id=_u(), spo_number=_code("SPO-NEWER")[:50], product_id=f["product"].id,
+        allocated_quantity=20, quantity_received=20, expected_date=same_date,
+    )
+    db.add(newer)
+    db.flush()
+    db.query(SPOAllocation).filter(SPOAllocation.id == newer.id).update(
+        {"created_at": datetime(2026, 8, 2, 0, 0, 0)}
+    )
+    db.flush()
+
+    result = svc._last_receipt_map(db, [str(f["product"].id)])
+    assert result[str(f["product"].id)]["spo_number"] == newer.spo_number, result
+
+
+def test_last_receipt_map_retired_unreceived_line_never_answers(db, chain):
+    """AC-50: a line hidden by `visible_line_clauses()` (retired and never received) is
+    never picked, whatever its own date - an older, LIVE line answers ahead of it, even
+    though it too has nothing received (last in is status-blind now; only VISIBILITY
+    gates the pick)."""
+    f = chain
+    retired_spo_number = _code("RETIRED-NEWER")[:50]
+    live_spo_number = _code("LIVE-OLDER-OPEN")[:50]
+    db.add(SPOAllocation(
+        id=_u(), spo_number=retired_spo_number, product_id=f["product"].id,
+        allocated_quantity=40, quantity_received=0,
+        expected_date=date(2026, 8, 30), retired_at=datetime(2026, 9, 1, 0, 0, 0),
+    ))
+    db.add(SPOAllocation(
+        id=_u(), spo_number=live_spo_number, product_id=f["product"].id,
+        allocated_quantity=25, quantity_received=0, expected_date=date(2026, 8, 10),
+    ))
+    db.flush()
+
+    result = svc._last_receipt_map(db, [str(f["product"].id)])
+    assert result[str(f["product"].id)]["spo_number"] == live_spo_number, result
+
+
+def test_last_receipt_map_company_scoped(db, chain):
+    """AC-54: mirrors `tests/test_spo_last_receipt.py`'s per-product scope test - under
+    a Mocha scope, and under a Sorento scope, a SORENTO-owned line on a MOCHA product
+    must not answer (the windowed subquery needs its own explicit company predicate,
+    the same hazard `spo_last_receipt_service.last_receipt_rows`'s per-product branch
+    documents for `.subquery()` losing `with_loader_criteria`).
+
+    A POSITIVE control (Sorento reading its OWN product's own line) sits beside the two
+    negative ones: without it, a function that never reads `spo_allocations` at all -
+    today's picking-lines implementation - would pass both negative assertions by
+    accident and this test would prove nothing about the fix actually arriving.
+    """
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import MOCHA_ID
+    from tests._mc_lookup_seed import product as mc_product
+    from tests._mc_lookup_seed import seed_mocha
+
+    f = chain
+    own_spo_number = _code("SPO-SORENTO-OWN")[:50]
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    db.add(SPOAllocation(
+        id=_u(), spo_number=own_spo_number, product_id=f["product"].id,
+        allocated_quantity=77, expected_date=date(2026, 8, 12),
+        company_id=DEFAULT_COMPANY_ID,
+    ))
+    db.flush()
+    assert svc._last_receipt_map(db, [str(f["product"].id)])[str(f["product"].id)][
+        "spo_number"
+    ] == own_spo_number, (
+        "the positive control must answer under the SAME company that owns the line "
+        "and the product, or the negative assertions below prove nothing"
+    )
+
+    seed_mocha(db)
+    mocha_product = mc_product(db, company_id=MOCHA_ID, code=_code("MCH-SCOPE"))
+    db.add(SPOAllocation(
+        id=_u(), spo_number=_code("SPO-SORENTO")[:50], product_id=mocha_product.id,
+        allocated_quantity=99, quantity_received=99, company_id=DEFAULT_COMPANY_ID,
+    ))
+    db.flush()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert svc._last_receipt_map(db, [str(mocha_product.id)]) == {}, (
+        "Sorento owns the line but not the product, so the join hides it"
+    )
+
+    set_company_scope(db, frozenset({MOCHA_ID}))
+    assert svc._last_receipt_map(db, [str(mocha_product.id)]) == {}, (
+        "Mocha owns the product but the LINE is Sorento's - the explicit predicate on "
+        "the windowed subquery must hide it"
+    )
+
+
+def test_report_last_receipt_none_when_no_spo_line(db, chain):
+    """AC-51: a product with NO VISIBLE `spo_allocations` line freezes all four
+    last-receipt columns NULL, and `report()` returns `last_receipt = None` - never a
+    dict carrying a zero qty.
+
+    A RETIRED, never-received line is seeded on the product so this absence is a claim
+    about `visible_line_clauses()` filtering it out, not merely "the table has no row for
+    this product at all" - a fact any implementation, including the old picking-lines one,
+    would already get right. Without this seed the test cannot distinguish the new
+    `last_in_map`-backed `_last_receipt_map` from the old GR-based one it replaced."""
+    f = chain
+    db.add(SPOAllocation(
+        id=_u(), spo_number=_code("RETIRED-NEVER-RECEIVED")[:50], product_id=f["product"].id,
+        allocated_quantity=15, quantity_received=0, expected_date=date(2026, 8, 1),
+        retired_at=datetime(2026, 9, 1, 0, 0, 0),
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = db.query(OrderSummaryRow).filter(
+        OrderSummaryRow.run_id == f["run"].id, OrderSummaryRow.product_id == f["product"].id,
+    ).one()
+    assert row.last_receipt_date is None
+    assert row.last_receipt_qty is None
+    assert row.last_receipt_spo_number is None
+    assert row.last_receipt_container_number is None
+
+    report_row = svc.report(db, run_id=f["run"].id)["rows"][0]
+    assert report_row["last_receipt"] is None, report_row["last_receipt"]

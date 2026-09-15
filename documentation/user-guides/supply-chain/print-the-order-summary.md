@@ -23,6 +23,12 @@ hand**, **Reorder level**, **Project qty**, **Dealer o/s**, **Order qty**, **Del
   "Month - qty" line and one "Name - qty" line per entry. A product with no inquiry row shows
   a blank Delivery cell even when it has Project demand elsewhere on the grid.
 * **Supplier** is the chosen supplier, or the suggested one if none has been chosen yet.
+* **Last in qty** reads the newest shipping order line for the product, received or not - the
+  same line the chatbot's "last in" answer names. It prints "SPO number - container number -
+  quantity", or "SPO number - quantity" when that shipping order named no container. It is
+  blank when the product has no shipping order line at all.
+* **Last in date** is that same line's expected delivery date, or its issue date when it has
+  none.
 * **Remarks** shows the MOQ (for example "MOQ 1000") only when there is one.
 
 Every figure on the sheet is the plan's own - nothing is typed twice. The sheet prints exactly
@@ -56,3 +62,4 @@ preparing - narrow the plan's scope (fewer warehouses or products) and try again
 
 * [Run a reorder plan](run-a-reorder-plan.md)
 * [Upload the data a reorder plan is built from](upload-plan-data.md)
+* [Low stock report](low-stock-report.md)
