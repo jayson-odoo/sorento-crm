@@ -628,3 +628,203 @@ def test_crm_route_requires_process_permission(crm_client):
         },
     )
     assert granted.status_code == 200, granted.text
+
+
+# ---------------------------------------------------------------------------
+# R4/R7/R8/R10/R11/R12 (Phase 3 review) - hardening on `line_pricing` and the
+# route it backs.
+# ---------------------------------------------------------------------------
+
+
+def test_no_access_codes_gives_no_promotion_options(db):
+    """R4a: a viewer with NO access codes falls back to the PUBLIC code
+    (`end_user`), so a promotion tagged `dealer` only must never reach it."""
+    parent = _product(db, list_price="500.00")
+    _promotion(db, [(parent, "400.00")], access_levels=["dealer"])
+
+    row = line_pricing(
+        db,
+        lines=[
+            {
+                "key": "L1",
+                "product_id": parent.id,
+                "part_product_ids": [],
+                "candidate_product_ids": [],
+                "promotion_id": None,
+            }
+        ],
+        viewer=ViewerContext(access_codes=frozenset()),
+    )[0]
+
+    assert row["promotion_options"] == []
+
+
+def test_promotion_covering_only_a_candidate_prices_the_line_at_list(db):
+    """R11a: `promotion_options` legitimately lists a promotion that covers
+    only an unresolved CANDIDATE (AC-S7-2) - but if that is the ONLY covering
+    promotion, `_line_total_under` sums to exactly the RESOLVED products'
+    list price (nothing on the line itself is discounted), so the line's own
+    `sell_price_basis` must read `list`, not `promotion` - a line cannot be
+    "on sale" for a discount that lives on a candidate nobody has picked yet.
+    """
+    parent = _product(db, list_price="500.00")
+    candidate = _product(db, list_price="80.00")
+    covers_candidate_only = _promotion(db, [(candidate, "50.00")])
+
+    row = line_pricing(
+        db,
+        lines=[
+            {
+                "key": "L1",
+                "product_id": parent.id,
+                "part_product_ids": [],
+                "candidate_product_ids": [candidate.id],
+                "promotion_id": None,
+            }
+        ],
+        viewer=_staff_viewer(),
+    )[0]
+
+    assert row["auto_promotion_id"] == covers_candidate_only.id, (
+        "seed assumption: it is still the only, and so the cheapest, option"
+    )
+    assert row["sell_price"] == row["list_price"] == Decimal("500.00")
+    assert row["sell_price_basis"] == "list", (
+        "nothing on the line itself is discounted by the chosen promotion"
+    )
+
+
+def test_auto_pick_on_a_tie_is_independent_of_query_order(db, monkeypatch):
+    """R12: two promotions tied on total must resolve to the SAME winner no
+    matter what order Postgres's un-ordered `_covering_promotions` query
+    happens to return them in (its `.distinct()` gives no ordering
+    guarantee at all, so this cannot be pinned by seeding order alone -
+    `_covering_promotions` itself is monkeypatched to hand back the exact
+    same two `Promotion` rows in each order, isolating the actual gap:
+    `line_pricing`'s own `promotion_options.sort(key=... sell_price only)`
+    has no tiebreaker, so a tie's winner is whatever `_covering_promotions`
+    happened to return first).
+    """
+    import app.services.dealer_kit.pricing as pricing_module
+
+    parent = _product(db, list_price="500.00")
+    promo_a = _promotion(db, [(parent, "400.00")], description="ZZT A Promo")
+    promo_z = _promotion(db, [(parent, "400.00")], description="ZZT Z Promo")
+
+    def _covering_z_first(db_, product_ids, viewer):
+        return [promo_z, promo_a]
+
+    def _covering_a_first(db_, product_ids, viewer):
+        return [promo_a, promo_z]
+
+    monkeypatch.setattr(pricing_module, "_covering_promotions", _covering_z_first)
+    winner_z_first = line_pricing(
+        db,
+        lines=[{"key": "L1", "product_id": parent.id, "promotion_id": None}],
+        viewer=_staff_viewer(),
+    )[0]["auto_promotion_id"]
+
+    monkeypatch.setattr(pricing_module, "_covering_promotions", _covering_a_first)
+    winner_a_first = line_pricing(
+        db,
+        lines=[{"key": "L1", "product_id": parent.id, "promotion_id": None}],
+        viewer=_staff_viewer(),
+    )[0]["auto_promotion_id"]
+
+    assert winner_z_first == winner_a_first, (
+        f"tie winner flipped with query order: {winner_z_first=} {winner_a_first=}"
+    )
+
+
+def test_numbers_serialise_as_json_numbers_not_strings(portal_client):
+    """R10: a `LinePricingRow`'s `Decimal` fields must reach the browser as
+    JSON numbers - `manual_sell_price` on the request/line schemas is a
+    documented exception (serialises as a string, per
+    `test_patch_line_manual_price`), but the LOOKUP row has no such carve-out
+    in the plan (AC-S7-1's contract), so a caller must be able to do
+    arithmetic on it without a `parseFloat`.
+    """
+    client, db, _contact_id = portal_client
+    parent = _product(db, list_price="500.00")
+
+    res = client.post(
+        "/api/v1/public/portal/lookups/line-pricing",
+        json={
+            "price_mode": "list",
+            "lines": [
+                {
+                    "key": "L1",
+                    "product_id": parent.id,
+                    "part_product_ids": [],
+                    "candidate_product_ids": [],
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    assert isinstance(row["list_price"], (int, float)), type(row["list_price"])
+    assert isinstance(row["sell_price"], (int, float)), type(row["sell_price"])
+
+
+def test_line_pricing_route_caps_at_200_lines(portal_client):
+    """R7: 201 lines on one lookup call is refused with 422, not processed -
+    the plan gives every route a body ceiling; this one never got one."""
+    client, db, _contact_id = portal_client
+
+    res = client.post(
+        "/api/v1/public/portal/lookups/line-pricing",
+        json={
+            "price_mode": "list",
+            "lines": [
+                {"key": f"L{i}", "product_id": None, "part_product_ids": [], "candidate_product_ids": []}
+                for i in range(201)
+            ],
+        },
+    )
+    assert res.status_code == 422, res.text
+
+
+def test_line_pricing_route_caps_candidates_per_line_at_50(portal_client):
+    """R7: 51 candidate ids on ONE line is refused with 422."""
+    client, db, _contact_id = portal_client
+
+    res = client.post(
+        "/api/v1/public/portal/lookups/line-pricing",
+        json={
+            "price_mode": "list",
+            "lines": [
+                {
+                    "key": "L1",
+                    "product_id": None,
+                    "part_product_ids": [],
+                    "candidate_product_ids": [str(uuid.uuid4()) for _ in range(51)],
+                }
+            ],
+        },
+    )
+    assert res.status_code == 422, res.text
+
+
+def test_malformed_product_id_in_line_pricing_is_422_not_500(portal_client):
+    """R8: a junk `product_id` must not reach `Product.id.in_(...)` and blow
+    up as a Postgres `DataError` (500) - `_add_lines` already fixed this on
+    the save path (security review finding); the bare lookup route never
+    validates shape at all."""
+    client, db, _contact_id = portal_client
+
+    res = client.post(
+        "/api/v1/public/portal/lookups/line-pricing",
+        json={
+            "price_mode": "list",
+            "lines": [
+                {
+                    "key": "L1",
+                    "product_id": "not-a-uuid",
+                    "part_product_ids": [],
+                    "candidate_product_ids": [],
+                }
+            ],
+        },
+    )
+    assert res.status_code == 422, res.text
