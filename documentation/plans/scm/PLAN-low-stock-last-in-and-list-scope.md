@@ -30,57 +30,61 @@ Parent: `documentation/plans/scm/PLAN-low-stock-report.md` (PR #909, merged 14 S
 - "when there is last in, we need to mention the SPO number and container number also".
 - "I prefer All to match the list exported, and we fix the last in quantity and last in date".
 
-## Captain rulings (flagged to the owner in the same message; overturn = one-line change)
+## Owner rulings, second round (15 Sep, overturning the captain's R1 and R3)
 
-- **R1 - received lines only.** The last-in line is the newest VISIBLE `spo_allocations` line per
-  product **with `quantity_received > 0`**, ordered by the MCP tool's own key
-  `coalesce(expected_date, issue_date, created_at::date) DESC, created_at DESC`, company scoped,
-  `spo_supply.visible_line_clauses()` applied. Measured on 0913 for the latest run's 872 products:
-  784 have any SPO line, 778 have a received line, and for 125 the newest line overall is an
-  UNRECEIVED open line - printing that one would show a date with a blank quantity, which is
-  "incoming", not "last in". 746 of the 778 received lines carry a container number.
-- **R2 - date = the SPO line's date** (the same coalesce key), because only 2,043 allocations
-  carry an approved GRN date while 74,300 carry an ESB-stated `quantity_received` (parent module
-  docstring). One rule, one column.
-- **R3 - one new column, "Last in SPO"**, immediately after "Last in date", on BOTH workbooks
-  (order sheet `_EXPORT_COLUMNS` + PDF, and `LOW_STOCK_COLUMNS`), text `"<SPO> - <container>"` or
-  `"<SPO>"` when the line names no container, blank when there is no last-in line. "Last in qty"
-  stays a NUMBER (H1 rule, quantities are numbers) rather than becoming a `_docs_text` cell: there
-  is exactly one document, so the total-then-lines shape would print the quantity twice.
-- **R4 - no backfill.** Frozen rows are the run's own evidence; the chat tool always creates a
-  fresh run, and the buyer re-runs the plan for the on-screen sheet. The migration adds the two
-  columns nullable and touches no row.
+- "for last in, please refer to our MCP service, i think even haven't GR we also show as last
+  in" - the line is the NEWEST visible `spo_allocations` line per product, received or not,
+  exactly `spo_last_receipt_service.last_receipt_rows(product_ids=..., top_n=1)`'s pick:
+  ordered by `coalesce(expected_date, issue_date, created_at::date) DESC, created_at DESC`,
+  `visible_line_clauses()`, company scoped. No `quantity_received` filter.
+- "for last in quantity, it is SPO - container number - quantity, same like our PO qty" - NO new
+  column. The "Last in qty" cell becomes a TEXT cell shaped like the BRW PO qty document line:
+  `"<SPO> - <container> - <qty>"`, `"<SPO> - <qty>"` when the line names no container, `""` when
+  the product has no visible SPO line. It is one document, so no total line above it (the PO cell
+  prints a total only because it sums several documents).
+
+## Captain rulings still standing (flag to the owner; overturn = one-line change)
+
+- **R2 - date = the SPO line's date** (the coalesce key above), the same date the MCP row leads
+  with; only 2,043 allocations carry an approved GRN date against 74,300 ESB-stated receipts.
+- **R2b - quantity = the SPO line's quantity (`allocated_quantity`)**, the figure the MCP row
+  prints as "SPO quantity". `quantity_received` is not used in the cell: the owner's ruling shows
+  unreceived lines too, and mixing "received if any else ordered" would hide which one a cell
+  states. If the owner wants received-first, swap the column in `last_in_map` and one test.
+- **R4 - no backfill.** Frozen rows are the run's evidence; the chat tool always creates a fresh
+  run; the buyer re-runs the plan for the on-screen sheet. Migration adds two nullable columns,
+  touches no row.
 - **R5 - one scope helper.** `export_report`'s hidden-code drop becomes a shared
   `summary_order_service.visible_rows(db, rep) -> list[dict]` that `export_report` and
   `low_stock_report_service._split` both call. `low_stock_guard_stats` is DELETED; the low-stock
-  export route reads `export_guard_stats` (already hidden-adjusted). The parent's AC-32 wording
-  ("hidden covered rows included") is superseded by this plan.
+  export route reads `export_guard_stats` (already hidden-adjusted). Parent AC-32 superseded.
 
 ## Slices (one lane, one branch `fix/low-stock-last-in-list-scope`, one PR)
 
-### S1 - Last in from the last received SPO line (BE)
-- `app/services/spo_last_receipt_service.py`: add `last_received_map(db, product_ids) ->
+### S1 - Last in from the newest SPO line, MCP shape (BE)
+- `app/services/spo_last_receipt_service.py`: add `last_in_map(db, product_ids) ->
   dict[product_id, {"spo_number", "container_number", "qty", "date"}]` - one windowed query
-  (`row_number() over (partition by product_id order by key desc, created_at desc)`), filters
-  `quantity_received > 0` + `visible_line_clauses()` + explicit company predicate on
-  `SPOAllocation` (the `.subquery()` loses the listener, same as `last_receipt_rows`). Reuse the
-  module's `key_expr` (lift it to a module-level helper so both functions share it).
-- `summary_order_service._last_receipt_map` body becomes a call to that map (keep the name, the
-  callers, and the `{date, qty}` contract, extended with `spo_number`, `container`). Drop the
-  picking-lines SQL.
-- `write_rows` (line ~355) also freezes `row.last_receipt_spo_number` and
+  (`row_number() over (partition by product_id order by key desc, created_at desc)`), the SAME
+  filters as `last_receipt_rows`'s per-product branch (`visible_line_clauses()`, explicit company
+  predicate on `SPOAllocation` because `.subquery()` loses the listener), `qty = allocated_quantity`,
+  `date = coalesce(expected_date, issue_date, created_at::date)`. Lift `key_expr` to a module-level
+  helper both functions share. No receipt filter.
+- `summary_order_service._last_receipt_map` body becomes a call to that map (keep the name and the
+  `write_rows` call sites; the value contract becomes `{date, qty, spo_number, container}`). Drop
+  the picking-lines SQL entirely.
+- `write_rows` (~355) also freezes `row.last_receipt_spo_number` and
   `row.last_receipt_container_number`.
 - Migration `518_osr_last_receipt_spo` (down_revision `517_chatbot_low_stock_vocab`): two nullable
-  `VARCHAR(100)` columns on `scm.order_summary_row`. Model `OrderSummaryRow` gains both columns.
-- `report()` row `last_receipt` becomes `{"date", "qty", "spo_number", "container"}` (the two new
-  keys None on a run frozen before 518 - readers use `.get`).
-- `_EXPORT_COLUMNS` + `_XLSX_COLUMN_WIDTHS` + `_PDF_LIST_COLUMNS`/`_PDF_NUM_COLUMNS` indices +
-  `_export_rows` / `_export_xlsx_rows`: insert "Last in SPO" after "Last in date" (Remarks shifts
-  to Q, width 16). Cell text helper `_last_in_spo_text(receipt) -> str`.
-- `low_stock_report_service`: `LOW_STOCK_COLUMNS` + `_LOW_STOCK_WIDTHS` + `_sheet_row` get the same
-  column at the same position; `_SUPPLIER_INDEX` unaffected.
-- `documentation/reference` / schemas: `app/schemas/scm_order_summary.py` `last_receipt` shape if
-  it is typed there (check; `response_model` drops undeclared fields - assert in a test).
+  `VARCHAR(100)` columns on `scm.order_summary_row`; model `OrderSummaryRow` gains both.
+- `report()` row `last_receipt` becomes `{"date", "qty", "spo_number", "container"}` (new keys None
+  on a run frozen before 518; readers use `.get`). `app/schemas/scm_order_summary.py`: extend the
+  typed shape if one exists (`response_model` drops undeclared fields - a route test asserts it).
+- Cell helper `_last_in_text(receipt) -> str` in `summary_order_service`: `"<SPO> - <container> -
+  <qty>"`, `"<SPO> - <qty>"` without container, `"<qty>"` when frozen before 518 (no SPO number),
+  `""` when no receipt. Used by `_export_rows`, `_export_xlsx_rows` and
+  `low_stock_report_service._sheet_row` for the "Last in qty" cell. Column lists, widths and PDF
+  index tuples are UNCHANGED (16 columns stay 16); `_PDF_NUM_COLUMNS` drops index 13 (the cell is
+  text now) and `_PDF_LIST_COLUMNS` gains it, matching the PO/incoming cells' class.
 
 ### S2 - All sheet matches the list (BE)
 - `summary_order_service.visible_rows(db, rep)`: the hidden-code filter lifted out of
@@ -97,7 +101,7 @@ Parent: `documentation/plans/scm/PLAN-low-stock-report.md` (PR #909, merged 14 S
 
 ### Not in scope
 - Backfilling frozen runs (R4). Per-warehouse last-in. Changing the MCP tool
-  `crm_procurement_spo_allocations_last_receipt_list` (it keeps its newest-line-any-status shape).
+  `crm_procurement_spo_allocations_last_receipt_list` (the sheet now reads the same pick).
 - FE: no grid renders `last_receipt` today (only `types/summaryOrder.types.ts` names it); add the
   two optional fields to that type and nothing else.
 
