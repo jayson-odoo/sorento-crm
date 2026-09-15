@@ -2260,7 +2260,15 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # summaries, ...) is untouched. Deferred-import: `answer.py` imports FROM this
     # module (`DATE_PARAMS`, `space_id_or_default`), so a module-level import here
     # would be circular.
+    #
+    # `set_header` also travels out as its OWN key (below, `out["set_header"]`), not
+    # only baked into `response` - the turn re-architecture's `compose.py` renders its
+    # OWN per-row grammar from `figures`/`entities` rather than reusing this arm's
+    # `response` string wholesale (`lane_text` there is read only when a tool has NO
+    # rows to hand over), so without a header of its own a counted-set answer's rows
+    # would render with no leading count/attribute line at all.
     predicate = ctx.get("predicate") if isinstance(ctx.get("predicate"), dict) else None
+    set_header: str | None = None
     if predicate is not None:
         from app.services.chatbot.lanes.business.answer import (
             build_set_header,
@@ -2319,6 +2327,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                 elif set_noun.endswith("s"):
                     set_noun = set_noun[:-1]
             header = build_set_header(qualifying_total, shown, set_noun, require)
+        set_header = header
         msg = f"{header}\n{msg}"
 
     final_response = msg.strip()
@@ -2328,6 +2337,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     out: dict[str, Any] = {
         "response": final_response,
         "response_intro": e.get("intro"),
+        # The counted-set header alone (AC-1316/AC-1317), so a reader that renders its
+        # own rows can still prefix the right line - see the note above `predicate`.
+        "set_header": set_header,
         # GROUPED: the flat `items` order and the NUMBERED order the customer just read
         # are two different orders, and `answers` is what a positional pick ("2") resolves
         # against - so a grouped answer used to hand back a different record than the one

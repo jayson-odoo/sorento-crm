@@ -133,7 +133,15 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
 
         label = row.label if row else domain
         codes = ", ".join(str(e) for e in entities)
-        header = f"*{label}* for {codes}:" if codes else f"*{label}*:"
+        # A counted-set answer (AC-1316/AC-1317, "10 taps have certificates. Showing
+        # 5.") carries its OWN header, computed off the qualifying total and the
+        # class word rather than the domain label - it wins over the generic
+        # `*{label}* for {codes}:` line whenever the fetch supplied one, rows or not.
+        header_override = env.get("header_override")
+        if isinstance(header_override, str) and header_override.strip():
+            header = header_override.strip()
+        else:
+            header = f"*{label}* for {codes}:" if codes else f"*{label}*:"
         # A tool that renders its own answer - a report, a refusal, a miss suggestion -
         # hands it over as `lane_text` and the section prints THAT; rows go through the
         # grammar above (contract 102). One or the other, never both.
