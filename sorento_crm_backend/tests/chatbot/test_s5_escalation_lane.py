@@ -108,7 +108,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.services.chatbot.contracts import SUGGESTED_TEAMS
+from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS  # was contracts.SUGGESTED_TEAMS (AC-1594)
 from tests.chatbot import _corpus
 
 # --------------------------------------------------------------------------- #
@@ -2029,7 +2029,7 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
         # answer has something to resolve against. Nothing narrowed this one, so it is the
         # whole vocabulary.
         assert result["pending"]["options"] == [
-            {"team": t, "label": t.replace("_", " ")} for t in SUGGESTED_TEAMS
+            {"team": t, "label": t.replace("_", " ")} for t in ESCALATION_TEAMS
         ], result["pending"]["options"]
         services.next_assignee.assert_not_called()
 

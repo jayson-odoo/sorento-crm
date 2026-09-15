@@ -20,17 +20,22 @@ import pytest
 from pydantic import ValidationError
 
 from app.services.chatbot import contracts
+from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = BACKEND_ROOT / "app" / "services" / "chatbot"
 CONTRACTS_FILE = PACKAGE / "contracts.py"
+# AC-1594: SUGGESTED_TEAMS moved out of contracts.py to lanes/escalation.py -
+# escalation-lane vocabulary, not domain data (that file's own comment explains why).
+# Its OWN canonical declaration must not be flagged as a duplicate of itself.
+ESCALATION_FILE = PACKAGE / "lanes" / "escalation.py"
 
 # The vocabularies AC-109 names, plus the ones the engine itself owns.
 VOCABULARIES = {
     "MESSAGE_TYPES": contracts.MESSAGE_TYPES,
     "INTENT_HINTS": contracts.INTENT_HINTS,
     "DOMAIN_HINTS": contracts.DOMAIN_HINTS,
-    "SUGGESTED_TEAMS": contracts.SUGGESTED_TEAMS,
+    "SUGGESTED_TEAMS": ESCALATION_TEAMS,
     "SUGGESTED_AGENTS": contracts.SUGGESTED_AGENTS,
     "ENTITY_HINTS": contracts.ENTITY_HINTS,
     "SELECTION_CONTEXTS": contracts.SELECTION_CONTEXTS,
@@ -71,7 +76,7 @@ def test_tag_only_branch_kinds_are_a_subset_of_branch_kinds() -> None:
 
 
 def _package_sources() -> list[Path]:
-    return [p for p in PACKAGE.rglob("*.py") if p != CONTRACTS_FILE]
+    return [p for p in PACKAGE.rglob("*.py") if p not in (CONTRACTS_FILE, ESCALATION_FILE)]
 
 
 def test_no_second_copy_of_any_vocabulary_lives_in_the_package() -> None:
