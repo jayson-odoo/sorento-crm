@@ -102,8 +102,9 @@ total: 16 of 16, never 18 of 16. The reader's `parsed.rows` is not mutated.
 
 ## 3. Out of scope
 
-* No new columns, tables, settings. No frontend change: the worklist and job detail already
-  render per row.
+* No new columns, tables, settings. No frontend code change; the Rows tile now counts a `+`
+  cell once per product it names, and the job detail lists one outcome per member under the
+  same source row number.
 * No companion / supplied-with derivation here: `derive_bundles` runs after a row is raised
   and keeps working on member rows as it does on any row.
 * No change to the four `+` products or to the `C/W` / `&` cells.
