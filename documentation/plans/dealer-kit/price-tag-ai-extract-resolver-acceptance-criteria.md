@@ -129,6 +129,14 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
 - AC-S10-4 `[FE]` The designer at `approved` + self shows "Export PDF" only; at `designing` the
   bar is exactly as today (the existing "exactly one button" test still passes).
 
+## S11 The PDF render finds the frontend without a second setting
+
+- AC-S11-1 `[BE]` With `DEALER_KIT_PRINT_BASE_URL` unset and `FRONTEND_BASE_URL=https://fe.example`,
+  `_tag_sheet_print_url(download_id)` starts with `https://fe.example/c/print/tag-sheet/`; the
+  same for `_print_url`.
+- AC-S11-2 `[BE]` With both set, `DEALER_KIT_PRINT_BASE_URL` wins.
+- AC-S11-3 `[BE]` With neither set, the base is `http://localhost:3000` (today's default).
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and

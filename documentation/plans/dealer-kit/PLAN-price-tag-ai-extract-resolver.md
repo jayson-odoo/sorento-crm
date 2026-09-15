@@ -78,6 +78,16 @@ is the prod worker reaching `http://localhost:3000` for the render because
 change in `CONTAINER-PDF-EXPORT-RUNBOOK.md` (frontend alias + worker env) and is an owner
 action on the server, not code on this lane.
 
+Owner question 15 Sep: why does the dealer kit PDF need a print base URL when complaint and
+stock inquiry PDFs print fine? Because they are different engines. Complaint, stock inquiry,
+purchase request, quotation and promotion PDFs are Jinja HTML rendered in-process by
+WeasyPrint (`app/services/pdf_render.py`), no browser, no URL. The tag sheet is the designer's
+canvas: a React renderer (`TagSheetRenderer`) with brand fonts, layers and barcodes that
+exists only in the frontend, so the worker opens the frontend's print page in headless
+Chromium and prints it. It therefore has to know where the frontend is. The backend already
+knows: `FRONTEND_BASE_URL` is set on prod and is what every portal link is built from. The
+separate `DEALER_KIT_PRINT_BASE_URL` was only ever a second copy of that fact.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -166,6 +176,13 @@ action on the server, not code on this lane.
   (`canMarkProofReady` branch), so the bar still holds one primary. At `approved` with
   `print_by === 'self'` only "Export PDF" shows. Whatever read-only behaviour the designer has
   at `proof_ready` today applies unchanged; this slice does not touch canvas editability.
+- D16 `dealer_kit_export_tasks._print_url` / `_tag_sheet_print_url` resolve the base as:
+  `DEALER_KIT_PRINT_BASE_URL` if set, else `FRONTEND_BASE_URL` (the same setting portal links
+  use, read the same way `portal_service.submission_link` reads it), else
+  `http://localhost:3000`. Prod then renders through the public frontend URL with no compose
+  change; the dedicated env stays only as an override for a stack where the worker must reach
+  the frontend by an internal name. `CONTAINER-PDF-EXPORT-RUNBOOK.md` gets a one-paragraph note
+  saying the alias step is now optional.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -177,11 +194,13 @@ BE
   company if `extract()` is not already scoped there (check first; sibling
   `portal_lookup_product_combos` shows the pattern).
 - `app/services/price_tag_request_service.py`: D5.
+- `app/tasks/dealer_kit_export_tasks.py`: D16 (worker task file: restart the worker after).
 - `app/models/respond_template.py`, `app/services/respond_messaging_service.py`
   (`build_context_vars`), `app/services/price_tag_notify.py`: D10, D11.
 - `sorento_crm_frontend/services/whatsappTemplateService.ts` `USE_CASES`: D10.
 - tests: `tests/test_ai_extract_resolver_match.py`, `tests/test_price_tag_parts_need_combo.py`,
-  `tests/test_price_tag_notifications.py` (extend: identifier + context vars + use case listed).
+  `tests/test_price_tag_notifications.py` (extend: identifier + context vars + use case listed),
+  `tests/test_dealer_kit_print_url.py` (D16).
 
 FE
 - `app/(auth)/portal/lib/portal-client.ts`: `AIExtractedProductLine` gains the three fields.
