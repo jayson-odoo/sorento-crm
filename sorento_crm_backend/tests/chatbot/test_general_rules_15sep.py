@@ -82,6 +82,7 @@ from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_enti
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output  # noqa: F401
 from tests.chatbot.test_outstanding_lane import (
     REPORT_HIT,
+    _capturing_mcp,
     _open_question,
     _seed_contact,
     _session_of,
@@ -367,6 +368,20 @@ def _final_vars(session_factory, result) -> dict[str, Any]:
         if isinstance(variables, dict):
             return variables
     return _vars(session_factory)
+
+
+def _report_call(report: dict[str, Any]):
+    """A `mcp_call` that answers `crm_outstanding_report` the way PRODUCTION does.
+
+    The lane always sends `view=render` (`fetch.entity_ids_transformer`), so what comes
+    back from that tool is what `sorento_crm_mcp.presenters.present_response` rendered
+    from the route body - never the body itself. `test_outstanding_lane._capturing_mcp`
+    is the double that does that, and it is reused here rather than re-implemented: a
+    test that hands the lane a raw dict feeds the reply composer a shape production never
+    produces, which is precisely what hid six user-visible defects behind 33 green tests.
+    """
+    call, _captured = _capturing_mcp(report)
+    return call
 
 def _tokens_of(body: dict[str, Any]) -> set[str]:
     """The tokens THIS resolver request actually asked about, lower-cased and exact."""
@@ -796,7 +811,7 @@ def test_a_number_still_repicks_under_a_riding_offer(arm, session_factory, monke
     result, calls = _run_turn(
         session_factory, monkeypatch, qf=_pick_v1(2), text_body="2",
         msg_id="ZZT-gr-repick-answer", resolve_services=services, lanes=arm.lanes,
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
     tool_calls = [c for c in calls if not c[0].startswith("probe:")]
@@ -1128,7 +1143,7 @@ def test_a_number_past_the_last_printed_row_picks_nobody(
     result, _calls = _run_turn(
         session_factory, monkeypatch, qf=_pick_v1(beyond), text_body=str(beyond),
         msg_id=f"ZZT-gr-hidden-{arm.id}", resolve_services=services, lanes=arm.lanes,
-        attributes=["sales_orders.outstanding"], fetch_response=REPORT_HIT,
+        attributes=["sales_orders.outstanding"], fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
     # Graded on the DIALOGUE TRACE's own record of what the position resolved to, not on
@@ -1284,7 +1299,7 @@ def test_a_refinement_narrows_the_report_whatever_word_the_model_stamped(
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
     tool_calls = [c for c in calls if not c[0].startswith("probe:")]
@@ -1367,7 +1382,7 @@ def test_a_subject_capable_entity_is_a_new_ask_whatever_word_the_model_stamped(
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     for tool, args in [c for c in calls if not c[0].startswith("probe:")]:
@@ -1702,7 +1717,7 @@ def test_b2_a_decline_closes_the_open_report_and_fetches_nothing(
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     tool_calls = [c for c in calls if not c[0].startswith("probe:")]
@@ -1764,7 +1779,7 @@ def test_s1_a_this_turn_entity_with_a_null_current_message_is_still_this_turns_a
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     for tool, args in [c for c in calls if not c[0].startswith("probe:")]:
@@ -1896,4 +1911,312 @@ def test_the_escalation_lane_is_handed_the_offers_own_team(
     assert f"from {_pretty(case.team)} team" in closing, (
         f"{case.id}: the customer is told which team has it, and it has to be the one the "
         f"offer named: {closing!r}"
+    )
+
+
+# =========================================================================== #
+# GROUP 5 - WHEN A TURN BOTH ANSWERS AND ASKS, THE ASK WINS (AC-1062, chain e)
+#
+# Owner chain e on `sorento_ai_automation_focus_full`, 15 Sep 2026:
+#
+#   turn b4863e5d "DO outstanding for chin chun"  -> the customer picker
+#   turn a509fbb0 "1"                             -> printed the six-ledger header AND
+#                                                    "Outstanding for which document?",
+#                                                    but PERSISTED `customer_pick` again
+#   turn add34025 "1"                             -> only now armed `outstanding_scope`
+#
+# Two rules meet on that middle turn. D19 rule 1 says a roster survives its own pick;
+# `_ask_for_turn` says the question THIS turn asked is what persists. The reply printed
+# the scope question, so that is the question the customer is looking at - and the rule
+# the coder is implementing is that the ask wins, always, over the roster that was merely
+# answered.
+#
+# **Reproduction, stated plainly**: driven through this harness on the coder's head, every
+# pick-emission shape measured (v1 `reference_positions`, v3 `answers_open_question.picks`,
+# `entity_op` reuse / replace_combine, with and without `requested_attributes`, message_type
+# casual / business_query) prints AND persists `outstanding_scope` correctly. The live
+# defect did not reproduce from the emission alone, so these are written as the RULE rather
+# than as a repro of that one turn, and the one shape that IS red here is the one the
+# measurement found: a pick that arrives UNSTAMPED (no domain word, no order status - what
+# the model emits when it reads the turn as nothing but an answer) loses the outstanding
+# ask entirely and runs the plain order list.
+#
+# Red (1) is a GUARD on the emission, not on the phrase (the parser gap - v20 emitted a
+# bare `order_status: "outstanding"` for "DO outstanding" - is the prompt's own half, and
+# `test_outstanding_lane::TestScopeWordsBind` / `TestPromptTeachesScopeWordsInsideLongerSentences`
+# hold it): GIVEN `do_outstanding` / `so_outstanding` / `outstanding_both`, the scope
+# question must never be asked and the report runs at that scope.
+# =========================================================================== #
+
+#: `order_status` -> the `scope` the report must run at, from `_SCOPE_BY_ORDER_STATUS`.
+PRE_SCOPED = (("do_outstanding", "do"), ("so_outstanding", "so"), ("outstanding_both", "both"))
+
+#: The four ways a number reaches the engine, all four of which must resolve the same
+#: question. `v1-stamped` is the live v20 shape (the model stamps the domain and the
+#: status back onto a bare "1" - R-B's own note); `v1-unstamped` is the same prompt
+#: reading the turn as a pure answer (`entity_op: reuse`); `v1-replace` is that same
+#: answer emitted with `entity_op: replace_combine`, which is what R-D's own live pick
+#: turn carried (d5851ed2: "the pick emitted `entity_op: replace` with the customer
+#: alone") and what `ParseOutput`'s default is; `v3` is this lane's own parser.
+ANSWER_CHANNELS = ("v1-stamped", "v1-unstamped", "v1-replace", "v3")
+
+
+def _outstanding_ask_qf(status: str, *, customer_raw: str, v3: bool = False) -> dict[str, Any]:
+    qf = _qf(
+        [_entity(customer_raw, "customer")], domain="order", intent_hint="check_order",
+        order_status=status, entity_op="replace_combine",
+    )
+    if v3:
+        qf["answers_open_question"] = {
+            "resolved": False, "picks": [], "yes_no": None, "free_text": None,
+        }
+        qf["anaphora"] = False
+        qf["topic_reset"] = False
+    return qf
+
+
+def _numbered_answer_qf(position: int, *, channel: str, status: str) -> dict[str, Any]:
+    """A bare number, in each of the three shapes the engine has to read it in."""
+    if channel == "v3":
+        return _parser_output(
+            message_type="business_query", intent_hint="check_order", domain_hint="order",
+            order_status=status, entity_op="reuse", entities=[], asks=[],
+            reference_positions=[],
+            answers_open_question={
+                "resolved": True, "picks": [position], "yes_no": None, "free_text": None,
+            },
+            anaphora=False, topic_reset=False,
+        )
+    if channel == "v1-stamped":
+        return _parser_output(
+            message_type="business_query", intent_hint="check_order", domain_hint="order",
+            order_status=status, entity_op="reuse", entities=[], asks=[],
+            reference_positions=[position],
+        )
+    return _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entities=[], asks=[],
+        entity_op="reuse" if channel == "v1-unstamped" else "replace_combine",
+        reference_positions=[position],
+    )
+
+
+def _report_tool_calls(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    return [args for name, args in calls if name == "crm_outstanding_report"]
+
+
+def _other_tool_calls(calls: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    return [
+        name
+        for name, _args in calls
+        if not name.startswith("probe:") and name != "crm_outstanding_report"
+    ]
+
+
+@pytest.mark.parametrize(("status", "scope"), PRE_SCOPED, ids=lambda x: x)
+def test_a_pre_scoped_outstanding_ask_never_asks_the_scope_question(
+    status, scope, session_factory, monkeypatch
+) -> None:
+    """Red (1), the no-picker half: the document type was named, so there is nothing to
+    ask. #862's own pre-scoping, guarded per status rather than per phrase."""
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(
+        single={
+            "hanlim": {
+                "uuid": CARRIED_CUSTOMER_UUID, "entity_type": "customer",
+                "canonical_code": "HANLIM", "match_tier": "exact", "company_name": "Sorento",
+            }
+        }
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_outstanding_ask_qf(status, customer_raw="hanlim"),
+        text_body=f"{status} for hanlim", msg_id=f"ZZT-gr5-prescoped-{status}",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status == "done", (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Outstanding for which document?" not in reply, (
+        f"{status} names the document type, so the scope question is answered before it "
+        f"is asked: {reply!r}"
+    )
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, f"{status}: one report call: {calls!r}"
+    assert reports[0].get("scope") == scope, (
+        f"{status} must run the report at scope {scope!r}: {reports[0]!r}"
+    )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") != "outstanding_scope", (
+        f"{status}: nothing is left to ask about the document type: {question!r}"
+    )
+
+
+@pytest.mark.parametrize("channel", ANSWER_CHANNELS, ids=lambda c: c)
+@pytest.mark.parametrize(("status", "scope"), PRE_SCOPED, ids=lambda x: x)
+def test_a_pre_scoped_ask_keeps_its_scope_across_a_customer_picker(
+    status, scope, channel, session_factory, monkeypatch
+) -> None:
+    """Red (1), the picker half, which is chain e's own first two turns: the document type
+    named in the ORIGINAL message has to survive the pick, so the pick answers with the
+    report at that scope and still never asks which document.
+
+    Measured red on `v1-unstamped`: a pick the model reads as a pure answer loses the
+    outstanding ask altogether and the turn runs the plain order list.
+    """
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(multi={"chin chun": _customer_rows()})
+    _run_turn(
+        session_factory, monkeypatch,
+        qf=_outstanding_ask_qf(status, customer_raw="chin chun", v3=channel == "v3"),
+        text_body=f"{status} for chin chun",
+        msg_id=f"ZZT-gr5-picker-{status}-{channel}-arm",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_numbered_answer_qf(1, channel=channel, status=status), text_body="1",
+        msg_id=f"ZZT-gr5-picker-{status}-{channel}-pick",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status == "done", (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Outstanding for which document?" not in reply, (
+        f"{status} / {channel}: the document type was named before the picker and must "
+        f"survive it: {reply!r}"
+    )
+    assert _other_tool_calls(calls) == [], (
+        f"{status} / {channel}: the pick resumes the OUTSTANDING ask, so nothing else may "
+        f"answer it: {calls!r}"
+    )
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, (
+        f"{status} / {channel}: the pick runs the report once: {calls!r}"
+    )
+    assert reports[0].get("scope") == scope, (
+        f"{status} / {channel}: at the scope the first message named: {reports[0]!r}"
+    )
+    assert reports[0].get("customer_ids") == [CHIN_CHUN[0][0]], (
+        f"{status} / {channel}: for the customer the pick chose: {reports[0]!r}"
+    )
+
+
+@pytest.mark.parametrize("channel", ANSWER_CHANNELS, ids=lambda c: c)
+class TestTheQuestionAPickTurnAsksIsTheOneThatPersists:
+    """Red (2): the general rule, on both kinds a pick turn can newly ask.
+
+    The reply is the contract. A turn that answers the roster AND asks a new question has
+    put the new question on the customer's screen, so that is what the next message
+    answers - and the roster it merely picked from cannot outlive it by surviving into the
+    persisted slot (D19 rule 1 is about a roster nothing newer replaced).
+    """
+
+    def _arm_and_pick(self, session_factory, monkeypatch, *, status: str, channel: str, tag: str):
+        _seed_contact(session_factory, variables={})
+        services = _exact_services(multi={"chin chun": _customer_rows()})
+        _run_turn(
+            session_factory, monkeypatch,
+            qf=_outstanding_ask_qf(status, customer_raw="chin chun", v3=channel == "v3"),
+            text_body=f"{status} for chin chun", msg_id=f"ZZT-gr5-{tag}-{channel}-arm",
+            attributes=["sales_orders.outstanding"], resolve_services=services,
+            emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+        )
+        result, calls = _run_turn(
+            session_factory, monkeypatch,
+            qf=_numbered_answer_qf(1, channel=channel, status=status), text_body="1",
+            msg_id=f"ZZT-gr5-{tag}-{channel}-pick",
+            attributes=["sales_orders.outstanding"], resolve_services=services,
+            emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+        )
+        return result, calls, services
+
+    def test_a_pick_turn_that_asks_the_scope_question_persists_it(
+        self, channel, session_factory, monkeypatch
+    ) -> None:
+        """Chain e's middle turn: a BARE `outstanding` ask, so the pick turn has to ask
+        which document - and what it asked is what has to be waiting for the next number.
+        """
+        result, _calls, _services = self._arm_and_pick(
+            session_factory, monkeypatch, status="outstanding", channel=channel, tag="scope"
+        )
+        assert result.status == "done", (result.status, result.error)
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, (
+            f"{channel}: a bare outstanding ask still needs its document type: {reply!r}"
+        )
+        question = _stored_oq(_final_vars(session_factory, result))
+        assert question.get("kind") == "outstanding_scope", (
+            f"{channel}: the reply asked the scope question, so the roster it picked FROM "
+            f"must not be what is left waiting for the next number: {question!r}"
+        )
+        assert len(question.get("options") or []) == 3, question
+
+    def test_a_pick_turn_that_asks_the_detail_question_persists_it(
+        self, channel, session_factory, monkeypatch
+    ) -> None:
+        """The same rule on the other kind: the scope was already known, so the pick turn
+        ANSWERS with the report and asks the detail question instead."""
+        result, calls, _services = self._arm_and_pick(
+            session_factory, monkeypatch, status="do_outstanding", channel=channel,
+            tag="detail",
+        )
+        assert result.status == "done", (result.status, result.error)
+        assert _report_tool_calls(calls), f"{channel}: the pick runs the report: {calls!r}"
+        question = _stored_oq(_final_vars(session_factory, result))
+        assert question.get("kind") == "outstanding_detail", (
+            f"{channel}: the reply offered the detail list, so that is the question the "
+            f"next number answers: {question!r}"
+        )
+
+
+@pytest.mark.parametrize("channel", ANSWER_CHANNELS, ids=lambda c: c)
+@pytest.mark.parametrize(
+    ("position", "scope"), ((1, "so"), (2, "do"), (3, "both")), ids=lambda x: str(x)
+)
+def test_a_numbered_answer_to_the_scope_question_resolves_after_a_customer_pick(
+    position, scope, channel, session_factory, monkeypatch
+) -> None:
+    """Red (2)'s second half, chain e's third turn: the number the customer types against
+    the question the previous turn asked has to RESOLVE - the report at that scope, and no
+    third printing of the same three options."""
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(multi={"chin chun": _customer_rows()})
+    _run_turn(
+        session_factory, monkeypatch,
+        qf=_outstanding_ask_qf("outstanding", customer_raw="chin chun", v3=channel == "v3"),
+        text_body="outstanding for chin chun",
+        msg_id=f"ZZT-gr5-answer-{position}-{channel}-arm",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    _run_turn(
+        session_factory, monkeypatch,
+        qf=_numbered_answer_qf(1, channel=channel, status="outstanding"), text_body="1",
+        msg_id=f"ZZT-gr5-answer-{position}-{channel}-pick",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_numbered_answer_qf(position, channel=channel, status="outstanding"),
+        text_body=str(position),
+        msg_id=f"ZZT-gr5-answer-{position}-{channel}-scope",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status == "done", (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Outstanding for which document?" not in reply, (
+        f"{position} / {channel}: the customer answered the question - printing it a "
+        f"third time is how chain e's owner could not leave it: {reply!r}"
+    )
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, f"{position} / {channel}: one report call: {calls!r}"
+    assert reports[0].get("scope") == scope, (
+        f"{position} / {channel}: '{position}' is the {scope!r} scope: {reports[0]!r}"
+    )
+    assert reports[0].get("customer_ids") == [CHIN_CHUN[0][0]], (
+        f"{position} / {channel}: the customer the pick chose two turns ago is still the "
+        f"report's subject: {reports[0]!r}"
     )
