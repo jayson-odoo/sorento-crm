@@ -357,13 +357,26 @@ class TestOwner12SepNoPhantomAttachmentSentence:
 
 class TestAC911SPOAllocationDomainNoLongerUnsupported:
     def test_spo_allocation_removed_goods_receive_stays(self) -> None:
-        """AC-911: `spo_allocation` is no longer in `DEFAULT_UNSUPPORTED_DOMAINS`;
-        `goods_receive` still is - `crm_procurement_spo_allocations_last_receipt_list` (A6)
-        answers "last in" now, nothing in this plan reads GRN data."""
-        from app.services.chatbot.head.route import DEFAULT_UNSUPPORTED_DOMAINS
+        """AC-911: `spo_allocation` is supported; `goods_receive` still is not -
+        `crm_procurement_spo_allocations_last_receipt_list` (A6) answers "last in" now,
+        nothing in this plan reads GRN data.
 
-        assert "spo_allocation" not in DEFAULT_UNSUPPORTED_DOMAINS
-        assert "goods_receive" in DEFAULT_UNSUPPORTED_DOMAINS
+        AC-1592 port: `head.route.DEFAULT_UNSUPPORTED_DOMAINS` is deleted. The same
+        fact now lives on the `Policy` object's per-domain `supported` flag, fed by
+        `chatbot_domains` (`turn/policy_rows.py::DEFAULT_DOMAIN_ROWS` is the same seed
+        data a migration and a blank-schema fixture both fall back to, per
+        `load_policy`'s own docstring)."""
+        from app.services.chatbot.turn.policy import Policy
+        from app.services.chatbot.turn.policy_rows import DEFAULT_DOMAIN_ROWS, DEFAULT_KIND_ROWS
+
+        policy = Policy.from_rows(
+            domains=[dict(row) for row in DEFAULT_DOMAIN_ROWS],
+            kinds=[dict(row) for row in DEFAULT_KIND_ROWS],
+            tier_order=["dealer", "office", "end_user"],
+        )
+
+        assert policy.domain("spo_allocation").supported is True
+        assert policy.domain("goods_receive").supported is False
 
 
 class TestOwner8SepTheOfferIsWrittenOnce:

@@ -247,3 +247,13 @@ above is left as-is (historical record) rather than rewritten in place.
     `apply()` calls; two more RED tests, real regressions, not fixture bugs. 7
     passed, 2 failed in the new file. Fourth and fifth genuine regressions found by
     this triage pass, not the tester's fix to make.
+
+- **`test_crossdomain_ladder.py` (1358 lines) - done, one-line-swap PORT as
+  predicted.** Only `TestAC911SPOAllocationDomainNoLongerUnsupported`'s one test
+  used `head.route.DEFAULT_UNSUPPORTED_DOMAINS` (local import). Swapped to
+  `Policy.from_rows(...).domain(name).supported`, fed by
+  `turn/policy_rows.py::DEFAULT_DOMAIN_ROWS` (the same seed a migration and a
+  blank-schema fixture both fall back to). Confirmed: `spo_allocation.supported is
+  True`, `goods_receive.supported is False` - AC-911 holds under the new Policy
+  object. File collects clean (66 tests), the other ~1350 lines (kept `lanes/
+  business` ladder logic) untouched.
