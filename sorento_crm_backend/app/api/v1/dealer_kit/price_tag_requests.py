@@ -1002,6 +1002,14 @@ def _snapshot_draft(
         pinned_line_data=_pins_snapshot(db, page),
     )
     db.add(version)
+    # Live 500, PT-202609-0015: the app's own `SessionLocal` runs with
+    # `autoflush=False`, so a caller writing two versions in one request (an
+    # Update's before + after) had the SECOND call's `max()` query above miss
+    # this row entirely - both computed the same next version number, and the
+    # second INSERT hit `uq_dealer_kit_page_version`. Flushing here, not at
+    # the call site, is what makes `_snapshot_draft` safe to call twice in a
+    # row regardless of the session's own autoflush setting.
+    db.flush()
     # The draft has become history, so there is no work in progress left. Not
     # clearing it would make the NEXT open show the draft rather than the
     # version that was just saved from it - the same document today, but a

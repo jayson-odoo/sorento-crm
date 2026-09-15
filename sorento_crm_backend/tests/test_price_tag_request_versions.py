@@ -341,6 +341,71 @@ class TestRestore:
         assert restore_v2.status_code == 200, restore_v2.text
         assert live_pin() == 2260.00
 
+    def test_one_request_writing_two_versions_gets_consecutive_numbers(self, crm):
+        """Live 500 on :3082, PT-202609-0015: `_snapshot_draft` computed
+        ``max(PageVersion.version) + 1`` with a query, and the before + after
+        snapshots an Update writes in ONE request both read that same max,
+        because the first ``PageVersion`` was only ``db.add``ed, not flushed,
+        before the second query ran - both got version 1, and the second
+        INSERT hit ``uq_dealer_kit_page_version``.
+
+        This suite's own session defaults to autoflush (SQLAlchemy's own
+        default), which is exactly why every other test here never tripped
+        over it: the app's real ``SessionLocal`` runs with ``autoflush=False``
+        (see ``tests/_pg_fixture.py: pg_session``'s own docstring on the same
+        point), so the live route's second query genuinely could not see the
+        first, unflushed row. Turning autoflush off here for one call is what
+        makes this test tell the truth about the route instead of about this
+        fixture's own session.
+        """
+        from app.models.dealer_kit import PageVersion
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        client, db = crm
+        product = seed.seed_product(db, list_price=1000.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="new",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        tag_id = _first_tag_id(db, request)
+
+        product.list_price = 1200.00
+        db.commit()
+
+        db.autoflush = False
+        try:
+            response = client.post(
+                f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
+                json={"action": "update"},
+            )
+        finally:
+            db.autoflush = True
+
+        assert response.status_code == 200, response.text
+
+        req = PriceTagRequestService.get_request(db, request.id)
+        db.expire_all()
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == req.page_id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        assert [v.version for v in versions] == [1, 2], [
+            (v.version, v.commit_message) for v in versions
+        ]
+        assert versions[0].commit_message.startswith("Before product update:")
+        assert versions[1].commit_message.startswith("Product update:")
+
     def test_restoring_a_version_that_does_not_exist_404s(self, crm):
         client, db = crm
         request, _page, _doc = _request_with_three_versions(db)
