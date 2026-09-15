@@ -55,6 +55,18 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
 - AC-S4-4 `[FE]` A line with one tag and an open group keeps the tag row (the Split / Pick one
   controls live there).
 
+## S5 Tag Size panel collapsible
+
+- AC-S5-1 `[FE]` `TagSizeControl` renders collapsed by default: the "Tag Size" heading with the
+  current size beside it (`95 x 44.5 mm`), and no preset select, W / H inputs or "Apply to all
+  lines" button in the document.
+- AC-S5-2 `[FE]` Clicking the heading opens it (select, inputs, buttons present); clicking again
+  collapses it. The trigger is a button with `aria-expanded`.
+- AC-S5-3 `[FE]` With `localStorage["dealer-kit.tag-size.open"] === "1"` it renders open; opening
+  or closing writes the key. A throwing `localStorage` does not break the render (collapsed).
+- AC-S5-4 `[FE]` Existing `TagSizeControl.test.tsx` cases that interact with the select or
+  inputs open the panel first and still pass.
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and

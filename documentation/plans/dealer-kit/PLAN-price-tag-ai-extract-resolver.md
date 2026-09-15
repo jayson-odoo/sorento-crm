@@ -38,6 +38,10 @@ Fourth finding (owner screenshot 15 Sep, the tag designer's Lines rail): the sam
 line block ("P SRTWT8203, Qty 1 / Shower") with a "1a" tag row under it carrying the price,
 the check and the actions. Owner: a line with no parts is one row on the rail too.
 
+Fifth finding (owner screenshot 15 Sep, designer rail): the Tag Size panel (preset select, W,
+H, Apply to all lines) is always open and takes the rail space the lines need. Owner: make it
+collapsible; it is not needed most of the time.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -79,6 +83,14 @@ the check and the actions. Owner: a line with no parts is one row on the rail to
   No `1a` text, no `TagRailRow` under it. The Remove button is not shown (it is already hidden
   when a line has one tag). A line with two or more tags, any parts, or an open group keeps
   today's shape. `aria-label`s keep the tag label.
+- D9 `TagSizeControl` (shared by the designer rail and the template page) becomes a
+  `Collapsible` (`components/ui/collapsible.tsx`): the "Tag Size" heading is the trigger, with
+  a chevron and, when collapsed, the current size inline (`95 x 44.5 mm`, the same
+  `sizeKey`/label the select shows) so the value stays readable without opening it. Collapsed
+  by default. The open/closed state is remembered per browser in `localStorage` under one key
+  (`dealer-kit.tag-size.open`), read and written inside try/catch, so a viewer who opens it
+  keeps it open on the next request. No server preference, no prop: one component, one key.
+  The "Select a line to set its tag size" placeholder in the rail keeps its heading as is.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -97,7 +109,9 @@ FE
 - `app/(auth)/portal/components/PriceTagRequestForm.tsx`: D3, D4.
 - `app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestDetail.tsx`: D7.
 - `app/(protected)/dealer-kit/price-tag-requests/[id]/design/components/RequestTagDesigner.tsx`: D8.
-- tests: `RequestTagDesigner.tags.test.tsx` (one tag + no parts = one selectable block, no "1a";
+- `app/(protected)/dealer-kit/components/TagSizeControl.tsx`: D9.
+- tests: `TagSizeControl.test.tsx` (collapsed by default with the size inline; click opens;
+  state read from localStorage), `RequestTagDesigner.tags.test.tsx` (one tag + no parts = one selectable block, no "1a";
   two tags = tag rows), `PriceTagRequestDetail.test.tsx` (one tag + no parts = one row; two tags = sub-rows),
   `PriceTagRequestForm.aiExtractApply.test.tsx` (update the mocks: no `lookupTagItems`
   call, statuses from payload), `PriceTagRequestForm.parts.test.tsx` (Add part hidden when
