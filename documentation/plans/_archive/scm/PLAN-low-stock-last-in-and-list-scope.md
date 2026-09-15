@@ -1,6 +1,6 @@
 # PLAN - Low stock report: last in from the last SPO line, All sheet matches the list
 
-Status: implemented - awaiting review
+Status: merged - PR #919, 15 Sep 2026 (owner tested on the 15 Sep prod copy and merged; deployed by the main pipeline)
 Domain: scm
 Owner ruling source: chat, 15 Sep 2026 (prod run f857ca19-2c11-4a58-a27b-a203cd858b0b, `low-stock-15092026.xlsx`)
 UAC: `low-stock-last-in-and-list-scope-acceptance-criteria.md`
