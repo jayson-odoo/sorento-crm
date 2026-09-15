@@ -339,6 +339,244 @@ class TestAutoSplitThroughThePortalRoute:
         assert len(tags) == 2, "D6: one tag per Basin candidate, through the route"
         assert all(tag["choices"] for tag in tags), "no tag is left with empty choices"
 
+    def _ui_payload(self, *, sink_id, combo_id, drain_id, tap_a, tap_b, promotion_id):
+        """The EXACT shape the real portal UI POSTs (browser pass 2 HAR)."""
+        return {
+            "debtor_code": "ZZT-CUST01",
+            "debtor_name": "ZZT Dealer Customer",
+            "needed_by_date": None,
+            "notes": None,
+            "price_mode": "selling",
+            "print_by": "office",
+            "lines": [
+                {
+                    "line_type": "product",
+                    "product_id": sink_id,
+                    "product_set_id": None,
+                    "combo_id": combo_id,
+                    "quantity": 1,
+                    "included_accessories": None,
+                    "remarks": None,
+                    "product_class": None,
+                    "parts": [
+                        {"product_id": drain_id, "role": None, "candidates": []},
+                        {
+                            "product_id": None,
+                            "role": "Kitchen Tap",
+                            "candidates": [tap_a, tap_b],
+                        },
+                    ],
+                    "promotion_id": promotion_id,
+                    "manual_sell_price": None,
+                }
+            ],
+        }
+
+    def _sink_combo_and_promo(self, db, contact_id):
+        """Sink host, a FIXED drain part, an OPEN Kitchen Tap group, a
+        promotion covering the sink, and the contact granted `dealer` -
+        every ingredient the real browser walk's payload names."""
+        from app.models.product_combo import ProductCombo, ProductComboPart
+
+        sink_id = _seed_product(db)
+        drain_id = _seed_product(db)
+        tap_a = _seed_product(db)
+        tap_b = _seed_product(db)
+        combo = ProductCombo(
+            id=str(uuid.uuid4()), host_product_id=sink_id, name="Sink + Tap", sort_order=0
+        )
+        db.add(combo)
+        db.flush()
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=drain_id,
+                choice_group=None,
+                sort_order=0,
+            )
+        )
+        for index, candidate_id in enumerate((tap_a, tap_b)):
+            db.add(
+                ProductComboPart(
+                    id=str(uuid.uuid4()),
+                    combo_id=combo.id,
+                    part_product_id=candidate_id,
+                    choice_group="Kitchen Tap",
+                    sort_order=index + 1,
+                )
+            )
+        db.flush()
+        _grant_promotion_audience_code(db, contact_id, "dealer")
+        promotion_id = _seed_promotion_for(db, sink_id, access_levels=["dealer"])
+        return sink_id, combo.id, drain_id, tap_a, tap_b, promotion_id
+
+    def test_create_with_the_ui_payload_shape_then_submit_auto_splits(self, client):
+        """T1 (browser pass 2): the real portal UI's exact POST body - Selling
+        mode, a line `promotion_id`, `combo_id` set, `product_class: None`,
+        a FIXED part with `role: None` ahead of the open group - produced
+        ONE tag with empty `choices` in the browser, twice.
+
+        This is unit-for-unit that shape, and it PASSES: 2 tags, both after
+        create and after submit. The 4 bisect tests below it (dropping
+        `promotion_id`, `role: ""` instead of `null`, dropping the fixed
+        part, and going through blank-draft-then-PUT-then-submit - the
+        plausible read of "created two requests" if a Save Draft ran first)
+        all pass too. No field or sequencing tried here reproduces the
+        browser finding - kept as regression coverage for the exact
+        contract shape; the coder needs either the real request/product ids
+        from the browser session's own database rows, or a repeat capture
+        with network-level request/response bodies (not just the outgoing
+        POST) to find where the two disagree."""
+        c, db, contact_id = client
+        sink_id, combo_id, drain_id, tap_a, tap_b, promotion_id = (
+            self._sink_combo_and_promo(db, contact_id)
+        )
+
+        created = c.post(
+            _BASE,
+            json=self._ui_payload(
+                sink_id=sink_id,
+                combo_id=combo_id,
+                drain_id=drain_id,
+                tap_a=tap_a,
+                tap_b=tap_b,
+                promotion_id=promotion_id,
+            ),
+        )
+        assert created.status_code == 201, created.text
+        request_id = created.json()["id"]
+
+        after_create = c.get(f"{_BASE}/{request_id}").json()
+        create_tags = after_create["lines"][0]["tags"]
+        assert len(create_tags) == 2, (
+            "D6: one tag per Kitchen Tap candidate, right after create",
+            create_tags,
+        )
+        assert all(tag["choices"] for tag in create_tags), "no tag left with empty choices"
+
+        submitted = c.post(f"{_BASE}/{request_id}/submit")
+        assert submitted.status_code == 200, submitted.text
+
+        after_submit = c.get(f"{_BASE}/{request_id}").json()
+        submit_tags = after_submit["lines"][0]["tags"]
+        assert len(submit_tags) == 2, ("still 2 tags after submit", submit_tags)
+        assert all(tag["choices"] for tag in submit_tags)
+
+    def test_ui_payload_without_the_line_promotion_id_still_auto_splits(self, client):
+        """T1 bisect (1/3): same shape, `promotion_id` dropped."""
+        c, db, contact_id = client
+        sink_id, combo_id, drain_id, tap_a, tap_b, _promotion_id = (
+            self._sink_combo_and_promo(db, contact_id)
+        )
+
+        payload = self._ui_payload(
+            sink_id=sink_id,
+            combo_id=combo_id,
+            drain_id=drain_id,
+            tap_a=tap_a,
+            tap_b=tap_b,
+            promotion_id=None,
+        )
+        created = c.post(_BASE, json=payload)
+        assert created.status_code == 201, created.text
+        detail = c.get(f"{_BASE}/{created.json()['id']}").json()
+        tags = detail["lines"][0]["tags"]
+        assert len(tags) == 2, ("without promotion_id", tags)
+
+    def test_ui_payload_with_role_empty_string_instead_of_null_still_auto_splits(
+        self, client
+    ):
+        """T1 bisect (2/3): same shape, the FIXED drain part's `role` sent as
+        `""` (what the create/PUT schemas normally carry) instead of `None`
+        (what the HAR actually showed)."""
+        c, db, contact_id = client
+        sink_id, combo_id, drain_id, tap_a, tap_b, promotion_id = (
+            self._sink_combo_and_promo(db, contact_id)
+        )
+
+        payload = self._ui_payload(
+            sink_id=sink_id,
+            combo_id=combo_id,
+            drain_id=drain_id,
+            tap_a=tap_a,
+            tap_b=tap_b,
+            promotion_id=promotion_id,
+        )
+        payload["lines"][0]["parts"][0]["role"] = ""
+        created = c.post(_BASE, json=payload)
+        assert created.status_code == 201, created.text
+        detail = c.get(f"{_BASE}/{created.json()['id']}").json()
+        tags = detail["lines"][0]["tags"]
+        assert len(tags) == 2, ("role '' instead of null", tags)
+
+    def test_ui_payload_without_the_fixed_drain_part_still_auto_splits(self, client):
+        """T1 bisect (3/3): same shape, the FIXED drain part dropped entirely
+        - only the OPEN Kitchen Tap group remains on `parts`."""
+        c, db, contact_id = client
+        sink_id, combo_id, _drain_id, tap_a, tap_b, promotion_id = (
+            self._sink_combo_and_promo(db, contact_id)
+        )
+
+        payload = self._ui_payload(
+            sink_id=sink_id,
+            combo_id=combo_id,
+            drain_id=None,
+            tap_a=tap_a,
+            tap_b=tap_b,
+            promotion_id=promotion_id,
+        )
+        payload["lines"][0]["parts"] = [
+            {"product_id": None, "role": "Kitchen Tap", "candidates": [tap_a, tap_b]}
+        ]
+        created = c.post(_BASE, json=payload)
+        assert created.status_code == 201, created.text
+        detail = c.get(f"{_BASE}/{created.json()['id']}").json()
+        tags = detail["lines"][0]["tags"]
+        assert len(tags) == 2, ("no fixed part at all", tags)
+
+    def test_ui_payload_via_blank_draft_then_put_then_submit_still_auto_splits(
+        self, client
+    ):
+        """T1 bisect (4/4, sequencing not field shape): the real portal form
+        calls `createRequest` only when it has no `effectiveId` yet - a prior
+        "Save Draft" (or an id already assigned for another reason) routes
+        Submit through `updateRequest` (PUT) instead, which is plausibly what
+        "created two requests" actually did. Reproduces that two-step shape:
+        a bare draft (product only, no combo/parts/promotion) POSTed first,
+        then the full UI payload PUT onto it, then submit."""
+        c, db, contact_id = client
+        sink_id, combo_id, drain_id, tap_a, tap_b, promotion_id = (
+            self._sink_combo_and_promo(db, contact_id)
+        )
+
+        draft = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": sink_id}]},
+        )
+        assert draft.status_code == 201, draft.text
+        request_id = draft.json()["id"]
+
+        updated = c.put(
+            f"{_BASE}/{request_id}",
+            json=self._ui_payload(
+                sink_id=sink_id,
+                combo_id=combo_id,
+                drain_id=drain_id,
+                tap_a=tap_a,
+                tap_b=tap_b,
+                promotion_id=promotion_id,
+            ),
+        )
+        assert updated.status_code == 200, updated.text
+
+        submitted = c.post(f"{_BASE}/{request_id}/submit")
+        assert submitted.status_code == 200, submitted.text
+
+        detail = c.get(f"{_BASE}/{request_id}").json()
+        tags = detail["lines"][0]["tags"]
+        assert len(tags) == 2, ("blank draft, then PUT the full shape, then submit", tags)
+
     def test_put_updating_the_drafts_lines_still_auto_splits(self, client):
         c, db, _ = client
         cabinet_id = _seed_product(db)

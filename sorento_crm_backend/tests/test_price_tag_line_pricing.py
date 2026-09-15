@@ -743,6 +743,10 @@ def test_numbers_serialise_as_json_numbers_not_strings(portal_client):
     `test_patch_line_manual_price`), but the LOOKUP row has no such carve-out
     in the plan (AC-S7-1's contract), so a caller must be able to do
     arithmetic on it without a `parseFloat`.
+
+    No `price_mode` in the payload (T4): `LinePricingRequest` dropped the
+    field - neither route ever read it and `line_pricing` takes no such
+    parameter - so a test payload naming it drifts from the real contract.
     """
     client, db, _contact_id = portal_client
     parent = _product(db, list_price="500.00")
@@ -750,7 +754,6 @@ def test_numbers_serialise_as_json_numbers_not_strings(portal_client):
     res = client.post(
         "/api/v1/public/portal/lookups/line-pricing",
         json={
-            "price_mode": "list",
             "lines": [
                 {
                     "key": "L1",

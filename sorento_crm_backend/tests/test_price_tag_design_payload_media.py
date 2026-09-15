@@ -482,3 +482,95 @@ def test_every_part_photo_is_in_the_image_map_too():
         _rows, media = design_media(db, request, doc={})
 
     assert mirror_photo.id in media["images"], media["images"]
+
+
+def test_a_pinned_parts_photo_url_is_resigned_not_read_back_stale():
+    """T3 (blocker, re-review): `_row_from_pin` re-signs the HOST's
+    `row["images"]` (`resign_images`) but hands `row["parts"]` straight
+    through from the stored pin - a signed URL is dead within the hour, so a
+    part-bound layer on a design read any time after that draws whatever
+    dead link was live when the tag was pinned.
+
+    Overwrites the PINNED part image's url with a sentinel directly (raw
+    SQL, the same way a week-old pin would actually go stale) and asserts
+    neither the export payload's media map NOR `resolve-prices`' own
+    `parts[].images[].url` ever echoes it back - both read through
+    `resolve_request_line_data` -> `_row_from_pin`, one seam.
+    """
+    from sqlalchemy import text
+
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.dealer_kit import tag_data_service
+    from app.services.dealer_kit.tag_sheet_export_service import design_media
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    with blank_session() as db:
+        contact_id = seed.seed_portal_contact(db)
+        cabinet = seed.seed_product(db)
+        mirror = seed.seed_product(db)
+        mirror_photo = seed.seed_product_photo(db, mirror)
+
+        combo = ProductCombo(
+            id=str(uuid.uuid4()), host_product_id=cabinet.id, name="2 pc", sort_order=0
+        )
+        db.add(combo)
+        db.flush()
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=mirror.id,
+                choice_group=None,
+                sort_order=0,
+            )
+        )
+        db.flush()
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact_id,
+            company_id=seed.SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": cabinet.id,
+                        "combo_id": combo.id,
+                        "parts": [{"product_id": mirror.id}],
+                    }
+                ],
+            },
+        )
+        db.flush()
+        tag = request.lines[0].tags[0]
+
+        tag_data_service.pin_tags(db, request, only_unpinned=True)
+        db.flush()
+
+        sentinel = "https://stale.example.test/dead-link.jpg"
+        db.execute(
+            text(
+                "UPDATE price_tag_request_tags SET pinned_tag_data = "
+                "jsonb_set(pinned_tag_data, '{parts,0,images,0,url}', to_jsonb(CAST(:u AS text))) "
+                "WHERE id = :i"
+            ),
+            {"u": sentinel, "i": tag.id},
+        )
+        db.flush()
+        db.expire_all()
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+        part_images = rows[0]["parts"][0]["images"]
+        assert mirror_photo.id in {img["attachment_id"] for img in part_images}
+        part_url = next(
+            img["url"] for img in part_images if img["attachment_id"] == mirror_photo.id
+        )
+        assert part_url != sentinel, "resolve-prices' own parts[].images[].url is stale"
+
+        _rows, media = design_media(db, request, doc={})
+
+    assert sentinel not in media["images"].values(), (
+        "the export media map still carries the dead pinned url"
+    )
+    assert media["images"].get(mirror_photo.id) == part_url

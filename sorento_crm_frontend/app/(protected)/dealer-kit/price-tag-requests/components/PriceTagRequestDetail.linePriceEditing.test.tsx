@@ -116,10 +116,14 @@ vi.mock('../../services/priceTagRequestService', () => ({
   updatePriceTagLinePrice: vi.fn(),
 }));
 
-import { getPriceTagRequest } from '../../services/priceTagRequestService';
+import {
+  getPriceTagRequest,
+  updatePriceTagLinePrice,
+} from '../../services/priceTagRequestService';
 import PriceTagRequestDetail from './PriceTagRequestDetail';
 
 const mockGet = vi.mocked(getPriceTagRequest);
+const mockUpdateLinePrice = vi.mocked(updatePriceTagLinePrice);
 
 function switchTab(name: string) {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
@@ -306,5 +310,88 @@ describe('PriceTagRequestDetail - manual price input does not fire a lookup per 
 
     const callsAfterTyping = mockLookupLinePricing.mock.calls.length - callsBeforeTyping;
     expect(callsAfterTyping).toBeLessThanOrEqual(1);
+  });
+});
+
+// --------------------------------------------------------------------------- T2
+describe('PriceTagRequestDetail - a line with a SAVED manual price is editable, not read-only (T2, browser pass 2)', () => {
+  it('renders the manual input pre-filled with 175, the Sell Price column reads RM 175.00, and blurring "1500" saves it once', async () => {
+    mockGet.mockResolvedValue({
+      ...baseRequest,
+      lines: [
+        {
+          id: 'line-1',
+          line_type: 'product',
+          product_id: 'prod-1',
+          product_set_id: null,
+          name: 'Kitchen Sink',
+          code: 'SRT-1',
+          show_promo_price: true,
+          quantity: 1,
+          included_accessories: null,
+          sort_order: 0,
+          list_price: 500,
+          sell_price: 175,
+          parts: [],
+          package_warning: null,
+          promotion_id: null,
+          promotion_name: null,
+          manual_sell_price: 175,
+          sell_price_basis: 'manual',
+          tags: [
+            {
+              id: 'line-1',
+              sort_order: 0,
+              label: '1a',
+              quantity: 1,
+              choices_display: [],
+              open_groups: [],
+              marketing_price_override: null,
+              marketing_override_reason: null,
+              list_price: 500,
+              sell_price: 175,
+            },
+          ],
+        },
+      ],
+    } as never);
+    mockLookupLinePricing.mockResolvedValue([
+      {
+        key: 'line-1',
+        list_price: 500,
+        promotion_options: [],
+        auto_promotion_id: null,
+        sell_price: 175,
+        sell_price_basis: 'manual',
+        parts_at_list: [],
+        candidates: [],
+      },
+    ]);
+    mockUpdateLinePrice.mockResolvedValue({} as never);
+
+    renderDetail();
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    // The main lines table's own "Sell Price" column, not the promotion
+    // sub-row's "Selling price" label - a line with a saved manual price and
+    // `show_promo_price: true` prints its tag's own resolved figure there.
+    expect(await screen.findByText('RM 175.00')).toBeInTheDocument();
+
+    const input = (await screen.findByLabelText(
+      'Selling price for SRT-1',
+    )) as HTMLInputElement;
+    // Pre-filled with the SAVED figure - not a static read-only paragraph
+    // (browser pass 2: a line like this rendered no input at all).
+    expect(input.value).toBe('175');
+
+    fireEvent.change(input, { target: { value: '1500' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(mockUpdateLinePrice).toHaveBeenCalledTimes(1));
+    expect(mockUpdateLinePrice).toHaveBeenCalledWith('req-1', 'line-1', {
+      promotion_id: null,
+      manual_sell_price: 1500,
+    });
   });
 });
