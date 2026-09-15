@@ -1,6 +1,6 @@
 # PLAN: Loading plan - stock list merged cells read through, no-demand rows back in the one table
 
-Status: BUILDING (owner go 15 Sep 2026)
+Status: IN REVIEW - PR open, awaiting owner test on :3080 and go (owner go to build 15 Sep 2026)
 Domain: scm
 Branch: fix/loading-plan-merged-cells-unfold
 UAC: loading-plan-merged-cells-unfold-acceptance-criteria.md
