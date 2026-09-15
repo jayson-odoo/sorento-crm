@@ -1417,19 +1417,21 @@ def test_last_receipt_map_retired_unreceived_line_never_answers(db, chain):
     though it too has nothing received (last in is status-blind now; only VISIBILITY
     gates the pick)."""
     f = chain
+    retired_spo_number = _code("RETIRED-NEWER")[:50]
+    live_spo_number = _code("LIVE-OLDER-OPEN")[:50]
     db.add(SPOAllocation(
-        id=_u(), spo_number=_code("RETIRED-NEWER")[:50], product_id=f["product"].id,
+        id=_u(), spo_number=retired_spo_number, product_id=f["product"].id,
         allocated_quantity=40, quantity_received=0,
         expected_date=date(2026, 8, 30), retired_at=datetime(2026, 9, 1, 0, 0, 0),
     ))
     db.add(SPOAllocation(
-        id=_u(), spo_number=_code("LIVE-OLDER-OPEN")[:50], product_id=f["product"].id,
+        id=_u(), spo_number=live_spo_number, product_id=f["product"].id,
         allocated_quantity=25, quantity_received=0, expected_date=date(2026, 8, 10),
     ))
     db.flush()
 
     result = svc._last_receipt_map(db, [str(f["product"].id)])
-    assert result[str(f["product"].id)]["spo_number"] == "LIVE-OLDER-OPEN", result
+    assert result[str(f["product"].id)]["spo_number"] == live_spo_number, result
 
 
 def test_last_receipt_map_company_scoped(db, chain):
@@ -1451,16 +1453,17 @@ def test_last_receipt_map_company_scoped(db, chain):
     from tests._mc_lookup_seed import seed_mocha
 
     f = chain
+    own_spo_number = _code("SPO-SORENTO-OWN")[:50]
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     db.add(SPOAllocation(
-        id=_u(), spo_number=_code("SPO-SORENTO-OWN")[:50], product_id=f["product"].id,
+        id=_u(), spo_number=own_spo_number, product_id=f["product"].id,
         allocated_quantity=77, expected_date=date(2026, 8, 12),
         company_id=DEFAULT_COMPANY_ID,
     ))
     db.flush()
     assert svc._last_receipt_map(db, [str(f["product"].id)])[str(f["product"].id)][
         "spo_number"
-    ] == "SPO-SORENTO-OWN", (
+    ] == own_spo_number, (
         "the positive control must answer under the SAME company that owns the line "
         "and the product, or the negative assertions below prove nothing"
     )
