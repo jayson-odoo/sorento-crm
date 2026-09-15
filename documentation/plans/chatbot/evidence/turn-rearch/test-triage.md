@@ -178,3 +178,21 @@ above is left as-is (historical record) rather than rewritten in place.
   `turn/route.py::_ASK_BRANCH`), never a string or a migration-era marker to dual-
   read. Already covered by `test_rearch_s3_team_pick_and_866.py` (7/7 green per the
   prior session's handoff) and the S2 pending-state suite. Retired.
+
+- **`test_warehouse_entity.py` (442 lines, was PORT) - MIXED, split done.** Only ONE
+  of its five classes used the doomed import - `TestAWarehouseIsNotADocumentFilter`
+  (review S1, live exec 11818957: a warehouse code must not filter a document-list
+  tool). The other four classes (`TestGateKeepsWarehouse`,
+  `TestZeroEntitySpoAllocationAsksInsteadOfFanningOut`,
+  `TestTransformerEmitsWarehouseIds`, `TestProductAndWarehouseResolveTogether`) test
+  `gate.run_gate`/`lanes/business/fetch` directly (kept) and were untouched - all 11
+  still pass. The doomed class was removed and ported to
+  `test_rearch_port_warehouse_not_a_document_filter.py`, probed against
+  `gate.run_gate` (the same seam its four siblings use): a warehouse-only entity on
+  `resource_attachment` domain still shows up in `compatible_entities`
+  (`gate_reason: "domain 'resource_attachment' not in matrix; passing through
+  unscoped"`) - the drop the old `output_exchange` post-process did has **no
+  equivalent anywhere in the new pipeline** (grepped for `broaden_dropped`: zero
+  hits). RED for that real reason; the guard negative (warehouse kept on
+  `inventory`/`spo_allocation`) stays green. Third genuine regression found by this
+  triage, not the tester's fix to make.
