@@ -1010,6 +1010,118 @@ class TestUpdateAndKeep:
         assert float(line.pinned_tag_data["list_price"]) == 1200.00
         assert line.data_change_ack_hash is None
 
+    def test_update_writes_an_AFTER_version_too_carrying_the_new_pin(self, crm):
+        """PT-202609-0015: Update snapshotted only the OLD pin (BEFORE), so
+        the new value (1200 here) never landed in any version - a Restore to
+        an earlier version could never bring it back because nothing ever
+        held it. The version count must grow by TWO: the before, and now the
+        after.
+        """
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        page, _doc = seed.attach_design(db, request)
+        product.list_price = 1200.00
+        db.commit()
+        tag_id = _tags(db, request.id)[0].id
+
+        before_count = (
+            db.query(PageVersion).filter(PageVersion.page_id == page.id).count()
+        )
+
+        response = client.post(
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
+            json={"action": "update"},
+        )
+        assert response.status_code == 200, response.text
+
+        db.expire_all()
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        assert len(versions) == before_count + 2, [
+            v.commit_message for v in versions
+        ]
+
+        before = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Before product update:")
+        ]
+        after = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Product update:")
+        ]
+        assert len(before) == 1, [v.commit_message for v in versions]
+        assert len(after) == 1, [v.commit_message for v in versions]
+        assert float(before[0].pinned_line_data[tag_id]["list_price"]) == 1000.00
+        assert float(after[0].pinned_line_data[tag_id]["list_price"]) == 1200.00, (
+            "the AFTER version must carry the NEW pin - equal to the live "
+            "value this update just wrote"
+        )
+
+    def test_update_all_writes_one_before_and_one_after_for_the_whole_batch(
+        self, crm
+    ):
+        """"Update all" is N sequential single-tag update calls (the FE's
+        `updateAllTagPins`). The batch must still read as ONE before-state and
+        ONE after-state, not a before/after pair per tag - the second tag's
+        own "before" would otherwise duplicate the first tag's "after" (both
+        snapshot the whole request's pins, not just the tag being touched).
+        """
+        client, db = crm
+        from app.models.dealer_kit import PageVersion
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product_a = seed.seed_product(db, list_price=1000.00)
+        product_b = seed.seed_product(db, list_price=2000.00)
+        request, _product, _contact = _designing_request(db, product=product_a)
+        PriceTagRequestService.replace_lines(
+            db,
+            request,
+            [
+                {"line_type": "product", "product_id": product_a.id},
+                {"line_type": "product", "product_id": product_b.id},
+            ],
+        )
+        db.commit()
+        page, _doc = seed.attach_design(db, request)
+        product_a.list_price = 1100.00
+        product_b.list_price = 2200.00
+        db.commit()
+
+        tag_ids = [tag.id for tag in _tags(db, request.id)]
+        assert len(tag_ids) == 2, "the fixture needs two tags to be a batch"
+
+        for tag_id in tag_ids:
+            response = client.post(
+                f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
+                json={"action": "update"},
+            )
+            assert response.status_code == 200, response.text
+
+        db.expire_all()
+        versions = (
+            db.query(PageVersion)
+            .filter(PageVersion.page_id == page.id)
+            .order_by(PageVersion.version)
+            .all()
+        )
+        before = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Before product update:")
+        ]
+        after = [
+            v for v in versions
+            if (v.commit_message or "").startswith("Product update:")
+        ]
+        assert len(before) == 1, [v.commit_message for v in versions]
+        assert len(after) == 1, [v.commit_message for v in versions]
+
     def test_keep_records_an_ack_and_silences_that_change(self, crm):
         client, db = crm
         from app.services.dealer_kit import tag_data_service

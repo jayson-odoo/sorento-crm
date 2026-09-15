@@ -101,6 +101,35 @@ describe('the list (AC-S5-6)', () => {
     expect(screen.getByText(/Unknown/)).toBeInTheDocument();
   });
 
+  it('renders the new AFTER-update title exactly as given (PT-202609-0015)', async () => {
+    // The sheet does not reword a commit message - it just has to render the
+    // new "Product update: <fields>" string the backend now writes, the same
+    // way it already renders "Before product update: <fields>".
+    renderSheet({
+      load: vi.fn(async () => [
+        {
+          version: 2,
+          commit_message: 'Product update: List price',
+          created_by_name: 'ZZT Marketing Mei',
+          created_at: '2026-09-15T02:00:00Z',
+        },
+        {
+          version: 1,
+          commit_message: 'Before product update: List price',
+          created_by_name: 'ZZT Marketing Mei',
+          created_at: '2026-09-15T01:00:00Z',
+        },
+      ]),
+    });
+
+    expect(
+      await screen.findByText('Product update: List price'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Before product update: List price'),
+    ).toBeInTheDocument();
+  });
+
   it('does not truncate a long commit message (owner round finding 4)', async () => {
     const LONG_MESSAGE =
       'Before product update: List price, Dimensions, Specs, Set members, Barcode';

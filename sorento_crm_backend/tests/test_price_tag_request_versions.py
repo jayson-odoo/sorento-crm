@@ -227,7 +227,11 @@ class TestRestore:
         assert [row.version for row in versions] == [1, 2, 3, 4], (
             "Restore adds to the history, it does not truncate it"
         )
-        assert versions[-1].commit_message == "Restored v1"
+        # Owner finding, PT-202609-0015: the NEW version restore adds is the
+        # state being LEFT (what was live before the restore), not a duplicate
+        # of v1 - v1 already exists as history, so re-snapshotting it a second
+        # time under "Restored v1" is the bug this pins down.
+        assert versions[-1].commit_message == "Before restore to v1"
 
         restored_page = db.query(Page).filter(Page.id == page.id).first()
         drawn = restored_page.draft_doc or versions[-1].doc
@@ -242,6 +246,100 @@ class TestRestore:
             "the pins are half the version - a doc restored over today's data "
             "shows old artwork at new prices"
         )
+
+    def test_the_owner_sequence_pin_update_restore_restore(self, crm):
+        """PT-202609-0015: pin 1260 -> update to 2260 -> restore v1 -> restore
+        v2, walked exactly as the owner hit it.
+
+        Before this fix, Update snapshotted only the OLD pin (never captured
+        2260 anywhere), and Restore re-snapshotted the version it restored TO
+        instead of the state it was leaving - so after "Update then Restore
+        v1", no version anywhere held 2260 and it was gone for good.
+        """
+        from app.models.dealer_kit import PageVersion
+        from app.models.price_tag import PriceTagRequestTag
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        client, db = crm
+        product = seed.seed_product(db, list_price=1260.00)
+        contact_id = seed.seed_portal_contact(db)
+        request = seed.seed_request(
+            db,
+            contact_id,
+            status="new",
+            products=[product],
+            print_by="office",
+            assigned_to_id=seed.MARKETER_ID,
+        )
+        PriceTagRequestService.transition_status(
+            db, request.id, "designing", user_id=seed.MARKETER_ID
+        )
+        db.commit()
+        tag_id = _first_tag_id(db, request)
+        assert float(
+            db.query(PriceTagRequestTag)
+            .filter(PriceTagRequestTag.id == tag_id)
+            .first()
+            .pinned_tag_data["list_price"]
+        ) == 1260.00
+
+        # Update to 2260: the pin route creates the page (none exists yet).
+        product.list_price = 2260.00
+        db.commit()
+        update = client.post(
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
+            json={"action": "update"},
+        )
+        assert update.status_code == 200, update.text
+
+        req = PriceTagRequestService.get_request(db, request.id)
+        page_id = req.page_id
+        assert page_id, "the update action must create the page"
+
+        def versions():
+            db.expire_all()
+            return (
+                db.query(PageVersion)
+                .filter(PageVersion.page_id == page_id)
+                .order_by(PageVersion.version)
+                .all()
+            )
+
+        def pin_of(version_row) -> float:
+            return float((version_row.pinned_line_data or {})[tag_id]["list_price"])
+
+        rows = versions()
+        assert len(rows) == 2, [r.commit_message for r in rows]
+        v1, v2 = rows
+        assert v1.commit_message.startswith("Before product update:")
+        assert pin_of(v1) == 1260.00
+        assert v2.commit_message.startswith("Product update:")
+        assert pin_of(v2) == 2260.00
+
+        live_pin = lambda: float(
+            db.query(PriceTagRequestTag)
+            .filter(PriceTagRequestTag.id == tag_id)
+            .first()
+            .pinned_tag_data["list_price"]
+        )
+        assert live_pin() == 2260.00
+
+        # Restore v1: the state being LEFT (2260) is what the new version
+        # carries, and the live pin becomes v1's (1260) - not re-snapshotted.
+        restore_v1 = client.post(f"{_CRM.format(id=request.id)}/versions/1/restore")
+        assert restore_v1.status_code == 200, restore_v1.text
+
+        rows = versions()
+        assert len(rows) == 3, [r.commit_message for r in rows]
+        v3 = rows[2]
+        assert v3.commit_message == "Before restore to v1"
+        assert pin_of(v3) == 2260.00
+        assert live_pin() == 1260.00
+
+        # Restoring v2 then brings 2260 back.
+        restore_v2 = client.post(f"{_CRM.format(id=request.id)}/versions/2/restore")
+        assert restore_v2.status_code == 200, restore_v2.text
+        assert live_pin() == 2260.00
 
     def test_restoring_a_version_that_does_not_exist_404s(self, crm):
         client, db = crm
