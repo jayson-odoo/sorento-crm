@@ -3011,7 +3011,7 @@ def run_tail(
     before writing anything when the compiled variables carry a key outside the allowlist
     (AC-203).
     """
-    from app.services.chatbot.contracts import SessionVars
+    from app.services.chatbot.contracts import LegacyVariables
     from app.services.chatbot.tail import compose as compose_mod
     from app.services.chatbot.tail import member_offer as member_mod
     from app.services.chatbot.tail import outcome as outcome_mod
@@ -3099,7 +3099,7 @@ def run_tail(
     # AC-203 / H15: the allowlist is checked BEFORE anything is written. A key the
     # compiler should not be writing fails the turn here rather than landing in a
     # real customer's session, where nothing would ever notice it.
-    SessionVars(**variables)
+    LegacyVariables(**variables)
 
     # `ctx.session` is `get-session-vars`'s own body, so the previous variables sit
     # one level in. Same accessor the compiler uses, so "kept" on the trace screen and
@@ -3321,7 +3321,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     become a live write by calling a different URL. The response carries the would-be
     `session_patch` instead.
 
-    **The session write is validated BEFORE it happens.** `SessionVars(extra="forbid")`
+    **The session write is validated BEFORE it happens.** `LegacyVariables(extra="forbid")`
     is what stops a harness key leaking into a customer's session (H15, AC-203), and it
     has to raise before `overwrite_for_contact`, not after.
 

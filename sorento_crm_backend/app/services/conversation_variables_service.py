@@ -31,8 +31,51 @@ def _coerce_to_dict(raw: Any) -> dict[str, Any]:
     return raw
 
 
+# A legacy `focus.order_status` -> `document` / `status` mapping (chatbot turn
+# re-architecture S0, AC-1504). `document` is a LIST of document kinds; the bucketed
+# "so_outstanding" / "do_outstanding" / "outstanding_both" values each named exactly
+# which document(s) the status question was about (`fetch.ORDER_STATUS_TO_SCOPE`) -
+# read once here and mapped forward, never written back (the hazard in the plan's
+# "Hazards" section: byte-compatible for a live contact mid-conversation at deploy).
+_LEGACY_ORDER_STATUS_DOCUMENT: dict[str, list[str]] = {
+    "do_outstanding": ["DO"],
+    "so_outstanding": ["SO"],
+    "outstanding_both": ["SO", "DO"],
+}
+# The status half of the same three buckets, plus the bare "outstanding" value -
+# every legacy value collapses to "outstanding" except one that already reads as a
+# plain status word (e.g. "delivered"), which passes through unchanged.
+_LEGACY_ORDER_STATUS_TO_STATUS: dict[str, str] = {
+    "outstanding": "outstanding",
+    "do_outstanding": "outstanding",
+    "so_outstanding": "outstanding",
+    "outstanding_both": "outstanding",
+}
+
+
+def _migrate_legacy_focus(focus: Any) -> dict[str, Any]:
+    """`focus.order_status` -> `focus.document` / `focus.status`, in place semantics.
+
+    A no-op when `focus` carries no `order_status` at all (the common case for any
+    contact who has never asked an order question, and for every row already written
+    under the new shape).
+    """
+    if not isinstance(focus, dict) or "order_status" not in focus:
+        return focus if isinstance(focus, dict) else {}
+    migrated = dict(focus)
+    legacy = migrated.pop("order_status")
+    if legacy:
+        migrated.setdefault("document", _LEGACY_ORDER_STATUS_DOCUMENT.get(legacy, []))
+        migrated.setdefault("status", _LEGACY_ORDER_STATUS_TO_STATUS.get(legacy, legacy))
+    return migrated
+
+
 def get_for_contact(db: Session, *, respond_io_id: str) -> dict[str, Any]:
-    """Return `session_vars` dict for the contact. 404 when no row matches."""
+    """Return `session_vars` dict for the contact. 404 when no row matches.
+
+    `focus.order_status`, if present, is migrated forward to `focus.document` /
+    `focus.status` on the way out (AC-1504) - read-time only, never written back.
+    """
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
         {"cid": respond_io_id},
@@ -44,7 +87,10 @@ def get_for_contact(db: Session, *, respond_io_id: str) -> dict[str, Any]:
             detail=f"Respond contact not found for respond_io_id={respond_io_id!r}.",
         )
 
-    return _coerce_to_dict(row.session_vars)
+    state = _coerce_to_dict(row.session_vars)
+    if "focus" in state:
+        state["focus"] = _migrate_legacy_focus(state["focus"])
+    return state
 
 
 def overwrite_for_contact(

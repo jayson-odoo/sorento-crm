@@ -195,10 +195,21 @@ def build_inputs(captures: dict[str, dict], *, n: int, seed: int, groups: set[st
 
 def resolve_prompts(db, *, current_date: str) -> tuple[str, str, str, str]:
     """(old_text, old_label, new_text, new_label), both through the registry."""
+    import sys
+    from pathlib import Path
+
     from app.models.ai_prompt import AIPromptVersion
     from app.services.ai_prompt_registry import PROMPT_KEYS, render
     from app.services.chatbot.head.parser import PROMPT_KEY
-    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT_SLIM
+
+    # SEMANTIC_PARSER_PROMPT_SLIM retired from the live module (chatbot turn
+    # re-architecture S0, AC-1506) - the historical body this script compares against
+    # lives on in alembic/_legacy_prompt_bodies.py, the immutable copy the old
+    # migrations that published it also read from.
+    _alembic_root = Path(__file__).resolve().parent.parent / "alembic"
+    if str(_alembic_root) not in sys.path:
+        sys.path.insert(0, str(_alembic_root))
+    from _legacy_prompt_bodies import SEMANTIC_PARSER_PROMPT_SLIM_V1
 
     old_text, old_version = render(db, PROMPT_KEY, current_date=current_date)
     old_label = f"production (v{old_version})" if old_version else "fallback constant"
@@ -207,7 +218,7 @@ def resolve_prompts(db, *, current_date: str) -> tuple[str, str, str, str]:
         db.query(AIPromptVersion)
         .filter(
             AIPromptVersion.name == PROMPT_KEY,
-            AIPromptVersion.template == SEMANTIC_PARSER_PROMPT_SLIM,
+            AIPromptVersion.template == SEMANTIC_PARSER_PROMPT_SLIM_V1,
         )
         .first()
     )
@@ -218,7 +229,7 @@ def resolve_prompts(db, *, current_date: str) -> tuple[str, str, str, str]:
         new_label = f"unlabelled (v{new_version})"
     else:
         spec = PROMPT_KEYS[PROMPT_KEY]  # noqa: F841 - kept for the variable list below
-        new_text = SEMANTIC_PARSER_PROMPT_SLIM.replace("{{current_date}}", current_date)
+        new_text = SEMANTIC_PARSER_PROMPT_SLIM_V1.replace("{{current_date}}", current_date)
         new_label = "module constant (migration 475 not applied on this database)"
     return old_text, old_label, new_text, new_label
 

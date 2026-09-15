@@ -255,6 +255,14 @@ class RespondContact(Base):
     # as it did before the switch existed. Flipped in bulk or per contact by
     # scripts/set_contact_outbound.py.
     outbound_enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    # Chatbot turn re-architecture (AC-1503): the Profile shelf, one JSONB blob
+    # (tier, language, default ledgers - PLAN "Design > State"), written by explicit
+    # picks (a WhatsApp pick, or the Contact > Access "Chatbot" card) and read as a
+    # `Profile:` hint block on every parse (S3, AC-1548). Recall is a separate bool
+    # column, not a profile key, because it gates a DIFFERENT thing (whether TAIL may
+    # re-parse with an `Episodes:` block, AC-1547) and defaults OFF per contact.
+    chatbot_profile = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
+    chatbot_recall_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

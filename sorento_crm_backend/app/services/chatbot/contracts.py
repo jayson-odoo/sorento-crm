@@ -693,8 +693,13 @@ class Pending(BaseModel):
     reprinted: bool | None = None
 
 
-class SessionVars(BaseModel):
+class LegacyVariables(BaseModel):
     """`respond_contacts.session_vars.variables`, allowlisted (H15, AC-203).
+
+    Renamed from `SessionVars` (chatbot turn re-architecture S0, AC-1504): that name now
+    names the NEW five-key session shape below. This is the pre-rearch flat shape n8n's
+    outer loop still writes to `session_vars.variables` - unrelated to, and untouched by,
+    the new `SessionVars`/`Focus` pair.
 
     `extra = "forbid"` is what stops a harness key or a stray diagnostic leaking into a
     customer's session: the JS built a fresh object literal per writer, so anything a
@@ -748,6 +753,56 @@ class SessionVars(BaseModel):
     # above already have (see `tail/compile_state.py`).
     order_status: Any = None
     pending: Pending | None = None
+
+
+# --------------------------------------------------------------------------- #
+# The turn re-architecture's session shape (AC-1504, PLAN-chatbot-turn-rearch.md
+# "Design > State"). NOT wired into the live engine yet (S0 declares the shape; S2's
+# `turn/apply.py` and S3's tail are what read and write it for real) - `LegacyVariables`
+# above stays what n8n's outer loop persists until then.
+# --------------------------------------------------------------------------- #
+
+
+class Focus(BaseModel):
+    """The persisted conversation focus - `session_vars.focus`.
+
+    `document` and `status` replace the legacy flat `order_status` (contract 34, "focus
+    slots with replace, reset, reuse"; hazard: a stored `order_status` is read once and
+    mapped forward - `conversation_variables_service.get_for_contact`). `document` is a
+    LIST of document kinds (`["DO"]`, `["SO", "DO"]`), never a third "both" value.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    products: list[str] = Field(default_factory=list)
+    customer: dict[str, Any] | None = None
+    domains: list[str] = Field(default_factory=list)
+    warehouse: str | None = None
+    transporter: str | None = None
+    attachment_type: str | None = None
+    brand: str | None = None
+    tier: str | None = None
+    document: list[str] = Field(default_factory=list)
+    status: str | None = None
+    date_window: dict[str, Any] | None = None
+
+
+class SessionVars(BaseModel):
+    """The five-key session shape (AC-1504). Byte-compatible hazard (contract 129,
+    "the five-key session shape must stay byte-compatible for #930's parked lane and for
+    live contacts mid-conversation at deploy"): exactly these five keys, nothing more.
+
+    `extra = "forbid"` for the same H15 reason `LegacyVariables` carries it - nothing
+    outside this list may leak into a customer's session.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    focus: Focus = Field(default_factory=Focus)
+    open_question: dict[str, Any] | None = None
+    ideation: dict[str, Any] | None = None
+    access_levels: list[str] = Field(default_factory=list)
+    contains_flyer: bool = False
 
 
 # The widths the `chatbot.turns` columns actually have. Validated on the way IN so an

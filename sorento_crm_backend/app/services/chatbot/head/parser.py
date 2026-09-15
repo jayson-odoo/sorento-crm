@@ -120,8 +120,21 @@ def _build_json_schema() -> dict[str, Any]:
                         "canonical_code": string_or_null,
                         "current_message": {"type": ["boolean", "null"]},
                         "confident": {"type": ["boolean", "null"]},
+                        # Turn re-architecture (AC-1506): the entity KIND hint's own
+                        # confidence, separate from `confident` above (the entity's
+                        # identity). Reconciliation (S2) asks the resolver for the
+                        # hinted kind FIRST only when this is true; a low-confidence
+                        # kind hint goes straight to reconciliation instead.
+                        "hint_confident": {"type": ["boolean", "null"]},
                     },
-                    "required": ["raw", "hint", "canonical_code", "current_message", "confident"],
+                    "required": [
+                        "raw",
+                        "hint",
+                        "canonical_code",
+                        "current_message",
+                        "confident",
+                        "hint_confident",
+                    ],
                 },
             },
             "entity_op": string_or_null,
@@ -194,6 +207,26 @@ def _build_json_schema() -> dict[str, Any]:
                 },
                 "required": ["is_escalation_confirmation", "company_pick"],
             },
+            # Turn re-architecture (AC-1506): the v3 shape's three new top-level keys.
+            # `document` is a LIST of document kinds ("DO", "SO") or null/empty for
+            # "no document named" - never a third "both" value (PLAN's own framing).
+            "document": {"type": ["array", "null"], "items": {"type": "string"}},
+            # The delivery/order status axis - "outstanding", "delivered", or null.
+            # Replaces the old flat `order_status` key on the OUTPUT side too, kept
+            # above only because live emissions before this prompt version still carry
+            # it (`output_exchange._EXEMPT_FROM_REQUIRED`-style tolerance).
+            "status": string_or_null,
+            "anaphora": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    # True when the message refers BACKWARD to something outside this
+                    # turn's own focus/pending (AC-1547) - the ONE signal that arms a
+                    # recall re-parse behind the contact's `chatbot_recall_enabled` flag.
+                    "backward_reference": {"type": ["boolean", "null"]},
+                },
+                "required": ["backward_reference"],
+            },
         },
         "required": [
             "message_type",
@@ -224,6 +257,9 @@ def _build_json_schema() -> dict[str, Any]:
             "correction",
             "routing",
             "escalation",
+            "document",
+            "status",
+            "anaphora",
         ],
     }
 

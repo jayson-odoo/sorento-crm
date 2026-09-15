@@ -10,7 +10,7 @@ Three properties of the JS are load-bearing and are reproduced deliberately:
 * **The output object is built from SCRATCH, never spread from the input.** The upstream
   `dym-transform-partial` appends fourteen harness control keys to the item, and
   `save-session-vars` used to PUT the WHOLE item, so a spread would persist harness keys
-  into real customer sessions. `SessionVars(extra="forbid")` is the CRM's structural
+  into real customer sessions. `LegacyVariables(extra="forbid")` is the CRM's structural
   version of the same guarantee (H15, AC-203) and it is enforced on the write path.
 * **`undefined` is an ABSENT KEY, not a null.** `variables.query_scope` is simply missing
   on a turn where the parser emitted no scope, and the captured fixtures record that. The

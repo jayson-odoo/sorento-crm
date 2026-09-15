@@ -164,6 +164,8 @@ class SystemSettingUpdate(BaseModel):
     # A7 (chatbot-growth-r1): the cross-domain probe ladder, per origin domain -
     # {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]} by default.
     chatbot_crossdomain_ladder: Optional[Dict[str, List[str]]] = None
+    # Chatbot turn re-architecture (AC-1502): the tier order, one copy.
+    chatbot_tier_order: Optional[List[str]] = None
     # Which chatbot lanes the CRM may FINISH, by `branch_kind`. `[]` (the default) means
     # none, and every turn delegates to n8n exactly as today. Validated as a list of
     # strings only: an unknown branch kind is the ENGINE's problem to ignore-and-warn, not
@@ -403,6 +405,7 @@ async def get_settings(
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,
+                "chatbot_tier_order": getattr(settings, "chatbot_tier_order", None) if settings else None,
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
@@ -666,7 +669,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
     # an outage rather than as the clear it asked for. The defaults repeat
     # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
-    from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
+    from app.modules.chatbot.lane_vocabulary import default_tier_order, default_unsupported_domains
 
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
         # Not a chatbot column, but it has the identical shape and the identical
@@ -690,6 +693,10 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             "inventory": ["incoming", "purchase_order"],
             "incoming": ["inventory"],
         },
+        # Chatbot turn re-architecture (AC-1502): repeats `SystemSetting.
+        # chatbot_tier_order`'s own default (app/models/user.py), through the same
+        # doorway `chatbot_unsupported_domains` above uses.
+        "chatbot_tier_order": default_tier_order(),
     }
     for column, default in _CHATBOT_COLUMN_DEFAULTS.items():
         if column in update_data and update_data[column] is None:

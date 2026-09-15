@@ -271,6 +271,14 @@ def _default_unsupported_domains() -> list[str]:
     return default_unsupported_domains()
 
 
+def _default_tier_order() -> list[str]:
+    """`tier_gate.TIER_ORDER`, via the chatbot module's doorway - same reasoning as
+    `_default_unsupported_domains` above (chatbot turn re-architecture, AC-1502)."""
+    from app.modules.chatbot.lane_vocabulary import default_tier_order
+
+    return default_tier_order()
+
+
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     # id as String so UPDATE/WHERE work when DB column is TEXT (avoids "operator does not exist: text = uuid")
@@ -581,6 +589,17 @@ class SystemSetting(Base):
         nullable=False,
         server_default='{"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]}',
         default=lambda: {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]},
+    )
+    # Chatbot turn re-architecture (AC-1502, captain ruling 16 Sep 2026): the tier
+    # order, ONE copy - `lanes/business/tier_gate.TIER_ORDER`'s own literal order today,
+    # retired from that module and its two other copies once this table is the only
+    # source (AC-1594). Not a `chatbot_entity_kinds` row: "tier" is not one of the 12
+    # `ENTITY_HINTS` and never gets one.
+    chatbot_tier_order = Column(
+        JSONB,
+        nullable=False,
+        server_default='["dealer", "office", "end_user"]',
+        default=lambda: _default_tier_order(),
     )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #

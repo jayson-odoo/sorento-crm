@@ -55,3 +55,16 @@ def default_unsupported_domains() -> list[str]:
     from app.services.chatbot.contracts import DEFAULT_UNSUPPORTED_DOMAINS
 
     return list(DEFAULT_UNSUPPORTED_DOMAINS)
+
+
+def default_tier_order() -> list[str]:
+    """The tier order (chatbot turn re-architecture, AC-1502 captain ruling 16 Sep 2026).
+
+    `lanes/business/tier_gate.TIER_ORDER`'s own literal order, through this doorway for
+    the same AC-002 reason every other function here exists:
+    `SystemSetting.chatbot_tier_order`'s Python default may not import
+    `app/services/chatbot/` directly.
+    """
+    from app.services.chatbot.lanes.business.tier_gate import TIER_ORDER
+
+    return list(TIER_ORDER)
