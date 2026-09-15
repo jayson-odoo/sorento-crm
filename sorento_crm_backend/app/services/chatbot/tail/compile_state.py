@@ -378,6 +378,56 @@ def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
     return jsc.truthy(payload.get("team")) and len(jsc.array(asked.get("options"))) > 0
 
 
+def _offer_born_beside_roster(
+    roster: Any,
+    *,
+    qf: Mapping[str, Any],
+    gate: Any,
+    offer_open: bool,
+    reply_text: Any,
+    turn_no: int,
+) -> dict[str, Any] | None:
+    """The roster and the escalate offer were born on the SAME turn - merge them (R-A).
+
+    `_offer_rides_on_roster` above covers the offer that arrives a turn LATER, over a
+    roster the tail carried. This covers the other half, which D19 rule 3 says the same
+    thing about and which had no seat at all: the did-you-mean lane and the "multiple
+    matches" picker both compose a numbered list AND append "Would you like me to escalate
+    to X team?" into ONE reply, and whoever armed the roster won outright - so the offer the
+    customer could plainly read was never recorded, `expects` stayed `pick`, and their
+    "yes" resolved nothing. Owner, 15 Sep 2026: "check stock srtwt2643" then "yes" was
+    routed to customer service, because with no `payload.offer` the routing chain fell
+    through to `DEFAULT_SUGGESTED_TEAM` while the reply had promised the warehouse team.
+
+    The SAME two conditions the plain offer arm in `_ask_for_turn` uses, for the same
+    reasons: `offer_open`, and the reply actually carrying the frozen phrase (the flag
+    alone asserts an offer on picker turns whose reply ends at the last row - S7a's second
+    defect). And a team, because an offer with nobody to escalate to is not an offer.
+
+    Returns the merged question, or None when there is nothing to merge - the caller then
+    arms the roster exactly as before.
+    """
+    if not offer_open or not isinstance(roster, dict):
+        return None
+    if roster.get("kind") not in pending_open_question.ROSTER_KINDS:
+        return None
+    if _FROZEN_ESCALATE_PREFIX not in jsc.js_string(reply_text or ""):
+        return None
+    team = _escalation_team(qf, gate)
+    if not jsc.truthy(team):
+        return None
+    domain = jsc.get(qf, "domain_hint")
+    offer = pending_open_question.ask(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        turn_no=turn_no,
+        expects="yes_no",
+        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+        payload={"team": team, "domain": domain},
+    )
+    return pending_open_question.with_offer(roster, offer)
+
+
 def _rows_are_customers(rows: Any) -> bool:
     """Is every row a CUSTOMER? The kind test `miss_suggest._attach_question` uses.
 
@@ -1544,7 +1594,20 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
             # the offer keeps its yes and its no.
             variables["open_question"] = pending_open_question.with_offer(previous, asked)
         else:
-            variables["open_question"] = {**asked, "asked_at_turn": turn_no}
+            armed = {**asked, "asked_at_turn": turn_no}
+            # ... and the SAME-TURN half of that ruling (R-A): a roster whose own reply
+            # carries the escalate sentence takes the offer on board instead of dropping
+            # it. `_offer_rides_on_roster` above only sees an offer asked over a roster the
+            # tail CARRIED, so a list and an offer born together left the offer nowhere.
+            born_with_offer = _offer_born_beside_roster(
+                armed,
+                qf=qf,
+                gate=gate,
+                offer_open=offer_open,
+                reply_text=output.get("user_response"),
+                turn_no=turn_no,
+            )
+            variables["open_question"] = born_with_offer or armed
     elif jsc.truthy(jsc.get(qf, "open_question_answered")):
         # ANSWERED, WHICH IS NOT THE SAME AS GONE (owner ruling D19). A ROSTER is still on
         # the customer's screen after they pick from it, so it survives its own pick with

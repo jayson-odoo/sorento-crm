@@ -1602,7 +1602,28 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_refinement_entities"] = [
                 dict(e) for e in named_entities if isinstance(e, dict)
             ]
-        elif names_entity or (own_question and (kind == "outstanding_detail" or picked is None)):
+        elif names_entity or (own_question and picked is None):
+            # A PICK OF ITS OWN IS NEVER A NEW ASK (R-B, owner merge test 15 Sep 2026).
+            # The second disjunct used to read `own_question and (kind ==
+            # "outstanding_detail" or picked is None)`, whose `or picked is None` is
+            # vacuous whenever the open question IS the detail ask - so the disjunct
+            # collapsed to `own_question`, which is `names_entity or
+            # truthy(domain_hint)`. The `names_entity` half is UNTOUCHED, so D17 point 3's
+            # guard stands: a stray position riding along with an entity ("2" + "delivery
+            # to hanlim") is still a new ask. The live
+            # v16 parser stamps `domain_hint: "order"` on a bare "1" often enough
+            # (`{domain_hint: order, intent_hint: check_order, message_type:
+            # business_query, entities: [], reference_positions: [1]}`), and that turn -
+            # a clean pick off the question's own frozen options - was read as the
+            # customer walking away from it. The filters died with the pending, the row
+            # label "Delivery order list" was then resolved as a fresh token, "list"
+            # matched six SPECIALIST customers, and the report re-ran over companies
+            # nobody had named.
+            #
+            # A turn that picked a row answered the question, whatever domain word the
+            # model attached to it. A turn that picked NOTHING and brought its own
+            # subject is still the new ask this arm is for, and still drops the pending.
+            #
             # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask
             # is DROPPED here, and every later reader of `prev_pending` this turn has to
             # see that - the scope-ask signal below and the `outstanding_filters` carry in
