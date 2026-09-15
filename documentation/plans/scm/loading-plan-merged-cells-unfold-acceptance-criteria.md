@@ -14,8 +14,10 @@ Plan: PLAN-loading-plan-merged-cells-unfold.md
 - AC-M4: A merged total-cbm cell (体积 total, when no per-unit column exists) is used for the
   anchor row's derived `cbm_per_unit` only; covered rows do not derive from it (they get the
   per-unit fill of AC-M2 when a per-unit column exists, else `None`).
-- AC-M5: A row's own non-empty value is never overwritten by a fill; only cells inside a merged
-  range, other than the anchor, are filled.
+- AC-M5: Only cells inside a merged range, other than the anchor, are filled; a cell outside
+  every merge keeps its own value, and the merge never bleeds into the row after the range
+  ends. A covered cell reads what the merged block displays, even if an exporter left a stray
+  value in it. A merge anchored on or above the header row never fills (AC-M5b).
 - AC-M6: An unmerged sheet parses exactly as before (existing `read_workbook` tests stay green;
   `test_stock_list_xlsm_upload.py` stays green).
 - AC-M7: An OLE2 `.xls` stock list parses as before (no merge info, no error).

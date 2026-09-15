@@ -57,7 +57,7 @@ and `LoadingPlanView` already uses it for Save (N). No backend change.
 - "Requested qty": the existing input (`renderQtyCell`, `qtyFor` / `onQtyChange`), column id
   `requested_qty`, sortable on `qtyFor(row)` is NOT needed - sort on `row.suggested_qty` (the
   saved override, what the record holds) as the old column did. Sits right after Suggested qty,
-  before Remarks. Read-only plan (cancelled) renders it as text like today.
+  before Remarks. Read-only plan (cancelled) renders it as plain text (it used to be a disabled input; AC-Q4 governs). The per-cell formula hover sits on the Suggested qty cell, the one showing the engine figure.
 - Same row object, same `row_key`, so search, Save (N), the stat cards and the row dialog are
   unchanged. Column-preference store: a saved visibility set must not hide the new column
   (check how unknown ids default in `useListingColumnConfig` / the DataGrid personalisation).
