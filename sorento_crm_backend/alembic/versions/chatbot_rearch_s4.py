@@ -14,7 +14,10 @@ compares ``config_json["blocks_hash"]`` against the rows as they stand today, so
 saved after this publish reads as "domain block out of date" instead of silently
 rewriting a version somebody already graded.
 
-Idempotent: a version already carrying today's hash is left alone.
+Idempotent: a version whose FULL rendered template (instruction block plus policy
+blocks) already matches today's is left alone - not just a `blocks_hash` match, since
+this migration's own instruction paragraph below can change without the policy tables
+moving at all (16 Sep 2026 amendment, AC-1317: the `continuation` output key).
 
 Revision ID: chatbot_rearch_s4
 Revises: chatbot_rearch_s0
@@ -39,17 +42,33 @@ down_revision = "chatbot_rearch_s0"
 branch_labels = None
 depends_on = None
 
+# Amended 16 Sep 2026 (AC-1317): the parser gains a `continuation` output key
+# (`head/parser.py`'s schema) - `turn/apply.py::_is_continuation` now reads that key
+# only, having retired the old free-text `user_goal` word-list match. One instruction
+# paragraph, marked the same way the policy blocks are, so it is easy to find and drop
+# once the schema itself is the only place this is documented.
+OUTPUT_KEYS_BEGIN = "<<<CHATBOT OUTPUT KEYS>>>"
+OUTPUT_KEYS_END = "<<<END CHATBOT OUTPUT KEYS>>>"
+CONTINUATION_INSTRUCTION = (
+    'Emit an additional boolean key "continuation" on every response: true when the '
+    "current message asks for MORE of the set the previous answer counted or listed "
+    '(e.g. "more", "next", "lagi", "show more"), false otherwise.\n'
+)
+
 logger = logging.getLogger("alembic.runtime.migration")
 
 PROMPT_NAME = "chatbot_semantic_parser"
 
 
 def _body(session: Session) -> tuple[str, str]:
-    """`(template, blocks_hash)` - the labelled body plus the rendered blocks.
+    """`(template, blocks_hash)` - the labelled body plus the output-keys instruction
+    plus the rendered policy blocks.
 
-    The base is whatever ``production`` points at today, so this publish ADDS the policy
-    blocks to the prompt that is actually live rather than replacing it with a body
-    nobody has graded.
+    The base is whatever ``production`` points at today, so this publish ADDS to the
+    prompt that is actually live rather than replacing it with a body nobody has
+    graded. Any OUTPUT KEYS / POLICY BLOCKS section the base already carries (from a
+    PRIOR run of this same migration having been promoted to production) is stripped
+    first, so re-running never nests one inside another.
     """
     blocks = render_prompt_blocks(session)
     label = (
@@ -63,7 +82,15 @@ def _body(session: Session) -> tuple[str, str]:
             session.query(AIPromptVersion).filter(AIPromptVersion.id == label.version_id).first()
         )
         base = (current.template or "") if current is not None else ""
-    template = f"{base.rstrip()}\n\n{BLOCKS_BEGIN}\n{blocks}{BLOCKS_END}\n"
+    for begin, end in ((OUTPUT_KEYS_BEGIN, OUTPUT_KEYS_END), (BLOCKS_BEGIN, BLOCKS_END)):
+        if begin in base and end in base:
+            head, _, tail = base.partition(begin)
+            _, _, tail = tail.partition(end)
+            base = head.rstrip() + tail
+    template = (
+        f"{base.rstrip()}\n\n{OUTPUT_KEYS_BEGIN}\n{CONTINUATION_INSTRUCTION}{OUTPUT_KEYS_END}\n"
+        f"\n{BLOCKS_BEGIN}\n{blocks}{BLOCKS_END}\n"
+    )
     return template, prompt_blocks_hash(session)
 
 
@@ -75,10 +102,14 @@ def upgrade() -> None:
     session = Session(bind=bind)
     try:
         template, blocks_hash = _body(session)
+        # `blocks_hash` alone under-counts: it covers the POLICY BLOCKS, not the output
+        # keys instruction above them, so a change to the instruction with the policy
+        # tables untouched must still republish. Full-template equality is the correct
+        # "nothing would change" check for both.
         already = [
             row
             for row in session.query(AIPromptVersion).filter(AIPromptVersion.name == PROMPT_NAME)
-            if (row.config_json or {}).get("blocks_hash") == blocks_hash
+            if (row.config_json or {}).get("blocks_hash") == blocks_hash and row.template == template
         ]
         if already:
             logger.info(

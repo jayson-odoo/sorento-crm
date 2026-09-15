@@ -102,6 +102,12 @@ def _build_json_schema() -> dict[str, Any]:
             "scope_intent": string_or_null,
             "is_affirmative": {"type": ["boolean", "null"]},
             "user_goal": string_or_null,
+            # AC-1317: true when the message asks for more of the set the LAST answer
+            # counted ("more", "next", "lagi", ...) - a dedicated boolean rather than a
+            # free-text `user_goal` word the code matches against a list, which was
+            # still a text rule wearing the parser's clothes (captain ruling, 16 Sep
+            # 2026). `turn/apply.py::_is_continuation` reads this key only.
+            "continuation": {"type": ["boolean", "null"]},
             "access_levels": {"type": "array", "items": {"type": "string"}},
             "broaden_axis": string_or_null,
             "date_mode": string_or_null,
@@ -235,6 +241,7 @@ def _build_json_schema() -> dict[str, Any]:
             "scope_intent",
             "is_affirmative",
             "user_goal",
+            "continuation",
             "access_levels",
             "broaden_axis",
             "date_mode",
