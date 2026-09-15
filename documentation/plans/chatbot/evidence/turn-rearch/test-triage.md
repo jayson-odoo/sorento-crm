@@ -338,3 +338,31 @@ above is left as-is (historical record) rather than rewritten in place.
   `test_parser_low_stock_publish.py`) - worth the captain routing a coder at
   `chatbot_parser_prompt.py` directly, since fixing it once would un-block all
   three, but that fix is not an AC-1592 deliverable.
+
+- **`test_tail_units.py` (1094 lines) - decision resolved, done.** New file
+  `test_rearch_port_tail_units.py`. Confirmed the flagged duplicate concern is real
+  but the shape is different from what the original table guessed: 12 of 14 classes
+  (`TestDymOfferLifecycle`, `TestTierMenuDomainCarry`, `TestBornRosterWins` (AC-205/
+  H29), `TestTierAndPromoOffersCarryUntilOverwritten`,
+  `TestTheMemberOfferCarryStopsAtTheAnswer`, `TestTheMemberOfferHasTheSameTtlAsTheDym
+  Offer`, `TestCannedCopy`, `TestPendingMarker`, `TestAnsweredDomainEquivalence`,
+  `TestThePickResolvedOrderListStatesItsScope`,
+  `TestACarriedOfferKeepsTheSubjectItWasMadeAbout`, and 3 of `TestSessionVarsIsAWall`'s
+  4 tests) are ALL built around `compile_current_state` (a shared `_compile` helper) -
+  the "compile a session_patch through many first-match-wins rules" mechanism
+  `engine.py::run_tail`'s own docstring says is deliberately gone ("no ladder of
+  markers to keep in step"). Confirmed empirically: `turn/pending.py` has no TTL
+  concept at all; `escalation_team`/`MEMBER_OFFER_TTL` exist nowhere (grepped);
+  `_narrow_and_plan` builds a fresh `Pending` from THIS turn's focus every call, so
+  AC-205/H29's "roster born this turn beats a carried picker" holds by construction,
+  not by a compiled-order fix - no separate "carried picker" structure exists to
+  race against. RETIRED, one consolidated rule (not 12 separate ones - the pattern
+  is uniform). The escalation-team default-fallback property (contract 77) is
+  already covered by `test_rearch_s3_team_pick_and_866.py` (green).
+  - `TestOutcomeHub`, `TestCsMemberOffer` (6 tests) - exercise KEPT `tail/outcome.py`
+    / `tail/member_offer.py` directly, no doomed dependency - copied unchanged.
+  - `TestSessionVarsIsAWall`'s core property (AC-203/H15, `extra=forbid`) - PORTED
+    with the model's REAL five field names (`SessionVars` itself is unchanged); the
+    other 3 tests in that class checked the OLD wide `SESSION_VAR_KEYS` allowlist
+    against compile_state's output, which no longer applies.
+  - 10/10 tests pass in the new file.
