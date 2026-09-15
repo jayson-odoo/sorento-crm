@@ -263,8 +263,17 @@ def carry_after_answer(
 #: `offer_is_open` and the miss-company arm all hold. `team_from_reply` reads the promised
 #: team back off it.
 ESCALATE_PREFIX = "Would you like me to escalate to"
+#: EVERY composer's sentence, not one of them. `compile_state`'s two miss arms and
+#: `compose.crossdomain_compose` write the frozen prefix; `lanes/business/answer.py` writes
+#: a lower-case "would you like me to escalate to X team?" on one arm and "Reply a number to
+#: pick, or 'yes' to escalate to X." on another; and the miss-company arm inserts a BOLD
+#: company ("escalate to *Sorento* customer service team?"). The offer must be recognised
+#: from all of them (owner rule 1, tester 2's generality catch), so the anchor is the two
+#: words that never vary - "escalate to" - and the team is whatever follows up to the end of
+#: the sentence. Over-capture is harmless: `team_from_reply` only accepts a span that
+#: reduces to a real catalogue team.
 _ESCALATE_TEAM_RE = re.compile(
-    re.escape(ESCALATE_PREFIX) + r"\s+(?P<team>[A-Za-z_ ]+?)\s+team\?", re.IGNORECASE
+    r"escalate to\s+(?P<team>[^.?!\n]+?)(?:\s+team)?\s*[.?!]", re.IGNORECASE
 )
 
 
@@ -291,7 +300,11 @@ def team_from_reply(reply_text: Any) -> str | None:
     match = _ESCALATE_TEAM_RE.search(jsc.js_string(reply_text or ""))
     if match is None:
         return None
-    words = [w for w in match.group("team").strip().lower().split() if w]
+    # Bold markers come off (the company insert is written `*Sorento*`), then leading words
+    # are dropped one at a time until what remains is a real catalogue team - which is how a
+    # company prefix, a lower-case composer and the "or 'yes' to escalate to X." shape all
+    # read the same without a list of companies or a list of sentences.
+    words = [w for w in match.group("team").replace("*", " ").strip().lower().split() if w]
     for start in range(len(words)):
         team = "_".join(words[start:])
         if team in SUGGESTED_TEAMS:

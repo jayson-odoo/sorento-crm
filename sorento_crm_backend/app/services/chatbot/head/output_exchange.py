@@ -1647,8 +1647,26 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     names_own_entity = any(
         jsc.get(e, "current_message") is not False for e in named_entities
     )
-    names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
-    own_question = names_entity or jsc.truthy(o.get("domain_hint"))
+    # WHAT THIS TURN SAID ABOUT THE DATE AXIS, which is not only a window. "all dates" is a
+    # refinement with no window at all - it WIDENS the axis (`broaden_axis: "date"`,
+    # `date_mode: "all"`) - and reading only the two filter fields made it look like a turn
+    # that said nothing, so it fell through to the new-ask arm and re-ran on the plain order
+    # lane (AC-1065, tester 2's parametrized red). The axis is the unit the rule is written
+    # in: a date is a filter this report can never take as its subject, whether the customer
+    # narrowed it or opened it up.
+    names_own_dates = (
+        jsc.truthy(o.get("date_filter_start"))
+        or jsc.truthy(o.get("date_filter_end"))
+        or jsc.js_string(o.get("broaden_axis") or "") == "date"
+        or jsc.js_string(o.get("date_mode") or "") == "all"
+    )
+    # WHAT THE TURN BROUGHT OF ITS OWN, and the domain word is not part of it (rule 3,
+    # owner ruling 15 Sep 2026). With the word in this test, "hi" under an open report was
+    # read two ways: `domain_hint: null` re-printed the question (R22's first unreadable
+    # reply) and `domain_hint: "order"` dropped it as a new ask - the same message, two
+    # readings, decided by a word the customer did not choose. An entity is the honest
+    # signal of a question of its own, and `picked` already covers the answer side.
+    own_question = names_entity
 
     if not already_read:
         if (
@@ -3928,7 +3946,16 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     if jsc.get(_mp_question, "kind") != "member_offer" and o.get("dym_pick_applied") is not True:
         st_o = parent_input.get("previous_conversation_state") or {}
         open_o = offer_is_open(st_o)
-        if open_o and not jsc.truthy(o.get("domain_hint")):
+        # NOT GATED ON THE DOMAIN WORD (rule 3, owner ruling 15 Sep 2026). A company word
+        # over an open offer is a company PICK - "Sorento" answers "which company?" - and
+        # whether the model also stamped a domain on that turn says nothing about it. The
+        # gate made the same word resolve a company with `domain_hint: null` and resolve
+        # nothing with `domain_hint: "order"`, which is the defect class R-B and R-H are:
+        # a reading that changes with a word the customer did not choose. What guards this
+        # arm is what it always was - an OPEN offer, no member-pick context, and no
+        # dym pick - plus `co_company_pick`, which only fires on a short reply that
+        # word-boundary matches exactly one offered company.
+        if open_o:
             co_o = co_company_pick(o)
             retarget_o = (
                 req_help
@@ -4100,4 +4127,5 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
                 e["raw"] = _DASHES.sub("-", e["raw"])
             if isinstance(jsc.get(e, "canonical_code"), str):
                 e["canonical_code"] = _DASHES.sub("-", e["canonical_code"])
+
     return output
