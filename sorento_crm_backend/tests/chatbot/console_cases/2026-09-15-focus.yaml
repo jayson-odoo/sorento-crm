@@ -1,0 +1,487 @@
+# Console cases for the chatbot focus lane (PR #863, feat/chatbot-focus): sticky roster (D19),
+# multiple-matches picker (S7), topic-reset dash fold (S7b), and the outstanding-report detail
+# pick / customer picker on the five-key model (main merge, #862).
+#
+# `documentation/plans/chatbot/PLAN-chatbot-focus-multi-domain.md` /
+# `chatbot-focus-multi-domain-acceptance-criteria.md` (AC-1006 to AC-1027) and
+# `chatbot-outstanding-report-acceptance-criteria.md` (AC-1106, AC-1138, AC-1156).
+#
+# Every turn's positive `reply_contains` is copied verbatim from a real owner-verified run,
+# recorded in `documentation/plans/chatbot/evidence/focus-l1/`:
+# - Chains A/B/C/D/F: s6-browser-verification.md (sticky roster, promo tier, decline, yes, casual)
+# - Chains G/H/I: s7-browser-verification.md (multi-match picker, "another one" one-bubble no
+#   dash, new subject clears the picker) - Chain G here uses the s7c re-run's FIXED picker
+#   positions (8/10/9/4), each scoped to its own product; the original s7 run's step "10" bug
+#   (resolved to row 9's code) is the regression these three positions guard against.
+# - merge-D/merge-E: merge-smoke-verification.md + the "Detail-pick fix re-verify" section in the
+#   same file (outstanding detail list renders on the FIRST "1", customer picker scopes the report)
+# - near-miss / stock?: the same did-you-mean roster mechanism (miss_suggest.py) and the
+#   low-signal clarifier line quoted in s6-browser-verification.md chain E step 4 / merge-smoke.
+#
+# NOT collected by pytest. Run with `scripts/chatbot_console_check.py` against the lane stack:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-15-focus.yaml \
+#       --base-url http://127.0.0.1:8081
+#
+# Export EXTERNAL_API_KEY from the backend .env before running. Add --prompt-version <id> to
+# pin the lane's own unpromoted `chatbot_semantic_parser` version (the Console/Settings default
+# is an older production-labelled row that predates this lane's parser contract - see the
+# "Flag for the captain" note in s6-browser-verification.md chain D/E).
+#
+# DATA FACTS: contact "437264483" (Jayson) carries a real chatbot.turns envelope on
+# sorento_ai_automation_focus_full, the DB every evidence run above was recorded against.
+# SRTWT2643 is a near-miss (edit-distance-1 from real SRTWT2632/2633/2634). SRTWC286 is a real
+# family with 11+ matches (fan-out, not a picker) and a 10-row incoming picker keyed off
+# container ETA rows; row 8 = SRTWC286-SH-NEW-P, row 9 = SRTWC286-SH-NEW-200, row 10 =
+# SRTWC286-SH-NEW, row 4 = the SRTWC286-SH prefix (matches every -SH* sibling, answer scoped to
+# SRTWC286-SH only). SRTWC8517-SH-UF is a real, unrelated product used as a "new subject" probe.
+# "chin" resolves to an 8-company customer picker including CHIN CHUN HARDWARE SDN BHD - [A/C I].
+#
+contact: "437264483"
+
+cases:
+  - name: A - did-you-mean roster, sequential picks 1/2/3 (AC-1014, AC-1017)
+    cold: true
+    turns:
+      # 1. Near-miss product triggers the did-you-mean roster.
+      - text: "stock SRTWT2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+            - "1. SRTWT2632"
+            - "2. SRTWT2633"
+            - "3. SRTWT2634"
+
+      # 2. Pick 1 resolves to the first frozen option.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2632"
+
+      # 3. Pick 2 resolves to the SECOND frozen option, not a re-answer of pick 1.
+      - text: "2"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2633"
+          reply_not_contains:
+            - "product: SRTWT2632"
+
+      # 4. Pick 3 resolves to the third frozen option (has stock + incoming, different reply shape).
+      - text: "3"
+        expect:
+          reply_contains:
+            - "Stock details found for the requested products."
+            - "SRTWT2634"
+
+  - name: B - promo tier menu, 1 Office then 2 Dealer (AC-1050, AC-1014)
+    cold: true
+    turns:
+      # 1. Ambiguous access level triggers the tier menu.
+      - text: "promo for srtwc286"
+        expect:
+          reply_contains:
+            - "Which access level do you need for srtwc286?"
+
+      # 2. Pick 1 (Office) - a HIT reply, not the menu again.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "I found 3 promotions for srtwc286."
+          reply_not_contains:
+            - "Which access level do you need for"
+
+      # 3. Pick 2 (Dealer) resolves against the TIER menu, not the HIT reply's own listing -
+      # still a promotions answer, not the tier menu repeated.
+      - text: "2"
+        expect:
+          reply_contains:
+            - "I found 3 promotions for srtwc286."
+          reply_not_contains:
+            - "Which access level do you need for"
+
+  - name: C - roster survives a declined escalate offer (AC-1015, AC-1017)
+    cold: true
+    turns:
+      - text: "stock SRTWT2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+
+      # 2. Pick 2 - resolves, then offers to escalate.
+      - text: "2"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2633"
+
+      # 3. Decline the escalate offer.
+      - text: "no"
+        expect:
+          reply_contains:
+            - "Escalation declined."
+
+      # 4. The original 3-row roster is still alive - pick 1 resolves SRTWT2632, not a re-answer.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2632"
+
+  - name: D - yes consumes the merged escalate question, roster does not re-arm (AC-1015, AC-1019)
+    cold: true
+    turns:
+      - text: "stock SRTWT2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+
+      # 2. Pick 1 - resolves, then offers to escalate.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2632"
+
+      # 3. Accept the escalate offer - runs the escalation lane.
+      - text: "yes"
+        expect:
+          reply_contains:
+            - "Your request is out of the scope of my ability and require human assistance."
+
+      # 4. A bare "2" after "yes" must NOT resolve against the original roster (SRTWT2633) -
+      # the escalate question consumed it and it does not re-arm.
+      - text: "2"
+        expect:
+          reply_not_contains:
+            - "product: SRTWT2633"
+
+  - name: F - roster survives a casual turn (AC-1004, AC-1017)
+    cold: true
+    turns:
+      - text: "stock SRTWT2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+
+      # 2. Pick 1 - resolves, then offers to escalate.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2632"
+
+      # 3. A casual message must not disturb the open escalate question or the roster.
+      - text: "thanks"
+        expect:
+          reply_contains:
+            - "You're welcome! Happy to help."
+
+      # 4. The original roster is still alive - pick 2 resolves SRTWT2633.
+      - text: "2"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2633"
+
+  - name: G - incoming wc286 ten-row picker, 8/10/9/4 each scoped to one product (AC-1014, AC-1018)
+    cold: true
+    turns:
+      # 1. Family prefix with many container-ETA rows triggers the multi-match picker.
+      - text: "incoming wc286"
+        expect:
+          reply_contains:
+            - "incoming search needs to be more specific. Multiple matches found. Please choose:"
+
+      # 2. Row 8 = SRTWC286-SH-NEW-P.
+      - text: "8"
+        expect:
+          reply_contains:
+            - "I have attached the file(s) below."
+            - "SRTWC286-SH-NEW-P"
+          reply_not_contains:
+            - "SRTWC286-SH-NEW-200"
+
+      # 3. Row 10 = SRTWC286-SH-NEW, the exact off-by-one regression guard (used to resolve to
+      # row 9's SRTWC286-SH-NEW-200 instead of its own code).
+      - text: "10"
+        expect:
+          reply_contains:
+            - "I have attached the file(s) below."
+            - "SRTWC286-SH-NEW"
+          reply_not_contains:
+            - "SRTWC286-SH-NEW-200"
+            - "SRTWC286-SH-NEW-P"
+
+      # 4. Row 9 = SRTWC286-SH-NEW-200.
+      - text: "9"
+        expect:
+          reply_contains:
+            - "I have attached the file(s) below."
+            - "SRTWC286-SH-NEW-200"
+          reply_not_contains:
+            - "SRTWC286-SH-NEW-P"
+
+      # 5. Row 4 = the SRTWC286-SH prefix - the primary answer is scoped to SRTWC286-SH only.
+      - text: "4"
+        expect:
+          reply_contains:
+            - "No incoming stock (ETA) found for SRTWC286-SH."
+
+  - name: H - another one after a pick is ONE bubble, no dash (AC-1008, AC-1020)
+    cold: true
+    turns:
+      - text: "stock SRTWT2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+
+      # 2. Pick 1 - resolves, then offers to escalate.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2632"
+
+      # 3. Topic-reset clarifier: exactly one reply bubble, ASCII hyphen only - no raw em dash
+      # (U+2014) or en dash (U+2013) leaking a second, unfolded bubble (the S6 chain E defect,
+      # fixed in S7b).
+      - text: "another one"
+        expect:
+          reply_contains:
+            - "Do you mean you want another option from the list?"
+          reply_not_contains:
+            - "\u2014"
+            - "\u2013"
+
+      # 4. A bare "2" after the topic-reset clarifier must NOT re-pick against the original
+      # roster (SRTWT2633) - the open question closed, not answered.
+      - text: "2"
+        expect:
+          reply_contains:
+            - "Could you share the options you're choosing from?"
+          reply_not_contains:
+            - "product: SRTWT2633"
+
+  - name: I - a new subject clears the multi-match picker (AC-1020, AC-1002)
+    cold: true
+    turns:
+      - text: "incoming wc286"
+        expect:
+          reply_contains:
+            - "incoming search needs to be more specific. Multiple matches found. Please choose:"
+
+      # 2. A different, unrelated product as a fresh stock ask clears the old picker.
+      - text: "SRTWC8517 stock?"
+        expect:
+          reply_contains:
+            - "Stock details found for the requested products."
+            - "SRTWC8517"
+
+      # 3. "8" now answers about SRTWC8517 again - NOT a re-pick of row 8 of the old wc286 roster.
+      - text: "8"
+        expect:
+          reply_contains:
+            - "Stock details found for the requested products."
+            - "SRTWC8517"
+          reply_not_contains:
+            - "SRTWC286"
+
+  - name: merge D - outstanding detail list renders on the first pick (AC-1106, AC-1138)
+    cold: true
+    turns:
+      # 1. Direct DO-outstanding ask - single-scope offer (this contact has no sales-order key).
+      - text: "SRTWT2634 outstanding"
+        expect:
+          reply_contains:
+            - "Reply 1 for the delivery order list."
+
+      # 2. "1" renders the per-DO row list immediately - NOT the offer line repeated, NOT an
+      # empty re-ask (the regression this lane fixed against the five-key merge).
+      - text: "1"
+        expect:
+          reply_contains:
+            - "202604-4130"
+            - "JUNGLE BATH GALLERY SDN BHD"
+            - "SRTWT2634"
+          reply_not_contains:
+            - "Reply 1 for the delivery order list."
+
+  - name: merge E - customer picker scopes the report to CHIN CHUN HARDWARE (AC-1156, AC-1162)
+    cold: true
+    turns:
+      # 1. Ambiguous customer name triggers the customer picker.
+      - text: "outstanding for chin"
+        expect:
+          reply_contains:
+            - "Which customer do you mean?"
+
+      # 2. Pick 1 closes the picker and scopes the report to the chosen customer.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Customer: CHIN CHUN HARDWARE SDN BHD - [A/C I]"
+            - "Delivery order outstanding"
+
+  - name: near-miss did-you-mean, single pick (AC-1014)
+    cold: true
+    turns:
+      # 1. Near-miss product triggers the did-you-mean roster.
+      - text: "stock SRTWT2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+            - "1. SRTWT2632"
+
+      # 2. Pick 1 resolves to the first frozen option.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Here's what you want:"
+            - "product: SRTWT2632"
+
+  - name: stock? low-signal clarifier, no stale product reused (AC-1012, AC-1025)
+    cold: true
+    turns:
+      # 1. A domain word alone, no product, no prior focus - asks for the missing filter rather
+      # than silently answering against nothing.
+      - text: "stock?"
+        expect:
+          reply_contains:
+            - "That would search every stock we have - I need at least one filter to narrow it down. Give me a product code or warehouse, and I can look it up."
+
+  # --------------------------------------------------------------------------------- #
+  # R-A to R-F (owner-found on the merged head d4ae8203b, coder a1f1112d diagnosis,
+  # 15 Sep 2026): documentation/plans/chatbot/evidence/focus-l1/console-check-merged-
+  # d4ae8203b.md. RED until the coder's fix lands - the pytest reds are
+  # tests/chatbot/test_sticky_roster_tail.py::TestTheOfferRidesOnABornDisambiguationRoster,
+  # tests/chatbot/test_open_question.py::TestTheRemainingHandlers
+  # (test_a_customer_pick_names_the_customer_never_the_debtor_code /
+  # test_a_customer_pick_keeps_the_co_resolved_product),
+  # tests/chatbot/test_owner_regressions_15sep.py, and
+  # tests/chatbot/test_outstanding_lane.py::TestDetailPickRerunsToolWithDetail::
+  # test_a_pick_with_domain_hint_set_still_reruns_the_report_not_a_new_ask.
+  # --------------------------------------------------------------------------------- #
+
+  - name: R-A - the escalate offer rides a roster born the same turn, yes escalates to warehouse
+    cold: true
+    turns:
+      # 1. Near-miss with nothing on any rung offers to escalate to WAREHOUSE (not
+      # purchasing/customer service) - the frozen offer phrase and the roster are born
+      # the SAME turn.
+      - text: "check stock srtwt2643"
+        expect:
+          reply_contains:
+            - "Couldn't find \"SRTWT2643\" (product). Did you mean:"
+            - "escalate to warehouse team"
+
+      # 2. "yes" must run the escalation lane for WAREHOUSE - the offer that was born
+      # beside the roster, not out_of_scope's default team (customer_service) and not a
+      # re-ask for a pick the offer never was.
+      - text: "yes"
+        expect:
+          reply_contains:
+            - "Your request is out of the scope of my ability and require human assistance."
+            - "warehouse"
+          reply_not_contains:
+            - "customer service"
+
+  - name: R-B/R-F - chin chun DO outstanding, customer pick, both ledgers, detail list
+    cold: true
+    turns:
+      # 1. Ambiguous customer name triggers the customer picker.
+      - text: "DO outstanding for chin chun"
+        expect:
+          reply_contains:
+            - "Which customer do you mean?"
+
+      # 2. Pick the multi-ledger CHIN CHUN HARDWARE row - the summary must count BOTH
+      # ledgers this row spans (R-F), not the one uuid a single-ledger pick used to
+      # carry, and end with the single-scope detail offer (R-B's own precondition).
+      - text: "1"
+        expect:
+          reply_contains:
+            - "CHIN CHUN HARDWARE SDN BHD"
+            - "Delivery order outstanding"
+            - "Reply 1 for the delivery order list."
+
+      # 3. The v16 pick shape (domain_hint set, entities empty) must still re-run the
+      # detail report for CHIN CHUN HARDWARE, never fall through to a new-ask drop
+      # (R-B) or lose the customer scope picked one turn back.
+      - text: "1"
+        expect:
+          reply_contains:
+            - "*DO Number:*"
+            - "CHIN CHUN HARDWARE"
+          reply_not_contains:
+            - "Reply 1 for the delivery order list."
+            - "Which customer do you mean?"
+
+  - name: R-C - photo for srtwc286, product pick keeps the attachment type, no re-ask
+    cold: true
+    turns:
+      # 1. Family with several real SKUs triggers the multiple-matches picker.
+      - text: "photo for srtwc286"
+        expect:
+          reply_contains:
+            - "product_attachment search needs to be more specific. Multiple matches found. Please choose:"
+
+      # 2. Row 4 = SRTWC286-SH - the co-resolved "photo" attachment type must survive
+      # the pick (payload.keep, R-C), answering with the photo directly rather than
+      # re-asking for the attachment type the same message already named.
+      - text: "4"
+        expect:
+          reply_contains:
+            - "SRTWC286-SH"
+          reply_not_contains:
+            - "Please provide the attachment type"
+
+      # 3. Row 2 (or SRTWC286-SH-P, whichever the roster numbers there) is a genuine
+      # no-photo miss - still no re-ask, the attachment type stayed in scope.
+      - text: "2"
+        expect:
+          reply_contains:
+            - "SRTWC286-SH-P"
+          reply_not_contains:
+            - "Please provide the attachment type"
+
+  - name: R-D - delivery for chin chun product wc286, customer pick keeps the product
+    cold: true
+    turns:
+      # 1. Ambiguous customer name triggers the customer picker; the co-resolved
+      # product "wc286" must be frozen into payload.keep beside the roster (R-C/D's
+      # arming-side gap).
+      - text: "delivery for chin chun product wc286"
+        expect:
+          reply_contains:
+            - "Which customer do you mean?"
+
+      # 2. The picked customer's delivery orders must stay scoped to wc286 - the
+      # Product line must not read "all products" (R-D's own header assertion).
+      - text: "1"
+        expect:
+          reply_contains:
+            - "CHIN CHUN HARDWARE SDN BHD"
+            - "wc286"
+          reply_not_contains:
+            - "Product: all products"
+
+  - name: R-E - golden win delivery, the header names the customer, never the debtor code
+    cold: true
+    turns:
+      # 1. Ambiguous customer name triggers the customer picker.
+      - text: "golden win delivery"
+        expect:
+          reply_contains:
+            - "Which customer do you mean?"
+
+      # 2. The picked row's Customer: line must carry the NAME the customer read off
+      # the picker, never the debtor code (`_entity_of`'s raw/canonical_code swap).
+      - text: "1"
+        expect:
+          reply_contains:
+            - "Customer: GOLDEN WIN HARDWARE SDN BHD"
+          reply_not_contains:
+            - "300-G013"

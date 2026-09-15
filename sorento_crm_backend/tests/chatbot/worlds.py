@@ -1005,6 +1005,15 @@ def project_variables_for_comparison(variables: dict[str, Any]) -> dict[str, Any
         keep = (open_question.get("payload") or {}).get("keep")
         if keep:
             projected_open_question["keep"] = _entity_codes(keep)
+        # R-F (coder a1f1112d, 15 Sep 2026): the picked row's family membership - which
+        # uuids a multi-ledger customer row ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)")
+        # widens to - rides `open_question.payload.families` (the fix's own seat, since
+        # `tail/compile_state.py`'s five-key wall drops any OTHER top-level key). Graded
+        # the same way `keep` is: present only when non-empty, projected to a plain dict
+        # so the grader does not care which internal shape produced it.
+        families = (open_question.get("payload") or {}).get("families")
+        if families:
+            projected_open_question["families"] = dict(families) if isinstance(families, dict) else families
 
     return {
         "focus": projected_focus,

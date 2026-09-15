@@ -1900,6 +1900,69 @@ class TestDetailPickRerunsToolWithDetail:
             f"the picked ROW LABEL is not an entity to look up: {reply!r}"
         )
 
+    def test_a_pick_with_domain_hint_set_still_reruns_the_report_not_a_new_ask(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """R-B (owner-found on the merged head, coder a1f1112d diagnosis, 15 Sep 2026,
+        pre-existing on main - fixed here anyway per the diagnosis). The live v16 parser
+        sometimes emits a numbered pick as `{domain_hint: "order", intent_hint:
+        "check_order", message_type: "business_query", entities: [], reference_positions:
+        [1]}` - no row-label rewrite is in play here (`entities` stays empty from the
+        start), `domain_hint` is simply set on the emission. `_apply_outstanding_pending`'s
+        `own_question = names_entity or truthy(domain_hint)` (output_exchange.py:1567) is
+        then True regardless of what the customer actually picked, and the
+        `outstanding_detail` disjunct (`own_question and (kind == "outstanding_detail" or
+        picked is None)`) drops the pending as a NEW ASK without ever checking `picked` -
+        the disjunct's own `or picked is None` is vacuous whenever `kind ==
+        "outstanding_detail"`, which it always is here. Grades the SAME gap on both
+        numbered channels: `reference_positions` (v1/v16) and `answers_open_question.picks`
+        (v3)."""
+        for label, extra in (
+            ("reference_positions", {"reference_positions": [1]}),
+            (
+                "answers_open_question",
+                {
+                    "reference_positions": [],
+                    "answers_open_question": {
+                        "resolved": True, "picks": [1], "yes_no": None, "free_text": None,
+                    },
+                },
+            ),
+        ):
+            _seed_open_outstanding_detail(session_factory)
+            result, captured = _run_turn(
+                session_factory,
+                monkeypatch,
+                qf=_parser_output(
+                    message_type="business_query",
+                    intent_hint="check_order",
+                    domain_hint="order",
+                    entities=[],
+                    **extra,
+                ),
+                text_body="1",
+                msg_id=f"ZZT-outstanding-rb-domain-hint-{label}",
+                attributes=["sales_orders.outstanding"],
+                matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+                mcp_response=REPORT_HIT,
+            )
+            assert captured, (
+                f"a pick with domain_hint set ({label}) must still re-run the detail "
+                f"report, not drop the pending as a new ask"
+            )
+            name, args = captured[0]
+            assert name == "crm_outstanding_report", (name, label)
+            assert args.get("detail") == "so", f"'1' must ask for the SO detail ({label}): {args}"
+            assert args.get("product_code") == PRODUCT_CODE, (
+                f"the carried product must survive the pick, not be dropped with the "
+                f"pending ({label}): {args}"
+            )
+            reply = (result.reply or {}).get("text") or ""
+            assert "*SO Number:*" in reply, (
+                f"the reply must be the numbered SO detail list, not the offer line "
+                f"re-printed ({label}): {reply!r}"
+            )
+
     def test_a_new_product_code_drops_the_pending(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)
         other_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
