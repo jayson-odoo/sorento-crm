@@ -19,12 +19,22 @@ from __future__ import annotations
 
 from typing import Iterable, Optional, Sequence
 
+from sqlalchemy import case
 from sqlalchemy.orm import Session
 
 from app.models.product import Product, ProductAttachment
-from app.models.resources import Attachment
+from app.models.resources import Attachment, AttachmentType
 from app.services.dealer_kit.viewer import ViewerContext
 from app.services.storage_router import resolve_signed_url
+
+# D8/AC-S10-1: a tiebreak, not a filter - a product whose only image is a
+# technical drawing still resolves it (AC-S10-3). Between two non-primary
+# images, "Product Photos" wins over anything else, which wins over
+# "Technical Specifications", so a drawing linked before the real photo (the
+# SRTKS8547 bug the plan measured) no longer wins on `created_at` alone.
+_PRODUCT_PHOTOS_RANK = 0
+_OTHER_TYPE_RANK = 1
+_TECHNICAL_SPECS_RANK = 2
 
 # What an anonymous reader of a public catalogue counts as. The public page is
 # the consumer-facing surface, so consumer imagery is what it may show; dealer
@@ -136,11 +146,17 @@ def gallery_images(
     rows = (
         db.query(ProductAttachment, Attachment)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
+        .outerjoin(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
         .filter(ProductAttachment.product_id == product.id)
         .filter(Attachment.mime_type.ilike("image/%"))
         .filter(Attachment.is_deleted.is_(False))
         .order_by(
             (ProductAttachment.is_primary.is_(True)).desc(),
+            case(
+                (AttachmentType.type_name == "Product Photos", _PRODUCT_PHOTOS_RANK),
+                (AttachmentType.type_name == "Technical Specifications", _TECHNICAL_SPECS_RANK),
+                else_=_OTHER_TYPE_RANK,
+            ),
             ProductAttachment.sort_order.nullslast(),
             ProductAttachment.created_at,
         )
