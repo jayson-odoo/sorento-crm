@@ -17,6 +17,26 @@ from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, State
 
 RESET_KEEPS = {"tier", "brands"}
 
+# D6, "domain follows the document": a turn that names a document kind and no domain is
+# about the domain that OWNS that document. A dict rather than a policy column because it
+# is five literals that follow from what the document IS - a migration for this would be a
+# table with one true row shape and no second reader.
+DOMAIN_BY_DOCUMENT: dict[str, str] = {
+    "SO": "order",
+    "DO": "order",
+    "PO": "purchase_order",
+    "SPO": "incoming",
+    "GRN": "goods_receive",
+}
+
+
+def _domain_of_document(document: list[str]) -> str | None:
+    for kind in document:
+        name = DOMAIN_BY_DOCUMENT.get(str(kind).strip().upper())
+        if name:
+            return name
+    return None
+
 
 def _set_kind_field(focus: Focus, kind: str, entities: list[dict[str, Any]]) -> None:
     attr = KIND_FIELD_MAP.get(kind)
@@ -65,6 +85,12 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
                 _set_kind_field(focus, kind_for_focus, built)
 
         trace.rules_fired.append("answer_pending")
+        # Contract 121: a pick never re-domains the turn. The question recorded the
+        # domain it was asked for, so the answer goes back to it rather than leaving
+        # a bare positional with nothing to be about.
+        asked_for = pending.payload.get("domain")
+        if asked_for:
+            focus.domains = [asked_for]
         if pending.kind in ROSTER_KINDS:
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
@@ -324,7 +350,14 @@ def _narrow_and_plan(
                 for i, tier in enumerate(policy.tier_order)
             ]
         ask = pending_ask(
-            ask_kind, ask_options, team=team, asked_at_turn=state.turn_no, expects="pick"
+            ask_kind,
+            ask_options,
+            team=team,
+            asked_at_turn=state.turn_no,
+            expects="pick",
+            # The domain this question is being asked FOR: what the answer goes back
+            # to next turn (contract 121), since the answer itself is a bare number.
+            payload={"domain": name},
         )
     else:
         for name, _ask_kind, _ask_options, entities, filters in outcomes:
@@ -379,8 +412,16 @@ def apply(
         domains = [a["domain"] for a in asks if a.get("domain")]
     elif verdict.get("domain_hint"):
         domains = [verdict["domain_hint"]]
-    else:
+    elif focus.domains:
         domains = list(focus.domains)
+    else:
+        # D6: nothing named a domain and nothing is carried, but the focus knows what
+        # DOCUMENT the conversation is about, and a document belongs to one domain.
+        carried = _domain_of_document(focus.document)
+        domains = [carried] if carried else []
+        if carried:
+            focus.domains = [carried]
+            trace.rules_fired.append("domain_follows_document")
 
     new_state = State(focus=focus, pending=pending_after, profile=state.profile, turn_no=state.turn_no)
     trace.lane = _lane(verdict, domains, policy)

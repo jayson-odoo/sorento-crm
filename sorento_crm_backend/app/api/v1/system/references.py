@@ -1416,6 +1416,17 @@ class ResolveReferenceRequest(BaseModel):
             "today. When present it supersedes `spec_fallback`."
         ),
     )
+    scope_terms: list[str] | None = Field(
+        default=None,
+        description=(
+            "Words that SCOPE the described set without ranking it - the class word "
+            "the caller's own parser already identified ('tap', 'kitchen sink'), sent "
+            "as a value rather than left to be sliced back out of `query`. Membership "
+            "only: unlike `free_terms` these never drive `search_specs` ranking, so a "
+            "product that qualifies purely through an id match is not evicted by the "
+            "ranker's evidence floor. Only used when `require` is present."
+        ),
+    )
     predicate_words: list[str] | None = Field(
         default=None,
         description=(
@@ -2692,7 +2703,15 @@ def resolve_reference_post(
         # merged into `free_terms`: a derived class word scopes the set but must
         # never also drive `search_specs` ranking, which would silently evict a
         # `product_ids`-only match that carries no spec row at all.
-        scope_terms = None if payload.free_terms else _has_turn_free_terms(payload, result, query_text)
+        # An explicit `scope_terms` wins: the caller's parser NAMED the class word,
+        # which is a better answer than slicing it back out of the raw message - and
+        # the only answer at all when the message that armed the turn is not this
+        # turn's own text (a pick, a carried subject).
+        scope_terms = (
+            list(payload.scope_terms)
+            if payload.scope_terms
+            else (None if payload.free_terms else _has_turn_free_terms(payload, result, query_text))
+        )
 
         # E3/AC-1317: the "more" carry pages by 5 off the QUALIFYING ids
         # themselves, capped at `_SET_PAGE_ID_CAP` (200) - never the ordinary

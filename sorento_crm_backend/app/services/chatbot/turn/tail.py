@@ -21,7 +21,10 @@ def persist(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
 
     payload = {
         "focus": focus_to_wire(state.focus),
-        "open_question": to_wire(getattr(answer, "question", None)),
+        # `pending' = composer.question` exactly (AC-1532) - and when the composer asked
+        # nothing, the roster that survived its OWN pick (contract 36) is still open, so
+        # it is what stays. "No new question" is not "no question".
+        "open_question": to_wire(getattr(answer, "question", None) or state.pending),
         "ideation": getattr(ctx, "ideation", None),
         "access_levels": getattr(ctx, "access_levels", []) or [],
         "contains_flyer": bool(getattr(ctx, "contains_flyer", False)),

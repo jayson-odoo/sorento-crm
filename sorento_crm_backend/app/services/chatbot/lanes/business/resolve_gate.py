@@ -686,6 +686,21 @@ def resolve_entity_body(
     if require is not None:
         body["require"] = require
         body["predicate_words"] = derive_predicate_words(parse_output, require, message_text=_query_text(ctx))
+        # The class word the PARSER named, forwarded as a value (turn re-architecture,
+        # D11): a `product_type` / `category` entity IS "which taps", and reading it off
+        # the verdict is what lets a HAS turn be described by something other than this
+        # turn's own raw text.
+        scope_terms: list[str] = []
+        for entity in parse_output.get("entities") or []:
+            if not isinstance(entity, dict):
+                continue
+            if jsc.nullish_str(entity.get("hint")).strip().lower() not in ("product_type", "category"):
+                continue
+            raw = jsc.nullish_str(entity.get("raw")).strip()
+            if raw and raw not in scope_terms:
+                scope_terms.append(raw)
+        if scope_terms:
+            body["scope_terms"] = scope_terms
     return body
 
 

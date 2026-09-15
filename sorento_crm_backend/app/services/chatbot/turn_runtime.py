@@ -208,10 +208,10 @@ def lane_parse_output(
 
 def resolve_kinds(
     db: Session, *, ctx: dict[str, Any], branch_kind: str, space_id: str | None, dry_run: bool
-) -> tuple[dict[str, dict[str, int]], list[dict[str, Any]]]:
+) -> tuple[dict[str, dict[str, int]], list[dict[str, Any]], dict[str, Any] | None]:
     """Ask the resolver what each named token actually IS (AC-1527).
 
-    Returns `({raw: {kind: hits}}, compatible_entities)`. The resolver and its gate are
+    Returns `({raw: {kind: hits}}, compatible_entities, predicate)`. The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
     which `turn/narrow.py` now decides from the policy instead.
 
@@ -223,7 +223,7 @@ def resolve_kinds(
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
-        return {}, []
+        return {}, [], None
     try:
         payload = resolve_gate.run(
             ctx,
@@ -236,7 +236,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return {}, []
+        return {}, [], None
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -252,7 +252,11 @@ def resolve_kinds(
 
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
-    return by_token, compatible
+    # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
+    # question described, and the count is what the answer's own header says. It rides
+    # the gate to the tool trigger, where `fetch.output_structurer` prepends it.
+    predicate = gate.get("predicate") if isinstance(gate.get("predicate"), dict) else None
+    return by_token, compatible, predicate
 
 
 def make_tool_runner(
@@ -262,6 +266,7 @@ def make_tool_runner(
     verdict: dict[str, Any],
     focus: Focus,
     compatible_entities: list[dict[str, Any]],
+    predicate: dict[str, Any] | None,
     space_id: str | None,
     dry_run: bool,
     turn_trace: Any,
@@ -285,11 +290,10 @@ def make_tool_runner(
             },
         }
         entities = _entities_for(spec, compatible_entities)
-        payload = {
-            "gate": {"compatible_entities": entities},
-            "tier_gate": _tier_gate(spec),
-            "ctx": lane_ctx,
-        }
+        gate: dict[str, Any] = {"compatible_entities": entities}
+        if predicate is not None:
+            gate["predicate"] = predicate
+        payload = {"gate": gate, "tier_gate": _tier_gate(spec), "ctx": lane_ctx}
         fragment = business.run_fetch(
             payload,
             services=business_services.fetch_services(db),

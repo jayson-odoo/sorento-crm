@@ -83,10 +83,12 @@ def decide(
                 return NarrowOutcome(None, [], [], profile.tier)
             return NarrowOutcome("tier_pick", [], [], None)
         # AC-1526's own wording: "product under incoming and purchase cost asks for
-        # a code", "customer under order asks for one family" - unconditional, not
-        # "asks only when there is more than one candidate". Any candidate at all
-        # asks for the confirming pick; none named proceeds with nothing to filter.
-        if candidates:
+        # a code", "customer under order asks for one family" - a NAMED candidate is
+        # asked about, not assumed. What settles it is IDENTITY: a candidate carrying a
+        # `uuid` is one the resolver matched or the customer picked off this very
+        # roster, and asking again for a code you already hold re-prints the same
+        # question forever (contract 36's own sticky roster is what feeds it back).
+        if candidates and not all(c.get("uuid") for c in candidates):
             return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
         return NarrowOutcome(None, [], [], None)
 

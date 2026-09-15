@@ -1376,8 +1376,9 @@ def _run_stages(  # noqa: PLR0915
 
         resolved_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
+        predicate: dict[str, Any] | None = None
         if plan.fetch or plan.ask is not None:
-            resolved_kinds, compatible_entities = turn_runtime.resolve_kinds(
+            resolved_kinds, compatible_entities, predicate = turn_runtime.resolve_kinds(
                 db,
                 ctx=ctx,
                 branch_kind="business_query",
@@ -1477,6 +1478,7 @@ def _run_stages(  # noqa: PLR0915
                     verdict=verdict,
                     focus=state_out.focus,
                     compatible_entities=compatible_entities,
+                    predicate=predicate,
                     space_id=space_id_for_turn,
                     dry_run=dry_run,
                     turn_trace=turn_trace,
