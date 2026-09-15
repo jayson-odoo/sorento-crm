@@ -339,6 +339,35 @@ def _run_turn(
     return result, calls
 
 
+
+def _final_vars(session_factory, result) -> dict[str, Any]:
+    """The five-key session as THIS turn left it, dry run or not.
+
+    **Not the contact row.** A dry-run turn (`is_test`, which is what the console and
+    every assertion here that needs the escalation lane's real `add_comment` text uses)
+    writes NOTHING: `complete_turn`'s own `written = (not dry_run) and ...`. So a test
+    that read `respond_contacts.session_vars` after a dry-run answer turn would be
+    reading the ARMING turn's state and grading it as the answer's - green or red for a
+    reason that has nothing to do with the code under test.
+
+    The engine records its would-be patch on the `remembered` stage instead
+    ("Nothing was written: this is a test turn (D14)."), and that IS the value a live
+    turn would have persisted, so it is what the answer-turn assertions read. A
+    non-dry-run turn carries the same object there, so one reader serves both.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    row = (
+        session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    )
+    for entry in reversed(list((row.trace if row is not None else None) or [])):
+        if not isinstance(entry, dict) or entry.get("stage") != "remembered":
+            continue
+        variables = ((entry.get("raw") or {}).get("session_patch") or {}).get("variables")
+        if isinstance(variables, dict):
+            return variables
+    return _vars(session_factory)
+
 def _tokens_of(body: dict[str, Any]) -> set[str]:
     """The tokens THIS resolver request actually asked about, lower-cased and exact."""
     asked = [str(body.get("query") or "")] + [str(t) for t in (body.get("tokens") or [])]
@@ -696,12 +725,12 @@ class TestTheOfferHasOneWriterAndOneTeam:
         The invariant either way is that the same "yes" cannot escalate twice.
         """
         _reply, services = arm.build(session_factory, monkeypatch, "yes1c")
-        _run_turn(
+        result, _calls = _run_turn(
             session_factory, monkeypatch, qf=_yes_v1(), text_body="yes",
             msg_id="ZZT-gr-yes1c-answer", resolve_services=services, lanes=arm.lanes,
             is_test=True,
         )
-        question = _stored_oq(_vars(session_factory))
+        question = _stored_oq(_final_vars(session_factory, result))
         assert not question, (
             f"arm {arm.id!r}: the accepted offer is still open, so the next bare 'yes' "
             f"escalates the same thing again: {question!r}"
@@ -806,18 +835,19 @@ class TestTheYesNoBridgeAnswersNothingItWasNotAsked:
             msg_id="ZZT-gr-neg-roster-yes", is_test=True,
         )
         assert result.status == "done", (result.status, result.error)
+        final = _final_vars(session_factory, result)
         # Graded on the QUESTION, not on whether the turn escalated at all: this emission
         # carries the parser's own `is_escalation_confirmation: true`, and a turn the
         # parser reads as a confirmation reaching the escalation lane is main's behaviour
         # (D11 - the lane reads no words, it reads that flag) and is not what this round
         # changes. What the bridge may not do is ANSWER a question nobody asked: consume
         # the roster, or mint an offer onto it that was never printed.
-        question = _stored_oq(_vars(session_factory))
+        question = _stored_oq(final)
         assert question.get("kind") == "product_pick", (
             f"the roster the customer is still reading must survive a yes it was never "
             f"asked for: {question!r}"
         )
-        assert len(_stored_oq_options(_vars(session_factory))) == 3, question
+        assert len(_stored_oq_options(final)) == 3, question
         assert question.get("expects") == "pick", (
             f"no offer was ever printed over this roster, so nothing may have made it a "
             f"yes/no question: {question!r}"
@@ -862,9 +892,9 @@ class TestTheYesNoBridgeAnswersNothingItWasNotAsked:
             f"- under the promoted v1 prompt the handler never runs, so the routing chain "
             f"falls through to DEFAULT_SUGGESTED_TEAM instead: {result.actions!r}"
         )
-        assert not _stored_oq(_vars(session_factory)), (
-            "an answered member offer is consumed, never re-armed: "
-            f"{_stored_oq(_vars(session_factory))!r}"
+        final = _stored_oq(_final_vars(session_factory, result))
+        assert not final, (
+            f"an answered member offer is consumed, never re-armed: {final!r}"
         )
 
 
@@ -1742,3 +1772,128 @@ def test_s1_a_this_turn_entity_with_a_null_current_message_is_still_this_turns_a
             f"the customer named their own subject, so the OLD product's report must not "
             f"be what answers them (domain_hint {domain_hint!r}): {tool} {args!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# GROUP 1c - the LANE's own read of the team, at the point it is chosen
+#
+# The tests above grade the `add_comment` TEXT, which is the customer's case as the
+# person picking it up reads it. This one grades the INPUT to the writer, because that
+# is where the wrong team is chosen and it is the only place a fix can be pinned
+# unambiguously: `lanes/escalation._assignment_actions(ctx, team, ...)` composes BOTH
+# the comment ("Team: <slug>", `_comment_text`) and the closing sentence
+# ("... from <team> team", `ROUTED_TO_PIC_REPLY`) from that one argument, and `team`
+# reaches it as `escalation_context(...)["team"]` =
+# `ctx.parse.output.routing.suggested_team` (escalation.py:197).
+#
+# So the whole chain is: the offer records a team -> the answer resolves the offer and
+# writes that team onto `routing.suggested_team` -> the lane reads it there. A break
+# anywhere in it shows up as this one argument, whichever end the coder repairs.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class TeamCase:
+    id: str
+    #: The team the OFFER the customer answered had recorded.
+    team: str
+    lanes: tuple[str, ...]
+    #: `(session_factory, monkeypatch, tag) -> resolve_services`
+    setup: Callable[..., ResolveGateServices | None]
+
+
+def _setup_standalone_offer(session_factory, monkeypatch, tag: str):
+    _reply, services = _build_miss_arm(session_factory, monkeypatch, tag)
+    return services
+
+
+def _setup_riding_offer(session_factory, monkeypatch, tag: str):
+    _reply, services = _build_customer_picker_arm(session_factory, monkeypatch, tag)
+    return services
+
+
+def _setup_member_offer(session_factory, monkeypatch, tag: str):
+    """A member offer is an escalation offer with a roster attached (`offer_is_open`
+    reads both kinds), and it carries its own team on `payload.team`."""
+    _seed_contact(
+        session_factory,
+        variables={
+            "open_question": {
+                "kind": "member_offer",
+                "options": [
+                    {"idx": 1, "label": "Nurain", "uuid": "aaaaaaaa-0000-0000-0000-000000000001"},
+                    {"idx": 2, "label": "Aina", "uuid": "aaaaaaaa-0000-0000-0000-000000000002"},
+                ],
+                "expects": "yes_no",
+                "asked_at_turn": 1,
+                "asked_at": None,
+                "payload": {"team": "warehouse", "domain": "inventory"},
+            }
+        },
+    )
+    return None
+
+
+TEAM_CASES: tuple[TeamCase, ...] = (
+    TeamCase("standalone-offer", team="warehouse", lanes=LANES, setup=_setup_standalone_offer),
+    TeamCase(
+        "riding-offer", team="customer_service", lanes=LANES, setup=_setup_riding_offer
+    ),
+    TeamCase("member-offer", team="warehouse", lanes=LANES, setup=_setup_member_offer),
+)
+
+
+@pytest.mark.parametrize("case", TEAM_CASES, ids=lambda c: c.id)
+def test_the_escalation_lane_is_handed_the_offers_own_team(
+    case, session_factory, monkeypatch
+) -> None:
+    """The team the lane ASSIGNS is the team the offer promised.
+
+    Measured on this head for the member offer: the emission the lane is handed comes back
+    with the offer resolved (handler `member_offer`, `escalate: True`,
+    `routing.suggested_team: warehouse`) and the case is still filed against
+    `customer_service` - so a later reader of the team is overwriting or ignoring the
+    answer's own routing before `_assignment_actions` sees it. Asserted on that argument,
+    so the red names the seam rather than the symptom, and on both strings built from it,
+    so a fix that repairs one and not the other cannot pass.
+    """
+    from app.services.chatbot.lanes import escalation as escalation_mod
+
+    services = case.setup(session_factory, monkeypatch, "lane-team")
+
+    handed: list[Any] = []
+    original = escalation_mod._assignment_actions
+
+    def _recording(ctx, team, **kwargs):
+        handed.append(team)
+        return original(ctx, team, **kwargs)
+
+    monkeypatch.setattr(escalation_mod, "_assignment_actions", _recording)
+
+    result, _calls = _run_turn(
+        session_factory, monkeypatch, qf=_yes_v1(), text_body="yes",
+        msg_id=f"ZZT-gr1c-{case.id}", resolve_services=services, lanes=case.lanes,
+        is_test=True,
+    )
+    assert result.status == "done", (result.status, result.error)
+    assert handed, (
+        f"{case.id}: a 'yes' to an open offer must reach the lane's assignment arm - "
+        f"nothing built the four actions: {result.actions!r}"
+    )
+    assert handed == [case.team], (
+        f"{case.id}: the offer promised {case.team!r} and the escalation lane was handed "
+        f"{handed!r} to file the case under"
+    )
+    assert _comment_teams(result) == [case.team], (
+        f"{case.id}: the triage note is what the person picking the case up searches by: "
+        f"{result.actions!r}"
+    )
+    closing = " ".join(
+        str(a.get("text") or "")
+        for a in (result.actions or [])
+        if isinstance(a, dict) and a.get("kind") == "send_message"
+    )
+    assert f"from {_pretty(case.team)} team" in closing, (
+        f"{case.id}: the customer is told which team has it, and it has to be the one the "
+        f"offer named: {closing!r}"
+    )
