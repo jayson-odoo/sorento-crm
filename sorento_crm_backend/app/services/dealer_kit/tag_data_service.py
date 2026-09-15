@@ -469,6 +469,17 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
     from app.services.price_tag_request_service import PriceTagRequestService
 
     terminal = PriceTagRequestService.is_terminal(request)
+
+    # Live finding: a line claimed through a backend that predated the pin (or
+    # otherwise left unpinned) stayed exposed to master data forever - reading
+    # it again and again is not a decision. An in-flight request pins any line
+    # still missing one on the first read that reaches it, the same way
+    # `pin_lines` pins a line added while designing; a terminal request is
+    # untouched, since it can decide nothing either way (the sibling guard
+    # `TestATerminalRequestNeverRunsTheLiveResolve` holds for the same reason).
+    if not terminal:
+        pin_lines(db, request, only_unpinned=True)
+
     lines = sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id))
     rows: list[dict] = []
 
