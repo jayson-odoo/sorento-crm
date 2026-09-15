@@ -1568,6 +1568,158 @@ class TestPickerCompanyScope:
     # ordinary company predicate the same as every other owned query.
 
 
+# ---------------------------------------------------------------------------
+# R4b/R5 (Phase 3 review) - the fail-closed promotion gate on CREATE, and the
+# same gate under a MULTI-company scope on REVISE.
+# ---------------------------------------------------------------------------
+
+
+class TestCreateFailsClosedWithNoAudience:
+    def test_a_line_promotion_id_is_refused_for_a_contact_with_no_access_codes(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        promotion_id = _seed_promotion_for(db, product_id, access_levels=["dealer"])
+
+        res = c.post(
+            _BASE,
+            json={
+                "price_mode": "selling",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "promotion_id": promotion_id,
+                    }
+                ],
+            },
+        )
+        assert res.status_code == 422, res.text
+        assert res.json().get("detail") == "line:0", res.text
+
+
+class TestReviseCrossCompanyPromotionGate:
+    """R5: a contact shared between company A and company B must not be able
+    to price a request STAMPED company A with a promotion that only belongs
+    to company B - the same multi-company sharing `TestPickerCompanyScope`
+    (#485) had to pin for the item picker. Currently GREEN - the company
+    predicate `_covering_promotions` already runs under is the REQUEST's own
+    (single) company, never the contact's multi-company scope, so this locks
+    that in as a regression guard rather than exposing a new gap."""
+
+    def test_revise_refuses_a_line_promotion_from_the_other_company(self):
+        from decimal import Decimal
+
+        from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
+        from app.models.portal import PortalRevisionConfig, PortalToken
+        from app.models.user import SystemSetting
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        with blank_session() as db:
+            db.add(
+                SystemSetting(
+                    id=str(uuid.uuid4()), portal_revisions_enabled=True, portal_max_revisions=2
+                )
+            )
+            db.add(
+                PortalRevisionConfig(
+                    id=str(uuid.uuid4()),
+                    source_entity_type="price_tag_request",
+                    is_enabled=True,
+                    max_revisions=None,
+                    allowed_statuses=["new", "changes_requested"],
+                    restart_stage_code=None,
+                )
+            )
+            db.commit()
+            contact_id, access_code, second_company_id, token_value = (
+                _seed_two_company_contact(db)
+            )
+            token_row = db.query(PortalToken).filter(PortalToken.token == token_value).one()
+            from app.api.v1.public.portal_price_tag import _resolve_company
+
+            request_company_id = _resolve_company(db, token_row)
+            other_company_id = (
+                second_company_id
+                if request_company_id != second_company_id
+                else _SORENTO_COMPANY_ID
+            )
+
+            product_id = _seed_product_in_company(
+                db, request_company_id, code=unique_code("R5prod")
+            )
+            other_product_id = _seed_product_in_company(
+                db, other_company_id, code=unique_code("R5other")
+            )
+
+            # A promotion that belongs to the OTHER company, covering the
+            # OTHER company's own product - never company A's line's product.
+            promotion = Promotion(
+                id=str(uuid.uuid4()),
+                description=unique_code("ZZT other-co promo"),
+                is_active=True,
+                access_levels=[access_code, "dealer", "end_user"],
+                company_id=other_company_id,
+            )
+            db.add(promotion)
+            db.flush()
+            group = PromotionGroup(
+                promotion_id=promotion.id, group_name="ZZT group", sort_order=0
+            )
+            db.add(group)
+            db.flush()
+            db.add(
+                PromotionProduct(
+                    id=str(uuid.uuid4()),
+                    promotion_id=promotion.id,
+                    promotion_group_id=str(group.id),
+                    product_id=other_product_id,
+                    promo_selling_price=Decimal("1.00"),
+                    company_id=other_company_id,
+                )
+            )
+            db.flush()
+
+            request = PriceTagRequestService.create_request(
+                db,
+                contact_id=contact_id,
+                company_id=request_company_id,
+                data={
+                    "debtor_name": "ZZT Dealer",
+                    "price_mode": "selling",
+                    "lines": [{"line_type": "product", "product_id": product_id}],
+                },
+            )
+            # Matches `test_portal_price_tag_revise.py`'s `_seed_request`: a
+            # revisable request has answered who prints (r9 D7) and sits in an
+            # `allowed_statuses` status.
+            request.status = "new"
+            request.print_by = "office"
+            request.portal_draft_at = None
+            db.commit()
+
+            with _multi_company_client(db, token_value) as c:
+                res = c.post(
+                    f"/api/v1/public/portal/submissions/price_tag_request/{request.id}/revise",
+                    json={
+                        "reason": "Trying the other company's promotion",
+                        "expected_revision_no": 0,
+                        "fields": {},
+                        "products": [
+                            {
+                                "product_id": product_id,
+                                "quantity": 1,
+                                "promotion_id": promotion.id,
+                            }
+                        ],
+                    },
+                )
+
+        assert res.status_code == 422, res.text
+        body = res.json()
+        assert body.get("detail") == "line:0", body
+        assert body.get("code") == "PROMOTION_NOT_AVAILABLE", body
+
+
 @pytest.fixture(autouse=True)
 def no_respond(monkeypatch):
     """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
