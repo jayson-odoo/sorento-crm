@@ -209,6 +209,9 @@ vi.mock('../../../../services/priceTagRequestService', () => ({
   updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
+  // AC-S10-3 (PLAN-price-tag-ai-extract-resolver.md D15): the approved+office
+  // bar's primary button - not imported by RequestTagDesigner.tsx yet.
+  markReadyForCollection: vi.fn(),
 }));
 // Tag Size control's "Saved sizes" group (S4): a react-query hook this suite
 // has no QueryClientProvider for. `useTagSizesQuery` is a `vi.fn()` so the
@@ -230,7 +233,11 @@ vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
 }));
 
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
-import { resolveRequestTags } from '../../../../services/priceTagRequestService';
+import {
+  resolveRequestTags,
+  exportTagSheet,
+  markReadyForCollection,
+} from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
 import type {
   PriceTagRequestDetail,
@@ -242,6 +249,8 @@ import type { LineTagData, TagSheetDoc, TagTemplate } from '@/lib/dealer-kit/tag
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolveRequestTags = vi.mocked(resolveRequestTags);
+const mockExportTagSheet = vi.mocked(exportTagSheet);
+const mockMarkReadyForCollection = vi.mocked(markReadyForCollection);
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -604,6 +613,60 @@ describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => 
     expect(screen.getByRole('button', { name: 'Design' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Arrange' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /PT-000001/ })).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S10-3/S10-4 (PLAN-price-tag-ai-extract-resolver.md D15): the request
+// bar at `approved` - print and hand-over live here now, not just export.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - the approved request bar (AC-S10-3, AC-S10-4)', () => {
+  function barButtonNames() {
+    const canvas = screen.getByTestId('canvas-editor');
+    return Array.from(document.body.querySelectorAll('button'))
+      .filter((btn) => !canvas.contains(btn))
+      .map((btn) => btn.textContent?.trim());
+  }
+
+  it('AC-S10-3: office - Export PDF and the primary Mark ready for collection, no Mark design ready', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
+    mockExportTagSheet.mockResolvedValue(undefined as never);
+    mockMarkReadyForCollection.mockResolvedValue(undefined as never);
+
+    renderDesigner(request({ status: 'approved', print_by: 'office' } as never));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const names = barButtonNames();
+    expect(names.some((t) => t?.includes('Export PDF'))).toBe(true);
+    expect(names.some((t) => t?.includes('Mark ready for collection'))).toBe(true);
+    expect(names.some((t) => t?.includes('Mark design ready'))).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: /Export PDF/ }));
+    await waitFor(() => expect(mockExportTagSheet).toHaveBeenCalledWith('req-1'));
+    expect(mockExportTagSheet).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: /Mark ready for collection/ }));
+    await waitFor(() =>
+      expect(mockMarkReadyForCollection).toHaveBeenCalledWith('req-1'),
+    );
+    await waitFor(() =>
+      expect(mockToastSuccess).toHaveBeenCalledWith('Marked ready for collection'),
+    );
+  });
+
+  it('AC-S10-4: self - Export PDF only, no Mark ready for collection', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestTags.mockResolvedValue([lineTagData()]);
+
+    renderDesigner(request({ status: 'approved', print_by: 'self' } as never));
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    const names = barButtonNames();
+    expect(names.some((t) => t?.includes('Export PDF'))).toBe(true);
+    expect(names.some((t) => t?.includes('Mark ready for collection'))).toBe(false);
+    expect(names.some((t) => t?.includes('Mark design ready'))).toBe(false);
   });
 });
 

@@ -142,8 +142,16 @@ vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
   useDeleteTagSizePreset: () => ({ run: vi.fn(), targetId: null, isPending: false }),
   useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
+// S8 (AC-S8-1/S8-2) needs a non-zero open-pins count on the rail; unmocked
+// elsewhere in this file it silently resolves to nothing (caught), which is
+// what every OTHER test here already relies on (0 pins, no badge at all).
+vi.mock('../../../../services/priceTagReviewService', () => ({
+  listReviewComments: vi.fn(async () => []),
+  setReviewCommentResolved: vi.fn(),
+}));
 
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
+import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
   getPriceTagRequest,
   resolveRequestTags,
@@ -159,6 +167,7 @@ import type {
 
 const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolve = vi.mocked(resolveRequestTags);
+const mockComments = vi.mocked(listReviewComments);
 const mockGetRequest = vi.mocked(getPriceTagRequest);
 const mockSplit = vi.mocked(splitRequestTag);
 const mockUpdateTag = vi.mocked(updateRequestTag);
@@ -580,5 +589,182 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
     const tagRow = screen.getByText('1a').closest('button');
     expect(tagRow).not.toBeNull();
     expect(within(tagRow as HTMLElement).queryByText('Missing: SRTMR502-BL')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S4 - the rail folds a single-tag, no-parts, no-open-group line into ONE
+// selectable block (D8, AC-S4-1..S4-4).
+//
+// PLAN-price-tag-ai-extract-resolver.md D8 / price-tag-ai-extract-resolver-
+// acceptance-criteria.md S4.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - one block for a single-tag, no-parts line (S4)', () => {
+  it('AC-S4-1/S4-2: renders one block, no "1a", carrying the tag price line and Use template, no Remove', async () => {
+    await mount(request({ lines: [line({ tags: [tag()] })] }));
+
+    // No ordinal anywhere - the line block itself is what would have shown it.
+    expect(screen.queryByText('1a')).toBeNull();
+    expect(screen.getByText('SRTBF11834')).toBeInTheDocument();
+    expect(screen.getByText('Qty 1 / Furniture Set / LP RM 1,599')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Use template for tag 1a' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Remove tag 1a' })).toBeNull();
+
+    // The block itself is what onSelect fires from.
+    const block = screen.getByText('SRTBF11834').closest('button');
+    expect(block).not.toBeNull();
+  });
+
+  it('AC-S4-1: the designed check shows on the block once the tag has a placement', async () => {
+    await mount(
+      request({ lines: [line({ tags: [tag()] })] }),
+      docFor('tag-1a', [savedLayer('l1')]),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-layers').textContent).toBe('1'),
+    );
+    const block = screen.getByText('SRTBF11834').closest('button');
+    expect(block).not.toBeNull();
+    expect((block as HTMLElement).querySelector('.text-emerald-600')).not.toBeNull();
+  });
+
+  it('AC-S4-1: clicking a second folded line\'s block selects THAT line\'s tag', async () => {
+    const detail = request({
+      lines: [
+        line(),
+        line({
+          id: 'line-2',
+          code: 'BBB-2',
+          product_id: 'prod-2',
+          sort_order: 1,
+          tags: [tag({ id: 'tag-2a', label: '2a' })],
+        }),
+      ],
+    });
+    mockResolve.mockResolvedValue([
+      row(),
+      row({ tag_id: 'tag-2a', line_id: 'line-2', tag_label: '2a', code: 'BBB-2' }),
+    ]);
+    await mount(detail, docFor('tag-2a', [savedLayer('a'), savedLayer('b'), savedLayer('c')]));
+
+    const secondBlock = screen.getByText('BBB-2').closest('button');
+    expect(secondBlock).not.toBeNull();
+    fireEvent.click(secondBlock as HTMLElement);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-layers').textContent).toBe('3'),
+    );
+  });
+
+  it('AC-S4-1 (parts clause): one tag but WITH a part is not folded - the "1a" tag row stays', async () => {
+    await mount(
+      request({
+        lines: [
+          line({
+            tags: [tag()],
+            parts: [
+              {
+                id: 'part-1',
+                product_id: 'prod-mirror',
+                code: 'SRTMR502-BL',
+                name: 'ZZT Mirror',
+                role: null,
+                candidates: [],
+                sort_order: 0,
+              },
+            ],
+          }),
+        ],
+      }),
+    );
+
+    expect(screen.getByText('1a')).toBeInTheDocument();
+  });
+
+  it('AC-S4-3: a line with two tags keeps the "1a"/"1b" tag rows, not folded', async () => {
+    const detail = request({
+      lines: [line({ tags: [tag(), tag({ id: 'tag-1b', label: '1b', sort_order: 1 })] })],
+    });
+    mockResolve.mockResolvedValue([row(), row({ tag_id: 'tag-1b', tag_label: '1b' })]);
+    await mount(detail);
+
+    expect(screen.getByText('1a')).toBeInTheDocument();
+    expect(screen.getByText('1b')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Remove tag 1b' }),
+    ).toBeInTheDocument();
+  });
+
+  it('AC-S4-4: a line with one tag and an open group keeps the tag row (Split / Pick one)', async () => {
+    await mount(request({ lines: [line({ tags: [OPEN_TAG] })] }));
+
+    expect(screen.getByText('1a')).toBeInTheDocument();
+    expect(screen.getByText('Open: Basin')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Split into 4 tags' }),
+    ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S8 (PLAN-price-tag-ai-extract-resolver.md D12) - the open-pins badge never
+// overlaps the action group (Use template / Remove).
+// ---------------------------------------------------------------------------
+
+function openComment(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'c1',
+    request_id: 'req-1',
+    tag_id: 'tag-1a',
+    round: 1,
+    x: 0.2,
+    y: 0.3,
+    w: 0,
+    h: 0,
+    body: 'Move it',
+    author_name: null,
+    created_at: '2026-09-01T00:00:00Z',
+    resolved_at: null,
+    resolved_by_name: null,
+    ...overrides,
+  } as never;
+}
+
+describe('RequestTagDesigner - rail badge clear of the actions (S8)', () => {
+  it('AC-S8-1: the open-pins badge is a sibling of the actions, not nested in the row button, and precedes Use template', async () => {
+    mockComments.mockResolvedValueOnce([openComment()]);
+    const detail = request({
+      lines: [line({ tags: [tag(), tag({ id: 'tag-1b', label: '1b', sort_order: 1 })] })],
+    });
+    mockResolve.mockResolvedValue([row(), row({ tag_id: 'tag-1b', tag_label: '1b' })]);
+    await mount(detail);
+
+    const badge = await screen.findByTitle(/1 open change request/);
+    const useTemplateBtn = screen.getByRole('button', { name: 'Use template for tag 1a' });
+
+    expect(badge.closest('button')).toBeNull();
+    expect(
+      badge.compareDocumentPosition(useTemplateBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('AC-S8-2: the row button carries enough right padding to clear the action group (pr-20 or wider)', async () => {
+    mockComments.mockResolvedValueOnce([openComment()]);
+    const detail = request({
+      lines: [line({ tags: [tag(), tag({ id: 'tag-1b', label: '1b', sort_order: 1 })] })],
+    });
+    mockResolve.mockResolvedValue([row(), row({ tag_id: 'tag-1b', tag_label: '1b' })]);
+    await mount(detail);
+    await screen.findByTitle(/1 open change request/);
+
+    const rowButton = screen.getByText('1a').closest('button');
+    expect(rowButton).not.toBeNull();
+    const match = (rowButton as HTMLElement).className.match(/\bpr-(\d+)\b/);
+    expect(match).not.toBeNull();
+    expect(Number(match?.[1] ?? 0)).toBeGreaterThanOrEqual(20);
   });
 });

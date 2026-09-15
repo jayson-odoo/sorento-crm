@@ -17,7 +17,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -87,6 +87,7 @@ type CapturedProps = {
     alsoAttach?: boolean;
     values?: Record<string, unknown>;
   }) => void;
+  renderRowStatus?: (p: Record<string, unknown>) => React.ReactNode;
 };
 let captured: CapturedProps = {};
 vi.mock('./AIExtractDialog', () => ({
@@ -346,5 +347,123 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
 
     expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(5);
     expect(screen.queryByLabelText('Quantity for line 2')).toBeNull();
+  });
+});
+
+/**
+ * AC-S1-6, AC-S1-7 (PLAN-price-tag-ai-extract-resolver, D3): the extract now
+ * arrives already resolved - `match` / `product_id` / `product_set_id` ride
+ * on each extracted row - so the form reads the payload directly instead of
+ * calling `lookupTagItems` per code and comparing codes itself.
+ */
+describe('PriceTagRequestForm - AI extract reads match fields off the payload (AC-S1-6, AC-S1-7)', () => {
+  it('AC-S1-6: statuses render from match/product_id/product_set_id alone; lookupTagItems is never called', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+
+    const products = [
+      {
+        product_code: MATCHED_PRODUCT.code,
+        product_name: MATCHED_PRODUCT.name,
+        match: 'product',
+        product_id: MATCHED_PRODUCT.id,
+        product_set_id: null,
+        quantity: 1,
+        notes: null,
+      },
+      {
+        product_code: MATCHED_SET.code,
+        product_name: MATCHED_SET.name,
+        match: 'product_set',
+        product_id: null,
+        product_set_id: MATCHED_SET.id,
+        quantity: 1,
+        notes: null,
+      },
+      {
+        product_code: 'GHOST-CODE',
+        product_name: null,
+        match: null,
+        product_id: null,
+        product_set_id: null,
+        quantity: 1,
+        notes: null,
+      },
+    ];
+
+    await act(async () => {
+      captured.onExtracted?.(products);
+    });
+
+    // The whole point of D3: no per-code round trip during extract.
+    expect(lookupTagItems).not.toHaveBeenCalled();
+
+    const { getByTestId } = render(
+      <div>
+        <div data-testid="row-0">{captured.renderRowStatus?.(products[0])}</div>
+        <div data-testid="row-1">{captured.renderRowStatus?.(products[1])}</div>
+        <div data-testid="row-2">{captured.renderRowStatus?.(products[2])}</div>
+      </div>,
+    );
+
+    expect(within(getByTestId('row-0')).getByText('Matched product')).toBeTruthy();
+    expect(within(getByTestId('row-1')).getByText('Matched set')).toBeTruthy();
+    expect(within(getByTestId('row-2')).getByText('Not found')).toBeTruthy();
+  });
+
+  it('AC-S1-7: Apply adds a line for every matched row and toasts the rest, with no wait for a lookup', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const products = [
+      {
+        product_code: MATCHED_PRODUCT.code,
+        product_name: MATCHED_PRODUCT.name,
+        match: 'product',
+        product_id: MATCHED_PRODUCT.id,
+        product_set_id: null,
+        quantity: 2,
+        notes: 'first',
+      },
+      {
+        product_code: 'GHOST-CODE',
+        product_name: null,
+        match: null,
+        product_id: null,
+        product_set_id: null,
+        quantity: 1,
+        notes: 'second',
+      },
+      {
+        product_code: MATCHED_SET.code,
+        product_name: MATCHED_SET.name,
+        match: 'product_set',
+        product_id: null,
+        product_set_id: MATCHED_SET.id,
+        quantity: 1,
+        notes: 'third',
+      },
+    ];
+
+    await act(async () => {
+      captured.onExtracted?.(products);
+    });
+    // Matches must already be available synchronously off the payload -
+    // Apply is called with no `extractAndSettle`/lookup wait in between.
+    expect(lookupTagItems).not.toHaveBeenCalled();
+
+    await act(async () => {
+      captured.onApply?.({ productLines: products });
+    });
+
+    expect(await screen.findByLabelText('Quantity for line 1')).toHaveValue(2);
+    expect(screen.getByLabelText('Remarks for line 1')).toHaveValue('first');
+    expect(screen.getByLabelText('Quantity for line 2')).toHaveValue(1);
+    expect(screen.getByLabelText('Remarks for line 2')).toHaveValue('third');
+    expect(screen.queryByLabelText('Quantity for line 3')).toBeNull();
+    await waitFor(() =>
+      expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('GHOST-CODE')),
+    );
   });
 });

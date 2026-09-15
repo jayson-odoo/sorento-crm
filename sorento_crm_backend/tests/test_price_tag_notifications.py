@@ -35,7 +35,18 @@ from fastapi.testclient import TestClient
 from app.main import app  # noqa: E402
 
 from tests import _ptag_r9_seed as seed
-from tests._pg_fixture import blank_session
+from tests._pg_fixture import blank_session, unique_code
+
+# Captured at COLLECTION time, before the `no_respond` autouse fixture below
+# ever runs and monkeypatches the module attributes of the same names. S6/S7
+# (PLAN-price-tag-ai-extract-resolver.md D10/D11) need the REAL
+# `build_context_vars` (to prove the new price_tag_update branch), so its
+# tests call this captured reference directly rather than going through
+# `respond_messaging_service.build_context_vars`, which stays faked to `{}`
+# for every other test in this file.
+from app.services import respond_messaging_service as _rms
+
+_REAL_BUILD_CONTEXT_VARS = _rms.build_context_vars
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SKIP_LIVE_DB_TESTS") == "1", reason="SKIP_LIVE_DB_TESTS=1"
@@ -849,3 +860,361 @@ class TestTheNotifierRunsAfterTheCommit:
             "the notifier ran before any commit, so it can report a "
             "transition that a later rollback throws away"
         )
+
+
+# ---------------------------------------------------------------------------
+# S6 (PLAN-price-tag-ai-extract-resolver.md D10) - price_tag_update is a
+# configurable use case, like every other status-update template.
+# ---------------------------------------------------------------------------
+
+
+def _seed_one_param_template(db, *, status: str = "approved"):
+    from app.models.respond_template import RespondChannel, RespondMessageTemplate
+    from app.models.respond_workspace import RespondWorkspace
+
+    ws = RespondWorkspace(
+        id=str(uuid.uuid4()),
+        space_id=unique_code("space"),
+        name="ZZT workspace",
+        api_key_ciphertext="not-encrypted-test",
+        is_active=True,
+        is_default=True,
+    )
+    db.add(ws)
+    db.flush()
+    ch = RespondChannel(
+        id=str(uuid.uuid4()), workspace_id=ws.id, respond_channel_id=453209
+    )
+    db.add(ch)
+    db.flush()
+    tpl = RespondMessageTemplate(
+        id=str(uuid.uuid4()),
+        channel_id=ch.id,
+        respond_template_id=1,
+        name=unique_code("ptag-update"),
+        language_code="en",
+        status=status,
+        components=[{"type": "body", "text": "{{1}}"}],
+        body_text="{{1}}",
+        param_count=1,
+    )
+    db.add(tpl)
+    db.commit()
+    return tpl
+
+
+class TestPriceTagUpdateIsConfigurable:
+    def test_ac_s6_1_the_use_case_is_offered_to_admins(self):
+        """AC-S6-1: joins TEMPLATE_DEFAULT_USE_CASES."""
+        from app.models.respond_template import TEMPLATE_DEFAULT_USE_CASES
+
+        assert "price_tag_update" in TEMPLATE_DEFAULT_USE_CASES
+
+    def test_ac_s6_1_get_defaults_lists_a_row_for_it(self, db_only):
+        from app.services import respond_template_service as svc
+
+        rows = svc.get_defaults(db_only)
+        assert any(r["use_case"] == "price_tag_update" for r in rows), rows
+
+    def test_ac_s6_1_set_default_accepts_a_one_param_template_mapped_to_message(
+        self, db_only
+    ):
+        from app.services import respond_template_service as svc
+
+        tpl = _seed_one_param_template(db_only)
+
+        out = svc.set_default(
+            db_only,
+            "price_tag_update",
+            template_id=str(tpl.id),
+            param_mapping={"1": "message"},
+        )
+        assert out["is_valid"] is True
+        assert out["param_mapping"] == {"1": "message"}
+
+    def test_ac_s6_2_build_context_vars_resolves_the_request(self, db_only):
+        """AC-S6-2: entity_number, status and a non-empty portal_url.
+
+        Calls the REAL `build_context_vars` (captured before the file's
+        `no_respond` autouse fixture fakes it to `{}` for every other test
+        here) so this actually proves the new branch, not the fake.
+        """
+        request = _request_at(db_only, "proof_ready")
+
+        vars_out = _REAL_BUILD_CONTEXT_VARS(
+            db_only,
+            use_case="price_tag_update",
+            business_id=str(request.id),
+            identifier=str(request.contact_id),
+        )
+
+        assert vars_out.get("entity_number") == request.doc_number
+        assert vars_out.get("status") == request.status
+        assert vars_out.get("portal_url"), "expected a non-empty portal_url"
+
+    def test_ac_s6_3_notify_salesperson_sends_the_template_with_entity_number_in_context(
+        self, db_only, monkeypatch
+    ):
+        """AC-S6-3: the send_text_or_template spy sees use_case=price_tag_update
+        and context vars carrying entity_number; a success row is logged.
+
+        `build_context_vars` is restored to the real implementation for this
+        one test (still via the spy below, never a real Respond.io call) so
+        the context it builds is the real price_tag_update branch's output,
+        not the file's default `{}` fake.
+        """
+        from app.models.integration import IntegrationLog
+        from app.services import price_tag_notify
+
+        monkeypatch.setattr(_rms, "build_context_vars", _REAL_BUILD_CONTEXT_VARS)
+
+        sent: list[dict] = []
+
+        def _fake_send(db, *, identifier, text, use_case, context_vars=None, **_kw):
+            sent.append(
+                {"identifier": identifier, "use_case": use_case, "context_vars": context_vars}
+            )
+            return {
+                "sent_as": "template",
+                "response": {"id": "zzt-msg-tpl"},
+                "window_state": "closed",
+                "request_payload": {"message": {"type": "whatsapp_template"}},
+            }
+
+        monkeypatch.setattr(_rms, "send_text_or_template", _fake_send)
+
+        request = _request_at(db_only, "proof_ready")
+
+        price_tag_notify.notify_salesperson(db_only, request, "proof_ready")
+        db_only.commit()
+
+        assert len(sent) == 1, "notify_salesperson did not reach send_text_or_template"
+        assert sent[0]["use_case"] == "price_tag_update"
+        assert sent[0]["context_vars"] is not None
+        assert sent[0]["context_vars"].get("entity_number") == request.doc_number
+
+        rows = (
+            db_only.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "price_tag_requests")
+            .filter(IntegrationLog.business_id == str(request.id))
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].status == "success"
+
+
+# ---------------------------------------------------------------------------
+# S7 (PLAN-price-tag-ai-extract-resolver.md D11) - the send is addressed and
+# logged by respond_io_id, not by the internal RespondContact uuid.
+# ---------------------------------------------------------------------------
+
+
+def _seed_contact_with_respond_id(db, *, respond_io_id: str | None):
+    from app.models.access import ContactAccessType, RespondContact, respond_contact_access_types
+
+    contact = RespondContact(
+        id=str(uuid.uuid4()),
+        phone_number=f"+60{uuid.uuid4().hex[:9]}",
+        name=unique_code("ZZT Sales Sam"),
+        respond_io_id=respond_io_id,
+    )
+    db.add(contact)
+    access_type = ContactAccessType(
+        code=unique_code("at"),
+        name=unique_code("Access Type"),
+        portal_form_types=["price_tag_request"],
+    )
+    db.add(access_type)
+    db.flush()
+    db.execute(
+        respond_contact_access_types.insert().values(
+            contact_id=contact.id, access_type_code=access_type.code
+        )
+    )
+    db.flush()
+    return contact
+
+
+def _outbox_client(db, monkeypatch) -> TestClient:
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.models.user import User, UserStatus
+    from app.services.user_service import UserPermissionService
+
+    user = User(
+        id=str(uuid.uuid4()),
+        email=f"{unique_code('outbox')}@zzt.test",
+        name="ZZT Outbox Caller",
+        status=UserStatus.ACTIVE.value,
+    )
+    db.add(user)
+    db.flush()
+    principal = {"id": str(user.id), "email": user.email}
+
+    def _override_db():
+        yield db
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = lambda: principal
+    # The system router is wrapped in `require_module_enabled_with_api_key`,
+    # which depends on THIS, not `get_current_user` - unoverridden it 401s
+    # before `require_permission` (system.respond_outbox.view) even runs.
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug == "system.respond_outbox.view",
+    )
+    return TestClient(app)
+
+
+class TestSendIsAddressedByRespondIoId:
+    def test_ac_s7_1_send_and_both_log_rows_use_the_respond_io_id(
+        self, db_only, monkeypatch
+    ):
+        from app.models.integration import IntegrationLog
+        from app.services import price_tag_notify
+
+        RESPOND_ID = "437264483"
+        contact = _seed_contact_with_respond_id(db_only, respond_io_id=RESPOND_ID)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact.id, status="proof_ready", products=[product]
+        )
+
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            _rms,
+            "send_text_or_template",
+            lambda db, *, identifier, text, use_case, context_vars=None, **_kw: (
+                sent.append({"identifier": identifier})
+                or {
+                    "sent_as": "text",
+                    "response": {"id": "zzt-msg-1"},
+                    "window_state": "open",
+                    "request_payload": {"message": {"type": "text", "text": text}},
+                }
+            ),
+        )
+
+        price_tag_notify.notify_salesperson(db_only, request, "proof_ready")
+        db_only.commit()
+
+        assert sent and sent[0]["identifier"] == RESPOND_ID, (
+            "the send must be addressed by respond_io_id, not the internal "
+            "RespondContact uuid"
+        )
+
+        rows = (
+            db_only.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "price_tag_requests")
+            .filter(IntegrationLog.business_id == str(request.id))
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].external_reference == RESPOND_ID
+        assert rows[0].endpoint.endswith(f"contact/id:{RESPOND_ID}/message")
+
+    def test_ac_s7_1_a_failed_send_still_logs_the_respond_io_id(
+        self, db_only, monkeypatch
+    ):
+        from app.models.integration import IntegrationLog
+        from app.services import price_tag_notify
+
+        RESPOND_ID = "437264483"
+        contact = _seed_contact_with_respond_id(db_only, respond_io_id=RESPOND_ID)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact.id, status="proof_ready", products=[product]
+        )
+
+        def _boom(db, *, identifier, text, use_case, context_vars=None, **_kw):
+            raise RuntimeError("ZZT respond down")
+
+        monkeypatch.setattr(_rms, "send_text_or_template", _boom)
+
+        price_tag_notify.notify_salesperson(db_only, request, "proof_ready")
+        db_only.commit()
+
+        rows = (
+            db_only.query(IntegrationLog)
+            .filter(IntegrationLog.business_table == "price_tag_requests")
+            .filter(IntegrationLog.business_id == str(request.id))
+            .all()
+        )
+        assert len(rows) == 1
+        assert rows[0].status == "failed"
+        assert rows[0].external_reference == RESPOND_ID
+        assert rows[0].endpoint.endswith(f"contact/id:{RESPOND_ID}/message")
+
+    def test_ac_s7_2_a_contact_with_no_respond_io_id_falls_back_to_the_contact_id(
+        self, db_only, monkeypatch
+    ):
+        """Regression: today's behaviour, unchanged by D11."""
+        from app.services import price_tag_notify
+
+        contact = _seed_contact_with_respond_id(db_only, respond_io_id=None)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact.id, status="proof_ready", products=[product]
+        )
+
+        sent: list[dict] = []
+        monkeypatch.setattr(
+            _rms,
+            "send_text_or_template",
+            lambda db, *, identifier, text, use_case, context_vars=None, **_kw: (
+                sent.append({"identifier": identifier})
+                or {
+                    "sent_as": "text",
+                    "response": {},
+                    "window_state": "open",
+                    "request_payload": {},
+                }
+            ),
+        )
+
+        price_tag_notify.notify_salesperson(db_only, request, "proof_ready")
+
+        assert sent and sent[0]["identifier"] == str(contact.id)
+
+    def test_ac_s7_3_the_outbox_shows_the_contact_name_and_phone(
+        self, db_only, monkeypatch
+    ):
+        from app.services import price_tag_notify
+
+        RESPOND_ID = "437264483"
+        contact = _seed_contact_with_respond_id(db_only, respond_io_id=RESPOND_ID)
+        product = seed.seed_product(db_only)
+        request = seed.seed_request(
+            db_only, contact.id, status="proof_ready", products=[product]
+        )
+
+        monkeypatch.setattr(
+            _rms,
+            "send_text_or_template",
+            lambda db, *, identifier, text, use_case, context_vars=None, **_kw: {
+                "sent_as": "text",
+                "response": {},
+                "window_state": "open",
+                "request_payload": {"message": {"type": "text", "text": text}},
+            },
+        )
+        price_tag_notify.notify_salesperson(db_only, request, "proof_ready")
+        db_only.commit()
+
+        client = _outbox_client(db_only, monkeypatch)
+        try:
+            resp = client.get(
+                "/api/v1/system/respond-outbox",
+                params={"business_table": "price_tag_requests"},
+            )
+            assert resp.status_code == 200, resp.text
+            rows = resp.json()["data"]
+            assert len(rows) == 1, rows
+            row = rows[0]
+            assert row["contact_name"] == contact.name
+            assert row["contact_phone"] == contact.phone_number
+            assert request.doc_number in (row["message_text"] or "")
+        finally:
+            app.dependency_overrides.clear()

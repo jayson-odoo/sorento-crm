@@ -83,6 +83,7 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 
 import {
   createRequest,
+  getRequest,
   lookupDebtors,
   lookupProductCombos,
   lookupTagItems,
@@ -455,5 +456,110 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     // The part and package rows span the whole line table rather than squeezing
     // into one column, which is what makes them readable at 375px.
     expect(wrapper).toHaveAttribute('colspan', '5');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PLAN-price-tag-ai-extract-resolver.md D4 / price-tag-ai-extract-resolver-
+// acceptance-criteria.md S2 (AC-S2-1..S2-3): "Add part" only when the
+// product actually has a combo. Supersedes the old "on any line, combo or
+// not" rule this same file pinned above.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', () => {
+  it('AC-S2-3: no "Add part" before the combos lookup answers (no flash)', async () => {
+    let resolveCombos: (value: { host_guarded: boolean; combos: unknown[] }) => void =
+      () => {};
+    mockCombos.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveCombos = resolve;
+        }),
+    );
+    await startWithALine();
+    await pickTheCabinet();
+
+    expect(screen.queryByLabelText('Add part')).toBeNull();
+
+    resolveCombos({ host_guarded: false, combos: [] });
+    await waitFor(() => expect(mockCombos).toHaveBeenCalled());
+    expect(screen.queryByLabelText('Add part')).toBeNull();
+  });
+
+  it('AC-S2-2: shows "Add part" once the lookup returns one or more combos', async () => {
+    mockCombos.mockResolvedValue({
+      host_guarded: true,
+      combos: [COMBO_3_IN_1, COMBO_4_IN_1],
+    });
+    await startWithALine();
+    await pickTheCabinet();
+    await screen.findByLabelText('Package');
+
+    expect(screen.getByLabelText('Add part')).toBeInTheDocument();
+  });
+
+  it('AC-S2-1: no "Add part" when the lookup returns empty - existing part rows still render with Remove', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: false, combos: [] });
+    const draftRequest = {
+      id: 'req-1',
+      doc_number: 'PT-202609-0009',
+      debtor_code: 'ZZTD01',
+      debtor_name: 'ZZT Dealer Sdn Bhd',
+      promotion_id: null,
+      promotion_name: null,
+      price_mode: 'list',
+      needed_by_date: null,
+      notes: null,
+      status: 'new',
+      line_count: 1,
+      created_at: '2026-09-01T00:00:00Z',
+      portal_draft_at: '2026-09-01T00:00:00Z',
+      contact_id: 'contact-1',
+      has_completed_export: false,
+      is_editable: true,
+      revision_no: 0,
+      last_revised_at: null,
+      revision: null,
+      attachments: [],
+      lines: [
+        {
+          id: 'line-1',
+          line_type: 'product',
+          product_id: CABINET.id,
+          product_set_id: null,
+          name: CABINET.name,
+          code: CABINET.code,
+          show_promo_price: false,
+          quantity: 1,
+          included_accessories: null,
+          remarks: null,
+          sort_order: 0,
+          combo_id: null,
+          package_warning: null,
+          parts: [
+            {
+              id: 'part-existing',
+              product_id: MIRROR.product_id,
+              code: MIRROR.code,
+              name: MIRROR.name,
+              role: null,
+              candidates: [],
+              sort_order: 0,
+            },
+          ],
+          tags: [],
+        },
+      ],
+    };
+    (getRequest as ReturnType<typeof vi.fn>).mockResolvedValue(draftRequest);
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText(MIRROR.code);
+    await waitFor(() => expect(mockCombos).toHaveBeenCalledWith(CABINET.id));
+
+    expect(screen.queryByLabelText('Add part')).toBeNull();
+    expect(
+      screen.getByRole('button', { name: `Remove part ${MIRROR.code} from line 1` }),
+    ).toBeInTheDocument();
   });
 });
