@@ -4129,13 +4129,17 @@ class TestScopeQuestionCustomerLineMatchesReportHeader:
         c2 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD [A/C I]")
         c3 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD - [CERAMIC]")
         db.commit()
-        base_key = gate_mod._cust_base(
-            {"display": {"customer_name": "CHIN CHUN HARDWARE SDN BHD"}, "canonical_code": None}
-        )
         roster = [
             {
                 "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)", "uuid": c1.id,
                 "product": None, "entity_type": "customer",
+                # R-F (coder a1f1112d, 15 Sep 2026, design revised same day): the family
+                # rides ON THE ROSTER ROW itself, not a session-level
+                # `variables["picker_families"]` map - the legacy map read is deleted
+                # (five-key sessions never carry it, 2026-08-24 "family outlives the
+                # roster" ruling). The pick turn needs nothing from the prior session
+                # beyond the roster it already carries.
+                "family_uuids": [c1.id, c2.id, c3.id],
             },
         ]
         _seed_contact(
@@ -4157,12 +4161,6 @@ class TestScopeQuestionCustomerLineMatchesReportHeader:
                     "domains": _focus_slot(["order"]),
                     "order_status": _focus_slot("outstanding"),
                 },
-                # The candidate-to-account-family map the picker's gate built, which the
-                # PICK turn reads straight off the prior session
-                # (`gate.py` ~1021: `variables["picker_families"]`) to widen the pick to
-                # every ledger of the family. Kept verbatim - it is a real prev-turn input
-                # the pick depends on, not one of the persisted five keys.
-                "picker_families": {base_key: [c1.id, c2.id, c3.id]},
             },
         )
         pick_result, pick_captured = _run_turn(

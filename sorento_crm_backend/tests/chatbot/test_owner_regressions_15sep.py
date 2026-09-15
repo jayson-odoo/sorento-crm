@@ -192,6 +192,16 @@ class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
     `focus.customer.family_uuids` into every uuid the `customer_ids` argument carries -
     today it reads only `e.get("uuid")`, one value per entity."""
 
+    # Real customer uuids (sorento_ai_automation_focus_full): CHIN CHUN HARDWARE SDN BHD
+    # - [A/C I] (300-C043) and CHIN CHUN HOMEMART SDN BHD - [CERAMIC] (300-C125), the two
+    # ledgers a "(MCH, SRT)"-style multi-company roster row spans. `entity_ids_transformer`
+    # is uuid-format-only (`_UUID_RE`, fetch.py:329/504 - it SKIPS any entity whose `uuid`
+    # does not match `^[0-9a-f]{8}-...\Z` before any family logic ever runs), so a synthetic
+    # id like "uuid-mch" would make test 2 pass for the WRONG reason (both real tests below
+    # need genuine uuid4 strings, not a synthetic label).
+    ROW_UUID = "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+    FAMILY_UUID = "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+
     def test_a_picked_row_carries_its_family_uuids_onto_the_entity(self) -> None:
         outcome = oq.resolve(
             "customer_pick",
@@ -201,17 +211,20 @@ class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
                     "idx": 1,
                     "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
                     "code": "300-C043",
-                    "uuid": "uuid-mch",
+                    "uuid": self.ROW_UUID,
                     "entity_type": "customer",
                     # `gate.run_gate`'s own row field (956-966): every uuid this
                     # roster row's family spans, computed on the ARMING turn.
-                    "family_uuids": ["uuid-mch", "uuid-srt"],
+                    "family_uuids": [self.ROW_UUID, self.FAMILY_UUID],
                 }
             ],
             {},
         )
 
-        assert outcome.focus["customer"].get("family_uuids") == ["uuid-mch", "uuid-srt"], (
+        assert outcome.focus["customer"].get("family_uuids") == [
+            self.ROW_UUID,
+            self.FAMILY_UUID,
+        ], (
             f"_entity_of must copy the row's family_uuids onto the picked entity so "
             f"the report fetches both ledgers, not just the row's own uuid: "
             f"{outcome.focus.get('customer')!r}"
@@ -223,9 +236,9 @@ class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
             "entities": [
                 {
                     "entity_type": "customer",
-                    "uuid": "uuid-mch",
+                    "uuid": self.ROW_UUID,
                     "code": "300-C043",
-                    "family_uuids": ["uuid-mch", "uuid-srt"],
+                    "family_uuids": [self.ROW_UUID, self.FAMILY_UUID],
                 }
             ],
             "semantic_input": {},
@@ -233,7 +246,14 @@ class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
 
         args = fetch_mod.entity_ids_transformer(trigger)
 
-        assert sorted(args.get("customer_ids") or []) == ["uuid-mch", "uuid-srt"], (
+        # Confirms the entity itself is NOT silently skipped by the uuid-format gate
+        # before we ever get to grading the family expansion (the bug this whole round
+        # is chasing hides behind a false green exactly this way).
+        assert not (args.get("_diagnostics") or {}).get("skipped"), (
+            f"the row uuid itself must pass entity_ids_transformer's uuid-format gate: "
+            f"{args.get('_diagnostics')!r}"
+        )
+        assert sorted(args.get("customer_ids") or []) == sorted([self.ROW_UUID, self.FAMILY_UUID]), (
             f"the tool call must carry every ledger the picked row's family spans, "
             f"not only the row's own uuid: {args.get('customer_ids')!r}"
         )
