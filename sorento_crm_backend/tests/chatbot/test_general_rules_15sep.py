@@ -156,9 +156,18 @@ def _printed_team(reply: str) -> str | None:
     compose`, and four arms in `lanes/business/answer.py`, one of which spells it with a
     lower-case "would"). A reader that only matched the frozen capitalised prefix would
     call an arm "no offer at all" when the customer can plainly read one.
+
+    **LAST MATCH WINS, and the test's own reader needs it as much as the code does.** A
+    customer token quoted back inside a not-found line can carry the whole offering clause
+    ("would you like me to escalate to purchasing team."), and the bot's own sentence is
+    always appended AFTER the echo - so the first match spans from the echo into the real
+    sentence's " team?" and returns nonsense. Measured on the live order-domain line:
+    searching forwards gave `'purchasing team." (order). Would you like me to escalate to
+    customer service'`; the last match gives `customer service`, which is what the
+    customer was promised.
     """
-    match = _ESCALATE_SENTENCE_RE.search(reply or "")
-    return match.group(1).strip() if match else None
+    matches = list(_ESCALATE_SENTENCE_RE.finditer(reply or ""))
+    return matches[-1].group(1).strip() if matches else None
 
 
 def _pretty(team: Any) -> str:
@@ -2546,14 +2555,38 @@ REAL_OFFER_REPLIES = (
     ),
 )
 
-#: Replies where the phrase is the CUSTOMER's, quoted back at them. Measured live: a
-#: not-found echo of the token "escalate to purchasing." records a `purchasing` offer, so
-#: the next bare "yes" escalates something nobody offered.
-ECHOED_OFFER_REPLIES = (
+#: The CUSTOMER's own words, quoted back at them. Three of them carry the whole offering
+#: clause, not merely the two anchor words, which is what the final review found still
+#: open: the token IS the sentence, so a reader that takes the first match it sees cannot
+#: tell the echo from the promise. Measured live on the order-domain not-found line.
+ECHOED_CUSTOMER_TOKENS = (
+    "escalate to purchasing.",
+    "or 'yes' to escalate to warehouse.",
+    "would you like me to escalate to purchasing team.",
+)
+
+#: The same tokens as the bot actually renders them: the echo FIRST, inside the not-found
+#: line, and the bot's own offer appended after it.
+ECHO_THEN_REAL_OFFER = tuple(
     (
-        "not-found-echo",
-        'Couldn\'t find these: "escalate to purchasing." (product): not found.',
-    ),
+        token,
+        f'Couldn\'t find: "{token}" (order). '
+        "Would you like me to escalate to customer service team?",
+    )
+    for token in ECHOED_CUSTOMER_TOKENS
+)
+
+#: Echo-ONLY replies: the customer's token quoted back with NO offer appended (a turn that
+#: ANSWERED something and merely could not resolve one token). There is nothing here for a
+#: "yes" to accept.
+ECHO_ONLY_REPLIES = tuple(
+    (
+        token,
+        "Here are the matching products.\n\n1. *Product Code:* SRTWT2634\n\n"
+        f'Couldn\'t find these: "{token}" (product): not found.',
+    )
+    for token in ECHOED_CUSTOMER_TOKENS
+) + (
     (
         "scope-header-echo",
         "Customer: all\nProduct: escalate to warehouse.\nDates: all dates\n\n"
@@ -2579,29 +2612,57 @@ def test_s1_every_composer_shape_of_the_bots_own_offer_is_recorded(
     assert question.get("expects") == "yes_no", question
 
 
-@pytest.mark.parametrize(("case_id", "reply"), ECHOED_OFFER_REPLIES, ids=lambda x: str(x))
-def test_s1_a_reply_that_merely_echoes_the_customers_words_records_no_offer(
-    case_id, reply
-) -> None:
-    """S1 (reviewer): the phrase appearing in the reply is not the same fact as the bot
-    having offered.
+@pytest.mark.parametrize(("token", "reply"), ECHO_THEN_REAL_OFFER, ids=lambda x: str(x)[:40])
+def test_s1_the_bots_own_sentence_wins_over_the_echo_above_it(token, reply) -> None:
+    """S1's first half, and the half `team_from_reply` owns: LAST MATCH WINS.
 
-    `team_from_reply` anchors on the two words that never vary ("escalate to"), which is
-    what makes it read every composer - and a customer token quoted back inside a
-    not-found line or a scope header carries those same two words. An offer nobody made
-    must not be answerable: the next bare "yes" would escalate on the strength of the
-    customer's own typing.
+    Every composer appends its offer to the end of the text, so the bot's own promise is
+    always the last "escalate to" in the reply. The echo above it is the customer's, and
+    on these three tokens it carries the offering clause itself - so "the first one found"
+    reads the customer's word as the promise, and their next "yes" goes to the team THEY
+    typed.
     """
     from app.services.chatbot.dialogue import open_question as oq
 
-    assert oq.record_offer(None, reply_text=reply, turn_no=1) is None, (
-        f"{case_id}: the bot did not offer anything here - the words are the customer's, "
-        f"quoted back: {reply!r}"
+    assert oq.team_from_reply(reply) == "customer_service", (
+        f"the promise is the LAST sentence, not the echoed token {token!r}: {reply!r}"
+    )
+    question = oq.record_offer(None, reply_text=reply, turn_no=1)
+    assert (question or {}).get("payload", {}).get("team") == "customer_service", (
+        f"the recorded offer is what the customer was promised, not what they typed: "
+        f"{question!r}"
     )
 
 
+@pytest.mark.parametrize(("case_id", "reply"), ECHO_ONLY_REPLIES, ids=lambda x: str(x)[:40])
+def test_s1_an_echo_with_no_offer_behind_it_arms_nothing(case_id, reply) -> None:
+    """S1's second half, at the seam that owns it: the ENGINE's post-compose arm.
+
+    `record_offer` is handed a reply and a fallback team; it cannot know whether the bot
+    offered anything, and that is not its job - the CALLER knows, because the tail gates
+    its call on `offer_open` and `crossdomain_compose` hands the engine an offer only when
+    it appended one. Measured on this head: the engine arm reads a team off a pure echo and
+    arms a `team_pick` out of it, so a following bare "yes" escalates on the strength of
+    the customer's own typing.
+    """
+    from app.services.chatbot import engine as engine_mod
+
+    sealed = {"text": reply, "session_patch": {"variables": {"open_question": None}}}
+    engine_mod._arm_cross_domain_offer(
+        # No offer from `crossdomain_compose`: nothing appended an escalate sentence this
+        # turn, which is the whole premise.
+        sealed, {}, ctx={"parse": {"_turn_no": 3}}, domain="master_products",
+    )
+    armed = sealed["session_patch"]["variables"]["open_question"]
+    assert not armed, (
+        f"{case_id}: no offer was made on this turn - the words are the customer's, "
+        f"quoted back - and a question was armed anyway: {armed!r}"
+    )
+
+
+@pytest.mark.parametrize("token", ECHOED_CUSTOMER_TOKENS, ids=lambda t: t[:32])
 def test_s1_an_echoed_phrase_never_outranks_the_bots_own_offer(
-    session_factory, monkeypatch
+    token, session_factory, monkeypatch
 ) -> None:
     """The same rule end to end, on the one turn shape that carries BOTH: the customer's
     unresolvable token quoted back ("escalate to purchasing.") and the bot's own offer
@@ -2614,11 +2675,11 @@ def test_s1_an_echoed_phrase_never_outranks_the_bots_own_offer(
     "yes" goes there.
     """
     _seed_contact(session_factory, variables={})
-    token = "escalate to purchasing."
     result, _calls = _run_turn(
         session_factory, monkeypatch,
         qf=_qf([_entity(token, "order")], domain="order", intent_hint="check_order"),
-        text_body=f'has my order "{token}" arrived', msg_id="ZZT-gr6-s1-echo",
+        text_body=f'has my order "{token}" arrived',
+        msg_id=f"ZZT-gr6-s1-echo-{abs(hash(token)) % 10000}",
         resolve_services=_exact_services(unresolved=(token,)),
     )
     reply = (result.reply or {}).get("text") or ""
@@ -2628,15 +2689,15 @@ def test_s1_an_echoed_phrase_never_outranks_the_bots_own_offer(
     printed = _printed_team(reply)
     question = _stored_oq(_final_vars(session_factory, result))
     recorded = _recorded_team(question)
-    assert recorded != "purchasing", (
-        f"'purchasing' is the customer's own word, quoted back inside a not-found line - "
-        f"the offer is whatever the BOT's own sentence named ({printed!r}): {question!r}"
+    assert printed == "customer service", (
+        f"this test is only itself if the BOT's own sentence named customer service: "
+        f"{reply!r}"
     )
-    if printed is not None:
-        assert _pretty(recorded) == printed, (
-            f"the reply promised {printed!r} and the question recorded {recorded!r}: "
-            f"{question!r}"
-        )
+    assert recorded == "customer_service", (
+        f"the team in {token!r} is the customer's own word, quoted back inside a "
+        f"not-found line - the offer is whatever the BOT's own sentence named "
+        f"({printed!r}): {question!r}"
+    )
 
 
 # --------------------------------------------------------------------------- #
