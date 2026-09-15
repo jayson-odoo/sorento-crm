@@ -3583,6 +3583,13 @@ def _spend_the_answer(variables: dict[str, Any], parse: Any) -> bool:
     # again re-opened the very question `carry_after_answer` had spent: a second bare "yes"
     # escalated the same thing twice. The accept is the news of this turn; the sentence is
     # yesterday's.
+    #
+    # ASYMMETRIC ON PURPOSE, and this is the reason (reviewer nit, 15 Sep 2026). A "no" does
+    # NOT return early, because declining is not the end of the conversation: the roster the
+    # offer rode stays on the customer's screen (`carry_after_answer` strips the offer and
+    # keeps the list), and a reply that genuinely offers again - a rerun that missed again -
+    # SHOULD re-record it, which is exactly what `with_offer` merging back on is for. Only
+    # an ACCEPT is terminal, because a human now has the conversation.
     return jsc.get(answer, "yes_no") == "yes"
 
 
@@ -3660,69 +3667,27 @@ def _arm_cross_domain_offer(
     turn_no = int(jsc.js_number(jsc.get(parse, "_turn_no")) or 0)
     previous = jsc.get(parse, "_open_question_before") or variables.get("open_question")
     carried = variables.get("open_question")
-    roster = _live_roster(carried, previous)
-    if roster is not None:
-        # THE ONE IMPLEMENTATION (owner ruling, 15 Sep 2026, general rule 1) - the tail
-        # calls the same function with its own composed text.
-        variables["open_question"] = open_question_mod.record_offer(
-            roster, reply_text=sealed.get("text"), turn_no=turn_no, domain=domain,
-            fallback_team=team,
-        )
-        return
-    if "member_offer" in (jsc.get(carried, "kind"), jsc.get(previous, "kind")):
-        # A MEMBER OFFER IS ALREADY AN OPEN OFFER, with its own yes and no and its own
-        # re-prompt (the `offer_hold` lane, `cs-roster-plan` rebuilding the roster), and
-        # `offer_is_open` counts it as one. The escalate yes/no has nothing to add to it and
-        # must not replace the named people the customer is reading. Measured: two owner
-        # worlds (`sub-output-live/out-14875019`, `out-15145655`) turned a re-prompted
-        # six-person roster into a one-option team clarify as soon as this arm could read a
-        # team off the printed sentence.
-        return
-    if _the_tail_armed_its_own(carried, previous):
-        # THE TAIL ASKED SOMETHING ELSE THIS TURN, and it is the one that knows (S1). A
-        # team clarify, a company clarify, a fresh picker: the reply the customer is
-        # about to read IS that question, and overwriting it with the escalate line's
-        # yes/no left them answering one thing while the bot waited for another. Only a
-        # question the tail merely CARRIED (the same one `_open_question_before` holds) is
-        # this arm's to replace, because then the offer is the only news of the turn.
-        return
+
+    # ONE CALL, and the rule decides (reviewer, 15 Sep 2026). What is open right now is what
+    # the tail wrote this turn, or - when it wrote nothing - the question the customer is
+    # still looking at; `record_offer` then does the deciding, the same way it does for the
+    # tail's own call: a ROSTER takes the offer on board, NO question becomes the plain
+    # yes/no, and any OTHER question is left exactly as it is. Passing `None` here instead
+    # of the carried question is what made two guards necessary - one for `member_offer`,
+    # one for "the tail armed its own" - and they were the same rule written twice more.
+    base = carried if isinstance(carried, dict) and carried.get("kind") else None
+    if base is None and _is_a_roster(previous):
+        base = previous
     question = open_question_mod.record_offer(
-        None, reply_text=sealed.get("text"), turn_no=turn_no, domain=domain,
+        base, reply_text=sealed.get("text"), turn_no=turn_no, domain=domain,
         fallback_team=team,
     )
-    if question is None:
+    if question is None or question is base:
         return
+    # THE CLOCK DOES NOT RESTART on an offer re-made over the same question.
     if open_question_mod.same_question(question, previous) and isinstance(previous, dict):
         question["asked_at_turn"] = int(previous.get("asked_at_turn", question["asked_at_turn"]))
     variables["open_question"] = question
-
-
-def _the_tail_armed_its_own(carried: Any, previous: Any) -> bool:
-    """Did `compile_state` ask a question of its OWN this turn, rather than carry one?
-
-    Carrying is the case this arm exists to override: a question that is simply still open
-    says nothing about the escalate line `crossdomain_compose` has just appended. Asking is
-    not - the tail composed it from what happened this turn, with the rows it printed.
-    """
-    if not isinstance(carried, dict) or not carried.get("kind"):
-        return False
-    return not open_question_mod.same_question(carried, previous)
-
-
-def _live_roster(carried: Any, previous: Any) -> dict[str, Any] | None:
-    """The numbered list still on the customer's screen, or None (D19).
-
-    THE TAIL'S ANSWER IS FINAL, including when it is "something else" (S6 review, S1).
-    `compile_state` has already decided what survives this turn, and reading past a
-    question it deliberately armed - a team clarify, a fresh picker - to a stale roster on
-    `_open_question_before` deleted that decision: measured on the review probe, the
-    clarify the tail had just written vanished and the stale `product_pick` came back
-    merged with the offer. So `previous` is consulted for exactly one case, the one it was
-    added for: the tail wrote no question at all.
-    """
-    if _is_a_roster(carried):
-        return carried
-    return previous if carried is None and _is_a_roster(previous) else None
 
 
 def _is_a_roster(question: Any) -> bool:

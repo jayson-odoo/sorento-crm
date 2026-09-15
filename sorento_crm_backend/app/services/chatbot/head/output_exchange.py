@@ -1458,8 +1458,12 @@ def _outstanding_leaves_the_offer(o: dict, prev_pending: Any) -> bool:
         return False
     if [e for e in jsc.array(o.get("entities")) if jsc.truthy(e)]:
         return False
-    if jsc.truthy(o.get("domain_hint")):
-        return False
+    # NO DOMAIN READ (reviewer B2, rule 3, 15 Sep 2026). A bare "no" is a decline whether
+    # or not the model stamped a domain on it, and the live stamping is `domain_hint:
+    # "order"` - so with the word in this test the same "no" re-printed the detail rows and
+    # kept the question, which is R22's own loop, and closed it only when the word happened
+    # to be null. What guards this function is the three tests above: no numbered reply, no
+    # entity, and the decline or a question already printed back once.
     if o.get("is_affirmative") is False:
         return True
     return jsc.truthy(jsc.get(jsc.get(prev_pending, "payload"), "reprinted"))
@@ -1546,11 +1550,22 @@ def _close_outstanding_pending(o: dict) -> None:
     nothing (`run_fetch`); the three routing fields are what get the turn to that lane.
     """
     o["outstanding_pending_dropped"] = True
-    if o.get("is_affirmative") is False:
-        o["outstanding_offer_declined"] = True
-        o["domain_hint"] = "order"
-        o["message_type"] = "business_query"
-        o["intent_hint"] = "check_order"
+    # A DECLINE IS R22's SHAPE, not merely a false `is_affirmative` (reviewer B1, 15 Sep
+    # 2026). "no, check stock SRTWT2634" is a decline AND a new ask, and stamping it here
+    # answered "Okay, noted." and ran no tool - the customer asked for stock and got a
+    # closing line. What R22 recognises is a turn that says no and NOTHING else: no entity
+    # of its own and no numbered reply. A turn that declines and asks is a new ask, and the
+    # ask is what it is owed.
+    if o.get("is_affirmative") is not False:
+        return
+    if [e for e in jsc.array(o.get("entities")) if jsc.get(e, "current_message") is not False]:
+        return
+    if jsc.array(o.get("reference_positions")):
+        return
+    o["outstanding_offer_declined"] = True
+    o["domain_hint"] = "order"
+    o["message_type"] = "business_query"
+    o["intent_hint"] = "check_order"
 
 
 def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -> None:
@@ -1666,7 +1681,11 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
     # reply) and `domain_hint: "order"` dropped it as a new ask - the same message, two
     # readings, decided by a word the customer did not choose. An entity is the honest
     # signal of a question of its own, and `picked` already covers the answer side.
-    own_question = names_entity
+    # `own_question` WAS `names_entity or truthy(domain_hint)`; rule 3 took the domain word
+    # out (15 Sep 2026) and what is left is `names_entity`, so arm 2 below reads it
+    # directly and the name goes. R-B's protection - a PICK is never a new ask - now comes
+    # from rule 3 itself rather than from a `picked is None` term: with no domain word in
+    # the test, a bare pick names nothing and cannot reach the arm at all.
 
     if not already_read:
         if (
@@ -1684,27 +1703,25 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_refinement_entities"] = [
                 dict(e) for e in named_entities if isinstance(e, dict)
             ]
-        elif names_entity or (own_question and picked is None):
-            # A PICK OF ITS OWN IS NEVER A NEW ASK (R-B, owner merge test 15 Sep 2026).
-            # The second disjunct used to read `own_question and (kind ==
-            # "outstanding_detail" or picked is None)`, whose `or picked is None` is
-            # vacuous whenever the open question IS the detail ask - so the disjunct
-            # collapsed to `own_question`, which is `names_entity or
-            # truthy(domain_hint)`. The `names_entity` half is UNTOUCHED, so D17 point 3's
-            # guard stands: a stray position riding along with an entity ("2" + "delivery
-            # to hanlim") is still a new ask. The live
-            # v16 parser stamps `domain_hint: "order"` on a bare "1" often enough
-            # (`{domain_hint: order, intent_hint: check_order, message_type:
-            # business_query, entities: [], reference_positions: [1]}`), and that turn -
-            # a clean pick off the question's own frozen options - was read as the
-            # customer walking away from it. The filters died with the pending, the row
-            # label "Delivery order list" was then resolved as a fresh token, "list"
-            # matched six SPECIALIST customers, and the report re-ran over companies
-            # nobody had named.
+        elif names_entity:
+            # AN ENTITY OF ITS OWN IS A NEW ASK, and that is the whole test (rule 3, R-B,
+            # 15 Sep 2026). This arm read `names_entity or (own_question and (kind ==
+            # "outstanding_detail" or picked is None))`, where the inner `or picked is None`
+            # is vacuous whenever the open question IS the detail ask, so the disjunct
+            # collapsed to `own_question` - which was `names_entity or
+            # truthy(domain_hint)`. The live v16 parser stamps `domain_hint: "order"` on a
+            # bare "1" often enough (`{domain_hint: order, intent_hint: check_order,
+            # message_type: business_query, entities: [], reference_positions: [1]}`), so a
+            # clean pick off the question's own frozen options was read as the customer
+            # walking away from it: the filters died with the pending, the row label
+            # "Delivery order list" was resolved as a fresh token, "list" matched six
+            # SPECIALIST customers, and the report re-ran over companies nobody had named.
             #
-            # A turn that picked a row answered the question, whatever domain word the
-            # model attached to it. A turn that picked NOTHING and brought its own
-            # subject is still the new ask this arm is for, and still drops the pending.
+            # With the domain word gone from the test, a PICK cannot reach this arm at all -
+            # it names nothing - so R-B's protection now comes from rule 3 rather than from
+            # a term of its own. D17 point 3's guard is unchanged and is this arm: a stray
+            # position riding along with an entity ("2" + "delivery to hanlim") is a new ask
+            # because of the entity.
             #
             # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask
             # is DROPPED here, and every later reader of `prev_pending` this turn has to

@@ -277,6 +277,14 @@ _ESCALATE_TEAM_RE = re.compile(
 )
 
 
+#: The sentences that MAKE an offer, both written by the bot. Reading a team is gated on one
+#: of these appearing, so a reply that merely echoes a customer's words cannot mint an offer:
+#: `Couldn't find these: "escalate to purchasing." (product): not found.` contains the two
+#: anchor words and nothing that offers anything (security review S1, 15 Sep 2026), and a
+#: bare "escalate to" test made it answerable by the next "yes".
+_OFFER_ANCHORS = (ESCALATE_PREFIX.lower(), "'yes' to escalate to")
+
+
 def team_from_reply(reply_text: Any) -> str | None:
     """The team THE CUSTOMER WAS PROMISED, read off the sentence they will read.
 
@@ -297,7 +305,11 @@ def team_from_reply(reply_text: Any) -> str | None:
     """
     from app.services.chatbot.contracts import SUGGESTED_TEAMS
 
-    match = _ESCALATE_TEAM_RE.search(jsc.js_string(reply_text or ""))
+    text = jsc.js_string(reply_text or "")
+    lowered = text.lower()
+    if not any(anchor in lowered for anchor in _OFFER_ANCHORS):
+        return None
+    match = _ESCALATE_TEAM_RE.search(text)
     if match is None:
         return None
     # Bold markers come off (the company insert is written `*Sorento*`), then leading words
