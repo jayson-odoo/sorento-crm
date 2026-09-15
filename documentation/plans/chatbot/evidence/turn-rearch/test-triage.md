@@ -212,3 +212,38 @@ above is left as-is (historical record) rather than rewritten in place.
   tests in the class pass (the untouched third, `test_a_demand_the_stock_
   covers...`, never used `decide` at all). The other ~2770 lines - every other
   class in the file - untouched.
+
+- **`test_route_unit.py` (332 lines) - done, split into PORT + RETIRE + two more RED
+  findings.** New file `test_rearch_port_route_unit.py`. Six classes, six separate
+  calls:
+  - `TestStockDenialGate` - PORTED against `engine._stock_check_denied`/
+    `_demand_qty_missing` (same seam as the `test_s6c_answer_lane.py` port above).
+    One assertion FLIPPED not dropped: the old "missing field still throws" test
+    proved live's own un-guarded expression threw; the new function is guarded
+    (`jsc.get` on a `None` row) and returns denied instead of throwing - safer, so
+    the port asserts the safer behaviour.
+  - `TestIdeateNeverShadowedByHelpRequest` - PORTED, confirmed CORRECT:
+    `turn/apply.py::_HELP_EXEMPT_DOMAINS = {"portal_link", "ideate"}` reproduces
+    the fix exactly.
+  - `TestLadderLaziness` - RETIRED. Moot on both counts: the predicate no longer
+    throws (see above), and the new `route()` no longer emits domain-specific
+    branch kinds (`"check_promotion"` etc.) to assert on - `business_query` is now
+    generic across every domain.
+  - `TestItemShape` - RETIRED. Asserted `route_turn`'s n8n list-of-json-envelopes
+    shape; `route()` returns a plain string, no equivalent shape exists.
+  - `TestTierRePick`, `TestOutOfRangeMemberPickReprompsInsteadOfLowSignal` -
+    RETIRED, same rule as `test_ascii_digit_semantics.py` above: raw-text digit
+    matching against a stored `tier_menu`/roster is superseded by the parser's
+    structured `answers_open_question` (`tier_pick` is one of
+    `_turn_helpers.PENDING_KINDS`), already covered by
+    `test_rearch_s2_number_answers.py`.
+  - `TestBroadenAllNeverReadAsLowSignal`, `TestAFilterModificationIsNeverLowSignal`
+    - PORTED as RED findings, NOT retired. `turn/apply.py::_lane()` (grepped this
+    session: no `scope_intent`/`broaden_axis`/`member_offer_filter_modification`
+    reference anywhere) returns `"casual"` unconditionally for
+    `message_type in {casual, unknown, confirmation}` before any of these three
+    fields are consulted - reproducing BOTH owner console defects (item E, pass 4
+    item E) the old ladder had already fixed. Confirmed empirically via direct
+    `apply()` calls; two more RED tests, real regressions, not fixture bugs. 7
+    passed, 2 failed in the new file. Fourth and fifth genuine regressions found by
+    this triage pass, not the tester's fix to make.
