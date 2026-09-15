@@ -785,7 +785,15 @@ DIVERGENCES: list[Divergence] = [
             "read is deleted (family now rides on `family_uuids`, the roster row / "
             "picked entity, not a session-level map), so the port's `compatible_entities` "
             "is short those rows until the coder's fix lands. Field-scoped to "
-            "`compatible_entities` too, same five nested paths as `allowed_lookup` above."
+            "`compatible_entities` too, same five nested paths as `allowed_lookup` "
+            "above - and to the trio DERIVED from it: `routing_brand` (null on the "
+            "port, 'sorento' on the capture), `routing_brand_source` (null -> "
+            "'resolved') and `routing_companies` (differs only in the Sorento "
+            "company's codes/labels, built from the same widened entity list). "
+            "Caught by `test_full_corpus_whole_sub_replay["
+            "resolve-exit-offer/sub-resolve-and-gate-rs/rg-15125764]`, which reads "
+            "this entry (its `fixture.node` is `sub-resolve-and-gate` regardless of "
+            "which exit-arm folder the fixture came from)."
         ),
         strip_paths=(
             ("escalate_message",),
@@ -800,6 +808,18 @@ DIVERGENCES: list[Divergence] = [
             ("ctx", "gate", "compatible_entities"),
             ("ctx_resolved", "compatible_entities"),
             ("ctx_resolved", "ctx", "gate", "compatible_entities"),
+            ("routing_brand",),
+            ("routing_brand_source",),
+            ("routing_companies",),
+            ("gate", "routing_brand"),
+            ("gate", "routing_brand_source"),
+            ("gate", "routing_companies"),
+            ("ctx_resolved", "routing_brand"),
+            ("ctx_resolved", "routing_brand_source"),
+            ("ctx_resolved", "routing_companies"),
+            ("ctx_resolved", "ctx", "gate", "routing_brand"),
+            ("ctx_resolved", "ctx", "gate", "routing_brand_source"),
+            ("ctx_resolved", "ctx", "gate", "routing_companies"),
         ),
     ),
     # OWNER CONSOLE PASS 4, item F (6 Sep 2026): a container-hinted token that the
