@@ -1,6 +1,6 @@
 # PLAN: price tag AI extract matches through the entity resolver; Add part only on a product with a combo
 
-Status: BUILDING 15 Sep 2026 (owner go, chat 15 Sep)
+Status: PR OPEN 15 Sep 2026 (owner go, chat 15 Sep; reviewer + security-reviewer READY after three rounds, browser verified on :3080; awaiting owner pass)
 Domain: dealer-kit
 UAC: price-tag-ai-extract-resolver-acceptance-criteria.md
 Branch: fix/price-tag-ai-extract-resolver  (lane stack :3080 / :8080)
