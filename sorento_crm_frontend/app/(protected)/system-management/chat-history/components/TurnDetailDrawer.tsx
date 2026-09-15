@@ -14,6 +14,7 @@ import type {
   TurnDetailCrossdomain,
   TurnDetailDecay,
   TurnDetailFocus,
+  TurnDetailMemorySlot,
 } from '../types/chatbotTurn.types';
 
 /**
@@ -76,6 +77,12 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       <Section title="Parse" testId="section-parse">
         <ParseSection parse={detail.parse} />
+      </Section>
+      <Section title="Apply" testId="section-apply">
+        <ApplySection apply={detail.apply ?? null} />
+      </Section>
+      <Section title="Memory" testId="section-memory">
+        <MemorySection memory={detail.memory ?? null} />
       </Section>
       <Section title="Decay" testId="section-decay">
         <DecaySection decay={detail.decay} />
@@ -195,6 +202,143 @@ function ParseSection({ parse }: { parse: TurnDetail['parse'] }) {
           <Code value={parse.raw} />
         </div>
       )}
+    </div>
+  );
+}
+
+function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
+  if (!apply) return <Empty>Not recorded on this turn (APPLY shipped in S3).</Empty>;
+  return (
+    <div className="space-y-3 text-xs">
+      {apply.verdict && (
+        <div>
+          <div className="mb-1 font-medium text-muted-foreground">Verdict</div>
+          <Code value={apply.verdict} />
+        </div>
+      )}
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">State diff</div>
+        {apply.state_diff.length === 0 ? (
+          <Empty>Nothing changed this turn.</Empty>
+        ) : (
+          <ul className="space-y-1.5">
+            {apply.state_diff.map((d, i) => (
+              <li key={`${d.slot}-${i}`} className="rounded-md border px-2 py-1.5">
+                <span className="font-medium">{d.slot}</span>{' '}
+                <span className="text-muted-foreground">
+                  {JSON.stringify(d.before)} {'->'} {JSON.stringify(d.after)}
+                </span>
+                {d.reason && <p className="mt-0.5 text-muted-foreground">{d.reason}</p>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Narrowing applied</div>
+        {apply.narrowing.length === 0 ? (
+          <Empty>No narrowing rule fired.</Empty>
+        ) : (
+          <ul className="space-y-1 text-muted-foreground">
+            {apply.narrowing.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Reconciliation</div>
+        <p className="text-muted-foreground">{apply.reconciliation ?? 'Nothing to reconcile.'}</p>
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Turn plan</div>
+        <p className="text-muted-foreground">{apply.plan ?? '-'}</p>
+      </div>
+      {apply.prompt_text && (
+        <Collapsible>
+          <CollapsibleTrigger className="text-primary underline-offset-2 hover:underline">
+            Prompt text sent to the parser
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-1 overflow-x-auto">
+              <SearchableCode text={apply.prompt_text} />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+    </div>
+  );
+}
+
+function MemorySlotTable({ slots }: { slots: TurnDetailMemorySlot[] }) {
+  if (slots.length === 0) return <Empty>Nothing on this shelf.</Empty>;
+  return (
+    <table className="w-full text-xs">
+      <tbody>
+        {slots.map((slot) => (
+          <tr key={slot.key} className="border-b last:border-0">
+            <td className="w-24 py-1 pe-2 align-top font-medium">{slot.key}</td>
+            <td className="py-1 align-top text-muted-foreground">
+              {typeof slot.value === 'string' ? slot.value : JSON.stringify(slot.value)}
+              {slot.writer && (
+                <Badge variant="secondary" appearance="light" size="sm" className="ms-1.5">
+                  {slot.writer}
+                </Badge>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function MemorySection({ memory }: { memory: TurnDetail['memory'] }) {
+  if (!memory) return <Empty>Not recorded on this turn (Memory shipped in S3).</Empty>;
+  return (
+    <div className="space-y-3 text-xs">
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Focus - writer: APPLY</div>
+        <MemorySlotTable slots={memory.focus} />
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Profile - writer: explicit picks</div>
+        <MemorySlotTable slots={memory.profile} />
+      </div>
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">
+          Episodes - writer: TAIL on topic switch
+        </div>
+        {memory.episodes ? (
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              {memory.episodes.recall_hit ? (
+                <Badge variant="success" appearance="light" size="sm">
+                  recall hit
+                </Badge>
+              ) : (
+                <Badge variant="secondary" appearance="light" size="sm">
+                  not triggered
+                </Badge>
+              )}
+              {memory.episodes.reason && (
+                <span className="text-muted-foreground">{memory.episodes.reason}</span>
+              )}
+            </div>
+            {memory.episodes.last_frame_summary && (
+              <p className="text-muted-foreground">{memory.episodes.last_frame_summary}</p>
+            )}
+            {memory.episodes.frame_count != null && (
+              <p className="text-muted-foreground">
+                {memory.episodes.frame_count} frame{memory.episodes.frame_count === 1 ? '' : 's'}{' '}
+                for this contact
+              </p>
+            )}
+          </div>
+        ) : (
+          <Empty>No episode recorded yet.</Empty>
+        )}
+      </div>
     </div>
   );
 }

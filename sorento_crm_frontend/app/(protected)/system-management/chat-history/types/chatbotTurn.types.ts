@@ -275,9 +275,61 @@ export interface TurnDetailSession {
   diff: TurnDetailSessionDiffEntry[];
 }
 
+/**
+ * APPLY and Memory (chatbot turn re-architecture S1/S3, AC-1514, AC-1549).
+ *
+ * Both are OPTIONAL on `TurnDetail`: a turn recorded before S3 ships never carries
+ * them, and the drawer's own `Section` renders that as the same "nothing recorded
+ * yet" empty state every other kind here already uses - never an error.
+ */
+export interface TurnDetailApplyDiffEntry {
+  slot: string;
+  before: unknown;
+  after: unknown;
+  /** Which rule moved it, e.g. "exclusive narrows the named axis". */
+  reason: string | null;
+}
+
+export interface TurnDetailApply {
+  /** The parser verdict APPLY read, as sent (contract 102 to 105's shape). */
+  verdict: Record<string, unknown> | null;
+  state_diff: TurnDetailApplyDiffEntry[];
+  /** One line per (domain, entity kind) the narrower touched this turn. */
+  narrowing: string[];
+  /** `reconciled: <from> -> <to>`, or null when nothing was rewritten. */
+  reconciliation: string | null;
+  /** The turn's plan in one line - fetches, or the question asked instead. */
+  plan: string | null;
+  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
+  prompt_text: string | null;
+}
+
+export interface TurnDetailMemorySlot {
+  key: string;
+  value: unknown;
+  /** Who last wrote this slot, and when - "turn 9, pick", "set this turn". */
+  writer: string | null;
+}
+
+export interface TurnDetailMemoryEpisodes {
+  recall_hit: boolean;
+  /** Why recall did or did not fire, e.g. "no backward reference". */
+  reason: string | null;
+  last_frame_summary: string | null;
+  frame_count: number | null;
+}
+
+export interface TurnDetailMemory {
+  focus: TurnDetailMemorySlot[];
+  profile: TurnDetailMemorySlot[];
+  episodes: TurnDetailMemoryEpisodes | null;
+}
+
 export interface TurnDetail {
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
+  apply?: TurnDetailApply | null;
+  memory?: TurnDetailMemory | null;
   decay: TurnDetailDecay[];
   open_question: TurnDetailOpenQuestion | null;
   focus: TurnDetailFocus[];

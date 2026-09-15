@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { RiErrorWarningFill } from '@remixicon/react';
-import { LoaderCircleIcon, XIcon } from 'lucide-react';
+import { LoaderCircleIcon } from 'lucide-react';
 
 import {
   AlertDialog,
@@ -18,20 +19,26 @@ import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
 import { useChatbotLanes, useChatbotSettings, useSaveChatbotSettings } from './hooks/useChatbotSettings';
 import type { ChatbotSettings } from './services/chatbotSettingsService';
+import MemorySettingsCard from './components/MemorySettingsCard';
+import TierOrderCard from './components/TierOrderCard';
+import CrossDomainLadderCard from './components/CrossDomainLadderCard';
 
 /**
- * Settings -> Chatbot (AC-809, AC-810).
+ * Settings -> Chatbot (AC-809, AC-810; chatbot turn re-architecture S1, AC-1513).
  *
- * Which lanes the CRM finishes, the two switches that used to be environment flags,
- * and the domains the bot refuses. All four are read per turn by the engine, so a
- * change here takes effect on the next WhatsApp message with no deploy.
+ * Which lanes the CRM finishes and the three switches that used to be environment
+ * flags - read per turn by the engine, so a change here takes effect on the next
+ * WhatsApp message with no deploy. The domains the bot refuses used to be a
+ * free-text list here (AC-931); that box is retired - "Supported" now lives on
+ * each domain's own row on the Chatbot Domains page, which is also where a
+ * domain's tools, narrowing and escalation team live, so a refusal is no longer a
+ * name typed twice.
  */
 
 export default function ChatbotSettingsPage() {
@@ -40,7 +47,6 @@ export default function ChatbotSettingsPage() {
   const save = useSaveChatbotSettings();
 
   const [draft, setDraft] = useState<ChatbotSettings | null>(null);
-  const [newDomain, setNewDomain] = useState('');
   const [orderingConfirmOpen, setOrderingConfirmOpen] = useState(false);
 
   useEffect(() => {
@@ -83,13 +89,6 @@ export default function ChatbotSettingsPage() {
         ? [...draft.chatbot_completed_lanes, kind]
         : draft.chatbot_completed_lanes.filter((k) => k !== kind),
     );
-
-  const addDomain = () => {
-    const domain = newDomain.trim();
-    if (!domain || draft.chatbot_unsupported_domains.includes(domain)) return;
-    set('chatbot_unsupported_domains', [...draft.chatbot_unsupported_domains, domain]);
-    setNewDomain('');
-  };
 
   return (
     <div className="space-y-5">
@@ -176,58 +175,23 @@ export default function ChatbotSettingsPage() {
         <CardHeader className="border-b border-border">
           <CardTitle>Domains the bot does not answer</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4 py-5">
-          {draft.chatbot_unsupported_domains.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No domains are refused.</p>
-          ) : (
-            <ul className="space-y-2">
-              {draft.chatbot_unsupported_domains.map((domain) => (
-                <li
-                  key={domain}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2"
-                >
-                  <span className="truncate text-sm" title={domain}>
-                    {domain}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Remove ${domain}`}
-                    onClick={() =>
-                      set(
-                        'chatbot_unsupported_domains',
-                        draft.chatbot_unsupported_domains.filter((d) => d !== domain),
-                      )
-                    }
-                  >
-                    <XIcon />
-                    Remove
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          <div className="flex flex-col gap-3 sm:flex-row">
-            <Input
-              id="chatbot-new-domain"
-              aria-label="Domain to refuse"
-              placeholder="goods_receive"
-              value={newDomain}
-              onChange={(e) => setNewDomain(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  addDomain();
-                }
-              }}
-            />
-            <Button type="button" variant="outline" onClick={addDomain}>
-              Add
-            </Button>
-          </div>
+        <CardContent className="py-5">
+          <p className="text-sm text-muted-foreground">
+            Moved to each domain&apos;s own row -{' '}
+            <Link
+              href="/system-management/chatbot-domains"
+              className="text-primary hover:underline"
+            >
+              Chatbot Domains
+            </Link>
+            . Turn the Supported switch off there instead of listing the name here.
+          </p>
         </CardContent>
       </Card>
+
+      <MemorySettingsCard />
+      <TierOrderCard />
+      <CrossDomainLadderCard />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
         <Button
