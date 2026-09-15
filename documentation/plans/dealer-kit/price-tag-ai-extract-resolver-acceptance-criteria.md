@@ -67,6 +67,32 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
 - AC-S5-4 `[FE]` Existing `TagSizeControl.test.tsx` cases that interact with the select or
   inputs open the panel first and still pass.
 
+## S6 price_tag_update is a configurable use case
+
+- AC-S6-1 `[BE]` `"price_tag_update" in TEMPLATE_DEFAULT_USE_CASES`; `GET` of the template
+  defaults endpoint lists a row for it; `set_default` for it with a template whose one param
+  maps to `message` is accepted.
+- AC-S6-2 `[BE]` `build_context_vars(db, use_case="price_tag_update", business_id=<request id>,
+  identifier=...)` returns `entity_number == request.doc_number`, `status == request.status`,
+  and a non-empty `portal_url` when the portal link resolves.
+- AC-S6-3 `[BE]` With a valid default configured and the window closed, `notify_salesperson`
+  sends the template (the `send_text_or_template` spy sees `use_case="price_tag_update"` and
+  context vars carrying `entity_number`) and logs a success row.
+- AC-S6-4 `[FE]` The WhatsApp Templates settings page renders a "Price Tag Request - Update"
+  row in the update group with "Set template" when unset.
+
+## S7 The price tag send is addressed and logged by respond_io_id
+
+- AC-S7-1 `[BE]` For a request whose contact has `respond_io_id="437264483"`,
+  `notify_salesperson` calls `send_text_or_template` with `identifier="437264483"` and both the
+  success and the failed `IntegrationLog` rows carry `external_reference="437264483"` and an
+  endpoint ending `contact/id:437264483/message`.
+- AC-S7-2 `[BE]` A contact with no `respond_io_id` falls back to the contact's id (today's
+  behaviour), so nothing is dropped.
+- AC-S7-3 `[BE]` `GET /api/v1/system/respond-outbox?business_table=price_tag_requests` returns
+  that row with `contact_name` and `contact_phone` filled and `message_text` equal to the sent
+  copy.
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and

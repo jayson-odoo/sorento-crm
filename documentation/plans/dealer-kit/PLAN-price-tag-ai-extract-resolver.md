@@ -42,6 +42,20 @@ Fifth finding (owner screenshot 15 Sep, designer rail): the Tag Size panel (pres
 H, Apply to all lines) is always open and takes the rail space the lines need. Owner: make it
 collapsible; it is not needed most of the time.
 
+Sixth finding (owner, live 15 Sep 3:29 pm, PT-202609-0004 "design is ready"): the Respond send
+failed with `24h window closed and template send skipped for use case 'price_tag_update': no
+default template configured`, and the WhatsApp Templates settings page has no row for that
+use case, so it cannot be configured. `price_tag_notify.USE_CASE = "price_tag_update"` is
+absent from `TEMPLATE_DEFAULT_USE_CASES` (BE) and from `USE_CASES` in
+`services/whatsappTemplateService.ts` (FE), and `build_context_vars` has no branch for it, so
+even a configured template would have no entity number or portal link to fill.
+
+Seventh finding (same outbox): the Contact column reads "-" on the list and a UUID in the
+modal. `price_tag_notify._send` passes `request.contact_id` (a `respond_contacts.id` UUID)
+straight through as the send identifier and logs it as `external_reference`; the outbox
+resolves name and phone by `respond_io_id`, so the UUID never resolves. The OTP path already
+does it right: `contact.respond_io_id or contact.id`.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -91,6 +105,21 @@ collapsible; it is not needed most of the time.
   (`dealer-kit.tag-size.open`), read and written inside try/catch, so a viewer who opens it
   keeps it open on the next request. No server preference, no prop: one component, one key.
   The "Select a line to set its tag size" placeholder in the rail keeps its heading as is.
+- D10 `price_tag_update` joins `TEMPLATE_DEFAULT_USE_CASES` (after `ticket_resolved`, with a
+  comment in the same voice as its neighbours) and the FE `USE_CASES` list as
+  "Price Tag Request - Update" in the update group, described as: "Sent to the salesperson
+  when their price tag request moves (received, design ready, changes requested, approved,
+  PDF ready, ready for collection, collected, rejected) and their 24h window is closed. Map
+  params to Full update message at minimum; add Entity number and Portal URL when the template
+  carries them." `build_context_vars` gains an `elif entity_use_case == "price_tag_update"`
+  branch that loads `PriceTagRequest` by `business_id` and sets `entity_number`
+  (`doc_number`), `status`, and `portal_url` (the same `_portal_link`). `message` is already
+  defaulted to the text by `send_text_or_template`.
+- D11 `price_tag_notify._send` resolves the identifier once at the top:
+  `resolve_respond_io_id(db, request.contact_id) or request.contact_id`
+  (`app/services/respond_identifier.py`), and uses that value for the window check, the send,
+  the webhook, and BOTH log rows' `external_reference` and endpoint. The outbox list and modal
+  then show the contact's name and phone, the way stock inquiry / purchase request rows do.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -102,7 +131,11 @@ BE
   company if `extract()` is not already scoped there (check first; sibling
   `portal_lookup_product_combos` shows the pattern).
 - `app/services/price_tag_request_service.py`: D5.
-- tests: `tests/test_ai_extract_resolver_match.py`, `tests/test_price_tag_parts_need_combo.py`.
+- `app/models/respond_template.py`, `app/services/respond_messaging_service.py`
+  (`build_context_vars`), `app/services/price_tag_notify.py`: D10, D11.
+- `sorento_crm_frontend/services/whatsappTemplateService.ts` `USE_CASES`: D10.
+- tests: `tests/test_ai_extract_resolver_match.py`, `tests/test_price_tag_parts_need_combo.py`,
+  `tests/test_price_tag_notifications.py` (extend: identifier + context vars + use case listed).
 
 FE
 - `app/(auth)/portal/lib/portal-client.ts`: `AIExtractedProductLine` gains the three fields.
