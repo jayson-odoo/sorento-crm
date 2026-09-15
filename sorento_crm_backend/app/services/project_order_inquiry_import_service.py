@@ -56,7 +56,8 @@ be a data migration that buys no correctness.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+import re
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -218,6 +219,11 @@ class _Plan:
     #: The rows that set was derived from, kept so `_pair` groups them into the pairing's
     #: first source rather than reading the same two queries a second time.
     bought_rows: Optional[Tuple[List[Any], List[Any]]] = None
+    #: How many rows `matches` actually holds, once a `+` cell has been split into one row
+    #: per member (`_members`, plan section 2). `None` for a plan `_plan` never ran on -
+    #: `_empty`'s unreadable-file / no-actor shapes - where `_result` falls back to
+    #: `len(plan.parsed.rows)`, the only count there is to report.
+    rows_expanded: Optional[int] = None
 
 
 @dataclass
@@ -323,6 +329,36 @@ def _restates(row) -> tuple:
         row.delivery_date,
         (row.location or "").strip().upper(),
     )
+
+
+def _members(row, line_codes: set) -> list:
+    """One sheet row, or one row per product a `+` cell names (plan section 1).
+
+    Measured on the customer's own monthly book, 15 Sep 2026 (PLAN section 0): 173 of
+    16,060 sheet rows join several product codes with `+` in one ITEM CODE cell - a set the
+    customer always sells together, written as one row though AutoCount holds it as
+    SEPARATE lines, one per member, each at the cell's own quantity. Splitting is the only
+    way those rows ever raise.
+
+    A cell that IS a line's own product code is never split - four real codes on the book
+    contain `+` themselves (`FUR-GA30T+A66C`, `FUR-GA905T+A908C`, `FUR-GA3131T+A58C`,
+    `P69190C-ENG + D969-ENG`), so `line_codes` is checked BEFORE the `+` is ever looked at.
+    An order this row's number does not name passes an empty `line_codes` here (no line can
+    possibly hold the cell whole), so the cell still splits - the count in `line_not_found`
+    is what the operator reads either way.
+
+    Split on `+` only, whitespace either side optional. An empty member from a stray
+    leading, trailing or doubled `+` is dropped silently - no `""` item_code ever reaches
+    the match loop or the result.
+    """
+    item_code = (row.item_code or "").strip()
+    if "+" not in item_code or item_code in line_codes:
+        return [row]
+    return [
+        replace(row, item_code=member)
+        for member in (m.strip() for m in re.split(r"\s*\+\s*", item_code))
+        if member
+    ]
 
 
 def _unambiguous_refs(db: Session, refs: set) -> set:
@@ -491,7 +527,7 @@ def _already_raised(db: Session, core_lines: Sequence[SalesOrderLine]) -> set:
 
 def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     """Match every row, decide raise / skip / report. Pure: writes nothing."""
-    plan = _Plan(parsed=parsed, matches=[_Match(row=row) for row in parsed.rows])
+    plan = _Plan(parsed=parsed)
     numbers = {row.so_number for row in parsed.rows if row.so_number}
     plan.orders = _orders_by_number(db, numbers)
     plan.orders_not_found = sorted(n for n in numbers if n not in plan.orders)
@@ -503,6 +539,18 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     refused = {entry["so_number"] for entry in plan.orders_not_plannable}
 
     lines = _lines_of(db, {str(order.id) for order in plan.orders.values()})
+
+    #: One row per `+` member (`_members`), before anything else reads `plan.matches` - the
+    #: match loop, the ledger and the result all work on the EXPANDED rows, never on
+    #: `parsed.rows` (plan section 2). The reader's own list is not mutated.
+    expanded: List[Any] = []
+    for row in parsed.rows:
+        order = plan.orders.get(row.so_number)
+        line_codes = {c[1] for c in lines.get(str(order.id), [])} if order else set()
+        expanded.extend(_members(row, line_codes))
+    plan.matches = [_Match(row=row) for row in expanded]
+    plan.rows_expanded = len(expanded)
+
     raised_already = _already_raised(
         db, [held[0] for group in lines.values() for held in group]
     )
@@ -1122,7 +1170,7 @@ def _result(
         # and how many sales-order headers it stamps.
         "orders_adopted": orders_adopted,
         "orders_stamped": orders_stamped,
-        "rows": len(plan.parsed.rows),
+        "rows": plan.rows_expanded if plan.rows_expanded is not None else len(plan.parsed.rows),
         "rows_raised": rows_raised,
         "rows_already_raised": sum(1 for m in plan.matches if m.already_raised),
         "rows_line_not_found": len(line_not_found),
@@ -1495,9 +1543,9 @@ def apply(
     """
     outcome = outcome or ImportOutcome(None, persist=False)
     parsed = read_order_inquiry(file_data)
-    if on_total_rows is not None:
-        on_total_rows(len(parsed.rows))
     if not parsed.ok:
+        if on_total_rows is not None:
+            on_total_rows(len(parsed.rows))
         return _empty(parsed)
 
     link_actor = _link_actor(actor)
@@ -1506,12 +1554,19 @@ def apply(
         # an upload with nobody to attribute it to would write a page of decisions no one
         # can be asked about (security review N1, 14 Sep). The route always has an actor;
         # this guards a direct caller. Refused whole rather than half-written.
+        if on_total_rows is not None:
+            on_total_rows(len(parsed.rows))
         refused = _empty(parsed)
         refused["ok"] = False
         refused["problems"] = list(parsed.problems) + [NO_ACTOR_PROBLEM]
         return refused
 
     plan = _plan(db, parsed)
+    # After `_plan`, not before (AC-M-10): a `+` cell splits into one row per member, and
+    # `ImportOutcome` records one outcome per member row, so the job page's total must be
+    # the EXPANDED count - never `len(parsed.rows)`, the sheet's own row count.
+    if on_total_rows is not None:
+        on_total_rows(plan.rows_expanded)
     links, not_linkable = _pair(db, plan)
 
     now = _now()

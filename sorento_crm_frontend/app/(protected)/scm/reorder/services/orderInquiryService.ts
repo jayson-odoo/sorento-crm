@@ -68,7 +68,7 @@ export interface OrderInquiryPreview {
   orders_adopted: number;
   /** Sales order headers that receive the origin / project-label stamp. */
   orders_stamped: number;
-  /** Sheet rows read, before matching. */
+  /** Rows the import accounts for: sheet rows, with a `+` cell counted once per product it names. */
   rows: number;
   /** Rows raised as an order inquiry row (linked or not). */
   rows_raised: number;

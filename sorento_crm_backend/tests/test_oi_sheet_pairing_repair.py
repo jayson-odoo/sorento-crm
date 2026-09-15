@@ -582,7 +582,10 @@ def test_ac_r_11_differing_remark_is_a_restatement():
             outcome=outcome,
         )
 
-        assert result["rows"] == 3, "the file's own row count keeps all three"
+        assert result["rows"] == 3, (
+            "the rows the import accounts for; no `+` cell here, so the file's own row "
+            "count keeps all three"
+        )
         assert outcome.count_of("restates_an_instalment") == 1, outcome.breakdown()
         assert result["rows_raised"] == 2, result
         assert len(w.rows()) == 2, [str(row.qty) for row in w.rows()]

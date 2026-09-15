@@ -763,7 +763,9 @@ def test_identical_rows_across_tabs_raise_once():
 
         result = w.apply(book(JAN26=[stated], ROLLUP=[stated]), outcome=outcome)
 
-        assert result["rows"] == 2, "the file's own row count keeps both"
+        assert result["rows"] == 2, (
+            "the rows the import accounts for; no `+` cell here, so the file's own row count"
+        )
         assert result["rows_raised"] == 1, result
         assert len(w.rows()) == 1
         assert result["rows_line_not_found"] == 0, "the restatement took the line's quantity"
