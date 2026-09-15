@@ -357,7 +357,7 @@ def _narrow_and_plan(
                 attributes=attributes,
                 resolved_candidates=(candidates or {}).get(kind),
             )
-            trace.narrowing.append(f"{name}.{kind}:{policy_value}")
+            trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:
                 domain_ask_kind = outcome.ask_kind
                 domain_ask_options = outcome.ask_options

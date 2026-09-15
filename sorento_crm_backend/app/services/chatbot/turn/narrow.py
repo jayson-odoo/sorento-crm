@@ -64,6 +64,10 @@ class NarrowOutcome:
     ask_options: list[dict[str, Any]]
     entities: list[dict[str, Any]]
     filter_value: Any
+    #: A short reason the caller traces instead of the plain `{domain}.{kind}:
+    #: {policy_value}` line, when this outcome is not the policy's ordinary read
+    #: (currently only "settled_carry" - see `must_narrow_one` below).
+    note: str | None = None
 
 
 def decide(
@@ -115,12 +119,33 @@ def decide(
             if profile.tier:
                 return NarrowOutcome(None, [], [], profile.tier)
             return NarrowOutcome("tier_pick", [], [], None)
+        if policy_value == "must_narrow_one":
+            # Ruling (16 Sep 2026, captain): the narrower must never re-ask for an
+            # entity the conversation already settled. A focus-carried entity with a
+            # `uuid` IS settled (the resolver matched it, or the customer picked it
+            # off a roster) - never re-asked. SEVERAL distinct names in play at once
+            # (three different customers named the same turn) is a real choice on the
+            # table and still asks - unchanged from before. A SINGLE bare name with
+            # nothing else to compare it against is handed to the RESOLVER this turn
+            # instead of guessed at here: `resolved_candidates` above already covers
+            # "the resolver found several for this one token" (asks) and "found
+            # exactly one" (settles); reaching HERE with one un-uuid'd candidate means
+            # there was no resolver answer for it at all this turn, so it passes
+            # through, deferred, rather than an ask manufactured from a name alone.
+            if candidates and all(c.get("uuid") for c in candidates):
+                return NarrowOutcome(None, [], candidates, None, note="settled_carry")
+            if len(candidates) > 1:
+                return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
+            return NarrowOutcome(
+                None, [], candidates, None, note="settled_carry" if candidates else None
+            )
         # AC-1526's own wording: "product under incoming and purchase cost asks for
-        # a code", "customer under order asks for one family" - a NAMED candidate is
-        # asked about, not assumed. What settles it is IDENTITY: a candidate carrying a
-        # `uuid` is one the resolver matched or the customer picked off this very
-        # roster, and asking again for a code you already hold re-prints the same
-        # question forever (contract 36's own sticky roster is what feeds it back).
+        # a code" - a NAMED candidate is asked about, not assumed. What settles it is
+        # IDENTITY: a candidate carrying a `uuid` is one the resolver matched or the
+        # customer picked off this very roster, and asking again for a code you
+        # already hold re-prints the same question forever (contract 36's own sticky
+        # roster is what feeds it back). `must_narrow_one` is handled above instead -
+        # this branch is `narrow_to_code` only now.
         if candidates and not all(c.get("uuid") for c in candidates):
             return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
         return NarrowOutcome(None, [], [], None)
