@@ -1,6 +1,7 @@
 """Pydantic schemas for price tag requests and tag templates."""
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
@@ -18,6 +19,14 @@ from pydantic import (
 # ---------------------------------------------------------------------------
 # Price tag request line schemas
 # ---------------------------------------------------------------------------
+
+#: A hand-typed line price (D2, R6/security review) - matches the column's
+#: own `Numeric(12, 2)`. `gt=0`: a manual price is an agreed FIGURE, not a
+#: giveaway (0) or a typo with a stray minus sign (-5); an absurd
+#: `1E+400`-shaped value is refused by `max_digits` before it ever reaches
+#: storage. Every arm that accepts a hand-typed price (create, update, the
+#: CRM line PATCH, and revise's own line model below) shares this ONE bound.
+ManualSellPrice = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
 
 
 class LinePartIn(BaseModel):
@@ -60,7 +69,36 @@ class PriceTagRequestLineCreate(BaseModel):
     # (AC-S6-5), checked in the service where the line's resolved parts and
     # candidates are known.
     promotion_id: Optional[str] = None
-    manual_sell_price: Optional[Decimal] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
+
+
+class PriceTagReviseLineIn(BaseModel):
+    """One ``products[]`` entry in a revise payload (D1/D5, R6/security
+    review) - the revise composer sends every field
+    ``PriceTagRequestLineInput`` (create/update) does, but the raw dict
+    never ran through pydantic at all: unlike create/update, where a
+    ``Decimal`` field type at least rejects a non-numeric string, a bad
+    ``manual_sell_price`` here reached ``_as_decimal`` completely
+    unvalidated (``-5``/``0`` converted cleanly, ``"abc"`` raised
+    ``decimal.InvalidOperation`` uncaught). Same bound every other arm
+    (create, update, the CRM line PATCH) uses.
+
+    ``extra="ignore"``, not ``"forbid"``: the composer's payload carries
+    ``combo_id`` / ``parts`` / ``included_accessories`` / ``product_class`` /
+    ``line_type`` too - ``_convert_ptag_revise_line`` already reads only the
+    fields declared here and drops the rest by design (they are carried over
+    from the OLD line instead, Gap D), so this model is not the composer's
+    full contract, only the two fields that never had one.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+    quantity: int = Field(default=1, ge=1)
+    remarks: Optional[str] = None
+    promotion_id: Optional[str] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
 
 
 class PriceTagRequestTagUpdate(BaseModel):
@@ -304,7 +342,7 @@ class PriceTagRequestLinePricePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     promotion_id: Optional[str] = None
-    manual_sell_price: Optional[Decimal] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -971,45 +1009,96 @@ class TagItemLookupItem(BaseModel):
     name: str
 
 
+def _uuid_or_none(value: Optional[str]) -> Optional[str]:
+    """A caller-supplied id, or a pydantic `ValueError` (422) naming the
+    field (R8/R8b, security review): every id on this lookup line reaches a
+    UUID column somewhere downstream (`Product.id.in_(...)`,
+    `PromotionProduct.promotion_id == ...`), where a non-UUID string is a
+    Postgres `DataError` (500), not an empty result.
+    """
+    if value is None:
+        return None
+    try:
+        return str(_uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("must be a valid UUID") from None
+
+
 class LinePricingLineIn(BaseModel):
     """One line to price (D4, S7). ``manual_sell_price`` is deliberately NOT
     here - a line has no manual figure until it is SAVED, so neither lookup
     route's caller ever has one to send; ``line_pricing`` the service
     function still accepts it as a plain dict key, for ``resolve_tags_live``
-    (S9) to reuse the one engine with a persisted line's own figure."""
+    (S9) to reuse the one engine with a persisted line's own figure.
+
+    R7/R8 (security review): each id list is capped at 50, and every id -
+    ``product_id``, each ``part_product_ids`` / ``candidate_product_ids``
+    entry, ``promotion_id`` - is UUID-shape checked here rather than
+    reaching a Postgres `DataError` further down.
+    """
 
     key: str
     product_id: Optional[str] = None
-    part_product_ids: list[str] = Field(default_factory=list)
-    candidate_product_ids: list[str] = Field(default_factory=list)
+    part_product_ids: list[str] = Field(default_factory=list, max_length=50)
+    candidate_product_ids: list[str] = Field(default_factory=list, max_length=50)
     promotion_id: Optional[str] = None
+
+    @field_validator("product_id", "promotion_id", mode="after")
+    @classmethod
+    def _validate_id(cls, value):
+        return _uuid_or_none(value)
+
+    @field_validator("part_product_ids", "candidate_product_ids", mode="after")
+    @classmethod
+    def _validate_id_list(cls, values):
+        return [_uuid_or_none(v) for v in values]
 
 
 class LinePricingRequest(BaseModel):
-    price_mode: Literal["list", "selling"] = "list"
-    lines: list[LinePricingLineIn] = Field(default_factory=list)
+    """R7 (security review): `lines` is capped at 200 - the lookup route had
+    no body ceiling at all, unlike every other list-shaped payload in this
+    module.
+
+    `price_mode` is gone (it rode along from an earlier draft of this
+    contract): neither the portal nor the CRM route ever reads
+    `payload.price_mode`, `line_pricing` itself takes no such parameter, and
+    `sell_price` is a real number in List mode too - AC-S7-1 never gave it a
+    job, so dropping it removes dead API surface rather than wiring a
+    behaviour nothing asks for.
+    """
+
+    lines: list[LinePricingLineIn] = Field(default_factory=list, max_length=200)
 
 
 class LinePricingPromotionOption(BaseModel):
     id: str
     description: str
-    sell_price: Decimal
+    sell_price: float
 
 
 class LinePricingCandidateOut(BaseModel):
     product_id: str
-    list_price: Optional[Decimal] = None
-    sell_price: Optional[Decimal] = None
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
 
 
 class LinePricingRow(BaseModel):
-    """One line's answer (D4's API contract shape)."""
+    """One line's answer (D4's API contract shape).
+
+    R10 (security review): every money field is a plain ``float``, the same
+    as ``ResolvedLineData`` - unlike ``manual_sell_price`` on the request/
+    line schemas (a documented exception that stays a ``Decimal``, so it
+    keeps serialising as a JSON string, per ``test_patch_line_manual_price``),
+    this is a LOOKUP row the plan's own contract (AC-S7-1) gives no such
+    carve-out, so a caller must be able to do arithmetic on it without a
+    ``parseFloat``.
+    """
 
     key: str
-    list_price: Decimal
+    list_price: float
     promotion_options: list[LinePricingPromotionOption] = []
     auto_promotion_id: Optional[str] = None
-    sell_price: Optional[Decimal] = None
+    sell_price: Optional[float] = None
     sell_price_basis: str
     parts_at_list: list[str] = []
     candidates: list[LinePricingCandidateOut] = []

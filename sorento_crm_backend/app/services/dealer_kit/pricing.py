@@ -387,7 +387,14 @@ def line_pricing(
             promotion_options.append(
                 {"id": promo.id, "description": promo.description or "", "sell_price": total}
             )
-        promotion_options.sort(key=lambda option: option["sell_price"])
+        # R12 (security review): sorted on total ALONE, a tie's winner was
+        # whatever order `_covering_promotions`' un-ordered `.distinct()`
+        # query happened to return - the SAME two promotions could auto-pick
+        # a different one from one call to the next. `description` then
+        # `id` breaks the tie deterministically.
+        promotion_options.sort(
+            key=lambda option: (option["sell_price"], option["description"], option["id"])
+        )
 
         auto_promotion_id = promotion_options[0]["id"] if promotion_options else None
         chosen_id = given_promotion_id or auto_promotion_id
@@ -412,14 +419,22 @@ def line_pricing(
             sell_price_basis = "list"
             parts_at_list = []
 
+        # One lookup for every candidate on the line, not one per candidate
+        # (reviewer finding, this round) - a five-candidate open group used
+        # to cost five round trips for what `_offer_prices` already answers
+        # in one, the same way the resolved side of this function does.
+        candidate_offers = (
+            _offer_prices(db, candidate_ids, viewer, chosen_id)
+            if chosen_id and candidate_ids
+            else {}
+        )
         candidates_out = []
         for candidate_id in candidate_ids:
             product = products_by_id.get(candidate_id)
             c_list = _a_real_price(product.list_price) if product else None
             c_sell = c_list
             if chosen_id and product:
-                offer = _offer_prices(db, [candidate_id], viewer, chosen_id).get(candidate_id)
-                worth = _offer_worth_showing(offer, c_list)
+                worth = _offer_worth_showing(candidate_offers.get(candidate_id), c_list)
                 c_sell = worth if worth is not None else c_list
             candidates_out.append(
                 {"product_id": candidate_id, "list_price": c_list, "sell_price": c_sell}

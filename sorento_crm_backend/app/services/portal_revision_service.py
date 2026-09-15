@@ -337,7 +337,7 @@ def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
     ]
 
 
-def _convert_ptag_revise_line(raw: dict) -> dict:
+def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
     """A revise payload line names a product/set by id and a quantity, the
     same shape the portal PUT/create routes already read - never a
     `line_type`, which those routes require. Derived here instead.
@@ -345,35 +345,59 @@ def _convert_ptag_revise_line(raw: dict) -> dict:
     D1/D5: `promotion_id` / `manual_sell_price`, when the raw line sends
     them, carry straight through - the salesperson's own line-level control
     over the price basis is not a create/update-only feature.
-    `replace_lines` -> `_add_lines` validates both exactly like create/update
-    do (AC-S6-4/S6-5, 422 naming the line), one gate, not a second copy of
-    it here. Left OFF the dict (not defaulted to `None`) when the raw line
-    does not carry the key at all, so `_apply_price_tag_lines`'s carry-over
-    step below can tell "cleared" from "not sent" and fall back to the old
-    line's own value for the latter, the same way it already does for
-    `included_accessories` / `combo_id` / `parts`.
+    `replace_lines` -> `_add_lines` validates promotion coverage exactly
+    like create/update do (AC-S6-5, 422 naming the line), one gate, not a
+    second copy of it here. Left OFF the dict (not defaulted to `None`)
+    when the raw line does not carry the key at all, so
+    `_apply_price_tag_lines`'s carry-over step below can tell "cleared"
+    from "not sent" and fall back to the old line's own value for the
+    latter, the same way it already does for `included_accessories` /
+    `combo_id` / `parts`.
+
+    R6 (security review): `raw` is validated through `PriceTagReviseLineIn`
+    FIRST - the revise composer's payload never ran through pydantic at
+    all, so a bad `manual_sell_price` ("abc", -5, 0, an absurd `1E+400`)
+    reached `Decimal()` completely unvalidated. `.get(...)` below reads off
+    the VALIDATED model, not the raw dict, so what flows into `converted`
+    is already bound-checked.
     """
+    from pydantic import ValidationError
+
+    from app.schemas.price_tag import PriceTagReviseLineIn
+    from app.services.error_handler import AppException
+
+    try:
+        validated = PriceTagReviseLineIn(**raw)
+    except ValidationError as exc:
+        raise AppException(
+            status_code=422,
+            message="This line's price could not be saved.",
+            detail=f"line:{idx}",
+            code="VALIDATION_ERROR",
+        ) from exc
+    clean = validated.model_dump()
+
     converted = (
         {
             "line_type": "product_set",
             "product_id": None,
-            "product_set_id": raw.get("product_set_id"),
-            "quantity": raw.get("quantity", 1),
-            "remarks": raw.get("remarks"),
+            "product_set_id": clean.get("product_set_id"),
+            "quantity": clean.get("quantity", 1),
+            "remarks": clean.get("remarks"),
         }
-        if raw.get("product_set_id")
+        if clean.get("product_set_id")
         else {
             "line_type": "product",
-            "product_id": raw.get("product_id"),
+            "product_id": clean.get("product_id"),
             "product_set_id": None,
-            "quantity": raw.get("quantity", 1),
-            "remarks": raw.get("remarks"),
+            "quantity": clean.get("quantity", 1),
+            "remarks": clean.get("remarks"),
         }
     )
     if "promotion_id" in raw:
-        converted["promotion_id"] = raw.get("promotion_id")
+        converted["promotion_id"] = clean.get("promotion_id")
     if "manual_sell_price" in raw:
-        converted["manual_sell_price"] = raw.get("manual_sell_price")
+        converted["manual_sell_price"] = clean.get("manual_sell_price")
     return converted
 
 
@@ -429,7 +453,10 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
             # does not hold here.
             PriceTagRequestService.validate_submittable(row, require_debtor=True)
             return
-        converted = [_convert_ptag_revise_line(d) for d in (payload.get("products") or [])]
+        converted = [
+            _convert_ptag_revise_line(d, idx)
+            for idx, d in enumerate(payload.get("products") or [])
+        ]
         if not converted:
             raise AppException(
                 status_code=422,

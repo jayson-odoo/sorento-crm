@@ -354,7 +354,9 @@ def update_price_tag_request(
     return _with_resolved_lines(db, req)
 
 
-def _line_or_404(db: Session, request_id: str, line_id: str) -> PriceTagRequestLine:
+def _line_or_404(
+    db: Session, request_id: str, line_id: str
+) -> tuple[PriceTagRequest, PriceTagRequestLine]:
     """One line of THIS request, or 404 (D5/AC-S11-2).
 
     Same shape as ``_tag_or_404`` and for the same reason: the request is
@@ -401,6 +403,11 @@ def update_price_tag_request_line_price(
     quoted is history at that point, not a figure still open to change.
     """
     request_id = validate_uuid_path(request_id, resource="Price tag request")
+    # R8a (security review): `line_id` skipped this gate while `request_id`
+    # did not - a malformed line id reached `PriceTagRequestLine.id ==
+    # line_id` (a UUID column) as a Postgres `DataError` (500) instead of
+    # the guaranteed-missing 404 every other bad-format id here answers with.
+    line_id = validate_uuid_path(line_id, resource="Price tag request line")
     req, line = _line_or_404(db, request_id, line_id)
     if PriceTagRequestService.is_terminal(req):
         raise AppException(
