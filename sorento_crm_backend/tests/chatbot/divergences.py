@@ -1107,6 +1107,102 @@ DIVERGENCES: list[Divergence] = [
             "not_supported - the deliberate point of A6."
         ),
     ),
+    # R-F (coder a1f1112d, 15 Sep 2026, measured on the coder's fixed tree - the local
+    # head with R-H green, 4386 pass): three `disallowed-entity-gate` fixtures resolved
+    # to the AC-1 blanket below (`fixture=None`) with NOTHING of their own, so they need
+    # a per-fixture entry SPLICED AHEAD of it (`find()` returns the first match, same
+    # convention as `owner ruling A + AC-1` below for `sub-resolve-and-gate`) carrying
+    # the SAME `allowed_lookup` strip AC-1 already needs for this node, plus the R-F
+    # residual: `compatible_entities` gained the family's customer rows the same way
+    # `sub-resolve-and-gate`'s two entries already fold it in, and on two of the three
+    # (`rg-15125764`, `exec-14095480`) that widening ALSO reaches `routing_brand`,
+    # `routing_brand_source` and `routing_companies` - all three are DERIVED from
+    # `compatible_entities` (`routing_companies.codes` gained the family's customer
+    # codes when the legacy `picker_families` map widened the list at capture time), so
+    # they are the same hazard, not a second one. `exec-14206818` only diverges on
+    # `compatible_entities` itself. The whole-sub replay of `rg-15125764` reads the
+    # `sub-resolve-and-gate` node's own entry (already folded, prior round), not this
+    # one, and needs nothing further here.
+    *(
+        Divergence(
+            node="disallowed-entity-gate",
+            fixture=name,
+            hazard=(
+                "AC-1 (chatbot-warehouse-entity-and-last-in) + R-F family_uuids "
+                "(2026-08-24 lifetime ruling)"
+            ),
+            reason=(
+                "the same allowed_lookup echo AC-1's blanket entry strips for every "
+                "disallowed-entity-gate fixture, plus: this capture was recorded with "
+                "picker_families in ctx (the OLD n8n 34-key spine's map), and n8n's own "
+                "JS appended the family's extra customer rows onto compatible_entities "
+                "from it - the legacy map read is deleted (family now rides on "
+                "family_uuids, the roster row / picked entity, not a session-level "
+                "map), so the port's compatible_entities is short those rows until the "
+                "coder's fix lands. routing_brand / routing_brand_source / "
+                "routing_companies are DERIVED from compatible_entities and move for "
+                "the same reason."
+            ),
+            strip_paths=(
+                ("gate_debug", "allowed_lookup"),
+                ("gate", "gate_debug", "allowed_lookup"),
+                ("ctx", "gate", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+                ("compatible_entities",),
+                ("gate", "compatible_entities"),
+                ("ctx", "gate", "compatible_entities"),
+                ("ctx_resolved", "compatible_entities"),
+                ("ctx_resolved", "ctx", "gate", "compatible_entities"),
+                ("routing_brand",),
+                ("gate", "routing_brand"),
+                ("ctx", "gate", "routing_brand"),
+                ("ctx_resolved", "routing_brand"),
+                ("ctx_resolved", "ctx", "gate", "routing_brand"),
+                ("routing_brand_source",),
+                ("gate", "routing_brand_source"),
+                ("ctx", "gate", "routing_brand_source"),
+                ("ctx_resolved", "routing_brand_source"),
+                ("ctx_resolved", "ctx", "gate", "routing_brand_source"),
+                ("routing_companies",),
+                ("gate", "routing_companies"),
+                ("ctx", "gate", "routing_companies"),
+                ("ctx_resolved", "routing_companies"),
+                ("ctx_resolved", "ctx", "gate", "routing_companies"),
+            ),
+        )
+        for name in ("rg-15125764", "exec-14095480")
+    ),
+    Divergence(
+        node="disallowed-entity-gate",
+        fixture="exec-14206818",
+        hazard=(
+            "AC-1 (chatbot-warehouse-entity-and-last-in) + R-F family_uuids "
+            "(2026-08-24 lifetime ruling)"
+        ),
+        reason=(
+            "the same allowed_lookup echo AC-1's blanket entry strips for every "
+            "disallowed-entity-gate fixture, plus: this capture was recorded with "
+            "picker_families in ctx and n8n's own JS appended the family's extra "
+            "customer rows onto compatible_entities from it - the legacy map read is "
+            "deleted (family now rides on family_uuids), so the port's "
+            "compatible_entities is short those rows until the coder's fix lands. "
+            "Measured: unlike its two siblings above, this capture's routing_* echoes "
+            "do not move - compatible_entities alone diverges here."
+        ),
+        strip_paths=(
+            ("gate_debug", "allowed_lookup"),
+            ("gate", "gate_debug", "allowed_lookup"),
+            ("ctx", "gate", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "gate_debug", "allowed_lookup"),
+            ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+            ("compatible_entities",),
+            ("gate", "compatible_entities"),
+            ("ctx", "gate", "compatible_entities"),
+            ("ctx_resolved", "compatible_entities"),
+            ("ctx_resolved", "ctx", "gate", "compatible_entities"),
+        ),
+    ),
     # AC-1 (chatbot-warehouse-entity-and-last-in, 8 Sep 2026): `ALLOWED` gained
     # "warehouse" on `inventory` and a whole `spo_allocation` row, so the gate's DEBUG
     # ECHO of the matrix lists one more type than every capture taken before the change.
