@@ -86,6 +86,7 @@ from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output  # n
 from tests.chatbot.test_outstanding_lane import (
     REPORT_HIT,
     _capturing_mcp,
+    _focus_slot,
     _open_question,
     _seed_contact,
     _session_of,
@@ -221,12 +222,15 @@ def _run_turn(
     is_test: bool = False,
     lanes: tuple[str, ...] = LANES,
     complete_delegated: bool = True,
+    capture_user_block: list[str] | None = None,
 ):
     """One real `engine.run_turn`. Returns `(result, calls)`.
 
     `calls` records every MCP call the turn made, fetch and probe alike, the probe
     prefixed `probe:` - the cross-domain ladder runs on the PROBE seam and the fetch on
     the tool seam, and a test about the ladder has to be able to tell them apart.
+
+    `capture_user_block`, given a list, has this turn's `user_block` appended to it.
 
     `is_test=True` makes the turn a DRY RUN: the escalation lane still runs and still
     composes its real reply and its real `add_comment` text, with `<preview>` where a
@@ -276,7 +280,16 @@ def _run_turn(
         )
 
     monkeypatch.setattr(parser_mod, "resolve_config", _config)
-    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: qf)
+
+    def _parse(config, user_block):
+        # D17's own reason for existing: the parser is meant to read the open question's
+        # rows off THIS text, so a test asking what the model was actually shown reads the
+        # block rather than guessing at an internal builder's name.
+        if capture_user_block is not None:
+            capture_user_block.append(user_block)
+        return qf
+
+    monkeypatch.setattr(parser_mod, "parse", _parse)
 
     calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -808,52 +821,82 @@ class TestTheOfferHasOneWriterAndOneTeam:
         )
 
 
-@pytest.mark.parametrize("arm", [a for a in OFFER_ARMS if a.roster], ids=lambda a: a.id)
-def test_a_number_still_repicks_under_a_riding_offer(arm, session_factory, monkeypatch) -> None:
+#: A `customer_pick` roster with the escalate offer RIDING it (D19 rule 3), seeded rather
+#: than driven through the gate. The kind and the rows are what this test is about, and
+#: the gate's own arming is what group 2 grades: while `compatible_entities` still carries
+#: the co-resolved siblings, that arm persists THIRTEEN rows and a `product_pick` kind, so
+#: driving it here would grade group 2's defect a second time and never reach the re-pick.
+_RIDDEN_CUSTOMER_ROSTER = {
+    "kind": "customer_pick",
+    "options": [
+        {
+            "idx": index,
+            "label": f"{name} (SRT)",
+            "code": code,
+            "uuid": uuid,
+            "entity_type": "customer",
+            "family_uuids": [uuid],
+        }
+        for index, (uuid, code, name) in enumerate(CHIN_CHUN, start=1)
+    ],
+    "expects": "pick_or_yes_no",
+    "asked_at_turn": 2,
+    "asked_at": None,
+    "payload": {
+        "domain": "order",
+        "keep": [],
+        "offer": {
+            "team": "customer_service",
+            "domain": "order",
+            "options": [{"idx": 1, "team": "customer_service", "label": "customer_service"}],
+        },
+    },
+}
+
+
+def test_a_number_still_repicks_under_a_riding_offer(session_factory, monkeypatch) -> None:
     """D19 rule 1 and rule 3 together: with an offer riding the roster, a NUMBER is still
     a pick against the rows the reply numbered, and it wins over the yes/no (a number is
     unambiguous).
 
-    **Graded on the PICK, not on the fetch** (coordinator's ruling on the R-J round): what
-    the lane does with the re-picked customer depends on which axes the focus carries into
+    **Graded on the PICK, not on the fetch** (coordinator's ruling, R-J round): what the
+    lane does with the re-picked customer depends on which axes the focus carries into
     that turn - under R16's broad `order_status` carry an inherited `outstanding` sends it
     to the report and a missing grant can then refuse it - and none of that is what this
     test is about. So: the dialogue resolved the SECOND row, the turn SAID something, and
     any tool it did reach is scoped to that row.
 
-    The grant is passed in so a legitimate outstanding re-run is not refused for want of
-    it; the arming chain here names no document type, so nothing in it asks for one.
-
     **A refused pick may never be SILENT** (D13): the customer typed a number off a list
     the bot printed, and a turn that answers nothing at all is a defect whichever lane
     declined it.
     """
-    _reply, services = arm.build(session_factory, monkeypatch, "repick")
+    _seed_contact(
+        session_factory, variables={"open_question": dict(_RIDDEN_CUSTOMER_ROSTER)}
+    )
     result, calls = _run_turn(
         session_factory, monkeypatch, qf=_pick_v1(2), text_body="2",
-        msg_id="ZZT-gr-repick-answer", resolve_services=services, lanes=arm.lanes,
-        attributes=["sales_orders.outstanding"], fetch_response=_report_call(REPORT_HIT),
+        msg_id="ZZT-gr-repick-answer", attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(), fetch_response=_report_call(REPORT_HIT),
     )
-    assert result.status == "done", (result.status, result.error)
+    assert result.status in ("done", "delegated"), (result.status, result.error)
     said = ((result.reply or {}).get("text") or "").strip() or " ".join(
         str(a.get("text") or "")
         for a in (result.actions or [])
         if isinstance(a, dict) and a.get("kind") == "send_message"
     ).strip()
     assert said, (
-        f"arm {arm.id!r}: the customer picked row 2 off a list the bot printed and the "
-        f"turn said nothing at all: actions={result.actions!r}"
+        f"the customer picked row 2 off a list the bot printed and the turn said nothing "
+        f"at all: actions={result.actions!r}"
     )
     picked = _picked_labels(session_factory, result.turn_id)
     assert any(CHIN_CHUN[1][2] in label for label in picked), (
-        f"arm {arm.id!r}: '2' must resolve the roster's own SECOND row (CHIN CHUN "
-        f"HOMEMART), never the offer and never a row the reply did not number: "
-        f"{picked!r}"
+        f"'2' must resolve the roster's own SECOND row (CHIN CHUN HOMEMART), never the "
+        f"offer and never a row the reply did not number: {picked!r}"
     )
     for name, args in [c for c in calls if not c[0].startswith("probe:")]:
         assert args.get("customer_ids") in (None, [CHIN_CHUN[1][0]]), (
-            f"arm {arm.id!r}: whatever the re-pick fetched must be scoped to the row the "
-            f"customer chose: {name} {args!r}"
+            f"whatever the re-pick fetched must be scoped to the row the customer chose: "
+            f"{name} {args!r}"
         )
 
 
@@ -1215,21 +1258,23 @@ CARRIED_CUSTOMER_NAME = "CNK HARDWARE"
 DOMAIN_HINTS = (None, "order", "inventory")
 
 
-def _seed_open_detail(session_factory, *, filters: dict[str, Any]) -> None:
-    _seed_contact(
-        session_factory,
-        variables={
-            "open_question": _open_question(
-                "outstanding_detail",
-                options=[
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                    {"idx": 2, "label": "Delivery order list", "value": "do"},
-                    {"idx": 3, "label": "Both lists", "value": "both"},
-                ],
-                filters=filters,
-            )
-        },
-    )
+def _seed_open_detail(
+    session_factory, *, filters: dict[str, Any], domains: list[str] | None = None
+) -> None:
+    variables: dict[str, Any] = {
+        "open_question": _open_question(
+            "outstanding_detail",
+            options=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+            filters=filters,
+        )
+    }
+    if domains:
+        variables["focus"] = {"domains": _focus_slot(list(domains))}
+    _seed_contact(session_factory, variables=variables)
 
 
 def _customer_subject_filters() -> dict[str, Any]:
@@ -2328,7 +2373,14 @@ def test_b1_a_decline_that_brings_its_own_question_is_answered_not_just_acknowle
     The DEFECT is that one reading, so that is what the first three assertions grade; the
     fourth says only what the rules that already exist owe this turn afterwards.
     """
-    _seed_open_detail(session_factory, filters=_customer_subject_filters())
+    # AN ALIVE DOMAIN, because that is the rule being relied on (coordinator's ruling):
+    # with no domain word of its own the turn re-runs the domains the conversation is
+    # already about, and a fixture whose focus carries none leaves it nothing to re-run -
+    # the turn then delegates as low_signal and the test would be grading the fixture.
+    _seed_open_detail(
+        session_factory, filters=_customer_subject_filters(),
+        domains=["order"],
+    )
     result, calls = _run_turn(
         session_factory, monkeypatch,
         qf=_decline_with_a_new_ask_qf(domain_hint, raw=raw, hint=hint),
@@ -2702,3 +2754,380 @@ def test_the_engines_post_compose_arm_never_replaces_an_open_member_offer(
     assert after == member, (
         f"the named people the customer is reading must still be the question: {after!r}"
     )
+
+
+# =========================================================================== #
+# GROUP 7 - R-K, merge blocker: a bare number over a STICKY roster, once casual
+# turns have intervened, is not read as a pick under the PROMOTED prompt
+#
+# Live chain on 92f0c081b (`sorento_ai_automation_focus_full`):
+#
+#   `incoming wc286`  -> the ten-row picker            (turn 2, correct)
+#   `8`               -> row 8, scoped to it           (correct)
+#   `another one`     -> low_signal                    (turn ab73f52b, correct)
+#   `thanks`          -> low_signal                    (turn 8440c1ff, correct)
+#   `10`              -> **low_signal**                (turn 3fd0d37c) instead of
+#                                                       SRTWC286-SH-NEW
+#
+# Measured on those three rows, and it says where the defect is NOT:
+#
+# * the STICKY ROSTER IS FINE. All three turns were handed
+#   `_open_question_before = {kind: product_pick, options: 10, asked_at_turn: 2}` - the
+#   roster survived every casual turn, which is D19 rule 1 working.
+# * the ENGINE's resolver is fine. It bridges v1 `reference_positions` into picks, and
+#   turn 3fd0d37c's emission carries `reference_positions: []`.
+# * the PARSER never emitted the position, while saying in the same breath what the
+#   message was: `user_goal: "trying to pick option 10"`, `message_type: "casual"`, the
+#   three v3 keys absent (this is the v1-shaped promoted prompt).
+#
+# So the question is what the model was SHOWN. `engine._pending_options` surfaces an open
+# question's numbered rows to the parser's user block - and only for
+# `_OPTION_PENDING_KINDS = ("outstanding_scope", "outstanding_detail")`. A `product_pick`
+# is told `Pending: the assistant is waiting for a product_pick reply.` and nothing else,
+# so the only place its rows ever appeared was the `Previous response:` line - which after
+# one casual turn is the casual reply, and the list is gone from the input entirely.
+#
+# The two tests below split on exactly that seam: one grades the RESOLUTION given the
+# position (the roster and the head), the other grades the parser's INPUT (the projection).
+# =========================================================================== #
+
+
+def _casual_v1(goal: str) -> dict[str, Any]:
+    """The live v20 emission for "another one" / "thanks", verbatim on every field the
+    rows carry (turns ab73f52b / 8440c1ff)."""
+    return _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entity_op="reuse",
+        entities=[], reference_positions=[], reference_target=None, is_affirmative=None,
+        correction=False, scope_intent=None, order_status=None, user_goal=goal,
+    )
+
+
+def _number_v1(position: int, *, goal: str | None = None) -> dict[str, Any]:
+    """A bare number, v1-shaped, WITH the position the parser emits when it can see the
+    rows. Turn 3fd0d37c's own emission is this minus `reference_positions`, and that
+    absence is what group 7's second test is about."""
+    return _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entity_op="reuse",
+        entities=[], reference_positions=[position], reference_target=None,
+        is_affirmative=None, correction=False, scope_intent=None, order_status=None,
+        user_goal=goal or f"trying to pick option {position}",
+    )
+
+
+#: The live v20 emission for the "10" turn, verbatim: the model says it is a pick and
+#: emits no position, because it was never shown a list to count.
+_LIVE_NUMBER_NO_POSITION = "trying to pick option 10"
+
+
+def _roster_rows(*codes: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "idx": i, "label": code, "code": code, "product": code,
+            "uuid": f"3333333{i}-1111-1111-1111-11111111111{i % 10}",
+            "entity_type": "product",
+        }
+        for i, code in enumerate(codes, start=1)
+    ]
+
+
+def _customer_roster_rows() -> list[dict[str, Any]]:
+    return [
+        {
+            "idx": i, "label": f"{name} (SRT)", "code": code, "uuid": uuid,
+            "entity_type": "customer", "family_uuids": [uuid],
+        }
+        for i, (uuid, code, name) in enumerate(CHIN_CHUN, start=1)
+    ]
+
+
+@dataclass(frozen=True)
+class StickyRoster:
+    id: str
+    question: dict[str, Any]
+    #: The position the customer types, and the row label it has to resolve to.
+    position: int
+    label: str
+    #: `dialogue` kinds resolve through `open_question.resolve` and land on the trace;
+    #: `outstanding_scope` is resolved by the head instead, so it is graded on the report.
+    channel: str
+    #: HOW MANY intervening casual turns this roster can be graded over, and it is not the
+    #: same number for every kind. A casual turn over an OUTSTANDING question is already
+    #: ruled on (R22, owner round 9): the first unreadable reply re-prints the question and
+    #: the second closes it, so "the roster is still there two turns later" is not true of
+    #: that kind by design - measured here too (one "another one" closes it). R-K is about
+    #: the kinds D19 makes sticky, so the outstanding one is graded at 0 and says why.
+    casual_counts: tuple[int, ...] = (0, 1, 2)
+    #: Answer this roster's number as a DRY RUN. Only the member offer needs it: its pick
+    #: escalates, and a live escalation opens an SLA row, which a blank schema has no
+    #: policy for ("404: No SLA policy found with code='NORMAL'") - infrastructure, not
+    #: behaviour. The lane still composes its real actions on a dry run.
+    dry_run: bool = False
+    #: The completed-lane set the ANSWER turn needs. A member pick is answered by the
+    #: `offer_hold` lane (the re-prompt / assign path), and a lane left out of the set
+    #: DELEGATES - a delegated turn writes no actions, which reads as "the pick resolved
+    #: nothing" when in truth it was handed to n8n.
+    lanes: tuple[str, ...] = LANES
+
+
+STICKY_ROSTERS: tuple[StickyRoster, ...] = (
+    StickyRoster(
+        "multi-match-product",
+        _open_question(
+            "product_pick", options=_roster_rows(*WC286_CODES),
+            filters=None, turn_no=2,
+        ) | {"payload": {"domain": "incoming", "keep": []}},
+        position=10, label="SRTWC286-P", channel="dialogue",
+    ),
+    StickyRoster(
+        "did-you-mean-product",
+        _open_question(
+            "product_pick", options=_roster_rows("SRTWT2632", "SRTWT2633", "SRTWT2634"),
+            filters=None, turn_no=2,
+        ) | {
+            # `miss_suggest._attach_question`'s own payload: the did-you-mean roster is a
+            # product_pick that also carries the offer's identity.
+            "payload": {"domain": "inventory", "keep": [], "offer_id": "exec-1", "picked": []}
+        },
+        position=3, label="SRTWT2634", channel="dialogue",
+    ),
+    StickyRoster(
+        "customer-picker",
+        _open_question(
+            "customer_pick", options=_customer_roster_rows(), filters=None, turn_no=2,
+        ) | {"payload": {"domain": "order", "keep": []}},
+        position=2, label="CHIN CHUN HOMEMART", channel="dialogue",
+    ),
+    StickyRoster(
+        "outstanding-scope",
+        _open_question(
+            "outstanding_scope",
+            options=[
+                {"idx": 1, "label": "Sales orders", "value": "so"},
+                {"idx": 2, "label": "Delivery orders", "value": "do"},
+                {"idx": 3, "label": "Both", "value": "both"},
+            ],
+            filters={
+                "product_code": OUTSTANDING_CODE,
+                "date_filter_start": None, "date_filter_end": None,
+                "customer_ids": [], "warehouse_codes": [], "location_token": None,
+            },
+            turn_no=2,
+        ),
+        position=2, label="Delivery orders", channel="head", casual_counts=(0,),
+    ),
+    StickyRoster(
+        # (b) THE GUARD the coordinator asked for: a member offer is answered by a
+        # position too (`_member_offer`: "the roster is on the screen beside the offer, so
+        # a bare '2' is an answer to the same question"), and it is NOT one of
+        # `ROSTER_KINDS`, so nothing about D19's stickiness applies to it. If this arm is
+        # red, member_offer belongs in `_OPTION_PENDING_KINDS` with the other three.
+        "member-offer",
+        {
+            "kind": "member_offer",
+            "options": [
+                {"idx": 1, "label": "Nurain", "uuid": "aaaaaaaa-0000-0000-0000-000000000001"},
+                {"idx": 2, "label": "Aina", "uuid": "aaaaaaaa-0000-0000-0000-000000000002"},
+            ],
+            "expects": "yes_no",
+            "asked_at_turn": 2,
+            "asked_at": None,
+            "payload": {"team": "warehouse", "domain": "inventory"},
+        },
+        position=2, label="Aina", channel="dialogue", dry_run=True,
+        lanes=(*LANES, "offer_hold", "low_signal"),
+    ),
+)
+
+
+def _sticky_cases() -> list[tuple[StickyRoster, int]]:
+    """Every (roster, intervening-casual-turns) pair, so a kind whose casual behaviour is
+    ruled elsewhere is graded over the counts that are its own."""
+    return [(roster, count) for roster in STICKY_ROSTERS for count in roster.casual_counts]
+
+#: The live chain had TWO casual turns between the pick and the number; 0 and 1 are there
+#: because the number of them is exactly what the defect is keyed on.
+CASUAL_RUNS = (0, 1, 2)
+_CASUAL_GOALS = ("trying to ask for another one", "trying to thank the assistant")
+
+
+def _run_casual_turns(
+    session_factory,
+    monkeypatch,
+    *,
+    count: int,
+    tag: str,
+    blocks: list[str] | None = None,
+    lanes: tuple[str, ...] = LANES,
+) -> None:
+    for index in range(count):
+        _run_turn(
+            session_factory, monkeypatch, qf=_casual_v1(_CASUAL_GOALS[index % 2]),
+            text_body=("another one", "thanks")[index % 2],
+            msg_id=f"ZZT-gr7-{tag}-casual-{index}",
+            lanes=(*lanes, "low_signal", "offer_hold"), capture_user_block=blocks,
+        )
+
+
+
+def _open_question_options_fact(session_factory, turn_id: str) -> Any:
+    """`understood.facts.open_question_options` off the persisted trace - WHICH options
+    the parser was shown, which the engine records for exactly this diagnosis."""
+    from app.models.chatbot_turn import ChatbotTurn
+
+    row = (
+        session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    )
+    for entry in list((row.trace if row is not None else None) or []):
+        if isinstance(entry, dict) and entry.get("stage") == "understood":
+            return ((entry.get("facts") or {}).get("open_question_options"))
+    return None
+
+@pytest.mark.parametrize(
+    ("roster", "casual_turns"), _sticky_cases(), ids=lambda x: x.id if isinstance(x, StickyRoster) else f"{x}-casual"
+)
+def test_a_bare_number_resolves_the_frozen_row_however_many_casual_turns_intervened(
+    roster, casual_turns, session_factory, monkeypatch
+) -> None:
+    """R-K, the resolution half: the roster the customer can still see answers a number,
+    and small talk in between changes nothing about which row that number means.
+
+    Given the position (which is what the parser emits when it can see the rows - the
+    other half of R-K, below), this grades the roster's own lifetime and the handler that
+    resolves against it.
+    """
+    _seed_contact(session_factory, variables={"open_question": dict(roster.question)})
+    _run_casual_turns(
+        session_factory, monkeypatch, count=casual_turns,
+        tag=f"{roster.id}-{casual_turns}", lanes=roster.lanes,
+    )
+    # THE ROWS, BEFORE the number arrives - because a question that kept its kind and lost
+    # its rows resolves nothing, and the symptom below would not say why. Measured on the
+    # member offer: one casual turn comes back `kind: member_offer` with `options: []`
+    # (the `offer_hold` re-prompt re-arms it empty), so the customer's "2" picks nobody -
+    # and projecting THAT list to the parser would project nothing.
+    alive = _stored_oq(_vars(session_factory))
+    assert len(alive.get("options") or []) == len(roster.question.get("options") or []), (
+        f"{roster.id} after {casual_turns} casual turn(s): the question is still open and "
+        f"the rows the customer is looking at are gone: {alive!r}"
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch, qf=_number_v1(roster.position),
+        text_body=str(roster.position),
+        msg_id=f"ZZT-gr7-{roster.id}-{casual_turns}-number",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(),
+        fetch_response=_report_call(REPORT_HIT),
+        is_test=roster.dry_run, lanes=roster.lanes,
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    if roster.channel == "dialogue":
+        picked = _picked_labels(session_factory, result.turn_id)
+        assert any(roster.label in label for label in picked), (
+            f"{roster.id} after {casual_turns} casual turn(s): "
+            f"'{roster.position}' means the row the customer read, whatever was said in "
+            f"between: {picked!r}"
+        )
+    else:
+        reports = _report_tool_calls(calls)
+        assert reports, (
+            f"{roster.id} after {casual_turns} casual turn(s): the scope answer must run "
+            f"the report: {calls!r}"
+        )
+        assert reports[0].get("scope") == "do", (
+            f"{roster.id} after {casual_turns} casual turn(s): '2' is the DO scope: "
+            f"{reports[0]!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("roster", "casual_turns"), _sticky_cases(), ids=lambda x: x.id if isinstance(x, StickyRoster) else f"{x}-casual"
+)
+def test_the_parser_is_still_shown_the_frozen_rows_after_casual_turns(
+    roster, casual_turns, session_factory, monkeypatch
+) -> None:
+    """R-K's own defect, at the seam the live rows point at: what the PARSER was shown.
+
+    Under the promoted v1 prompt the model's only sight of a roster is the user block. It
+    is handed `Pending: the assistant is waiting for a <kind> reply.` on every open
+    question, and the numbered rows ONLY for `engine._OPTION_PENDING_KINDS`
+    (`outstanding_scope`, `outstanding_detail`) - so a `product_pick` or `customer_pick`
+    roster reaches the model only through the `Previous response:` line, which one casual
+    turn replaces with the casual reply. Live: turn 3fd0d37c said
+    `user_goal: "trying to pick option 10"` and `reference_positions: []` - the model knew
+    it was a pick and had no list to count.
+
+    The assertion is the projection, not the wording: the block must name the rows the
+    question froze (their labels), on the turn the number arrives AND on every casual turn
+    before it, because the roster is open on all of them.
+    """
+    _seed_contact(session_factory, variables={"open_question": dict(roster.question)})
+    blocks: list[str] = []
+    _run_casual_turns(
+        session_factory, monkeypatch, count=casual_turns,
+        tag=f"{roster.id}-{casual_turns}-blocks", blocks=blocks, lanes=roster.lanes,
+    )
+    result, _calls = _run_turn(
+        session_factory, monkeypatch, qf=_number_v1(roster.position),
+        text_body=str(roster.position),
+        msg_id=f"ZZT-gr7-{roster.id}-{casual_turns}-block",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(),
+        fetch_response=_report_call(REPORT_HIT),
+        capture_user_block=blocks, is_test=roster.dry_run, lanes=roster.lanes,
+    )
+    assert len(blocks) == casual_turns + 1, blocks
+    expected_rows = [
+        str(row.get("label")) for row in (roster.question.get("options") or [])
+    ]
+    # THE ENGINE'S OWN RECORD FIRST. `understood.facts.open_question_options` exists for
+    # exactly this question ("diagnosing 'the model answered casual' needs to separate
+    # 'it was never told what was on offer' from 'it was told and did not take it'"), and
+    # on all three live turns it is empty.
+    recorded = _open_question_options_fact(session_factory, result.turn_id)
+    assert recorded, (
+        f"{roster.id} after {casual_turns} casual turn(s): the turn recorded no "
+        f"`open_question_options` at all, so the parser was never shown the rows it is "
+        f"meant to count - live turn 3fd0d37c's own shape: {recorded!r}"
+    )
+    for label in expected_rows:
+        assert any(label in str(row) for row in recorded), (
+            f"{roster.id}: the rows shown to the parser must be the rows the question "
+            f"froze - {label!r} missing from {recorded!r}"
+        )
+    # AND THE BLOCK, because the record is only worth having if it reaches the model.
+    for index, block in enumerate(blocks):
+        missing = [label for label in expected_rows if label not in block]
+        assert not missing, (
+            f"{roster.id}, parser input on turn {index + 1} of "
+            f"{casual_turns + 1}: the question is open and the model cannot see the rows "
+            f"it is supposed to count - missing {missing[:3]!r} from:\n{block}"
+        )
+
+
+def test_showing_the_parser_a_roster_adds_exactly_one_line_to_the_v1_block() -> None:
+    """The parity half (c): the extra line is ADDITIVE and nothing else about the block
+    moves.
+
+    `test_parser_user_block_parity.py` holds the v1 block byte-for-byte against the
+    captured n8n run, and its fixture turn has NO open question - so this states the
+    property that file cannot: the same block, for the same turn, with a roster open,
+    differs by exactly one line and that line is the options.
+    """
+    from app.services.chatbot.head import parser as parser_mod
+
+    common = dict(
+        previous_response="Previous turn (inventory): stock for SRTWC286-SH.",
+        latest_user_message="10\n",
+        pending_kind="product_pick",
+    )
+    without = parser_mod.build_user_block(**common)
+    with_rows = parser_mod.build_user_block(
+        **common, pending_options=["1. SRTWC286-SH", "10. SRTWC286-P"]
+    )
+    before, after = without.split("\n"), with_rows.split("\n")
+    assert after[: len(before)] == before, (
+        f"the block the promoted prompt already reads must not move:\n{without!r}\n"
+        f"{with_rows!r}"
+    )
+    assert len(after) == len(before) + 1, (with_rows, without)
+    assert after[-1].startswith("Open question options: "), after[-1]
