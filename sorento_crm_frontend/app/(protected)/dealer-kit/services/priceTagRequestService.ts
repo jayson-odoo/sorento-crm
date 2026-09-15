@@ -82,7 +82,6 @@ import {
   designPayloadFromResponse,
   type TagSheetDesignPayload,
 } from '@/lib/dealer-kit/design-payload';
-import { computeLinePricing } from '@/lib/dealer-kit/mock-line-pricing';
 import type {
   LinePricingLineInput,
   LinePricingResult,
@@ -346,37 +345,50 @@ export async function updatePriceTagPrintBy(
 // ---------------------------------------------------------------------------
 
 /**
- * One pricing call for every line (D4). MOCK ONLY (Phase 1) - see
- * `lib/dealer-kit/mock-line-pricing.ts`. Same computation the portal form
- * uses, so a product prices the same on both sides of the same request.
+ * One pricing call for every line (D4, S7). Staff-audience: the CRM route
+ * has no contact to check against, so it prices under `staff_viewer()`.
  */
 export async function lookupLinePricing(
   priceMode: PriceMode,
   lines: LinePricingLineInput[],
 ): Promise<LinePricingResult[]> {
-  return computeLinePricing(priceMode, lines);
+  const response = await apiFetch(`${BASE}/line-pricing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price_mode: priceMode, lines }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to price these lines'));
+  }
+  return response.json();
 }
 
 /**
- * A line's price basis (D5). MOCK ONLY (Phase 1) - resolves immediately with
- * no persistence; the caller (`PriceTagRequestDetail`) keeps the change in
- * its own state and re-derives every price through `lookupLinePricing`.
- * Phase 2 (S11) swaps this for the real
- * `PATCH /dealer-kit/price-tag-requests/{id}/lines/{line_id}` call - the
- * shape below is that route's own request/response contract.
+ * A line's price basis (D5, S11). Clears the line's tags' pins server-side
+ * so the design carries the change through the usual data-change banner.
+ *
+ * ```
+ * PATCH /api/v1/dealer-kit/price-tag-requests/{requestId}/lines/{lineId}
+ *   { promotion_id?, manual_sell_price? }
+ *   200 the refreshed request. 409 once the request is terminal.
+ * ```
  */
 export async function updatePriceTagLinePrice(
   requestId: string,
   lineId: string,
   patch: { promotion_id?: string | null; manual_sell_price?: number | null },
 ): Promise<void> {
-  // MOCK (Phase 1): no persistence yet - Phase 2 (S11) sends this as
-  // `PATCH /dealer-kit/price-tag-requests/{requestId}/lines/{lineId}` with
-  // `patch` as the body.
-  void requestId;
-  void lineId;
-  void patch;
-  return Promise.resolve();
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/lines/${encodeURIComponent(lineId)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to update the price'));
+  }
 }
 
 /**

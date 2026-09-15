@@ -178,7 +178,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     Record<string, { promotion_id: string | null; manual_sell_price: number | null; locked: boolean }>
   >({});
   const [savingLinePrice, setSavingLinePrice] = useState<string | null>(null);
-  const canProcessPrice = useHasPermission('price_tag_requests.process');
+  const canProcessPrice = useHasPermission('dealer_kit.price_tag_requests.process');
 
   useEffect(() => {
     let cancelled = false;
@@ -541,6 +541,13 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       setSavingLinePrice(lineId);
       try {
         await updatePriceTagLinePrice(request.id, lineId, patch);
+        // The route clears the line's tags' pins server-side (S11), so the
+        // data-change banner picks up the price change alongside the
+        // refreshed request - the same two calls every other mutation here
+        // makes after a write.
+        const data = await getPriceTagRequest(request.id);
+        setRequest(data);
+        loadDataChanges();
         toast.success('Price basis updated');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to update the price');
@@ -548,7 +555,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         setSavingLinePrice(null);
       }
     },
-    [request],
+    [request, loadDataChanges],
   );
 
   const choosePromotion = useCallback(
@@ -1124,8 +1131,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 only - List price alone needs no promotion
                                 pick (AC-S5-1). Editable only while the
                                 request is not terminal AND the viewer holds
-                                `price_tag_requests.process` (AC-S5-3/S5-4);
-                                otherwise the same cells render read only. */}
+                                `dealer_kit.price_tag_requests.process`
+                                (AC-S5-3/S5-4); otherwise the same cells
+                                render read only. */}
                             {line.line_type === 'product' &&
                               line.product_id &&
                               (request.price_mode ?? 'list') === 'selling' && (

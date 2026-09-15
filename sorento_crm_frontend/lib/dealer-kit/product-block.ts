@@ -81,6 +81,22 @@ function subjectPartOf(props: TagLayerProps): number | undefined {
   }
 }
 
+/** The parent host's OWN price, alone - never the tag's roll-up (D7,
+ *  AC-S4-4). `parent_list_price`/`parent_sell_price` are the real answer,
+ *  resolved server-side; absent (an older pinned/cached row, or a test
+ *  fixture that predates them), it is recovered by subtracting every part's
+ *  own price from the roll-up - the same arithmetic that built the roll-up
+ *  in the first place, run in reverse. */
+function parentAlonePrice(line: LineTagData, field: 'list_price' | 'sell_price'): number | null {
+  const total = field === 'list_price' ? line.list_price : line.sell_price;
+  if (total == null) return null;
+  const partsTotal = line.parts.reduce((sum, part) => {
+    const value = field === 'list_price' ? part.list_price : part.sell_price;
+    return sum + (value ?? 0);
+  }, 0);
+  return total - partsTotal;
+}
+
 /** The parent's own fields, shaped like a single product (D7) - what a
  *  price badge's `subjectPart: -1` and an out-of-range part both fall back
  *  to (AC-S4-4/S4-6). */
@@ -93,8 +109,10 @@ function productFromLineParent(line: LineTagData): ProductTagData {
     spec_lines: line.spec_lines ? line.spec_lines.split('\n') : [],
     specs: line.specs,
     images: line.images,
-    list_price: line.list_price,
-    offer_price: line.show_promo_price ? line.sell_price : null,
+    list_price: line.parent_list_price ?? parentAlonePrice(line, 'list_price'),
+    offer_price: line.show_promo_price
+      ? (line.parent_sell_price ?? parentAlonePrice(line, 'sell_price'))
+      : null,
     promotion_id: null,
     barcode: line.barcode,
   };

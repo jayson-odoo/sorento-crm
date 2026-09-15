@@ -418,7 +418,16 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
             "line_id": row["line_id"],
             "tag_label": row["tag_label"],
             "open_groups": row["open_groups"],
-            "parts": row["parts"],
+            # D7 (S9): full product data per part, prices leaving as floats
+            # the same way the tag's own do below.
+            "parts": [
+                {
+                    **part,
+                    "list_price": _as_float(part.get("list_price")),
+                    "sell_price": _as_float(part.get("sell_price")),
+                }
+                for part in row["parts"]
+            ],
             "code": row["code"],
             "name": row["name"],
             "dimensions": row["dimensions"],
@@ -431,6 +440,11 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
             # arithmetic already happened, in the pricing engine.
             "list_price": _as_float(row["list_price"]),
             "sell_price": _as_float(row["sell_price"]),
+            # D7 (S9): the host alone - what a price badge's `subjectPart:
+            # -1` reads, never the roll-up above.
+            "parent_list_price": _as_float(row.get("parent_list_price")),
+            "parent_sell_price": _as_float(row.get("parent_sell_price")),
+            "sell_price_basis": row.get("sell_price_basis"),
             "show_promo_price": row["show_promo_price"],
             "included_accessories": row["included_accessories"],
             "quantity": row["quantity"],

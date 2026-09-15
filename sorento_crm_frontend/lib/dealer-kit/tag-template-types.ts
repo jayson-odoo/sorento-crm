@@ -633,6 +633,16 @@ export interface LineTagData {
   /** One line per set member, already formatted. Empty for a product line. */
   set_members: string;
   images: TagImage[];
+  /** The parent host's OWN price, alone - never the roll-up. Read by
+   *  `subjectPart: -1` (D7, AC-S4-4): the parent alone is a different figure
+   *  from `list_price`/`sell_price` below the moment a combo has priced
+   *  parts. Optional so an older pinned/cached row (pre-D7) still renders -
+   *  `productFromLineParent` falls back to subtracting `parts[]` from the
+   *  roll-up when absent. */
+  parent_list_price?: number | null;
+  /** Offer under the line's promotion, or null with none - the parent's own
+   *  half of `parent_list_price` above. */
+  parent_sell_price?: number | null;
   list_price: number | null;
   sell_price: number | null;
   show_promo_price: boolean;

@@ -447,26 +447,26 @@ export type {
   LinePricingResult,
   SellPriceBasis,
 } from '@/lib/dealer-kit/mock-line-pricing';
-import { computeLinePricing } from '@/lib/dealer-kit/mock-line-pricing';
 import type {
   LinePricingLineInput as LinePricingLineInputT,
   LinePricingResult as LinePricingResultT,
 } from '@/lib/dealer-kit/mock-line-pricing';
 
 /**
- * One pricing call for every line (D4). MOCK ONLY (Phase 1) - resolves
- * synchronously wrapped in a promise so the form's calling shape (await,
- * loading-free since the state is derived) matches the real route's once it
- * lands in Phase 2. No network call, no persistence. The computation itself
- * is shared with the CRM detail page's own mock
- * (`lib/dealer-kit/mock-line-pricing.ts`), so a product prices the same on
- * both sides of the same request.
+ * One pricing call for every line (D4, S7). Audience-scoped to THIS
+ * contact - the portal route reads it off the portal token, not a param
+ * this call sends.
  */
 export async function lookupLinePricing(
   priceMode: PriceMode,
   lines: LinePricingLineInputT[],
 ): Promise<LinePricingResultT[]> {
-  return computeLinePricing(priceMode, lines);
+  const res = await portalFetch(`${LOOKUPS}/line-pricing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ price_mode: priceMode, lines }),
+  });
+  return unwrap<LinePricingResultT[]>(res, 'Failed to price these lines');
 }
 
 // ---------------------------------------------------------------------------

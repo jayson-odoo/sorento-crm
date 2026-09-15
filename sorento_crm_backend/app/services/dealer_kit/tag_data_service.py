@@ -704,6 +704,11 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         # this line has always answered with.
         list_price = data["list_price"]
         sell_price = data["offer_price"]
+        # D7: the HOST alone, never the roll-up below - a price badge's
+        # `subjectPart: -1` reads THIS, not `list_price`/`sell_price`, the
+        # moment a combo has priced parts.
+        parent_list_price = data["list_price"]
+        parent_sell_price = data["offer_price"] if line.show_promo_price else None
         if part_products:
             part_prices = resolve_prices(db, part_products, viewer, promotion_id)
             list_price = _sum_prices(
@@ -769,6 +774,8 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "images": images,
                 "list_price": list_price,
                 "sell_price": sell_price,
+                "parent_list_price": parent_list_price,
+                "parent_sell_price": parent_sell_price,
                 "sell_price_basis": sell_price_basis,
                 "show_promo_price": line.show_promo_price,
                 "included_accessories": line.included_accessories or "",

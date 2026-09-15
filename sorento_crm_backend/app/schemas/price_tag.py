@@ -1160,12 +1160,26 @@ class TagOpenGroup(BaseModel):
 
 
 class TagPartData(BaseModel):
+    """One resolved part on a tag, D7's "full product data" (AC-S9-1) - a
+    layer may pick ANY part as its subject, so a part needs everything the
+    host already carries.
+    """
+
     #: Carried so a caller can match a part back to the choice that produced it.
     #: Never rendered - the code is what a reader sees (AC-X-2).
     product_id: Optional[str] = None
     code: str
     name: str
     dimensions: str = ""
+    spec_lines: list[str] = []
+    specs: list[SpecValue] = []
+    images: list[TagImage] = []
+    barcode: Optional[str] = None
+    list_price: Optional[float] = None
+    #: Offer under the LINE's promotion, or None - never a fall back to list
+    #: (AC-S9-1): a part printing at list beside its own code is not "on
+    #: sale", the tag's box total is what decides that.
+    sell_price: Optional[float] = None
 
 
 class ResolvedLineData(BaseModel):
@@ -1190,6 +1204,13 @@ class ResolvedLineData(BaseModel):
     images: list[TagImage] = []
     list_price: Optional[float] = None
     sell_price: Optional[float] = None
+    # D7 (S9): the HOST alone, never the roll-up above - a price badge's
+    # `subjectPart: -1` reads THIS.
+    parent_list_price: Optional[float] = None
+    parent_sell_price: Optional[float] = None
+    # D3/AC-S9-3: why `sell_price` is what it is - `manual` | `promotion` |
+    # `list`.
+    sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
     quantity: int
