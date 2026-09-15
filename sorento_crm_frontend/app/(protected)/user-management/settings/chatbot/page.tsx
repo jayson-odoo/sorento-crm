@@ -148,14 +148,8 @@ export default function ChatbotSettingsPage() {
         </CardContent>
       </Card>
 
-      <MemorySettingsCard
-        value={draft.chatbot_memory}
-        onChange={(v) => set('chatbot_memory', v)}
-      />
-      <TierOrderCard
-        value={draft.chatbot_tier_order}
-        onChange={(v) => set('chatbot_tier_order', v)}
-      />
+      <MemorySettingsCard />
+      <TierOrderCard />
       <CrossDomainLadderCard />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
