@@ -1,4 +1,23 @@
-"""Unit tests for app.services.mcp_tool_registry_service.sync_catalog."""
+"""Unit tests for app.services.mcp_tool_registry_service.sync_catalog.
+
+`sync_catalog`'s deactivation step is a blanket UPDATE over every active row in
+the real `mcp_tools` table (`last_seen_at < sync_started_at`), not scoped to the
+tool names a given test creates - that is the service's actual contract (a tool
+absent from ANY sync's catalog gets deactivated). Any other test file that spins
+up `with TestClient(app) as client:` fires FastAPI's startup event, which runs a
+REAL `sync_catalog(db)` + `db.commit()` against the SAME shared database
+(`app/main.py::startup_event`). Under CI's `-n auto` that runs on another xdist
+worker at any moment, so a real sync from an unrelated file can commit a
+deactivation of THIS file's fake `phase1_test_*` row (which is never in the real
+catalog) between this file's own commit and its own assert - see run 34931786068,
+`test_sync_catalog_deactivates_removed_tools` failing on
+`assert row.is_active is True` immediately after round 1. `--dist loadfile`
+already serializes this file's own tests onto one worker, so the race is
+cross-file, not within this file; the fix is to stop sharing the table at all,
+the same way `tests/test_mcp_catalog_ideation.py` already does for this same
+service: `blank_session()` gives each test a private scratch Postgres schema
+that no other worker's real sync can ever touch.
+"""
 from __future__ import annotations
 
 import uuid
@@ -7,8 +26,8 @@ from dataclasses import dataclass
 import pytest
 from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app.models.access import McpTool
+from tests._pg_fixture import blank_session
 
 
 @dataclass(frozen=True)
@@ -25,12 +44,8 @@ class _FakeSpec:
 
 @pytest.fixture
 def db() -> Session:
-    s = SessionLocal()
-    try:
+    with blank_session() as s:
         yield s
-    finally:
-        s.rollback()
-        s.close()
 
 
 @pytest.fixture
