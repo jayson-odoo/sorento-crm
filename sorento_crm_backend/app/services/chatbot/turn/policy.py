@@ -3,6 +3,7 @@
 # tests seed rows via `Policy.from_rows`, matching the real loader's own shape.
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -124,11 +125,54 @@ def load_policy(db: "Session") -> Policy:
     except Exception:  # noqa: BLE001 - no settings row yet is the seed default, not a failure
         tier_order = []
 
+    from app.modules.chatbot.lane_vocabulary import default_tier_order
+
     return Policy.from_rows(
-        domains=domain_rows or [dict(row) for row in policy_rows.DEFAULT_DOMAIN_ROWS],
+        domains=domain_rows or _default_domain_rows(),
         kinds=kind_rows or [dict(row) for row in policy_rows.DEFAULT_KIND_ROWS],
-        tier_order=tier_order or list(policy_rows.DEFAULT_TIER_ORDER),
+        tier_order=tier_order or default_tier_order(),
     )
+
+
+def _default_domain_rows() -> list[dict[str, Any]]:
+    """`policy_rows.DEFAULT_DOMAIN_ROWS`, plus `takes_date_filter` (AC-1501) - the SAME
+    derivation the S0 migration applies at insert time (`any(tool in DATE_PARAM_TOOLS for
+    tool in row["tools"])`), so a blank-schema fallback answers this question the same way
+    a migrated database's own column does, rather than defaulting every domain to False
+    (`DomainPolicy.takes_date_filter`'s own dataclass default)."""
+    return [
+        {
+            **row,
+            "takes_date_filter": any(t in policy_rows.DATE_PARAM_TOOLS for t in row["tools"]),
+        }
+        for row in policy_rows.DEFAULT_DOMAIN_ROWS
+    ]
+
+
+@functools.lru_cache(maxsize=1)
+def default_policy() -> "Policy":
+    """The frozen-seed `Policy` every pure reader without a live database session falls
+    back to (AC-1594): the SAME `policy_rows.py` data `load_policy`'s own blank-schema
+    fallback uses, so the two can never disagree. Several old `lanes/business/` ported
+    modules read a domain fact (a switch word, a tool, a date-filter flag) from deep
+    inside a pure helper with no `db` session and no `ctx` reaching it - this is what they
+    read instead of the retired `contracts.DOMAIN_SPEC`. Cached: the seed never changes
+    within a process, and every caller wants the same frozen object.
+    """
+    from app.modules.chatbot.lane_vocabulary import default_tier_order
+
+    return Policy.from_rows(
+        domains=_default_domain_rows(),
+        kinds=[dict(row) for row in policy_rows.DEFAULT_KIND_ROWS],
+        tier_order=default_tier_order(),
+    )
+
+
+def domain_switch_words(policy: "Policy") -> dict[str, str]:
+    """word -> domain, inverted from each row's `switch_words` (was `contracts.
+    DOMAIN_SWITCH_WORDS`). A word claimed by two domains keeps the LAST domain in
+    `policy.domains` order - same behaviour the old dict comprehension had."""
+    return {word: row.name for row in policy.domains for word in row.switch_words}
 
 
 def _rows(db: "Session", sql: str) -> list[dict[str, Any]]:

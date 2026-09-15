@@ -48,6 +48,21 @@ from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
 
+# The eight teams a turn can escalate to (was `contracts.SUGGESTED_TEAMS`, AC-1594/S6):
+# escalation-lane vocabulary, not domain data, so it lives here rather than on `Policy` -
+# `purchasing_certification` and `it_admin` answer from no `chatbot_domains` row of their
+# own, so a union over the domain table's `escalation_team_code` could never recover them.
+ESCALATION_TEAMS: tuple[str, ...] = (
+    "purchasing",
+    "purchasing_certification",
+    "customer_service",
+    "marketing_product",
+    "marketing_form",
+    "warehouse",
+    "marketing_promotion",
+    "it_admin",
+)
+
 # `escalation-context`'s own STOPGAP mirror of the parser fork's map. The real source is
 # the CRM `companies.code` column threaded through the resolver; kept byte-identical here
 # and in `head/output_exchange.CO_ALIASES` until that lands.
@@ -813,14 +828,12 @@ def _catalogue_teams(word: Any) -> list[str]:
     An exact member always wins outright: `purchasing` is a team in its own right and
     must not be read as the family `purchasing_certification` also belongs to.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     token = jsc.nullish_str(word).strip().lower().replace(" ", "_").replace("-", "_")
     if not token:
         return []
-    if token in SUGGESTED_TEAMS:
+    if token in ESCALATION_TEAMS:
         return [token]
-    return [t for t in SUGGESTED_TEAMS if token in t.split("_")]
+    return [t for t in ESCALATION_TEAMS if token in t.split("_")]
 
 
 def _clarify_over(
@@ -856,8 +869,6 @@ def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
     the slug, which is the only string routing can act on. De-duplicated by label, which is
     what the printed list can distinguish.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
     pairs: list[dict[str, Any]] = []
     seen: set[str] = set()
     for hit in hits:
@@ -866,7 +877,7 @@ def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
         if jsc.truthy(label) and label not in seen:
             seen.add(label)
             pairs.append({"team": code, "label": label})
-    return pairs or [{"team": t, "label": _pretty_team(t)} for t in SUGGESTED_TEAMS]
+    return pairs or [{"team": t, "label": _pretty_team(t)} for t in ESCALATION_TEAMS]
 
 
 def _team_clarify_options(hits: list) -> list[str]:

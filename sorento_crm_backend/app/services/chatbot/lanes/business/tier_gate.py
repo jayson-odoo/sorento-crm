@@ -25,7 +25,17 @@ from typing import Any
 from app.services.chatbot import jsc
 
 BRANDS = ("sorento", "cabana", "mocha")
-TIER_ORDER = ("dealer", "office", "end_user")
+
+
+def _tier_order() -> tuple[str, ...]:
+    """The tier order (was the module-level `TIER_ORDER`, AC-1594/S6): `chatbot_domains`
+    carries no tier axis, so this reads `system_settings.chatbot_tier_order` through
+    `turn.policy.default_policy()`'s frozen seed - the same fallback every pure reader
+    with no live per-turn `Policy` reaching it uses. Not memoized here: `default_policy`
+    itself is."""
+    from app.services.chatbot.turn.policy import default_policy
+
+    return default_policy().tier_order
 
 # `\Z`, not `$`: Python's `$` also matches before a trailing newline and JavaScript's does
 # not, so a level name ending in "\n" would parse here and not in n8n.
@@ -58,7 +68,7 @@ def map_entitlement(names: Any) -> dict[str, Any]:
         tiers.add(parsed["tier"])
     return {
         "brands": [b for b in BRANDS if b in brands],
-        "tiers": [t for t in TIER_ORDER if t in tiers],
+        "tiers": [t for t in _tier_order() if t in tiers],
         "unknown": unknown,
     }
 
@@ -169,10 +179,11 @@ def tier_gate(
         else None
     )
 
+    tier_order = _tier_order()
     stated_set: set[str] = set()
     for a in jsc.array(parser.get("access_levels")):
         s = jsc.js_string("" if a is None else a).strip().lower()
-        if s in TIER_ORDER:
+        if s in tier_order:
             stated_set.add(s)
             continue
         parsed = parse_level(a)
@@ -183,10 +194,10 @@ def tier_gate(
     # a stale tier.
     if tier_pick_invalid:
         tier_stated: list[str] = []
-    elif tier_pick and tier_pick in TIER_ORDER:
+    elif tier_pick and tier_pick in tier_order:
         tier_stated = [tier_pick]
     else:
-        tier_stated = [t for t in TIER_ORDER if t in stated_set]
+        tier_stated = [t for t in tier_order if t in stated_set]
 
     ent_map = map_entitlement(names)
 

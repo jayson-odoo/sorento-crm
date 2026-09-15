@@ -101,7 +101,7 @@ def _unprocessable(message: str) -> HTTPException:
 
 
 def _validate_domain(db: Session, body: ChatbotDomainBody) -> None:
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+    from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
 
     wanted = [t for t in (body.tools or []) if t]
     if body.primary_tool:
@@ -117,10 +117,10 @@ def _validate_domain(db: Session, body: ChatbotDomainBody) -> None:
                 f"Unknown MCP tool(s): {', '.join(missing)}. A domain may only name tools "
                 f"the MCP catalog actually serves."
             )
-    if body.escalation_team_code and body.escalation_team_code not in SUGGESTED_TEAMS:
+    if body.escalation_team_code and body.escalation_team_code not in ESCALATION_TEAMS:
         raise _unprocessable(
             f"Unknown escalation team {body.escalation_team_code!r}. Expected one of: "
-            f"{', '.join(SUGGESTED_TEAMS)}."
+            f"{', '.join(ESCALATION_TEAMS)}."
         )
 
 

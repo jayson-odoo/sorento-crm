@@ -28,6 +28,7 @@ from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
+from app.services.chatbot.turn import policy_rows
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
@@ -1079,8 +1080,9 @@ def run_fetch(
         "predicate": gate.get("predicate"),
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
-    if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
-        args, tool_name=tool_name
+    if (
+        tool_name in policy_rows.ENTITY_FILTER_REQUIRED_TOOLS
+        and not fetch_mod.has_narrowing_filter(args, tool_name=tool_name)
     ):
         # Nothing the customer named resolved, so no filter could be built, and the document
         # tools answer an unfiltered call with the whole library. Refused as an ABSENCE (the

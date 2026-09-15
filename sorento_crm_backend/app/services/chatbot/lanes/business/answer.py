@@ -2208,16 +2208,17 @@ _SCOPE_WORD = {
 def _domain_takes_a_date_filter(domain: Any) -> bool:
     """Does any tool this domain can call accept a date range?
 
-    Derived from the two declarations that already answer it - `DOMAIN_SPEC[domain].tools`
-    and `fetch.DATE_PARAMS` - rather than from a third hand-kept list that would drift
-    away from both. `spo_allocation`'s only tool
+    `Policy.domain(domain).takes_date_filter` now (AC-1594: was derived here from
+    `DOMAIN_SPEC[domain].tools` against `fetch.DATE_PARAMS`); the S0 migration seeded that
+    column with the SAME derivation, off `turn/policy_rows.py::DATE_PARAM_TOOLS`, so
+    reading the column is not a second copy. `spo_allocation`'s only tool
     (`crm_procurement_spo_allocations_last_receipt_list`) takes no date parameter, so the
     scoping ask offered the customer a filter nothing downstream could have applied.
     """
-    from app.services.chatbot.contracts import DOMAIN_SPEC
+    from app.services.chatbot.turn.policy import default_policy
 
-    spec = DOMAIN_SPEC.get(jsc.js_string(domain if jsc.truthy(domain) else "").lower())
-    return any(tool in DATE_PARAMS for tool in (spec.tools if spec is not None else ()))
+    row = default_policy().domain(jsc.js_string(domain if jsc.truthy(domain) else "").lower())
+    return bool(row.takes_date_filter) if row is not None else False
 
 # `allowed_lookup` holds the resolver's INTERNAL entity types. Printing them raw asks the
 # customer to speak our schema, and several are the same thing to them.
