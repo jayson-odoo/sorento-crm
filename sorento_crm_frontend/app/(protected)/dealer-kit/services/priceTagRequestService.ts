@@ -50,6 +50,28 @@
  *  `PlacedTag`), and the print payload's `resolvedData` is keyed the same way.
  *  The S3 migration rewrote every saved doc in place.
  * ===========================================================================
+ *
+ * ===========================================================================
+ * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1/D5,
+ * Phase 1 slice S5 - MOCKED, no backend wired yet)
+ * ===========================================================================
+ * D5: CRM staff can change a line's price basis (promotion or a hand-typed
+ * price) from the detail page, same rules as the portal form (S1).
+ * `lookupLinePricing` is the CRM side of the S1 mock - same computation
+ * (`lib/dealer-kit/mock-line-pricing.ts`), so a product prices identically
+ * whether the salesperson or marketing is looking at it.
+ *
+ * ---- BACKEND CONTRACT (Phase 2, not built) --------------------------------
+ *
+ *  POST /dealer-kit/price-tag-requests/line-pricing   same body/response as
+ *    the portal's own route (see the portal service's contract block).
+ *
+ *  PATCH /dealer-kit/price-tag-requests/{id}/lines/{line_id}
+ *    body `{ promotion_id?: string | null, manual_sell_price?: number | null }`
+ *    -> the refreshed request. `price_tag_requests.process`, 409 on a
+ *    terminal request, clears the line's tags' pin fields so a pinned design
+ *    picks up the price change as the usual data-change banner.
+ * ===========================================================================
  */
 
 import { apiFetch } from '@/lib/api';
@@ -60,6 +82,20 @@ import {
   designPayloadFromResponse,
   type TagSheetDesignPayload,
 } from '@/lib/dealer-kit/design-payload';
+import { computeLinePricing } from '@/lib/dealer-kit/mock-line-pricing';
+import type {
+  LinePricingLineInput,
+  LinePricingResult,
+  SellPriceBasis,
+} from '@/lib/dealer-kit/mock-line-pricing';
+
+export type {
+  LinePricingCandidate,
+  LinePricingLineInput,
+  LinePricingPromotionOption,
+  LinePricingResult,
+  SellPriceBasis,
+} from '@/lib/dealer-kit/mock-line-pricing';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -130,6 +166,14 @@ export interface PriceTagRequestLine {
   package_warning: string | null;
   /** What gets printed for this line: one tag by default, N after a split. */
   tags: PriceTagRequestTag[];
+  // ---- D1/D5 (Phase 2, not wired yet): the line's own promotion / manual
+  // price. Optional so a server that predates the migration keeps
+  // validating; the detail page falls back to `lookupLinePricing` (mocked)
+  // while these are absent.
+  promotion_id?: string | null;
+  promotion_name?: string | null;
+  manual_sell_price?: number | null;
+  sell_price_basis?: SellPriceBasis | null;
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch. */
@@ -294,6 +338,45 @@ export async function updatePriceTagPrintBy(
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to update the request'));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Line pricing (D1/D4/D5, Phase 1 mock - see the contract block at the top
+// of this file)
+// ---------------------------------------------------------------------------
+
+/**
+ * One pricing call for every line (D4). MOCK ONLY (Phase 1) - see
+ * `lib/dealer-kit/mock-line-pricing.ts`. Same computation the portal form
+ * uses, so a product prices the same on both sides of the same request.
+ */
+export async function lookupLinePricing(
+  priceMode: PriceMode,
+  lines: LinePricingLineInput[],
+): Promise<LinePricingResult[]> {
+  return computeLinePricing(priceMode, lines);
+}
+
+/**
+ * A line's price basis (D5). MOCK ONLY (Phase 1) - resolves immediately with
+ * no persistence; the caller (`PriceTagRequestDetail`) keeps the change in
+ * its own state and re-derives every price through `lookupLinePricing`.
+ * Phase 2 (S11) swaps this for the real
+ * `PATCH /dealer-kit/price-tag-requests/{id}/lines/{line_id}` call - the
+ * shape below is that route's own request/response contract.
+ */
+export async function updatePriceTagLinePrice(
+  requestId: string,
+  lineId: string,
+  patch: { promotion_id?: string | null; manual_sell_price?: number | null },
+): Promise<void> {
+  // MOCK (Phase 1): no persistence yet - Phase 2 (S11) sends this as
+  // `PATCH /dealer-kit/price-tag-requests/{requestId}/lines/{lineId}` with
+  // `patch` as the body.
+  void requestId;
+  void lineId;
+  void patch;
+  return Promise.resolve();
 }
 
 /**
