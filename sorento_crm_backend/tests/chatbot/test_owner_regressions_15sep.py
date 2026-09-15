@@ -115,13 +115,30 @@ class TestRCTheArmingSideFreezesCoResolvedSiblings:
         out = run_gate(dict(resolver), parser=parser, resolver=resolver)
 
         assert out["require_specific"] is True
-        compat_types = {e["entity_type"] for e in out["compatible_entities"]}
-        assert "product" in compat_types, (
-            f"gate.py:753-754 narrows compatible_entities to the picker's own "
-            f"candidate uuids (the ambiguous customer's), dropping the co-resolved "
-            f"product the pick's payload.keep is meant to freeze: "
-            f"{out['compatible_entities']!r}"
+        # THE GENERAL RULE, 15 Sep 2026: the gate publishes what ANOTHER TOKEN resolved
+        # on its own key, and `compatible_entities` goes back to being exactly the rows
+        # on offer. Asserting the sibling on `compatible_entities` (as this test did
+        # while the fix was a widening) asks the gate to say two things with one list -
+        # which is what numbered the ten hidden WC286 rows into a three-row customer
+        # roster and flipped its kind off `customer_pick`.
+        assert [e["entity_type"] for e in out["compatible_entities"]] == [
+            "customer", "customer",
+        ], (
+            f"compatible_entities is the rows ON OFFER - the picker's own two customer "
+            f"candidates and nothing else: {out['compatible_entities']!r}"
         )
+        keep_types = {e.get("hint") or e.get("entity_type") for e in (out.get("keep_entities") or [])}
+        assert "product" in keep_types, (
+            f"the co-resolved product the pick's `payload.keep` is meant to freeze must "
+            f"reach the tail on the gate's own keep channel: {out.get('keep_entities')!r}"
+        )
+        kept = next(
+            e for e in (out.get("keep_entities") or [])
+            if (e.get("hint") or e.get("entity_type")) == "product"
+        )
+        # A SINGLE-match token keeps the resolved entity, uuid and all.
+        assert kept.get("uuid") == "prod-wc286", kept
+        assert kept.get("canonical_code") == "WC286", kept
 
     def test_a_co_resolved_attachment_type_survives_the_products_own_picker(self) -> None:
         """"photo for srtwc286": "srtwc286" is a real family (several real SKUs),
@@ -166,14 +183,23 @@ class TestRCTheArmingSideFreezesCoResolvedSiblings:
         out = run_gate(dict(resolver), parser=parser, resolver=resolver)
 
         assert out["require_specific"] is True
-        compat_types = {e["entity_type"] for e in out["compatible_entities"]}
-        assert "attachment_type" in compat_types, (
-            f"gate.py:753-754 narrows compatible_entities to the picker's own "
-            f"candidate uuids (the ambiguous product's), dropping the co-resolved "
-            f"attachment type - there is no focus axis for it, so `payload.keep` is "
-            f"the only channel that carries it forward to the pick turn: "
+        assert {e["entity_type"] for e in out["compatible_entities"]} == {"product"}, (
+            f"compatible_entities is the three product rows the picker offers: "
             f"{out['compatible_entities']!r}"
         )
+        keep_types = {e.get("hint") or e.get("entity_type") for e in (out.get("keep_entities") or [])}
+        assert "attachment_type" in keep_types, (
+            f"there is no focus axis for an attachment type, so the gate's keep channel "
+            f"is the only thing that carries it forward to the pick turn: "
+            f"{out.get('keep_entities')!r}"
+        )
+        kept = next(
+            e for e in (out.get("keep_entities") or [])
+            if (e.get("hint") or e.get("entity_type")) == "attachment_type"
+        )
+        assert kept.get("raw") == "Product Photos", kept
+        assert kept.get("canonical_code") == "Product Photos", kept
+        assert kept.get("uuid") == "attach-photo", kept
 
     def test_a_co_resolved_multi_match_product_survives_the_customers_own_picker(
         self,
@@ -253,14 +279,27 @@ class TestRCTheArmingSideFreezesCoResolvedSiblings:
         out = run_gate(dict(resolver), parser=parser, resolver=resolver)
 
         assert out["require_specific"] is True, out.get("gate_reason")
-        compat_types = {e["entity_type"] for e in out["compatible_entities"]}
-        assert "product" in compat_types, (
-            f"the customer-ambiguity arm (gate.py ~941-949) replaces "
-            f"compatible_entities wholesale with only the customer picker's own "
-            f"rows, dropping the co-resolved WC286 family entirely - live: the "
-            f"delivery report answered 'Product: all products' instead of scoping "
-            f"to wc286: {out['compatible_entities']!r}"
+        assert [e["entity_type"] for e in out["compatible_entities"]] == [
+            "customer", "customer", "customer",
+        ], (
+            f"exactly the three customer rows the reply numbers - the ten WC286 "
+            f"candidates are NOT on offer and must not be numbered into the roster: "
+            f"{out['compatible_entities']!r}"
         )
+        keep = out.get("keep_entities") or []
+        raws = {str(e.get("raw") or "").lower() for e in keep}
+        assert "wc286" in raws, (
+            f"a token with NO exact match has nothing to freeze as a resolved entity, so "
+            f"what survives is the customer's OWN WORD - live: the delivery report "
+            f"answered 'Product: all products' instead of scoping to wc286: {keep!r}"
+        )
+        kept = next(e for e in keep if str(e.get("raw") or "").lower() == "wc286")
+        assert (kept.get("hint") or kept.get("entity_type")) == "product", kept
+        assert kept.get("canonical_code") is None, (
+            f"the word resolved to ten products and none of them exactly, so it carries "
+            f"no canonical code: {kept!r}"
+        )
+        assert kept.get("current_message") is True, kept
 
 
 class TestRFAPickedMultiLedgerRowKeepsEveryLedger:

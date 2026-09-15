@@ -314,11 +314,22 @@ CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     # otherwise byte-identical, missing only the one new field on their customer picker
     # rows. Same mechanism as those, not a field-scoped divergence: the strip is
     # unconditional per-node, so a capture that DOES carry `family_uuids` grades it.
+    #
+    # `keep_entities` (the general keep rule, 15 Sep 2026): the gate now publishes the
+    # entities ANOTHER token resolved beside the picker's own candidates on a key of
+    # their own, so `compatible_entities` goes back to being exactly the rows on offer
+    # and `payload.keep` has one source instead of being subtracted back out of the
+    # narrowed list. Additive and unconditional per node, the same class as
+    # `family_uuids` above: a capture recorded before the key existed cannot grade it,
+    # and one that carries it does. Residual on `rg-15125764`, `exec-14095480` and the
+    # `resolve-exit-offer/rg-15125764` whole-sub replay (which `_compare` keys under
+    # `sub-resolve-and-gate`, see that entry below).
     "disallowed-entity-gate": (
         "specific_options",
         "display_name",
         "incompatible_only",
         "family_uuids",
+        "keep_entities",
     ),
     # `construct-user-prompt`'s `focus_hints` / `open_question` (AC-1024, S2 clarifier
     # ruling, 12 Sep 2026): the dialogue module's hints replace the raw `session_vars`
@@ -389,6 +400,9 @@ CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
         "tier_pick_domain",
         "display_name",
         "incompatible_only",
+        # Same reason as the gate's own entry above, one level down: the whole-sub
+        # replays compare the gate's item under THIS node name.
+        "keep_entities",
     ),
 }
 
