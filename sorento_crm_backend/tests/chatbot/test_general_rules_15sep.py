@@ -3522,13 +3522,32 @@ def _no_row_label_anywhere(result: Any, tokens: list[str], *, label: str, case: 
     )
 
 
+#: Whether (a)'s emission carries the volunteered position, PER KIND - and the difference
+#: is not a convenience, it is what the live shape actually was.
+#:
+#: Turn 0b610e47 rode an `outstanding_detail` question whose options were ONE row
+#: ("1. Delivery order list"), so a `[1]` beside "only BRW" is the model pointing at the
+#: only thing on the screen while the customer narrows it. Over the THREE-option scope
+#: question the same `[1]` would be the model choosing "Sales orders" out of nowhere -
+#: prompt noise (issue #933), and the pin-consistent rule says a position ANSWERS
+#: (`test_outstanding_lane::TestScopeAnswerRunsReportWithCarriedFilters::
+#: test_a_date_in_the_answering_turn_wins_over_the_carried_one` and
+#: `TestDateNarrowingUnderAnOpenOffer::test_a_pick_carrying_its_own_dates_still_picks`:
+#: a position plus an off-subject filter answers WITH the filter applied, which is also
+#: what this group's own (d) case requires). Keeping the noise here would have made (a)
+#: and (d) demand opposite things of one emission, so the scope arm drops it and stays a
+#: test about NARROWING. The answering-with-a-filter reading is (d)'s.
+_A_POSITIONS = {"outstanding_detail": [1], "outstanding_scope": []}
+
+
 @pytest.mark.parametrize("kind", _HEAD_RESOLVED_KINDS, ids=lambda k: k)
 def test_rm_a_location_with_a_stray_position_narrows_and_mints_no_label(
     kind, session_factory, monkeypatch
 ) -> None:
-    """(a) Turn 0b610e47's own shape: a warehouse entity the customer really named, with a
-    position riding along. Only off-subject axes are named, so it is the refinement it
-    looks like - whatever the stray position says."""
+    """(a) Turn 0b610e47's own shape: a warehouse entity the customer really named, over a
+    question whose rows are on the screen. Only off-subject axes are named, so it is the
+    refinement it looks like - and over the detail question, whose single row the model
+    volunteered a position for, that holds whatever the stray position says."""
     _seed_brw_warehouse(session_factory)
     _seed_head_question(session_factory, kind)
     tokens: list[str] = []
@@ -3536,7 +3555,8 @@ def test_rm_a_location_with_a_stray_position_narrows_and_mints_no_label(
         session_factory, monkeypatch,
         qf=_parser_output(
             message_type="casual", intent_hint=None, domain_hint=None,
-            entity_op="replace_combine", reference_positions=[1], reference_target="result",
+            entity_op="replace_combine", reference_positions=_A_POSITIONS[kind],
+            reference_target="result",
             asks=[], entities=[_entity("BRW", "warehouse")],
             user_goal="trying to narrow it to BRW",
         ),
@@ -3547,19 +3567,43 @@ def test_rm_a_location_with_a_stray_position_narrows_and_mints_no_label(
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     _no_row_label_anywhere(result, tokens, label=_ROW_LABELS[kind], case=f"{kind}/(a)")
-    reports = _report_tool_calls(calls)
-    assert len(reports) == 1, f"{kind}: the narrowing re-runs the report once: {calls!r}"
-    assert reports[0].get("warehouse_codes") == ["BRW"], (
-        f"{kind}: narrowed to the location the customer named: {reports[0]!r}"
-    )
-    assert reports[0].get("customer_ids") == [CARRIED_CUSTOMER_UUID], (
-        f"{kind}: with the stored subject intact: {reports[0]!r}"
-    )
-    question = _stored_oq(_final_vars(session_factory, result))
+    reply = (result.reply or {}).get("text") or ""
+    final = _final_vars(session_factory, result)
+    question = _stored_oq(final)
     assert question.get("kind") == kind, (
         f"{kind}: a refinement re-arms the same question over the narrower window "
         f"(AC-1157/AC-1158): {question!r}"
     )
+    if kind == "outstanding_detail":
+        # The scope is already known, so the narrowed report is what answers.
+        reports = _report_tool_calls(calls)
+        assert len(reports) == 1, (
+            f"{kind}: the narrowing re-runs the report once: {calls!r}"
+        )
+        assert reports[0].get("warehouse_codes") == ["BRW"], (
+            f"{kind}: narrowed to the location the customer named: {reports[0]!r}"
+        )
+        assert reports[0].get("customer_ids") == [CARRIED_CUSTOMER_UUID], (
+            f"{kind}: with the stored subject intact: {reports[0]!r}"
+        )
+    else:
+        # AC-1157's own shape for the SCOPE question, and the same thing
+        # `test_outstanding_lane::test_a_date_only_turn_under_the_scope_question_reasks_
+        # with_the_new_window` pins for a date: the document type is still unknown, so
+        # nothing can be fetched - the question is re-asked with the filter overlaid on
+        # its header, and the filter is what is carried.
+        assert _report_tool_calls(calls) == [], (
+            f"{kind}: the document type is still unknown, so a narrowing cannot fetch: "
+            f"{calls!r}"
+        )
+        assert "Outstanding for which document?" in reply, reply
+        assert "Location: BRW" in reply, (
+            f"{kind}: the re-asked question shows the narrowing the customer just made: "
+            f"{reply!r}"
+        )
+        filters_out = _stored_oq_filters(final)
+        assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
+        assert filters_out.get("customer_ids") == [CARRIED_CUSTOMER_UUID], filters_out
 
 
 @pytest.mark.parametrize("kind", _HEAD_RESOLVED_KINDS, ids=lambda k: k)
