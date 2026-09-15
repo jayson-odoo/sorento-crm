@@ -92,7 +92,11 @@ function set(overrides: Partial<ProductSetTagData> = {}): TagBindingData {
 
 function lineData(overrides: Partial<LineTagData> = {}): LineTagData {
   return {
+    tag_id: 'tag-1',
     line_id: 'line-1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     code: 'CBF3612',
     name: 'Kitchen Sink',
     dimensions: '800 x 500 x 220 mm',
@@ -367,7 +371,7 @@ describe('the print page and the canvas resolve a token identically', () => {
             {
               id: 't1',
               template_id: 'tpl-1',
-              request_line_id: 'line-1',
+              request_tag_id: 'tag-1',
               x_mm: 0,
               y_mm: 0,
               width_mm: 95,
@@ -387,7 +391,7 @@ describe('the print page and the canvas resolve a token identically', () => {
     const onCanvas = layerText(layer, { kind: 'line', line: lineData() }, 'print');
 
     render(
-      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'line-1': resolved }} />,
+      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
     expect(onCanvas).toBe('CBF3612 in stainless steel at RM 599');
@@ -405,7 +409,7 @@ describe('the print page and the canvas resolve a token identically', () => {
     const onCanvas = layerText(layer, { kind: 'line', line: lineData() }, 'print');
 
     render(
-      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'line-1': resolved }} />,
+      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
     expect(onCanvas).toBe('Model CBF3612');
@@ -417,7 +421,7 @@ describe('the print page and the canvas resolve a token identically', () => {
     const resolved: ResolvedLineData = lineData();
 
     render(
-      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'line-1': resolved }} />,
+      <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
     expect(screen.getByText('Kitchen Sink')).toBeTruthy();

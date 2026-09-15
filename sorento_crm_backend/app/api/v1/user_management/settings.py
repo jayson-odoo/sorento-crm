@@ -171,6 +171,10 @@ class SystemSettingUpdate(BaseModel):
     # above - they must appear HERE and in the GET dict, because both are manual.
     chatbot_business_lane_enabled: Optional[bool] = None
     chatbot_ordering_enabled: Optional[bool] = None
+    # Price tag packages (D2): the product classes a request line is WARNED about
+    # when it reaches marketing without its catalogue package. Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    price_tag_guarded_classes: Optional[list[str]] = None
 
 
 class ChatbotLane(BaseModel):
@@ -390,6 +394,7 @@ async def get_settings(
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
+                "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -646,6 +651,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
 
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
+        # Not a chatbot column, but it has the identical shape and the identical
+        # failure: NOT NULL with a default, so an explicit `null` here would send
+        # NULL into it and 500 at commit. An empty LIST is a legitimate answer
+        # (warn about nothing) and is written as sent; only `null` resets.
+        "price_tag_guarded_classes": ["Bathroom Furniture", "Kitchen Sink"],
         # NOT a literal (AC-931): read from the chatbot module's own doorway, which
         # projects it off `contracts.DOMAIN_SPEC`. This copy is why the doorway exists -
         # A6 unblocked `spo_allocation` in route.py and in the migration and this third

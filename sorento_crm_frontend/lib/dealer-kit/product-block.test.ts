@@ -718,7 +718,7 @@ describe('bindTemplateLayers clears a barcode override on clone (S9 review S5)',
     });
     expect(clone[0].text_override).toBeNull();
     // The template's own layers (what the editor still shows) are untouched -
-    // bindTemplateLayers is only ever called on a COPY (tagForLine clones
+    // bindTemplateLayers is only ever called on a COPY (tagForTag clones
     // via structuredClone before calling it).
     expect(overriddenTemplateLayers[0].text_override).toBe('4006381333931');
   });

@@ -126,6 +126,11 @@ export interface SystemSetting {
   // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
   handlingLockEnabledTypes: string[];
 
+  // Price tag packages (PLAN-price-tag-combos D2): the product class labels whose
+  // lines are warned about when they reach marketing without their catalogue
+  // package. Defaults to Bathroom Furniture + Kitchen Sink. Empty = warn nobody.
+  priceTagGuardedClasses: string[];
+
   // Portal submission revisions (UAC A1). `portalRevisionsEnabled` is the kill
   // switch and applies to every form type regardless of its own config row;
   // `portalMaxRevisions` is the fallback cap a type inherits when its own
