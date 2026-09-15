@@ -774,17 +774,31 @@ class Focus(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    products: list[str] = Field(default_factory=list)
-    customer: dict[str, Any] | None = None
+    # ONE shape, not two. These are the axes `turn/state.py::Focus` carries and
+    # `focus_to_wire` writes, field for field - the turn re-architecture's whole point is
+    # that there is a single scope, so the working object and the stored object cannot be
+    # different objects with a mapping between them. The mapping is what lost a ledger
+    # FAMILY on the way out (a singular `customer` cannot hold the two ledgers a "chin
+    # chun" pick resolves to, contract 103 / D7).
+    #
+    # Every entity axis is a LIST OF ENTITY DICTS (`{raw, canonical_code, uuid, ...}`),
+    # never a list of bare codes: what a pick resolved to and what the customer typed are
+    # both needed next turn, and a code alone keeps neither.
+    products: list[dict[str, Any]] = Field(default_factory=list)
+    customers: list[dict[str, Any]] = Field(default_factory=list)
+    warehouse: list[dict[str, Any]] = Field(default_factory=list)
+    brands: list[str] = Field(default_factory=list)
+    tier: list[str] = Field(default_factory=list)
     domains: list[str] = Field(default_factory=list)
-    warehouse: str | None = None
-    transporter: str | None = None
-    attachment_type: str | None = None
-    brand: str | None = None
-    tier: str | None = None
     document: list[str] = Field(default_factory=list)
     status: str | None = None
     date_window: dict[str, Any] | None = None
+    # AC-1317: where a counted-set answer got to, `{set_key, offset}`.
+    set_page: dict[str, Any] | None = None
+    # Any entity kind without a named axis above, keyed by kind. A kind this turn's
+    # policy narrows on but the Focus never declared still has somewhere safe to sit
+    # rather than being dropped on the way to the session.
+    extra: dict[str, list[dict[str, Any]]] = Field(default_factory=dict)
 
 
 class SessionVars(BaseModel):

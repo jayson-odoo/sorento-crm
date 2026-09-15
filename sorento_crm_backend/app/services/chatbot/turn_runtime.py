@@ -208,10 +208,16 @@ def lane_parse_output(
 
 def resolve_kinds(
     db: Session, *, ctx: dict[str, Any], branch_kind: str, space_id: str | None, dry_run: bool
-) -> tuple[dict[str, dict[str, int]], list[dict[str, Any]], dict[str, Any] | None]:
+) -> tuple[
+    dict[str, dict[str, int]],
+    list[dict[str, Any]],
+    dict[str, Any] | None,
+    dict[str, list[dict[str, Any]]],
+]:
     """Ask the resolver what each named token actually IS (AC-1527).
 
-    Returns `({raw: {kind: hits}}, compatible_entities, predicate)`. The resolver and its gate are
+    Returns `({raw: {kind: hits}}, compatible_entities, predicate, candidates_by_kind)`.
+    The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
     which `turn/narrow.py` now decides from the policy instead.
 
@@ -223,7 +229,7 @@ def resolve_kinds(
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
-        return {}, [], None
+        return {}, [], None, {}
     try:
         payload = resolve_gate.run(
             ctx,
@@ -236,7 +242,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return {}, [], None
+        return {}, [], None, {}
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -256,7 +262,52 @@ def resolve_kinds(
     # question described, and the count is what the answer's own header says. It rides
     # the gate to the tool trigger, where `fetch.output_structurer` prepends it.
     predicate = gate.get("predicate") if isinstance(gate.get("predicate"), dict) else None
-    return by_token, compatible, predicate
+    # The has/no stamps are the PICKER's, and the picker writes them onto its own
+    # annotated item (the `offer` exit), not onto the gate it was handed. Fall back to
+    # the gate so a turn that never reached the picker still groups its candidates.
+    annotated = payload.get("annotate_incoming")
+    stamps_from = annotated if isinstance(annotated, dict) else gate
+    return by_token, compatible, predicate, candidates_by_kind(stamps_from, compatible)
+
+
+def candidates_by_kind(
+    gate: dict[str, Any], compatible: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    """The resolver's own rows, grouped by entity kind, for the narrower's roster.
+
+    This is what turns "which product do you mean? 1. wc286" into the ten-row roster the
+    journey describes: the rows are what the resolver MATCHED, carrying the uuid a pick
+    resolves to, and `stamp` is the fact the kept picker probe already measured about
+    each one ("has incoming"). Deduped on identity, in the resolver's own order - the
+    order the customer will read the numbers in.
+    """
+    stamps = gate.get("incoming_by_code") if isinstance(gate.get("incoming_by_code"), dict) else {}
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    seen: dict[str, set[str]] = {}
+    for row in compatible:
+        kind = jsc.nullish_str(row.get("entity_type")).strip().lower()
+        # `code` is what the RESOLVER calls it; `canonical_code` / `raw` are what the
+        # parser and the focus call it. One row shape reaches here from both.
+        code = jsc.js_string(row.get("code") or row.get("canonical_code") or row.get("raw"))
+        identity = jsc.js_string(row.get("uuid") or code)
+        if not kind or not identity:
+            continue
+        if identity in seen.setdefault(kind, set()):
+            continue
+        seen[kind].add(identity)
+        built: dict[str, Any] = {
+            "raw": code or row.get("raw"),
+            "canonical_code": code or None,
+            "uuid": row.get("uuid") or code,
+            "hint": kind,
+        }
+        family = row.get("uuids")
+        if isinstance(family, list) and family:
+            built["uuids"] = list(family)
+        if code in stamps:
+            built["stamp"] = "has incoming" if stamps[code] else "no incoming"
+        grouped.setdefault(kind, []).append(built)
+    return grouped
 
 
 def make_tool_runner(

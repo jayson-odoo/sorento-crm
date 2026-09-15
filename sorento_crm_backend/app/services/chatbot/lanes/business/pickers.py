@@ -111,6 +111,19 @@ def annotate_incoming(gate: dict[str, Any] | None, *, probe: Any) -> dict[str, A
         message += "\n\nNone of these have incoming stock right now."
     out["escalate_message"] = message
     out["is_clarification"] = False  # parity with the not-found require_specific branch
+    # The same fact the sentence above states, kept as DATA (turn re-architecture,
+    # AC-1526): the new narrower builds its roster from `compatible_entities` and needs
+    # the has/no stamp per code, and re-reading it out of the rendered lines would be
+    # parsing our own prose. Computed here because this is where the probe answer is.
+    out["incoming_by_code"] = {
+        code: _norm(code) in has_incoming
+        for code in (
+            jsc.js_string(jsc.get(e, "code") or jsc.get(e, "canonical_code") or jsc.get(e, "raw"))
+            for e in jsc.array(out.get("compatible_entities"))
+            if jsc.truthy(e)
+        )
+        if code
+    }
     return out
 
 

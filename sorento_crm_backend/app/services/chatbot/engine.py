@@ -1377,16 +1377,24 @@ def _run_stages(  # noqa: PLR0915
         resolved_kinds: dict[str, dict[str, int]] = {}
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
+        resolved_candidates: dict[str, list[dict[str, Any]]] = {}
         if plan.fetch or plan.ask is not None:
-            resolved_kinds, compatible_entities, predicate = turn_runtime.resolve_kinds(
-                db,
-                ctx=ctx,
-                branch_kind="business_query",
-                space_id=space_id_for_turn,
-                dry_run=dry_run,
+            resolved_kinds, compatible_entities, predicate, resolved_candidates = (
+                turn_runtime.resolve_kinds(
+                    db,
+                    ctx=ctx,
+                    branch_kind="business_query",
+                    space_id=space_id_for_turn,
+                    dry_run=dry_run,
+                )
             )
-            if resolved_kinds:
-                state_out, plan = turn_apply(state_in, verdict, policy, resolved_kinds)
+            if resolved_kinds or resolved_candidates:
+                # The ONE re-entry the plan allows: what the resolver found goes back
+                # into APPLY, so the narrower asks about things that exist and a
+                # reconciled kind lands before anything is fetched.
+                state_out, plan = turn_apply(
+                    state_in, verdict, policy, resolved_kinds, resolved_candidates
+                )
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
         # agent (contract 58, fail closed) and the stock-denial switch, which is decided
@@ -1398,6 +1406,19 @@ def _run_stages(  # noqa: PLR0915
         else:
             branch_kind = turn_route(plan)
         item = _stamp_item(access, branch_kind, {})
+
+        # AC-1546: the episode belongs to the topic that just CLOSED, and a topic closes
+        # because the customer changed subject - not because this turn's lane went on to
+        # answer. Written HERE, where the reset is decided, so a turn whose fetch failed
+        # or whose lane refused still remembers the topic it ended. Once per turn, never
+        # mid-topic, never on a dry run.
+        if not dry_run and verdict.get("topic_reset") is True:
+            _write_episode(
+                db,
+                contact_respond_id=contact_respond_id,
+                before=remembered_before,
+                turn_id=turn_id,
+            )
 
         turn_trace.add(
             "apply",
@@ -1815,10 +1836,6 @@ def _run_answer(
             dry_run=dry_run,
             written=written,
         )
-        # H:  the episode is written on the topic the turn just CLOSED, never mid-topic.
-        if not dry_run and verdict.get("topic_reset") is True:
-            _write_episode(db, contact_respond_id=contact_respond_id, before=remembered_before, turn_id=turn_id)
-
         lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
         turn_trace.record(
             "sent",

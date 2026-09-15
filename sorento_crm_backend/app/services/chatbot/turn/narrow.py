@@ -23,15 +23,31 @@ def _candidates(focus: Focus, kind: str) -> list[dict[str, Any]]:
 
 
 def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+    """One numbered row per candidate.
+
+    `uuid` is the identity the pick resolves to and `uuids` is the FAMILY that identity
+    stands for (contract 103): one code with several ledgers or several rows is still one
+    thing to the person reading the list, and picking it must yield every member. A
+    resolver row carries both; a focus entity has only its own code, which is its own
+    family of one.
+
+    `stamp` is what the picker probe already measured about that row ("has incoming"),
+    printed after the label so the customer can choose on the fact rather than on the
+    code alone.
+    """
     built = []
     for i, c in enumerate(candidates):
         code = c.get("canonical_code") or c.get("raw")
+        identity = c.get("uuid") or code
+        family = c.get("uuids")
+        label = c.get("raw") or code
+        stamp = c.get("stamp")
         built.append(
             {
                 "position": i + 1,
-                "label": c.get("raw") or code,
-                "uuid": code,
-                "uuids": [code] if code else [],
+                "label": f"{label} - {stamp}" if stamp else label,
+                "uuid": identity,
+                "uuids": list(family) if isinstance(family, list) and family else ([identity] if identity else []),
                 "entity_type": kind,
                 "payload": {},
             }
@@ -54,6 +70,7 @@ def decide(
     focus: Focus,
     profile: Profile,
     attributes: tuple[str, ...] | list[str] = (),
+    resolved_candidates: list[dict[str, Any]] | None = None,
 ) -> NarrowOutcome:
     """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
 
@@ -67,6 +84,19 @@ def decide(
         return NarrowOutcome(None, [], [], None)
 
     candidates = _candidates(focus, kind)
+
+    # What the RESOLVER matched for the tokens this turn named. It outranks the focus
+    # rows for a narrowing decision, because a roster the customer is asked to choose
+    # from has to list things that exist: "wc286" is one focus entity and ten real
+    # products, and offering the customer their own typo back is not a choice.
+    if resolved_candidates:
+        if policy_value in _ROSTER_POLICIES and kind != "tier":
+            if len(resolved_candidates) == 1:
+                # A code that resolves to exactly one thing IS narrowed to a code -
+                # there is nothing left to ask.
+                return NarrowOutcome(None, [], list(resolved_candidates), None)
+            return NarrowOutcome(f"{kind}_pick", _options(resolved_candidates, kind), [], None)
+        candidates = list(resolved_candidates)
 
     if policy_value == "list_all":
         return NarrowOutcome(None, [], candidates, None)

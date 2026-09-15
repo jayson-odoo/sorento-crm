@@ -301,6 +301,7 @@ def _narrow_and_plan(
     state: State,
     trace: Trace,
     attributes: tuple[str, ...] = (),
+    candidates: dict[str, list[dict[str, Any]]] | None = None,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -331,6 +332,7 @@ def _narrow_and_plan(
                 focus=focus,
                 profile=state.profile,
                 attributes=attributes,
+                resolved_candidates=(candidates or {}).get(kind),
             )
             trace.narrowing.append(f"{name}.{kind}:{policy_value}")
             if outcome.ask_kind:
@@ -390,6 +392,7 @@ def apply(
     verdict: dict[str, Any],
     policy: Policy,
     resolved: dict[str, dict[str, int]] | None = None,
+    candidates: dict[str, list[dict[str, Any]]] | None = None,
 ):
     trace = Trace()
 
@@ -473,6 +476,6 @@ def apply(
     attributes = tuple(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
     )
-    plan = _narrow_and_plan(focus, policy, domains, new_state, trace, attributes)
+    plan = _narrow_and_plan(focus, policy, domains, new_state, trace, attributes, candidates)
 
     return new_state, plan
