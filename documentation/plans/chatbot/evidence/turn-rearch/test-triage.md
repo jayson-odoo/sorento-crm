@@ -282,3 +282,19 @@ above is left as-is (historical record) rather than rewritten in place.
     unnamed `AttributeError` - still a loud failure, just not a named one. Sixth
     finding this triage pass, flagged as LOW severity (not reachable from a real
     LLM response) rather than escalated at the same level as the other five.
+
+- **`test_load_script_seeding.py` (531 lines) - done, RETIRED the one doomed
+  class.** Only `TestQuestionAgentCoverage` used `head.output_exchange.
+  derive_routing` (a pure Python domain->agent table). Grepped: every remaining
+  reference to `derive_routing` anywhere in `app/services/chatbot/` is a COMMENT
+  citing it as historical rationale, never a live definition - the mechanism moved
+  to the PARSER's own `routing.suggested_agent` emission (prompt-driven, read via
+  `jsc.get(verdict.get("routing"), "suggested_agent")` in `engine.py`/
+  `turn_runtime.py`/`lanes/escalation.py`/`lanes/canned.py`);
+  `contracts.SUGGESTED_AGENTS` is only the allow-list enum, not a domain->agent
+  map. Nothing left in Python to statically compare `ACCESS_AGENT_CODES` against -
+  the question ("does the seed cover every domain a --live-llm run could need") can
+  only be answered by a live-LLM run now, which is this file's own `--live-llm`
+  flag's job. RETIRED, not the low-confidence PORT the original table guessed at.
+  File collects clean (18 tests); every other class (seed grant idempotency, branch
+  kind parity, settle-wait, business-lane preflight) untouched.
