@@ -413,6 +413,108 @@ class TestThePinIsWrittenWhenDesigningStarts:
 
 
 # ---------------------------------------------------------------------------
+# Live finding - a request claimed through a backend that predates pins left
+# its lines unpinned, and an unpinned line reads LIVE - exactly what the gate
+# forbids. Ruling: an unpinned line on an IN-FLIGHT request is pinned on the
+# first resolve that reaches it.
+# ---------------------------------------------------------------------------
+
+
+class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
+    def test_the_first_design_read_pins_it_and_a_later_edit_no_longer_moves_it(
+        self, crm
+    ):
+        client, db = crm
+        product = seed.seed_product(db, list_price=1000.00)
+        request, _product, _contact = _designing_request(db, product=product)
+        seed.attach_design(db, request)
+        line = _lines(db, request.id)[0]
+        # Simulate a row from before pins existed: claimed, designing, never
+        # pinned - the raw update a pre-pin backend would have left behind.
+        line.pinned_tag_data = None
+        line.pinned_at = None
+        db.commit()
+
+        first = client.get(f"{_CRM.format(id=request.id)}/design")
+        assert first.status_code == 200, first.text
+        first_row = next(
+            row for row in first.json()["lines"] if row["line_id"] == line.id
+        )
+        assert first_row["list_price"] == 1000.00
+
+        db.expire_all()
+        fresh_line = _lines(db, request.id)[0]
+        assert fresh_line.pinned_tag_data is not None, (
+            "the first read must pin the line, or it stays exposed to master "
+            "data forever - reading it again and again is not a decision"
+        )
+        assert fresh_line.pinned_at is not None
+        assert float(fresh_line.pinned_tag_data["list_price"]) == 1000.00, (
+            "the pin must equal what THIS read resolved, not some other value"
+        )
+
+        # A second, later edit must no longer move the payload - it is pinned.
+        product.list_price = 1500.00
+        db.commit()
+
+        second = client.get(f"{_CRM.format(id=request.id)}/design")
+        assert second.status_code == 200, second.text
+        second_row = next(
+            row for row in second.json()["lines"] if row["line_id"] == line.id
+        )
+        assert second_row["list_price"] == 1000.00, (
+            "the line is pinned now - a later master data edit must not move it"
+        )
+        assert any(
+            change["field"] == "list_price"
+            for change in second_row.get("data_changes") or []
+        ), second_row
+
+        # resolve-prices answers the same pinned figure, not a re-derived live
+        # one - it is the SAME resolver, not a second one that forgot the pin.
+        resolved = client.post(f"{_CRM.format(id=request.id)}/resolve-prices").json()
+        resolved_row = next(row for row in resolved if row["line_id"] == line.id)
+        assert resolved_row["list_price"] == 1000.00
+
+    def test_a_terminal_requests_unpinned_line_is_not_pinned_by_a_read(
+        self, db_only
+    ):
+        """The ruling only revives an IN-FLIGHT request's forgotten pin. A
+        terminal request can decide nothing, so writing a pin now would be a
+        pin nobody asked for and nobody can act on - the same reasoning
+        `TestATerminalRequestNeverRunsTheLiveResolve` holds the resolver to.
+        """
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+        from app.services.dealer_kit import tag_data_service
+
+        product = seed.seed_product(db_only, list_price=1000.00)
+        request, _product, _contact = _designing_request(db_only, product=product)
+        line = _lines(db_only, request.id)[0]
+        line.pinned_tag_data = None
+        line.pinned_at = None
+        db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).update({"status": "collected"})
+        db_only.commit()
+        db_only.expire_all()
+        request = db_only.query(PriceTagRequest).filter(
+            PriceTagRequest.id == request.id
+        ).first()
+
+        tag_data_service.resolve_request_line_data(db_only, request)
+        db_only.commit()
+        db_only.expire_all()
+
+        fresh_line = (
+            db_only.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.id == line.id)
+            .first()
+        )
+        assert fresh_line.pinned_tag_data is None
+        assert fresh_line.pinned_at is None
+
+
+# ---------------------------------------------------------------------------
 # AC-S5-2 / AC-S5-7 - what the read paths answer
 # ---------------------------------------------------------------------------
 
