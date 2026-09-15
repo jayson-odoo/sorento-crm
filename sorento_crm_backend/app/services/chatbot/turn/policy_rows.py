@@ -392,6 +392,31 @@ DEFAULT_KIND_ROWS: list[dict[str, Any]] = [
     ),
 ]
 
-# system_settings.chatbot_tier_order's default - lanes/business/tier_gate.TIER_ORDER's
-# own literal order (AC-1502, captain ruling 16 Sep 2026).
-DEFAULT_TIER_ORDER: list[str] = ["dealer", "office", "end_user"]
+# `DEFAULT_TIER_ORDER` used to live here (AC-1502). Gone (AC-1594, S6): the one literal is
+# `app/modules/chatbot/lane_vocabulary.py::default_tier_order()` now - the core-safe
+# doorway `SystemSetting.chatbot_tier_order`'s own Python default, the S0 migration's
+# seed and `policy.load_policy`'s blank-schema fallback all read, so a fourth copy never
+# has the chance to disagree with the other three.
+
+# --------------------------------------------------------------------------- #
+# Hand-curated per-TOOL exception lists (AC-1594, S6). Not domain or kind data - a tool's
+# narrowing requirement is a property of the MCP argument shape, which has no row in
+# either policy table - so these moved here rather than into `Policy`, matching the
+# `DATE_PARAM_TOOLS` precedent just above: frozen, reasoned data that lives in the ONE
+# seed-data module instead of as a third list on `lanes/business/fetch.py` itself.
+# --------------------------------------------------------------------------- #
+
+# SF6 (security review, PLAN-chatbot-last-purchase-cost.md, 12 Sep 2026): tools whose
+# UNSCOPED branch answers every product (or every product at a warehouse) rather than
+# refusing, so an entity filter is required rather than merely accepted.
+# `crm_resource_attachments_list` - a warehouse/document-type filter is enough narrowing.
+# `crm_procurement_po_last_cost_list` also joins for the same reason - see
+# `PRODUCT_ID_REQUIRED_TOOLS` below, which narrows its own bar further.
+ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset(
+    {"crm_resource_attachments_list", "crm_procurement_po_last_cost_list"}
+)
+
+# SF6: of `ENTITY_FILTER_REQUIRED_TOOLS`, the one tool for which `warehouse_ids` alone is
+# NOT enough narrowing - its unscoped branch is a plain top_n cap over every product at
+# that warehouse, so a warehouse named with no product is still an unnamed-product leak.
+PRODUCT_ID_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_procurement_po_last_cost_list"})

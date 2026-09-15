@@ -18,300 +18,26 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.chatbot import jsc
+from app.services.chatbot.turn import policy_rows
 
 # --------------------------------------------------------------------------- #
-# DOMAIN_SPEC (D9). One row per domain; five tables are views over it.
+# Domain vocabulary (D9, AC-1501/AC-1594). Used to live here as `DOMAIN_SPEC`, one
+# hand-authored dict with five views over it; the chatbot turn re-architecture (S0/S6)
+# moved the data to the `chatbot_domains` / `chatbot_entity_kinds` tables, loaded at
+# runtime as `turn.policy.Policy` (`turn.policy.load_policy` / `default_policy`). What
+# stays here is only what a live database read cannot supply: `DOMAIN_HINTS` /
+# `INTENT_HINTS` below build `Literal` types, which Python resolves at IMPORT time, so
+# they read the frozen seed (`turn.policy_rows.DEFAULT_DOMAIN_ROWS` - the SAME data a
+# migrated database is seeded from, one copy) rather than a database row.
+#
+# Deliberately NOT folded into the policy tables, and this is unchanged from D9's own
+# discipline: the tables that carry a per-domain HAZARD rather than a per-domain fact.
+# `AXIS_BY_DOMAIN`, `DOMAIN_SUBJECT_AXIS`, `DOMAIN_SUBJECT_HINT`, `DOMAIN_BLOCKED_HINTS`,
+# `MEMBER_OFFER_FILTER_HINTS` and `DOMAIN_BROADEN_BLOCKED_HINTS` each carry a hand-earned
+# annotation naming the live turn that put a row there (owner rulings K2 to K4, C1, the
+# 2026-08-09 promotion-brand leak). They stay where they are, in `head/output_exchange.py`,
+# next to their evidence.
 # --------------------------------------------------------------------------- #
-
-
-@dataclass(frozen=True)
-class DomainSpec:
-    """Everything about a domain that is the SAME fact said in several places (D9).
-
-    Evidence, not a hypothetical: adding one domain (`purchase_order`) meant editing six
-    separate literals, and each of the five below is a per-domain fact that was written
-    down independently and could therefore disagree with the others without anything
-    failing. That is H28 - enum drift - with the domain as the enum.
-
-    Deliberately NOT in here, and this is the whole discipline of the table: the tables
-    that carry a per-domain HAZARD rather than a per-domain fact. `AXIS_BY_DOMAIN`,
-    `DOMAIN_SUBJECT_AXIS`, `DOMAIN_SUBJECT_HINT`, `DOMAIN_BLOCKED_HINTS`,
-    `MEMBER_OFFER_FILTER_HINTS` and `DOMAIN_BROADEN_BLOCKED_HINTS` each carry a
-    hand-earned annotation naming the live turn that put a row there (owner rulings K2 to
-    K4, C1, the 2026-08-09 promotion-brand leak). Folding those into a uniform table would
-    lose the reason with the shape, which is the mistake `PRINCIPLES.md` calls "copying a
-    mechanism without the justification that earned it". They stay where they are, in
-    `head/output_exchange.py`, next to their evidence.
-
-    * `intents` - the `intent_hint` values that mean THIS domain. One tuple, flattened into
-      `INTENT_HINTS`; a 1:1 mapping today and the table is what makes that visible.
-    * `bare_entity_type` - owner ruling K rule 4: what a message that is nothing but a code
-      or a name IS under this domain. `None` means the rule does not apply, which is not
-      the same as "product" - see `BARE_ENTITY_TYPE_BY_DOMAIN`'s own note for why a wrong
-      guess is worse than not inheriting.
-    * `switch_words` - the words that SWITCH a conversation into this domain, inverted into
-      `DOMAIN_SWITCH_WORDS` (word -> domain). The inversion is what makes "one word, one
-      domain" a property the guardrail test can check rather than an accident of hand
-      editing.
-    * `tools` - the MCP tools a turn in this domain answers from, FIRST ONE FIRST.
-      `lanes/business/fetch.select_tool` calls `tools[0]` and nothing else, so the head
-      of each tuple is a contract, not an ordering: reorder it and a different tool
-      answers the customer. It is the tool production already chose - measured over the
-      740 business turns in the 7 Sep 2026 prod copy, the embedding pick this replaced
-      was the first-listed tool on every one of them, and
-      `tests/chatbot/test_tool_pick_from_domain_spec.py` pins the eleven names.
-      The REST of each tuple is an allow-list, not a candidate list: the union feeds
-      `fetch.CHATBOT_READ_ONLY_TOOLS`, which is what the probes and the cross-domain
-      rung are checked against when they name a tool directly.
-      `mcp_tool_registry_service.sync_catalog` also stamps this mapping (via
-      `mcp_tool_domains.CHATBOT_TOOL_DOMAINS`) onto `mcp_tools.chatbot_domain` - one
-      domain per tool, a tool listed twice raises at sync time - and nothing reads that
-      column since the tool search went (see its own docstring).
-    * `escalation_team` - the `SUGGESTED_TEAMS` member a turn in this domain escalates to.
-      Mirrors `output_exchange.derive_routing`'s ladder, which is a REPLAY-GRADED ported
-      node and therefore stays the executable copy; the guardrail test asserts the two
-      agree, which is what stops the pair drifting. `None` where `derive_routing` itself
-      falls through to the null pair.
-    * `default_supported` - False puts the domain in `DEFAULT_UNSUPPORTED_DOMAINS`, i.e.
-      the bot refuses it out of the box. Note that every unsupported domain has an EMPTY
-      `tools` tuple: the refusal is not a policy, it is that nothing can answer.
-    """
-
-    intents: tuple[str, ...]
-    bare_entity_type: str | None
-    switch_words: tuple[str, ...]
-    tools: tuple[str, ...]
-    escalation_team: str | None
-    default_supported: bool = True
-
-
-DOMAIN_SPEC: dict[str, DomainSpec] = {
-    "master_products": DomainSpec(
-        intents=("check_product",),
-        bare_entity_type=None,
-        switch_words=(
-            "catalogue",
-            "catalog",
-            "spec",
-            "specs",
-            "specification",
-            "specifications",
-            "dimension",
-            "dimensions",
-        ),
-        tools=(
-            "crm_master_products_list",
-            "crm_master_brands_list",
-            "crm_master_product_categories_list",
-            "crm_master_units_of_measure_list",
-        ),
-        escalation_team="purchasing",
-    ),
-    "product_attachment": DomainSpec(
-        intents=("check_product_attachment",),
-        bare_entity_type=None,
-        switch_words=(),
-        tools=("crm_master_product_attachments_list", "crm_certificates_list"),
-        # `derive_routing` splits this one on the CERTIFICATE signal
-        # (purchasing_certification when a cert word is present, marketing_product
-        # otherwise), which is a per-turn decision and not a per-domain fact. The
-        # non-cert arm is the one recorded here; the guardrail test asks
-        # `derive_routing` with no cert signal, so the split stays where it is
-        # executable.
-        escalation_team="marketing_product",
-    ),
-    "promotion": DomainSpec(
-        intents=("check_promotion",),
-        bare_entity_type="product",
-        switch_words=("promo", "promos", "promotion", "promotions", "promosi"),
-        tools=(
-            "crm_marketing_promotions_list",
-            "crm_marketing_promotion_attachments_list",
-            "crm_marketing_promotion_products_list",
-        ),
-        escalation_team="marketing_promotion",
-    ),
-    "forms": DomainSpec(
-        intents=("get_forms",),
-        bare_entity_type=None,
-        switch_words=(),
-        tools=("crm_forms_management_forms_list",),
-        escalation_team="marketing_form",
-    ),
-    "inventory": DomainSpec(
-        # `low_stock_report` (PLAN-low-stock-report S6, AC-62) is a SECOND intent on this
-        # domain, not a domain of its own: the ask is about stock, and the escalation team
-        # and entity vocabulary are the warehouse's either way.
-        intents=("check_stock", "low_stock_report"),
-        bare_entity_type="product",
-        switch_words=(
-            "stock", "stocks", "inventory", "stok", "qty", "quantity",
-            "low stock", "reorder report", "below level",
-        ),
-        # The low stock tool is APPENDED, never `tools[0]`: `select_tool` falls back to the
-        # first-listed tool for a domain, so putting it in front would send every plain
-        # stock ask ("how many CB100 in BRW") into a full reorder run. The intent, not the
-        # domain, is what picks it (`run_fetch`'s override).
-        tools=(
-            "crm_inventory_stock_balance_list",
-            "crm_inventory_warehouses_list",
-            "crm_low_stock_report",
-        ),
-        escalation_team="warehouse",
-    ),
-    "order": DomainSpec(
-        intents=("check_order",),
-        bare_entity_type="customer",
-        # "delivery" and its forms (owner turn 2d903c96, 8 Sep 2026): "delivery to hanlim"
-        # came back `request_for_help` with both hints null, and with no switch word for
-        # the delivery vocabulary the #6 consumer and the escalation guard had nothing
-        # structural to read. NOT "do": it collides with the English verb ("do you have").
-        switch_words=(
-            "order", "orders", "outstanding", "tempahan",
-            "delivery", "deliveries", "deliver", "delivered",
-            "penghantaran", "hantar", "dihantar",
-        ),
-        tools=(
-            "crm_order_management_orders_list",
-            "crm_order_management_orders_by_product_list",
-            # `crm_order_analytics` is OUT of the pool (8 Sep 2026). Measured on the graded
-            # console file: it won the pick on plain quantity asks ("how many did KENWEALTH
-            # TRADING take of C-FH14", turns 87694182 / 0b10a4c0 at 0.4195 against the
-            # order list's 0.4161; "delivery to hanlim", turn 11932963 at 0.497) and
-            # answered EMPTY every time, because its `metric` query param is required and
-            # the fetch lane never maps one from the parser - so the customer got "no order
-            # matched" and an escalate offer for a question the order list answers. Re-add
-            # it the day the lane maps a `metric` (count / total_value / avg_delivery_days)
-            # off the parser's emission; until then a tool that cannot be called correctly
-            # must not be retrievable.
-            # The customer master is claimed HERE and not by `master_products`: a
-            # customer is only ever looked up to narrow an order question.
-            "crm_master_customers_list",
-            # S4 point 2 (PLAN-chatbot-outstanding-report.md): NEVER `tools[0]` - the
-            # override lives in `lanes/business/__init__.py::run_fetch`, which swaps
-            # the pick to this tool for domain "order" + a resolved product + an
-            # outstanding order_status. Listed here only so `CHATBOT_READ_ONLY_TOOLS`
-            # (derived from `DOMAIN_CLAIMED_TOOLS`, this tuple's own union) allows it.
-            "crm_outstanding_report",
-        ),
-        escalation_team="customer_service",
-    ),
-    "incoming": DomainSpec(
-        intents=("check_incoming",),
-        bare_entity_type="product",
-        switch_words=(
-            "incoming",
-            "eta",
-            "shipment",
-            "shipments",
-            "arriving",
-            "container",
-            "containers",
-        ),
-        tools=(
-            "crm_incoming_stock_list",
-            "crm_incoming_stock_by_product",
-            "crm_incoming_stock_shipments",
-        ),
-        escalation_team="purchasing",
-    ),
-    "portal_link": DomainSpec(
-        intents=("get_portal_link",),
-        bare_entity_type=None,
-        switch_words=(),
-        tools=("crm_portal_link_get",),
-        escalation_team=None,
-    ),
-    "resource_attachment": DomainSpec(
-        intents=("get_resource_attachment",),
-        bare_entity_type=None,
-        switch_words=(),
-        tools=(
-            "crm_resource_attachments_list",
-            "crm_resource_attachments_catalogue",
-            "crm_resource_attachments_current_stock_list",
-        ),
-        # Unmapped in `derive_routing` ON PURPOSE: the row pairing it with
-        # marketing_product belongs to the unpromoted B-TEAM-1' lane change, and the
-        # live body routes it by the prior-state carry instead.
-        escalation_team=None,
-    ),
-    "goods_receive": DomainSpec(
-        intents=("check_goods_receive",),
-        bare_entity_type=None,
-        switch_words=(),
-        tools=(),
-        escalation_team=None,
-        # Nothing reads GRN data. The refusal is not a policy the owner could relax by
-        # editing `chatbot_unsupported_domains`; it is that there is no tool.
-        default_supported=False,
-    ),
-    "spo_allocation": DomainSpec(
-        intents=("check_spo",),
-        bare_entity_type=None,
-        # "spo" (8 Sep 2026, the trigger the purchase_order row names): measured last-in
-        # asks under the labelled prompt came back in the WRONG domain - turn bd6eacf4
-        # ("last in for C-FH14" -> order / check_order) and 796957f4 (the same words ->
-        # incoming / check_incoming). "spo" is the one token of that vocabulary that is a
-        # whole word of its own; "last" / "in" are not sanctioned here, so the bare
-        # "last in" phrasing is the prompt's to teach, not this table's.
-        switch_words=("spo",),
-        # `..._spo_allocations_...` and not `..._spo_...`: the name predates the 8 Sep
-        # 2026 fix (the retired tool search filtered `source_id LIKE '%spo_allocation%'`,
-        # so the shorter name was unretrievable from this domain - growth r1 A6). No
-        # search and no name decides retrievability now, this row does, but the owner
-        # ruled against renaming a shipped tool.
-        tools=("crm_procurement_spo_allocations_last_receipt_list",),
-        escalation_team=None,
-    ),
-    "ideate": DomainSpec(
-        intents=("submit_idea",),
-        bare_entity_type=None,
-        switch_words=(),
-        # `crm_ideation_turn` is a WRITE tool and deliberately outside the chatbot's
-        # allow-list; the ideate lane calls it directly rather than retrieving it.
-        tools=(),
-        # No CS team: an idea is captured, never escalated. Its access AGENT
-        # (`ideation`) is `derive_routing`'s own single source of truth.
-        escalation_team=None,
-    ),
-    "purchase_order": DomainSpec(
-        intents=("check_po",),
-        # No row, by owner ruling K rule 4's own trigger: a MEASURED turn where a bare
-        # token under this domain is mis-hinted, and it has answered none yet.
-        bare_entity_type=None,
-        # No switch words yet either. "PO" is two letters that collide with product
-        # codes and with "po" inside other tokens, and `DOMAIN_SWITCH_WORDS` is matched
-        # per WORD against the customer's message with no domain context - a wrong
-        # switch would drag an unrelated turn into this domain. The decisive
-        # `intent_hint` the prompt now teaches is the signal; add a switch word when a
-        # measured turn shows the intent alone is not enough.
-        #
-        # That turn arrived (8 Sep 2026): 18d9b95c, "PO for SRTWC8517" under the labelled
-        # prompt -> domain inventory / check_stock, and the bare "PO?" (1d22dbb6 ->
-        # inventory, 98a9bec0 -> null) - the intent alone was not enough. Matched per WHOLE
-        # token by `_TOKEN_RE`, so "po" inside a code ("po1234") does not fire.
-        switch_words=("po",),
-        tools=("crm_procurement_po_placed_list",),
-        escalation_team="purchasing",
-    ),
-    "purchase_cost": DomainSpec(
-        intents=("check_po_cost",),
-        # No bare-entity row: a bare code under this domain has answered no measured turn
-        # yet, same reasoning as `purchase_order`'s own row.
-        bare_entity_type=None,
-        # No switch words (review SF3, 12 Sep 2026), same ruling as `purchase_order`'s
-        # own row: "cost" is the everyday word for the SELLING price ("how much does
-        # M218 cost"), and `DOMAIN_SWITCH_WORDS` is matched per WHOLE TOKEN with no
-        # domain context - a whole-token switch on "cost" would drag every such ask
-        # into this domain and refuse it for every contact without the grant. Routing
-        # is the parser prompt's job alone here (`LAST_COST_ADDENDUM`); add a switch
-        # word when a measured turn shows the intent alone is not enough.
-        switch_words=(),
-        tools=("crm_procurement_po_last_cost_list",),
-        escalation_team="purchasing",
-    ),
-}
 
 # Tools the chatbot MAY call that no domain answers FROM. Two kinds, and neither is an
 # oversight: reads for surfaces the chatbot does not route to by domain at all (projects,
@@ -349,15 +75,18 @@ MESSAGE_TYPES = (
 )
 MessageType = Literal[MESSAGE_TYPES]  # type: ignore[valid-type]
 
-# Every declared intent, flattened out of `DOMAIN_SPEC` (D9). One tuple, and the mapping
-# from an intent back to its domain is now a property of the table rather than a fact a
-# reader had to know: `check_po` means `purchase_order` because that is the row it is on.
+# Every declared intent, flattened out of the frozen domain seed (D9). One tuple, and the
+# mapping from an intent back to its domain is now a property of the table rather than a
+# fact a reader had to know: `check_po` means `purchase_order` because that is the row it
+# is on. Read from `policy_rows.DEFAULT_DOMAIN_ROWS` rather than a database row because a
+# `Literal` type is resolved at IMPORT time (AC-1594) - the S0 migration seeds a real
+# database from this SAME list, so the two can never disagree.
 INTENT_HINTS: tuple[str, ...] = tuple(
-    intent for spec in DOMAIN_SPEC.values() for intent in spec.intents
+    intent for row in policy_rows.DEFAULT_DOMAIN_ROWS for intent in row["intents"]
 )
 IntentHint = Literal[INTENT_HINTS]  # type: ignore[valid-type]
 
-DOMAIN_HINTS: tuple[str, ...] = tuple(DOMAIN_SPEC)
+DOMAIN_HINTS: tuple[str, ...] = tuple(row["name"] for row in policy_rows.DEFAULT_DOMAIN_ROWS)
 DomainHint = Literal[DOMAIN_HINTS]  # type: ignore[valid-type]
 
 
@@ -388,58 +117,23 @@ def coerce_domain_hint(value: Any) -> Any:
     """
     return value if value in DOMAIN_HINTS else None
 
-# --------------------------------------------------------------------------- #
-# The views over DOMAIN_SPEC (D9, AC-931). Each of these was an independent literal
-# somewhere else in the package; the literal is gone and this is the only copy.
-# --------------------------------------------------------------------------- #
+# `BARE_ENTITY_TYPE_BY_DOMAIN`, `DOMAIN_SWITCH_WORDS`, `DEFAULT_UNSUPPORTED_DOMAINS` and
+# `DOMAIN_CLAIMED_TOOLS` used to live here as views over `DOMAIN_SPEC` (AC-931). Gone
+# (AC-1594): the data is `chatbot_domains` now, read as `turn.policy.Policy` -
+# `turn.policy.domain_switch_words(policy)` and `lanes/business/fetch.select_tool` /
+# `CHATBOT_READ_ONLY_TOOLS` for the tool views, `app/modules/chatbot/lane_vocabulary.
+# default_unsupported_domains()` for the core-side doorway `SystemSetting.
+# chatbot_unsupported_domains`'s own default and `settings.py`'s null-reset table already
+# went through (AC-002 unchanged by S6 - core still may not import this package).
+# `BARE_ENTITY_TYPE_BY_DOMAIN` has no runtime reader left; nothing replaces it.
 
-#: Owner ruling K rule 4: what a BARE entity IS under a carried domain. A domain with no
-#: `bare_entity_type` is ABSENT here, not present with a null - the readers test
-#: membership, and "the rule does not apply" is a different answer from "it is a product".
-#: Was a literal in `head/output_exchange.py`.
-BARE_ENTITY_TYPE_BY_DOMAIN: dict[str, str] = {
-    domain: spec.bare_entity_type
-    for domain, spec in DOMAIN_SPEC.items()
-    if spec.bare_entity_type is not None
-}
-
-#: word -> domain, inverted from each row's `switch_words`. The inversion is the point: a
-#: word claimed by two domains is now impossible to write, where the hand-maintained dict
-#: would simply have kept the last one. Was a literal in `head/output_exchange.py`.
-DOMAIN_SWITCH_WORDS: dict[str, str] = {
-    word: domain for domain, spec in DOMAIN_SPEC.items() for word in spec.switch_words
-}
-
-#: What `route.decide`'s `not_supported` arm tests when no configured list is supplied
-#: (AC-304). Was a literal in `head/route.py`, and repeated in TWO core-side places that
-#: cannot import this package (AC-002): `SystemSetting.chatbot_unsupported_domains`'s own
-#: default and `settings.py`'s null-reset table. Those two now read it through
-#: `app/modules/chatbot/lane_vocabulary.py`, the module's existing doorway for exactly this
-#: problem, and the column's `server_default` stays a DDL literal (it has to be) pinned by
-#: `tests/chatbot/test_domain_spec.py`.
-DEFAULT_UNSUPPORTED_DOMAINS: tuple[str, ...] = tuple(
-    domain for domain, spec in DOMAIN_SPEC.items() if not spec.default_supported
-)
-
-#: Every tool claimed by a domain. `lanes/business/fetch.CHATBOT_READ_ONLY_TOOLS` is this
-#: plus `UNDOMAINED_CHATBOT_TOOLS`; see that constant for why the allow-list is derived
-#: rather than a third list.
-DOMAIN_CLAIMED_TOOLS: tuple[str, ...] = tuple(
-    tool for spec in DOMAIN_SPEC.values() for tool in spec.tools
-)
-
-
-SUGGESTED_TEAMS = (
-    "purchasing",
-    "purchasing_certification",
-    "customer_service",
-    "marketing_product",
-    "marketing_form",
-    "warehouse",
-    "marketing_promotion",
-    "it_admin",
-)
-
+# `SUGGESTED_TEAMS` used to live here too (AC-931). Gone (AC-1594): NOT derivable from
+# `chatbot_domains.escalation_team_code` - two of the eight (`purchasing_certification`,
+# `it_admin`) answer from no domain of their own, so a domain-table union would silently
+# drop them. The eight codes are escalation-lane vocabulary, not domain data, and now live
+# in `lanes/escalation.py` as `ESCALATION_TEAMS`, the module that actually owns routing a
+# turn to a team.
+#
 # The team `output_exchange`'s routing chain falls to when this turn named none, its domain
 # derives none and no previous turn carried one - the HARD default at the end of the
 # nullish chain, so this body never emits a null team. Named here because TWO readers need
@@ -447,7 +141,6 @@ SUGGESTED_TEAMS = (
 # (AC-815 / review of #706 B1), which must not mistake a carried default for a previous
 # turn's real routing.
 DEFAULT_SUGGESTED_TEAM = "customer_service"
-SuggestedTeam = Literal[SUGGESTED_TEAMS]  # type: ignore[valid-type]
 
 SUGGESTED_AGENTS = (
     "general_enquiries",

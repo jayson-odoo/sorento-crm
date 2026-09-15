@@ -40,34 +40,39 @@ def lane_options(*, business_lane_enabled: bool) -> list[tuple[str, bool]]:
 def default_unsupported_domains() -> list[str]:
     """The domains the bot refuses out of the box (AC-304, AC-931).
 
-    `contracts.DEFAULT_UNSUPPORTED_DOMAINS`, projected off `DOMAIN_SPEC` (D9), reached
-    through this doorway for the same AC-002 reason `completed_lane_kinds` exists: the two
-    core-side readers - `SystemSetting.chatbot_unsupported_domains`' Python default and
-    `api/v1/user_management/settings.py`'s null-reset table - may not import
-    `app/services/chatbot/`, and hand-copied literals in those two places are exactly what
-    drifted when A6 unblocked `spo_allocation` (the settings copy was found only after the
-    other two were fixed).
+    Reached through this doorway for the same AC-002 reason `completed_lane_kinds`
+    exists: the two core-side readers - `SystemSetting.chatbot_unsupported_domains`'
+    Python default and `api/v1/user_management/settings.py`'s null-reset table - may not
+    import `app/services/chatbot/`, and hand-copied literals in those two places are
+    exactly what drifted when A6 unblocked `spo_allocation` (the settings copy was found
+    only after the other two were fixed). Since the chatbot turn re-architecture (AC-1594,
+    S6) the source is `turn.policy.default_policy()`'s frozen seed rather than the retired
+    `contracts.DEFAULT_UNSUPPORTED_DOMAINS`, and any per-tenant override lives in
+    `chatbot_domains.supported`, not here - this is only the blank-install default.
 
-    A LIST, not the tuple, because both readers hand the value to SQLAlchemy as a JSONB
+    A LIST, not a tuple, because both readers hand the value to SQLAlchemy as a JSONB
     column value and a tuple serialises differently. Read at call time, so a slice that
     changes the table needs no edit here.
     """
-    from app.services.chatbot.contracts import DEFAULT_UNSUPPORTED_DOMAINS
+    from app.services.chatbot.turn.policy import default_policy
 
-    return list(DEFAULT_UNSUPPORTED_DOMAINS)
+    return [row.name for row in default_policy().domains if not row.supported]
 
 
 def default_tier_order() -> list[str]:
-    """The tier order (chatbot turn re-architecture, AC-1502 captain ruling 16 Sep 2026).
+    """The tier order default (chatbot turn re-architecture, AC-1502 captain ruling
+    16 Sep 2026, AC-1594 captain ruling 16 Sep 2026).
 
-    `lanes/business/tier_gate.TIER_ORDER`'s own literal order, through this doorway for
-    the same AC-002 reason every other function here exists:
-    `SystemSetting.chatbot_tier_order`'s Python default may not import
-    `app/services/chatbot/` directly.
+    The ONE literal every reader without a live `system_settings.chatbot_tier_order` row
+    falls back to - `SystemSetting.chatbot_tier_order`'s Python default, the S0
+    migration's seed and `turn.policy.load_policy` / `default_policy`'s own fallback all
+    read this function rather than keeping their own copy, which is what stops the three
+    `TIER_ORDER` literals this replaced (`lanes/business/tier_gate.py`,
+    `lanes/business/fetch.py`, `turn/policy_rows.py::DEFAULT_TIER_ORDER`) drifting from
+    each other. No import of `app/services/chatbot/` needed here at all - the value is a
+    plain default, not derived from anything else in the package.
     """
-    from app.services.chatbot.lanes.business.tier_gate import TIER_ORDER
-
-    return list(TIER_ORDER)
+    return ["dealer", "office", "end_user"]
 
 
 # The Memory card's defaults (AC-1513, AC-1561). One declaration, read by

@@ -54,12 +54,9 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import (
-    DOMAIN_CLAIMED_TOOLS,
-    DOMAIN_SPEC,
-    UNDOMAINED_CHATBOT_TOOLS,
-)
-from app.services.chatbot.contracts import is_timeline
+from app.services.chatbot.contracts import UNDOMAINED_CHATBOT_TOOLS, is_timeline
+from app.services.chatbot.turn.policy import default_policy
+from app.services.chatbot.turn import policy_rows
 
 logger = logging.getLogger(__name__)
 
@@ -150,10 +147,13 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
 
 
 def select_tool(domain: str | None) -> list[dict[str, Any]]:
-    """The domain's tool, read off `DOMAIN_SPEC`. No embedding, no database, no network.
+    """The domain's tool, read off `turn.policy.default_policy()` (AC-1594: was
+    `contracts.DOMAIN_SPEC`, now the frozen seed `chatbot_domains` is migrated from). No
+    embedding, no database, no network.
 
-    `[{"name": DOMAIN_SPEC[domain].tools[0], "similarity": 1.0}]` for a domain with a
-    non-empty `tools` tuple, `[]` for everything else: no domain, a domain outside the
+    `[{"name": default_policy().domain(domain).tools[0], "similarity": 1.0}]` for a
+    domain with a non-empty `tools` tuple, `[]` for everything else: no domain, a domain
+    outside the
     table, and the two domains that answer from nothing (`goods_receive`, `ideate`). The
     empty list reaches `tool_filter` and ends the turn `not_found`, exactly as a zero-row
     search did (H11).
@@ -197,17 +197,15 @@ def select_tool(domain: str | None) -> list[dict[str, Any]]:
     name, and ended `not_found`; one that got past both guards would end the same way here,
     by falling off the table rather than by zeroing a `LIKE` filter.
     """
-    spec = DOMAIN_SPEC.get(domain) if domain else None
-    if spec is None or not spec.tools:
+    row = default_policy().domain(domain) if domain else None
+    if row is None or not row.tools:
         return []
-    return [{"name": spec.tools[0], "similarity": 1.0}]
+    return [{"name": row.tools[0], "similarity": 1.0}]
 
 
 # --------------------------------------------------------------------------- #
 # tier-probe-plan / tier-probe-collect
 # --------------------------------------------------------------------------- #
-
-TIER_ORDER = ("dealer", "office", "end_user")
 
 
 def tier_probe_plan(tier_gate: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -290,7 +288,9 @@ def tier_probe_collect(
         **base,
         "tier_availability": availability,
         "tier_available_list": (
-            [t for t in TIER_ORDER if availability.get(t)] if availability is not None else None
+            [t for t in default_policy().tier_order if availability.get(t)]
+            if availability is not None
+            else None
         ),
         "tier_any_available": any_available,
         "_tier_probe_count": len(results),
@@ -345,9 +345,11 @@ _UUID_RE = re.compile(
 # would fall through to the service's UNSCOPED branch: every product's cost at that
 # warehouse, or across the whole table, none of them named by the customer. Refused as an
 # absence instead, same as an unfiltered document ask.
-ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset(
-    {"crm_resource_attachments_list", "crm_procurement_po_last_cost_list"}
-)
+# `ENTITY_FILTER_REQUIRED_TOOLS` and `PRODUCT_ID_REQUIRED_TOOLS` moved to
+# `turn/policy_rows.py` (AC-1594, S6): hand-curated per-TOOL exceptions, not domain or
+# kind data, so they have no row in either policy table - see that module's own comment
+# for why they live there instead. Referenced here as `policy_rows.X` (not imported by
+# name) so this module keeps no attribute of either name.
 
 # What counts as narrowing on those tools: every entity-id param the transformer can emit,
 # plus the document-type filters the tool takes by name.
@@ -361,25 +363,17 @@ NARROWING_PARAMS: frozenset[str] = frozenset(TYPE_TO_PARAM.values()) | frozenset
     }
 )
 
-# SF6: tools in `ENTITY_FILTER_REQUIRED_TOOLS` for which `warehouse_ids` alone is NOT
-# enough narrowing. `NARROWING_PARAMS` above treats `warehouse_ids` as a valid filter
-# for `crm_resource_attachments_list` (a warehouse-scoped document list is a real
-# answer), but `crm_procurement_po_last_cost_list`'s unscoped branch is a plain top_n
-# cap over EVERY product at that warehouse - a warehouse named with no product is still
-# an unnamed-product leak, so this tool needs `product_ids` specifically.
-PRODUCT_ID_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_procurement_po_last_cost_list"})
-
 
 def has_narrowing_filter(args: Any, *, tool_name: str | None = None) -> bool:
     """True when the built args carry at least one non-empty narrowing key.
 
-    `tool_name` in `PRODUCT_ID_REQUIRED_TOOLS` narrows the bar to `product_ids`
-    specifically (SF6) - every other `ENTITY_FILTER_REQUIRED_TOOLS` member keeps the
-    generic "any narrowing param" rule.
+    `tool_name` in `policy_rows.PRODUCT_ID_REQUIRED_TOOLS` narrows the bar to
+    `product_ids` specifically (SF6) - every other `policy_rows.
+    ENTITY_FILTER_REQUIRED_TOOLS` member keeps the generic "any narrowing param" rule.
     """
     if not isinstance(args, dict):
         return False
-    if tool_name in PRODUCT_ID_REQUIRED_TOOLS:
+    if tool_name in policy_rows.PRODUCT_ID_REQUIRED_TOOLS:
         return jsc.truthy(args.get("product_ids"))
     return any(jsc.truthy(args.get(key)) for key in NARROWING_PARAMS)
 
@@ -854,18 +848,22 @@ class ToolNotAllowed(RuntimeError):
 # behind a user confirmation and a permission check. The chatbot has no user to confirm
 # with, which is the whole difference.
 #
-# **Where the names live (D9, AC-931).** Still a frozen literal, for every reason above -
-# it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
-# (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
-# as claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
+# **Where the names live (D9, AC-931, AC-1594).** Still a frozen set, for every reason
+# above - it is simply no longer a THIRD list. Each name is either claimed by exactly one
+# domain (`turn.policy.default_policy().domains[*].tools`, the frozen seed
+# `chatbot_domains` is migrated from) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS` as
+# claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
 # for every seam a tool name can reach the MCP client through (the probes and the
 # cross-domain rung name their tool directly); the one tool a turn is ANSWERED from is
-# `DOMAIN_SPEC[domain].tools[0]`, read by `select_tool`.
+# `default_policy().domain(domain).tools[0]`, read by `select_tool`. A STATIC allow-list
+# on purpose, not a live per-turn `Policy` read: this is a security boundary
+# (`ensure_read_only` below), and an owner editing `chatbot_domains.tools` must not
+# silently widen what the chatbot may call without a deliberate migration/review.
 # `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union against the MCP
 # catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS
-)
+    tool for row in default_policy().domains for tool in row.tools
+) | frozenset(UNDOMAINED_CHATBOT_TOOLS)
 
 
 def ensure_read_only(name: Any) -> None:
@@ -1284,17 +1282,14 @@ def _normalize_spec_word(v: Any) -> str:
 #: only the one multi-token entry ("list price") may be contained in a longer ask -
 #: same discipline as item 8's own matching, kept for the same reason ("seat size"
 #: must not read as a hit on "size").
-_BASE_PROPERTY_WORDS: frozenset[str] = frozenset(
-    {
-        "price", "list price", "harga", "cost",
-        "dimension", "dimensions", "size", "ukuran", "saiz",
-        "description", "name",
-    }
-)
-
-
+#:
+#: Was a module-level frozenset here (AC-1594, S6): the words are `chatbot_entity_kinds`.
+#: `base_property_words`' KEYS now, read through `Policy` (AC-1535) - which is a superset
+#: of the old literal (also "discontinued" and "brand", the S0 migration's own seed), a
+#: deliberate widening: a "discontinued" ask no longer needs its own miss line either.
 def _names_a_base_property(norm: str) -> bool:
-    for w in _BASE_PROPERTY_WORDS:
+    words = default_policy().kind("product")
+    for w in (words.base_property_words if words is not None else {}):
         if norm == w or (" " in w and w in norm):
             return True
     return False

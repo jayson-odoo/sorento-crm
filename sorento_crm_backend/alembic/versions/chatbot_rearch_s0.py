@@ -37,8 +37,14 @@ from app.services.chatbot.turn.policy_rows import (  # noqa: E402
     DATE_PARAM_TOOLS as _DATE_PARAM_TOOLS,
     DEFAULT_DOMAIN_ROWS as _DOMAINS,
     DEFAULT_KIND_ROWS as _ENTITY_KINDS,
-    DEFAULT_TIER_ORDER as _TIER_ORDER,
 )
+# The tier order default is ONE literal, `app/modules/chatbot/lane_vocabulary.
+# default_tier_order()` (AC-1594, S6) - the same function `SystemSetting.
+# chatbot_tier_order`'s own Python default and `turn.policy.load_policy`'s blank-schema
+# fallback read, so this column's `server_default` can never disagree with either.
+from app.modules.chatbot.lane_vocabulary import default_tier_order as _default_tier_order  # noqa: E402
+
+_TIER_ORDER = _default_tier_order()
 
 
 

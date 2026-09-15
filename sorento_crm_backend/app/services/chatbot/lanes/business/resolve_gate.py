@@ -165,20 +165,20 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 def _incoming_named_in_message(message: Any) -> bool:
     """Did the customer's OWN words say incoming this turn?
 
-    `contracts.DOMAIN_SWITCH_WORDS` is the table, imported rather than copied: it is
-    already the inventoried vocabulary that decides a this-turn domain switch, and a second
-    list of the same words is how two readers of one question start disagreeing. Since D9
-    it is inverted out of `DOMAIN_SPEC[domain].switch_words` rather than hand-maintained,
-    so this reader is now two hops from the one declaration instead of one hop from a copy.
+    `turn.policy.domain_switch_words(default_policy())` is the table (AC-1594: was
+    `contracts.DOMAIN_SWITCH_WORDS`), read rather than copied: it is already the
+    inventoried vocabulary that decides a this-turn domain switch, and a second list of
+    the same words is how two readers of one question start disagreeing.
     """
-    from app.services.chatbot.contracts import DOMAIN_SWITCH_WORDS
+    from app.services.chatbot.turn.policy import default_policy, domain_switch_words
 
+    switch_words = domain_switch_words(default_policy())
     # ANY token, where `output_exchange`'s switch reader (its ~line 1125) demands EVERY
     # remaining content token name the same domain. Different questions: the switch asks
     # "is this message nothing but a domain word", this asks "did the customer say incoming
     # at all", and one incoming word anywhere is enough to keep the domain theirs.
     text = jsc.nullish_str(message).lower()
-    return any(DOMAIN_SWITCH_WORDS.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
+    return any(switch_words.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
 
 
 def retype_shipment_miss(
