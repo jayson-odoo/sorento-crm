@@ -294,6 +294,17 @@ test" table carries the diagnosis; these are the independently-verifiable criter
   roster). A family member that is not a uuid is skipped exactly as a bad entity id is.
   Evidence: `test_owner_regressions_15sep` (pick-time copy + tool-call expansion).
 
+- AC-1065 [T] A NARROWING IS NOT A NEW ASK, WHATEVER WORD THE MODEL STAMPED. With an
+  outstanding question open, a turn that picks nothing and names only entities on axes this
+  report can never take as its SUBJECT - a location, a date - re-runs the SAME report with
+  the stored filters overlaid and re-arms the same question. "only BRW" narrows even when
+  the parser emits it as `message_type: business_query` with `domain_hint: "order"`, which
+  the live v20 model does. The question's own carried subject riding `entities` with
+  `current_message: false` is what a refinement KEEPS and never counts against it. A turn
+  that names a product or a customer of its own - either can BE this report's subject - is
+  still a new ask and still drops the pending ("delivery status for hanlim" under a
+  product-subject offer). Evidence: `test_outstanding_lane`, both the `domain_hint: null`
+  and the live `domain_hint: "order"` shapes.
 
 ## Supersession map (growth-r1 section D)
 

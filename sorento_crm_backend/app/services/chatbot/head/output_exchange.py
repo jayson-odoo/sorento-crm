@@ -1286,6 +1286,24 @@ _SCOPE_BY_ORDER_STATUS: dict[str, str] = {
 _ORDER_STATUS_BY_SCOPE: dict[str, str] = {v: k for k, v in _SCOPE_BY_ORDER_STATUS.items()}
 
 
+def _outstanding_subject_capable_axes() -> frozenset[str]:
+    """The axes an outstanding report can take as its SUBJECT - a product's and a
+    customer's (R13: it takes either one), and nothing else.
+
+    Derived through `_axis_for_hint` with no domain, for the reason
+    `_outstanding_subject_axes` below states: under `order` the domain table collapses
+    product and customer onto one "which order" axis, which is right for the order LIST
+    and wrong here. Read by the refinement test, which asks whether a named entity COULD
+    be a subject rather than whether it happens to be the current one (R-H).
+    """
+    return frozenset(
+        axis for axis in (_axis_for_hint("product", None), _axis_for_hint("customer", None)) if axis
+    )
+
+
+_OUTSTANDING_SUBJECT_CAPABLE_AXES = _outstanding_subject_capable_axes()
+
+
 def _outstanding_subject_axes(filters: Any) -> set[str]:
     """The AXES the stored outstanding subject occupies - a product subject on a
     product's axis, a customer subject on a customer's (R13: this report takes either
@@ -1322,32 +1340,45 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
       subject, so an entity on the subject's own axis REPLACES it, and that is a new
       ask (`test_a_replacing_product_under_a_product_offer_is_still_a_new_ask`).
 
-    R24 (owner round 9b, 13 Sep 2026) narrows this to the shape a refinement actually
-    has: a turn the parser classifies as a BUSINESS QUESTION OF ITS OWN - `message_type:
-    "business_query"` with a NON-NULL `domain_hint` - is a new ask under an open
-    outstanding pending, whatever axes its entities sit on. The axis test alone called
-    "delivery status for hanlim" (a customer entity under a PRODUCT-subject offer, so a
-    different axis) a refinement of the old product's report, re-ran SRTWT7443 with
-    `Customer: all`, and re-offered: "I kind of can't escape this loop." A refinement is
-    the casual-shaped turn that narrows what is already on screen ("i want to see this
-    month only" is `casual` + no domain; "only BRW" is `business_query` with NO domain,
-    which is the parser saying it read a filter, not a question), and this test lives
-    HERE rather than beside the call so there is one definition of what a refinement is.
+    R24 (owner round 9b, 13 Sep 2026) was reaching for a third: "delivery status for
+    hanlim" is a customer entity under a PRODUCT-subject offer, so the axis test alone
+    called it a refinement of the old product's report, re-ran SRTWT7443 with `Customer:
+    all`, and re-offered - "I kind of can't escape this loop." It reached for it through
+    the parser's CLASSIFICATION (`message_type: "business_query"` with a non-null
+    `domain_hint` is a new ask), and that is what R-H removes (owner merge test, 15 Sep
+    2026): the model stamps a domain word on a filter as readily as on a question, so
+    "only BRW" came back `business_query` + `domain_hint: "order"` and the narrowing the
+    customer asked for re-armed the scope question instead. Turn
+    94639ef2-cdf7-4540-a78e-93b411ba2e84, and the same defect shape as R-B.
+
+    What R24 actually wanted is the axis a SUBJECT can occupy at all. This report takes a
+    product or a customer as its subject (R13, either one), and nothing else: a location
+    or a date can only ever narrow one. So an entity on a subject-CAPABLE axis names a new
+    question - which keeps "delivery status for hanlim" a new ask for the reason that was
+    always true of it, and keeps a replacing product under a product offer a new ask too -
+    while an entity that can only filter is the refinement it looks like, whatever word the
+    model attached to the turn.
+
+    And only what THIS MESSAGE named is graded. The live turn carries the question's own
+    subject along in `entities` (`CNK HARDWARE`, `current_message: False`, beside the new
+    `BRW`), which is the conversation keeping its subject - the very thing a refinement
+    does - so grading it would refuse every refinement that has a subject to narrow. The
+    old axis test read it as "an entity on the subject's axis" and returned False; the R24
+    veto fired first and hid that, which is why removing the veto alone was not enough.
+
+    One definition of "refinement", and it lives HERE rather than beside the call.
     """
     if jsc.js_string(o.get("entity_op") or "") not in ("reuse", "replace_combine"):
         return False
-    if jsc.js_string(o.get("message_type") or "") == "business_query" and jsc.truthy(
-        o.get("domain_hint")
-    ):
-        return False
-    subject_axes = _outstanding_subject_axes(filters)
-    if not subject_axes:
+    if not _outstanding_subject_axes(filters):
         # Nothing stored to keep. An entity here would be NAMING the subject, not
         # narrowing it, so the turn stays the new ask today's code already calls it.
         return False
     for e in jsc.array(o.get("entities")):
+        if jsc.get(e, "current_message") is not True:
+            continue  # the question's own subject, carried - not this turn's ask
         axis = _axis_for_hint(jsc.get(e, "hint"), None)
-        if axis is None or axis in subject_axes:
+        if axis is None or axis in _OUTSTANDING_SUBJECT_CAPABLE_AXES:
             return False
     return True
 
