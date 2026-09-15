@@ -452,11 +452,26 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
     return str(kind) if kind else None
 
 
-#: The pending kinds whose answer is a POSITION against a roster the assistant printed
-#: (D17, 13 Sep 2026). Only these surface their options to the parser: every other kind
-#: either has no roster (`escalation_offer`) or already has its own resolution path, and
-#: attaching options to those would change a prompt this ruling is not about.
-_OPTION_PENDING_KINDS = ("outstanding_scope", "outstanding_detail")
+#: THE RULE: a question whose answer is a POSITION states its roster to the parser. Every
+#: such question, not a named list of two (owner ruling, 15 Sep 2026; D17, 13 Sep 2026, is
+#: where the rule came from and its scope was the outstanding report's two questions).
+#:
+#: R-K is what the narrow scope cost. The roster kinds were left out, so under the PROMOTED
+#: v1 prompt - which sees no `Focus:` or `Open question:` block, those being v3-only - the
+#: model was never told a numbered list was open: `incoming wc286` printed ten rows, two
+#: casual turns left the roster correctly alive (`before_opts=10` on all three), and the
+#: "10" that followed came back `message_type: casual` with `reference_positions: []`
+#: because nothing in its input mentioned a list. The same chain passes under v15, which is
+#: the tell: v3 emits `answers_open_question` from its own state block. Prod runs v20.
+#:
+#: `member_offer` is deliberately absent for now (same ruling): it prints people rather than
+#: rows and has its own resolution path, and a guard test decides whether it joins.
+#: `escalation_offer` has no roster at all.
+_OPTION_PENDING_KINDS = (
+    "outstanding_scope",
+    "outstanding_detail",
+    *open_question_mod.ROSTER_KINDS,
+)
 
 
 def _pending_options(variables: dict[str, Any]) -> list[str] | None:
