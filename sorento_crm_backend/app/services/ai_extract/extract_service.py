@@ -156,6 +156,11 @@ class ExtractFile:
 
 
 class AIExtractService:
+    # No price-tag / portal line ceiling exists to defer to for the resolver
+    # batch cap (`_resolve_product_codes`) - a plain sales order this long is
+    # not a real extract, so 100 is the bound.
+    _MAX_RESOLVE_CANDIDATES = 100
+
     def __init__(self, db: Session):
         self.db = db
 
@@ -837,9 +842,15 @@ class AIExtractService:
                         raw=raw, canonical=items, source="llm"
                     )
             elif f.kind == "fk_product":
+                # S6 (code review): a `fk_product` field names a PRODUCT, on
+                # a stock inquiry / purchase request form - never a set. The
+                # wider `{"product", "product_set"}` default is only for
+                # `_extract_products`'s own sales-order lines below.
                 if isinstance(raw, list):
                     raw_codes = [str(x).strip() for x in raw if str(x).strip()]
-                    resolved = self._resolve_product_codes(raw_codes)
+                    resolved = self._resolve_product_codes(
+                        raw_codes, allowed_entity_types=frozenset({"product"})
+                    )
                     codes = [
                         resolved[c][0] if c in resolved else c for c in raw_codes
                     ]
@@ -852,7 +863,13 @@ class AIExtractService:
                     )
                 else:
                     raw_code = str(raw).strip()
-                    resolved = self._resolve_product_codes([raw_code]) if raw_code else {}
+                    resolved = (
+                        self._resolve_product_codes(
+                            [raw_code], allowed_entity_types=frozenset({"product"})
+                        )
+                        if raw_code
+                        else {}
+                    )
                     code = resolved[raw_code][0] if raw_code in resolved else raw_code
                     values[f.name] = code
                     per_field[f.name] = ExtractFieldMeta(
@@ -943,39 +960,79 @@ class AIExtractService:
         return []
 
     def _resolve_product_codes(
-        self, codes: list[str]
-    ) -> dict[str, tuple[str, Literal["product", "product_set"] | None, str | None, str | None]]:
-        """codes -> (canonical_code, match, product_id, product_set_id), one
-        `resolve_references` call for the whole batch (D1), exact tier only
-        (`enable_prefix_fallback=False`, `enable_embedding_fallback=False`): a
-        prefix or semantic guess would print a tag for a product the sheet
-        never named. A code with no exact match, or an ambiguous one (more
-        than one scoped hit), is left out of the map so the caller keeps the
-        raw extracted text (D2). Company-scoped by whatever `company_scope`
-        the caller is already inside.
+        self,
+        codes: list[str],
+        *,
+        allowed_entity_types: frozenset[str] = frozenset({"product", "product_set"}),
+    ) -> dict[
+        str,
+        tuple[str, Literal["product", "product_set"] | None, str | None, str | None, str | None],
+    ]:
+        """codes -> (canonical_code, match, product_id, product_set_id,
+        display_name), `resolve_references` called once per 100-code chunk
+        (D1), exact tier only (`enable_prefix_fallback=False`,
+        `enable_embedding_fallback=False`): a prefix or semantic guess would
+        print a tag for a product the sheet never named. A code with no exact
+        match, or an ambiguous one (more than one scoped hit), is left out of
+        the map so the caller keeps the raw extracted text (D2). Company-scoped
+        by whatever `company_scope` the caller is already inside.
+
+        `allowed_entity_types` lets a caller (the scalar `fk_product` field
+        path below) narrow the match to `{"product"}` alone - a stock inquiry
+        / purchase request field names a PRODUCT, never a set, and the wider
+        default is only for `_extract_products`'s own sales-order lines.
+
+        Security review: `resolve_references` itself TRUNCATES its token list
+        to `max_candidates` (`tokens = tokens[:max_candidates]`) rather than
+        merely capping the cost of its own trigram "did you mean" pass over
+        the misses - so a flat cap silently dropped code 101 onward instead of
+        just bounding that pass. Chunked into batches of
+        `_MAX_RESOLVE_CANDIDATES` and resolved one call per chunk instead, so
+        every code is still answered and no single call runs the resolver's
+        alternatives pass over an unbounded batch (no line ceiling exists in
+        the price tag / portal code to defer to for the chunk size, and
+        `resolve_references` exposes no switch to skip that pass on its own -
+        simplest is to bound the batch, not add one).
         """
         cleaned = [c for c in (codes or []) if c]
         if not cleaned:
             return {}
-        result = resolve_references(
-            self.db,
-            cleaned,
-            allowed_entity_types={"product", "product_set"},
-            enable_prefix_fallback=False,
-            enable_embedding_fallback=False,
-            max_candidates=len(cleaned),
-        )
         out: dict[
-            str, tuple[str, Literal["product", "product_set"] | None, str | None, str | None]
+            str,
+            tuple[
+                str, Literal["product", "product_set"] | None, str | None, str | None, str | None
+            ],
         ] = {}
-        for tr in result.resolutions:
-            if not tr.resolved or len(tr.matches) != 1:
+        for start in range(0, len(cleaned), self._MAX_RESOLVE_CANDIDATES):
+            chunk = cleaned[start : start + self._MAX_RESOLVE_CANDIDATES]
+            try:
+                result = resolve_references(
+                    self.db,
+                    chunk,
+                    allowed_entity_types=allowed_entity_types,
+                    enable_prefix_fallback=False,
+                    enable_embedding_fallback=False,
+                    max_candidates=len(chunk),
+                )
+            except Exception:
+                # A resolver failure must not turn an LLM extract that already
+                # cost real money into a 500 on the public route - every code
+                # in THIS chunk answers as the D2 "no match" shape (raw text,
+                # no ids) instead; the other chunks are unaffected.
+                logger.exception(
+                    "resolve_references failed during AI extract product matching"
+                )
                 continue
-            match = tr.matches[0]
-            if match.entity_type == "product":
-                out[tr.token] = (match.canonical_code, "product", match.uuid, None)
-            elif match.entity_type == "product_set":
-                out[tr.token] = (match.canonical_code, "product_set", None, match.uuid)
+            for tr in result.resolutions:
+                if not tr.resolved or len(tr.matches) != 1:
+                    continue
+                match = tr.matches[0]
+                if match.entity_type == "product":
+                    name = (match.display or {}).get("product_name")
+                    out[tr.token] = (match.canonical_code, "product", match.uuid, None, name)
+                elif match.entity_type == "product_set":
+                    name = (match.display or {}).get("name")
+                    out[tr.token] = (match.canonical_code, "product_set", None, match.uuid, name)
         return out
 
     def _extract_products(self, parsed: dict[str, Any]) -> list[ExtractedProductLine]:
@@ -1000,12 +1057,22 @@ class AIExtractService:
             match: Literal["product", "product_set"] | None = None
             product_id: str | None = None
             product_set_id: str | None = None
+            # S1 (code review): the CRM's own name on a resolved match, not
+            # the sales order's freeform description the LLM read off the
+            # page - the two drift (abbreviations, a customer's own wording),
+            # and the applied line's Item is what marketing/the salesperson
+            # reads back. A miss keeps the LLM text; there is nothing else to
+            # show for a code the resolver could not place.
+            llm_name = str(item.get("product_name") or "").strip() or None
+            product_name = llm_name
             if raw_code and raw_code in resolved:
-                code, match, product_id, product_set_id = resolved[raw_code]
+                code, match, product_id, product_set_id, display_name = resolved[raw_code]
+                if display_name:
+                    product_name = display_name
             out.append(
                 ExtractedProductLine(
                     product_code=code,
-                    product_name=str(item.get("product_name") or "").strip() or None,
+                    product_name=product_name,
                     quantity=_coerce_float(item.get("quantity")),
                     unit_price=_coerce_float(item.get("unit_price")),
                     total=_coerce_float(item.get("total")),

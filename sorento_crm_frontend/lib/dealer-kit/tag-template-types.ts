@@ -699,7 +699,11 @@ export function defaultPriceBadgeProps(
     // The flyer's promotional block is white on red. A list-only badge paints
     // no box, so the fill only shows once somebody switches it to promo.
     fill: '#d32f2f',
-    textColor: '#ffffff',
+    // D22/B1 (security review): list_only prints its amount straight onto
+    // the tag's own background, which is what '#000000' has always drawn
+    // for it - white would be invisible there. promo is white-on-red, so
+    // its own default stays white.
+    textColor: variant === 'promo' ? '#ffffff' : '#000000',
     cornerRadius: 2,
     showNett: true,
   };

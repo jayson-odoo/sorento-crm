@@ -53,6 +53,10 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     value: string;
     onChange?: (v: string) => void;
     placeholder?: string;
+    // S1 (code review): the Item picker's own selected-value label - the
+    // only surface this mock exposes for asserting what NAME a picked line
+    // reads, since the mock otherwise renders no text for it.
+    selectedOption?: { value: string; label: string };
   }) => (
     <select
       aria-label={props.id === 'debtor' ? 'Customer' : (props.placeholder ?? '')}
@@ -60,6 +64,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       onChange={(e) => props.onChange?.(e.target.value)}
     >
       <option value="" />
+      {props.selectedOption && (
+        <option value={props.selectedOption.value}>{props.selectedOption.label}</option>
+      )}
     </select>
   ),
 }));
@@ -491,5 +498,37 @@ describe('PriceTagRequestForm - AI extract reads match fields off the payload (A
     await waitFor(() =>
       expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('GHOST-CODE')),
     );
+  });
+
+  // S1 (code review): a resolved match's product_name is the CRM's own name
+  // (the backend now overrides it there, ai_extract_resolver_match.py pins
+  // that half), never the sales order's freeform description - the applied
+  // line's Item is what marketing/the salesperson read back.
+  it("S1: the applied line's Item reads the CRM name from a resolved match", async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+    openSalesOrderSection();
+
+    const products = [
+      {
+        product_code: MATCHED_PRODUCT.code,
+        product_name: MATCHED_PRODUCT.name,
+        match: 'product',
+        product_id: MATCHED_PRODUCT.id,
+        product_set_id: null,
+        quantity: 1,
+        notes: null,
+      },
+    ];
+
+    await act(async () => {
+      captured.onExtracted?.(products);
+    });
+    await act(async () => {
+      captured.onApply?.({ productLines: products });
+    });
+
+    await screen.findByLabelText('Quantity for line 1');
+    expect(screen.getByText(MATCHED_PRODUCT.name)).toBeInTheDocument();
   });
 });

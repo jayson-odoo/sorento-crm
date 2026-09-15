@@ -351,6 +351,23 @@ function errorFields(e: unknown): string[] {
   return fields.filter((f): f is string => typeof f === 'string');
 }
 
+/**
+ * S4 (code review): a `line:<index>` refusal - PARTS_NEED_COMBO and
+ * INVALID_PART read the same `detail` shape (`app/services/price_tag_request_
+ * service.py`, both `422`s naming `line:<index>`) - also toasts "Line N:
+ * <message>" so the salesperson sees which line failed even before the
+ * inline row highlight scrolls into view. Both Save Draft and Submit call
+ * this the same way; neither branches on `code`, since the field vocabulary
+ * is what both codes share.
+ */
+function lineErrorToast(fields: string[], message: string): void {
+  const lineField = fields.find((f) => f.startsWith('line:'));
+  if (!lineField) return;
+  const index = Number(lineField.slice('line:'.length));
+  if (!Number.isInteger(index)) return;
+  toast.error(`Line ${index + 1}: ${message}`);
+}
+
 /** Bring the first complaint into view, after the render that drew it. */
 function scrollToFirstProblem(): void {
   setTimeout(() => {
@@ -1377,15 +1394,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.success('Draft saved');
       router.push(`${portalBase(slug)}?type=price_tag_request`);
     } catch (e) {
-      // The server's sentence, not ours: the set guard refuses an ala carte
-      // Bathroom Furniture line by NAME, and a generic message would leave the
-      // salesperson with no idea which line to change.
-      toast.error(e instanceof Error ? e.message : 'Failed to save draft');
+      // S4 (code review): the same `line:<index>` -> row mapping Submit uses
+      // (`applyFieldErrors`), so a reopened draft whose product lost its
+      // combo (or any other row-scoped refusal, PARTS_NEED_COMBO and
+      // INVALID_PART alike) is named on the ROW here too, not just a generic
+      // toast with no way back to which line it was about.
+      const message = e instanceof Error ? e.message : 'Failed to save draft';
+      const named = errorFields(e);
+      const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
+      if (placed > 0) {
+        lineErrorToast(named, message);
+        scrollToFirstProblem();
+      } else {
+        toast.error(message);
+      }
     } finally {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
 
   // ---- Revise (R3-1): sent through the portal revision engine, never the
   // retired post-submit PUT. A reason is required; the same zero-line/
@@ -1534,6 +1561,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       const placed = named.length > 0 ? applyFieldErrors(named, message) : 0;
       if (placed > 0) {
         setServerMessage(null);
+        lineErrorToast(named, message);
         scrollToFirstProblem();
       } else {
         setServerMessage(message);

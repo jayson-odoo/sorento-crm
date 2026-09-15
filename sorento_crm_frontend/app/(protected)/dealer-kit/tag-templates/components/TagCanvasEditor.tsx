@@ -59,6 +59,7 @@ import {
   buildSetBlock,
   isDynamic,
   layerDisplay,
+  layerText,
   rebindImageLayers,
   resolveSlotText,
   PRODUCT_BLOCK_SIZE,
@@ -3103,9 +3104,20 @@ export function TagCanvasEditor({
 
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
-  /** What the inspector's Content box falls back to when nothing was typed. */
+  /**
+   * What the inspector's Content box falls back to when nothing was typed,
+   * AND what its "Copy rendered text" preview shows (D21/S16 code review).
+   *
+   * `layerText` is the same function the print renderer resolves a layer's
+   * final text through (`TagSheetRenderer.tsx`) - it is not `resolveSlotText`
+   * alone, which answers null for a layer with NO `slot_binding` even when
+   * its own `props.text` carries a `{{token}}` (`Made of {{spec.material}}`,
+   * D57). `isDynamic` already gates the box to layers that carry a token
+   * either way, so the InspectorPanel decides whether to show this; this only
+   * has to compute what it would show.
+   */
   const selectedResolvedText = selectedLayer
-    ? resolveSlotText(selectedLayer, selectedData)
+    ? layerText(selectedLayer, selectedData, 'print')
     : null;
 
   /**

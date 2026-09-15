@@ -509,6 +509,41 @@ def test_validate_drops_unresolvable_lookup(db_session, seeded_warranty):
     assert "within_warranty" not in values
 
 
+def test_fk_product_field_ignores_a_set_code_match_stays_raw(db_session):
+    """S6 (code review): a `fk_product` field (a stock inquiry / purchase
+    request product code) resolves against PRODUCTS only - a set code that
+    would match `_extract_products`'s own wider {"product", "product_set"}
+    scope must stay raw here, since the field can only ever hold a product.
+    """
+    import uuid
+
+    from app.models.base import company_scope
+    from app.models.product_set import ProductSet
+
+    company_id = "00000000-0000-0000-0000-000000000001"
+    pset = ProductSet(
+        id=str(uuid.uuid4()),
+        company_id=company_id,
+        set_code="SRTFKSET1",
+        name="ZZT Set",
+        is_active=True,
+    )
+    db_session.add(pset)
+    db_session.flush()
+
+    schema = [
+        ExtractFieldSpec(name="product_code", label="Product code", kind="fk_product"),
+    ]
+    svc = AIExtractService(db_session)
+    with company_scope(db_session, frozenset({company_id})):
+        values, per_field = svc._validate_and_canonicalize(
+            {"product_code": "SRTFKSET1"}, schema
+        )
+
+    assert values["product_code"] == "SRTFKSET1"
+    assert per_field["product_code"].source == "llm"
+
+
 def test_validate_do_number_coerces_string_to_list():
     svc = AIExtractService(db=None)  # type: ignore[arg-type]
     schema = [

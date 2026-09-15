@@ -25,7 +25,7 @@
  * (a template has no sheet to fit, unlike a request's imposition).
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -131,7 +131,16 @@ export function TagSizeControl({
   const [error, setError] = useState<string | null>(null);
   // D9: collapsed by default; a viewer who opens it once keeps it open on
   // their next request, on this browser.
-  const [open, setOpen] = useState(() => readTagSizeOpen());
+  //
+  // S5 (code review): starts collapsed and reads localStorage in an EFFECT,
+  // not the `useState` initialiser - the template page renders this
+  // server-side, where localStorage does not exist, so a value read at
+  // mount time (during SSR) always disagrees with the client's real answer
+  // and hydrates mismatched. An effect runs client-only, after hydration.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (readTagSizeOpen()) setOpen(true);
+  }, []);
   const handleOpenChange = (next: boolean) => {
     setOpen(next);
     writeTagSizeOpen(next);

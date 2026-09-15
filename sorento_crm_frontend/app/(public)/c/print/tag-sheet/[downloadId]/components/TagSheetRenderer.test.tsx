@@ -97,6 +97,42 @@ describe('price_badge on the print page', () => {
     expect(screen.queryByText('NETT')).not.toBeInTheDocument();
   });
 
+  // AC-S17-1 (PLAN-price-tag-ai-extract-resolver.md D22, B1 security review):
+  // the print page is the other half of `KonvaTagLayer`'s own honouring of
+  // textColor - the canvas and the PDF must never disagree about the colour
+  // an unboxed amount prints in.
+  it('AC-S17-1: draws the amount with the layer textColor, matching the canvas', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('list_only'), textColor: '#FFFFFF' },
+          }),
+        ])}
+        resolvedData={{ [TAG_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('RM 1,599')).toHaveStyle({ color: '#FFFFFF' });
+  });
+
+  it('AC-S17-1: the empty placeholder stays #999999 regardless of textColor', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('list_only'), textColor: '#FFFFFF' },
+          }),
+        ])}
+        resolvedData={{ [TAG_ID]: resolved({ list_price: null, sell_price: null }) }}
+      />,
+    );
+
+    expect(screen.getByText('Price TBC')).toHaveStyle({ color: '#999999' });
+  });
+
   it('prints the struck list price above SP RM 599 NETT in the promo variant', () => {
     render(
       <TagSheetRenderer

@@ -97,6 +97,28 @@ SEPARATOR_CASES = [
 ]
 
 
+# --------------------------------------------------------------------------- #
+# S1 (code review): a resolved match reports the CRM's own product_name, not
+# the sales order's freeform description the LLM read off the page - the two
+# drift, and what the salesperson applies onto the line is what marketing and
+# the salesperson read back.
+# --------------------------------------------------------------------------- #
+def test_resolved_match_reports_the_crm_name_not_the_llm_description(db):
+    product = _product(db, "SRTNAME001")  # product_name = "ZZT SRTNAME001"
+    with company_scope(db, frozenset({SORENTO})):
+        out = AIExtractService(db)._extract_products(_parsed("SRTNAME001"))
+    assert len(out) == 1
+    assert out[0].product_name == product.product_name
+    assert out[0].product_name != "raw name"
+
+
+def test_a_miss_keeps_the_llm_description(db):
+    with company_scope(db, frozenset({SORENTO})):
+        out = AIExtractService(db)._extract_products(_parsed("ZZT-NOTHING-LIKE-IT"))
+    assert len(out) == 1
+    assert out[0].product_name == "raw name"
+
+
 @pytest.mark.parametrize("raw, stored", SEPARATOR_CASES)
 def test_extracted_code_normalizes_through_resolver(db, raw, stored):
     product = _product(db, stored)
@@ -116,6 +138,32 @@ def test_no_exact_match_keeps_raw_text_and_reports_no_match(db):
         out = AIExtractService(db)._extract_products(_parsed("ZZT-NOTHING-LIKE-IT"))
     assert len(out) == 1
     assert out[0].product_code == "ZZT-NOTHING-LIKE-IT"
+    assert out[0].match is None
+    assert out[0].product_id is None
+    assert out[0].product_set_id is None
+
+
+# --------------------------------------------------------------------------- #
+# S2 (code review): a token with TWO scoped hits (a normalized collision - two
+# codes that flatten to the same dash/whitespace-stripped form) is a real
+# ambiguity, not a match to guess between - the raw text is kept, same as no
+# match at all. Tier 1 exact only flags a multi-hit token `ambiguous` for
+# `certificate` (see entity_resolver.py); `_resolve_product_codes` has its own
+# `len(tr.matches) != 1` guard so a product/product_set collision is caught
+# regardless.
+# --------------------------------------------------------------------------- #
+def test_two_scoped_hits_for_one_token_keeps_raw_text_and_no_match(db):
+    base = unique_code("SRTAMB")
+    code_a = f"{base}-1"
+    code_b = f"{base}1"
+    _product(db, code_a)
+    _product(db, code_b)
+
+    with company_scope(db, frozenset({SORENTO})):
+        out = AIExtractService(db)._extract_products(_parsed(code_a))
+
+    assert len(out) == 1
+    assert out[0].product_code == code_a
     assert out[0].match is None
     assert out[0].product_id is None
     assert out[0].product_set_id is None
@@ -184,3 +232,190 @@ def test_extract_products_calls_resolver_once_with_whole_code_list_exact_only(
     assert codes == ["SRT-A", "SRT-B", "SRT-C"]
     assert kwargs.get("enable_prefix_fallback") is False
     assert kwargs.get("enable_embedding_fallback") is False
+
+
+# --------------------------------------------------------------------------- #
+# S3 (code review): `resolve_references` TRUNCATES its own token list to
+# `max_candidates` (`tokens = tokens[:max_candidates]`) rather than merely
+# bounding the cost of its trigram "did you mean" pass, so a flat cap silently
+# dropped code 101 onward. Chunked into batches of 100 instead - every call
+# stays bounded (no line ceiling exists in the price tag / portal code to
+# defer to for the chunk size), and every code still gets a call.
+# --------------------------------------------------------------------------- #
+def test_extract_products_chunks_a_long_batch_into_calls_of_100(db, monkeypatch):
+    import app.services.ai_extract.extract_service as extract_service_mod
+    from app.services.entity_resolver import ResolutionResult
+
+    calls: list[tuple] = []
+
+    def _fake_resolve_references(db_arg, codes, **kwargs):
+        calls.append((db_arg, list(codes), kwargs))
+        return ResolutionResult(tokens=list(codes), resolutions=[], elapsed_ms=0.0)
+
+    monkeypatch.setattr(
+        extract_service_mod, "resolve_references", _fake_resolve_references
+    )
+
+    codes = [f"SRT-{i}" for i in range(150)]
+    with company_scope(db, frozenset({SORENTO})):
+        AIExtractService(db)._extract_products(_parsed(*codes))
+
+    assert len(calls) == 2, "150 codes must resolve as two chunked calls, not one truncated one"
+    first_codes, first_kwargs = calls[0][1], calls[0][2]
+    second_codes, second_kwargs = calls[1][1], calls[1][2]
+    assert first_codes == codes[:100]
+    assert second_codes == codes[100:]
+    assert first_kwargs.get("max_candidates") == 100
+    assert second_kwargs.get("max_candidates") == 50
+
+
+def test_extract_products_resolves_all_150_codes_when_all_exist(db):
+    codes = [unique_code(f"SRTCHUNK{i}") for i in range(150)]
+    for code in codes:
+        _product(db, code)
+
+    with company_scope(db, frozenset({SORENTO})):
+        out = AIExtractService(db)._extract_products(_parsed(*codes))
+
+    assert len(out) == 150
+    assert all(row.match == "product" for row in out), [
+        row.product_code for row in out if row.match != "product"
+    ]
+    assert [row.product_code for row in out] == codes
+
+
+# --------------------------------------------------------------------------- #
+# Security review: a resolver failure must not turn an LLM extract that
+# already cost real money into a 500 on the public route - every code falls
+# back to the documented D2 "no match" shape (raw text, no ids).
+# --------------------------------------------------------------------------- #
+def test_extract_products_falls_back_to_raw_codes_when_resolver_raises(db, monkeypatch):
+    import app.services.ai_extract.extract_service as extract_service_mod
+
+    def _boom(db_arg, codes, **kwargs):
+        raise RuntimeError("ZZT resolver down")
+
+    monkeypatch.setattr(extract_service_mod, "resolve_references", _boom)
+
+    with company_scope(db, frozenset({SORENTO})):
+        out = AIExtractService(db)._extract_products(_parsed("SRT-A", "SRT-B"))
+
+    assert [row.product_code for row in out] == ["SRT-A", "SRT-B"]
+    assert all(row.match is None for row in out)
+    assert all(row.product_id is None and row.product_set_id is None for row in out)
+
+
+# --------------------------------------------------------------------------- #
+# Browser check: the router-level `apply_company_scope` dependency resolves a
+# portal token to the CONTACT'S companies (plural - `RespondContactCompany`),
+# not the ONE company this request belongs to. A code seeded in two of a
+# multi-company contact's companies came back "ambiguous" (two scoped hits)
+# under that wider ambient scope in the real portal, reading as Not Found for
+# a product that genuinely exists. The other tests in this file all wrap
+# `_extract_products` directly, under a hand-set `company_scope`, and so
+# never exercised the ROUTE's own scope at all - this drives the real
+# `POST /api/v1/public/portal/ai-extract` route through a TestClient instead.
+# --------------------------------------------------------------------------- #
+def test_route_scopes_the_extract_to_the_requests_own_company(monkeypatch):
+    import json
+    from datetime import datetime, timedelta
+
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.main import app
+    from app.models.access import RespondContact
+    from app.models.company import RespondContactCompany
+    from app.models.portal import PortalToken
+    from app.services.llm_provider import ChatResult
+    import app.services.ai_extract.extract_service as extract_service_mod
+
+    with blank_session() as db:
+        # SORENTO is the only ACTIVE company - `_resolve_company` (the portal
+        # route's own company resolver, single-tenant stub) picks the first
+        # active company with no further tiebreak, so this keeps the
+        # assertion below deterministic rather than racing an unordered
+        # `.first()` between two equally-active rows. The contact still
+        # genuinely belongs to BOTH (`RespondContactCompany` below), which is
+        # the ambient scope this test is reproducing the bug against.
+        if db.query(Company).filter(Company.id == SORENTO).first() is None:
+            db.add(
+                Company(id=SORENTO, name="ZZT Sorento", code=unique_code("SRT")[:20], is_active=True)
+            )
+        else:
+            # A default company already seeded for this schema (the app's own
+            # startup path) - make sure it is the sole ACTIVE row this test
+            # relies on rather than assuming its flag.
+            db.query(Company).filter(Company.id == SORENTO).update({"is_active": True})
+        other = str(uuid.uuid4())
+        db.add(Company(id=other, name="ZZT Other Co", code=unique_code("OTH")[:20], is_active=False))
+        db.flush()
+
+        contact = RespondContact(
+            id=str(uuid.uuid4()),
+            phone_number=f"+6011{uuid.uuid4().hex[:8]}",
+            name="ZZT multi-company contact",
+        )
+        db.add(contact)
+        db.flush()
+        db.add(RespondContactCompany(id=_uid(), respond_contact_id=contact.id, company_id=SORENTO))
+        db.add(RespondContactCompany(id=_uid(), respond_contact_id=contact.id, company_id=other))
+        db.flush()
+
+        code = "SRT6536-DIY"
+        sorento_product = _product(db, code, company_id=SORENTO)
+        _product(db, code, company_id=other)
+
+        token = PortalToken(
+            id=str(uuid.uuid4()),
+            token=f"ZZT-tok-{uuid.uuid4().hex}",
+            contact_id=contact.id,
+            space_id="ZZT-space",
+            expires_at=datetime.utcnow() + timedelta(days=30),
+            verified_at=datetime.utcnow() - timedelta(minutes=5),
+        )
+        db.add(token)
+        db.commit()
+
+        def _override_get_db():
+            yield db
+
+        content = json.dumps(
+            {"products": [{"product_code": code, "product_name": "raw", "quantity": 1}]}
+        )
+
+        class _FakeProvider:
+            def chat(self, **kwargs):
+                return ChatResult(
+                    content=content, prompt_tokens=0, completion_tokens=0, total_tokens=0
+                )
+
+        def _fake_resolve_provider(self):
+            return _FakeProvider(), "openai", "gpt-4"
+
+        monkeypatch.setattr(
+            extract_service_mod.AIExtractService,
+            "_resolve_provider",
+            _fake_resolve_provider,
+        )
+
+        app.dependency_overrides[get_db] = _override_get_db
+        try:
+            with TestClient(app) as c:
+                res = c.post(
+                    "/api/v1/public/portal/ai-extract",
+                    data={"form_key": "portal.price_tag_request"},
+                    files=[("files", ("so.txt", code.encode(), "text/plain"))],
+                    headers={"X-Portal-Token": token.token},
+                )
+        finally:
+            app.dependency_overrides.clear()
+
+        assert res.status_code == 200, res.text
+        products = res.json()["products"]
+        assert len(products) == 1
+        # Under the FULL ambient (both-company) scope this reads "ambiguous" -
+        # two scoped hits, match=None. Narrowed to the request's own company,
+        # it resolves to exactly the SORENTO row.
+        assert products[0]["match"] == "product"
+        assert products[0]["product_id"] == sorento_product.id

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,7 @@ from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
 
 SORENTO = "00000000-0000-0000-0000-000000000001"
+MOCHA = "00000000-0000-0000-0000-000000000002"
 
 
 @pytest.fixture
@@ -61,6 +63,15 @@ def _product(db, stem: str, *, company_id: str = SORENTO) -> Product:
     db.add(product)
     db.flush()
     return product
+
+
+def _mocha(db):
+    from app.models.company import Company
+
+    if db.query(Company).filter(Company.id == MOCHA).first() is None:
+        db.add(Company(id=MOCHA, name="ZZT Mocha", code=unique_code("MCH")[:20], is_active=True))
+        db.flush()
+    return MOCHA
 
 
 def _contact(db):
@@ -199,3 +210,102 @@ def test_create_request_with_parts_on_combo_product_is_accepted(db):
     )
     assert len(parts) == 1
     assert parts[0].product_id == mirror.id
+
+
+# --------------------------------------------------------------------------- #
+# Security review: ProductCombo carries no CompanyScopedMixin of its own - it
+# is scoped only THROUGH its host product, the same reason `_resolve_combo_id`
+# joins Product. A bare `ProductCombo` query under `company_scope` is a no-op,
+# so a host in ANOTHER company with a real combo there answered has_combo=True
+# under THIS company's scope - a cross-company existence oracle. Drives
+# `_add_line_parts` directly (bypassing `_add_lines`'s own line-level product
+# visibility guard, below) so this pins the combo-guard join in isolation.
+# --------------------------------------------------------------------------- #
+def test_combo_guard_is_company_scoped_not_a_cross_company_oracle(db):
+    mocha = _mocha(db)
+    their_cabinet = _product(db, "SRTXC001", company_id=mocha)
+    their_mirror = _product(db, "SRTXC002", company_id=mocha)
+    _combo(db, their_cabinet, "their combo", [(their_mirror, None)])
+
+    line = SimpleNamespace(id=_uid(), product_id=their_cabinet.id)
+
+    with pytest.raises(AppException) as exc:
+        PriceTagRequestService._add_line_parts(
+            db,
+            line,
+            [{"product_id": their_mirror.id}],
+            index=0,
+            company_id=SORENTO,
+        )
+
+    # Identical shape to the no-combo case above: a product this company
+    # cannot see must read exactly like one with no package at all, never
+    # differently depending on what exists in someone else's company.
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "PARTS_NEED_COMBO"
+    assert exc.value.detail["detail"] == "line:0"
+    assert exc.value.detail["message"] == "This product has no package to add a part to."
+
+
+# --------------------------------------------------------------------------- #
+# Security review: the line's own `product_id` arrives from the portal with
+# no company check, straight into `PriceTagRequestLine` - the gap that made
+# the combo guard above reachable at all. `_add_lines` now validates it the
+# same way parts are validated, before the line is even built.
+# --------------------------------------------------------------------------- #
+def test_create_request_refuses_a_foreign_product_id_on_a_line(db):
+    mocha = _mocha(db)
+    contact = _contact(db)
+    theirs = _product(db, "SRTXF001", company_id=mocha)
+
+    savepoint = db.begin_nested()
+    with pytest.raises(AppException) as exc:
+        PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [{"line_type": "product", "product_id": theirs.id, "quantity": 1}],
+            },
+        )
+    savepoint.rollback()
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INVALID_PART"
+    assert exc.value.detail["detail"] == "line:0"
+    assert db.query(PriceTagRequest).count() == 0
+
+
+def test_replace_lines_refuses_a_foreign_product_id_on_a_line(db):
+    mocha = _mocha(db)
+    contact = _contact(db)
+    theirs = _product(db, "SRTXF002", company_id=mocha)
+
+    request = PriceTagRequestService.create_request(
+        db,
+        contact_id=contact.id,
+        company_id=SORENTO,
+        data={"debtor_name": "ZZT Dealer", "lines": []},
+    )
+    db.flush()
+
+    savepoint = db.begin_nested()
+    with pytest.raises(AppException) as exc:
+        PriceTagRequestService.replace_lines(
+            db,
+            request,
+            [{"line_type": "product", "product_id": theirs.id, "quantity": 1}],
+        )
+    savepoint.rollback()
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INVALID_PART"
+    assert exc.value.detail["detail"] == "line:0"
+    db.expire_all()
+    assert (
+        db.query(PriceTagRequestLine)
+        .filter(PriceTagRequestLine.request_id == request.id)
+        .count()
+        == 0
+    )

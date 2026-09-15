@@ -87,6 +87,7 @@ import {
   lookupDebtors,
   lookupProductCombos,
   lookupTagItems,
+  type ProductCombosLookup,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
 import { selectOption } from '@/test-utils';
@@ -470,8 +471,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
 
 describe('PriceTagRequestForm - "Add part" only with a combo (AC-S2-1..S2-3)', () => {
   it('AC-S2-3: no "Add part" before the combos lookup answers (no flash)', async () => {
-    let resolveCombos: (value: { host_guarded: boolean; combos: unknown[] }) => void =
-      () => {};
+    let resolveCombos: (value: ProductCombosLookup) => void = () => {};
     mockCombos.mockImplementation(
       () =>
         new Promise((resolve) => {

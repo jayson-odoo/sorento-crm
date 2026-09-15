@@ -10,8 +10,12 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
-import { defaultShapeProps } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  TagBindingData,
+  TagLayer,
+  TagTemplateDoc,
+} from '@/lib/dealer-kit/tag-template-types';
+import { defaultShapeProps, defaultTextProps } from '@/lib/dealer-kit/tag-template-types';
 import type { CanvasReviewPin } from '@/lib/dealer-kit/review-comments';
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
@@ -33,7 +37,18 @@ vi.mock('react-konva', () => {
 });
 
 vi.mock('./KonvaTagLayer', () => ({
-  KonvaTagLayer: () => <div data-testid="layer-stand-in" />,
+  KonvaTagLayer: ({
+    layer,
+    onSelect,
+  }: {
+    layer: TagLayer;
+    onSelect?: (id: string, additive: boolean) => void;
+  }) => (
+    <div
+      data-testid={`layer-${layer.id}`}
+      onClick={() => onSelect?.(layer.id, false)}
+    />
+  ),
 }));
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
@@ -153,5 +168,78 @@ describe('TagCanvasEditor review pin popover (AC-S9-1, AC-S9-4)', () => {
     fireEvent.click(reopen);
 
     expect(onReviewPinResolve).toHaveBeenCalledWith('comment-1', false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S16 (code review, D21): the inspector's "Copy rendered text" preview is
+// wired off `selectedResolvedText`, which used to be `resolveSlotText` alone
+// - null for any layer with NO `slot_binding`, so an unbound text layer whose
+// OWN content carries a token (`Made of {{spec.material}}`, D57) never showed
+// a preview even though `isDynamic` correctly flagged it as one. Fixed to
+// `layerText` (the same function the print renderer resolves a layer's final
+// text through), which this pins through the real component, not a hand-fed
+// `resolvedText` prop (that half is `InspectorPanel.test.tsx` AC-S16-1/S16-2).
+// ---------------------------------------------------------------------------
+
+function textLayer(id: string, text: string): TagLayer {
+  return {
+    id,
+    type: 'text',
+    x_mm: 0,
+    y_mm: 0,
+    width_mm: 20,
+    height_mm: 6,
+    rotation_deg: 0,
+    z_index: 1,
+    locked: false,
+    visible: true,
+    slot_binding: null,
+    text_override: null,
+    props: { ...defaultTextProps(), text },
+  };
+}
+
+const LINE_BOUND_DATA: TagBindingData = {
+  kind: 'line',
+  line: {
+    tag_id: 'tag-1',
+    line_id: 'line-1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
+    code: 'SRTWT8267-GM',
+    name: 'Kitchen Sink',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: '',
+    specs: [{ key: 'dim_length', label: 'Length', value: '800', unit: 'mm' }],
+    set_members: '',
+    images: [],
+    list_price: 1599,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    barcode: null,
+  },
+};
+
+describe('TagCanvasEditor inspector preview - unbound text with a token (S16)', () => {
+  it('an unbound text layer "L{{spec.dim_length}}mm" previews "L800mm" with a Copy button', async () => {
+    const doc: TagTemplateDoc = {
+      width_mm: 60,
+      height_mm: 40,
+      layers: [textLayer('dims', 'L{{spec.dim_length}}mm')],
+    };
+    render(
+      <TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />,
+    );
+
+    fireEvent.click(screen.getByTestId('layer-dims'));
+
+    expect(await screen.findByText('L800mm')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Copy rendered text' }),
+    ).toBeInTheDocument();
   });
 });
