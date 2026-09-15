@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -1382,6 +1383,37 @@ def _resolve_open_question(
         ]
         if positions:
             answer = {**answer, "resolved": True, "picks": positions}
+        elif jsc.js_string(question.get("expects")) in ("yes_no", "pick_or_yes_no"):
+            # WIDER THAN THE SPEND BELOW, deliberately: reading what the customer SAID is
+            # prompt-version plumbing and belongs to every question that admits a yes or a
+            # no - the escalate offer, the roster it rides, and the member offer, whose own
+            # handler (`_member_offer`) is the right answer for it and never ran under the
+            # promoted prompt. WHICH question a yes consumes is policy, and that stays with
+            # `carry_after_answer` and `_spend_the_answer`.
+            #
+            # AND THE YES/NO ON THE SAME PATH (R-I, owner merge test 15 Sep 2026). The
+            # numbers bridge above has been here since L1-S3d; the yes/no had none, so a
+            # bare "yes" over an open offer resolved NOTHING under the live prompt - only
+            # prompt v3 emits `answers_open_question` - and the turn fell through to the
+            # escalation lane, where the team came from `DEFAULT_SUGGESTED_TEAM` instead of
+            # the offer's. Owner chain: `cca6b365` armed `{expects: pick_or_yes_no,
+            # payload.offer.team: "warehouse"}`, `570610f0` answered "yes" and was routed
+            # to CUSTOMER SERVICE with `answer: {picks: [], yes_no: null}` on its trace.
+            #
+            # The model's OWN structured verdict, never a word list (D11):
+            # `escalation.is_escalation_confirmation` is what this file already trusts to
+            # tell "Yes escalate" and a bare "ESCALATE" from the ask, on all 481 emissions
+            # in the replay corpus, and `is_affirmative` carries the plain yes and no.
+            # Applied only where the question ADMITS a yes or a no, so a roster with no
+            # offer still resolves nothing from an affirmative - which is D19's own rule.
+            escalation = jsc.get(parser_raw, "escalation")
+            said_yes = (
+                jsc.get(escalation, "is_escalation_confirmation") is True
+                or jsc.get(parser_raw, "is_affirmative") is True
+            )
+            said_no = jsc.get(parser_raw, "is_affirmative") is False
+            if said_yes or said_no:
+                answer = {**answer, "resolved": True, "yes_no": "yes" if said_yes else "no"}
     out: dict[str, Any] = {
         "question": question,
         "answer": answer,
@@ -3488,6 +3520,72 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
     return labelled
 
 
+def _is_escalate_offer_question(question: Any) -> bool:
+    """Is this question an ESCALATE OFFER, so a bare yes or no answers it?
+
+    The escalate offer is the one-team `team_pick` with `expects: yes_no` (D5) and the same
+    offer RIDING a roster (`expects: pick_or_yes_no`, `payload.offer`, D19 rule 3). Both are
+    answered by a word, which is why the v1 bridge in `_resolve_open_question` exists.
+
+    `member_offer` is NOT one of them, even though it also reads `expects: yes_no`: it has
+    its own re-prompt path (the `offer_hold` lane, and `cs-roster-plan` rebuilding the
+    roster), and two owner worlds - `sub-output-live/out-14875019` and `out-15145655` -
+    grade exactly that. A bridge that consumed it turned the re-prompted roster into a team
+    clarify. The rule is about the escalate offer; this is where that scope is written down.
+    """
+    if not isinstance(question, dict):
+        return False
+    expects = jsc.js_string(question.get("expects"))
+    payload = question.get("payload") if isinstance(question.get("payload"), dict) else {}
+    if expects == "pick_or_yes_no":
+        return isinstance(payload.get("offer"), dict)
+    return question.get("kind") == "team_pick" and expects == "yes_no"
+
+
+def _spend_the_answer(variables: dict[str, Any], parse: Any) -> bool:
+    """THE ANSWER IS SPENT WHERE THE REPLY IS FINAL, on every lane (rule 1, 15 Sep 2026).
+
+    `carry_after_answer` is the rule (D19) and the tail applies it whenever the emission it
+    is handed carries `open_question_answered`. The ESCALATION lane builds its own fragment
+    and that key does not survive the trip, so an accepted offer was answered - the
+    escalation filed, the right team assigned - and then CARRIED, because the tail's last
+    branch reads "nothing asked this turn, so what the customer is looking at stands". The
+    next bare "yes" escalated the same thing again.
+
+    So the spending happens here too, at the one seam that sees every lane's final state,
+    from the engine's own record of what was answered (`parse._answered`) rather than from
+    a flag a lane has to remember to forward. Idempotent: re-applying `carry_after_answer`
+    to an already-consumed question is `None` again, and to a surviving roster is the same
+    roster.
+    """
+    entry = jsc.get(parse, "_answered")
+    handler = jsc.get(entry, "handler") if jsc.truthy(entry) else None
+    answer = jsc.get(entry, "answer") if jsc.truthy(entry) else None
+    # AN ESCALATE OFFER's answer, and only that - a yes, a no, or a number on the roster it
+    # rides. The tail already spends every other answer, and it owns rules this seam cannot
+    # see: the outstanding scope and detail questions are STICKY by design (`_offer_carry`
+    # re-seats them so a "1" then a "2" both work), and spending them here consumed the
+    # offer after the first pick and sent the second into the plain order lane. What the
+    # tail cannot do is spend the answer to an OFFER, because the escalation lane builds its
+    # own fragment and `open_question_answered` does not survive the trip - the whole of
+    # R-I's second half. Same test as the bridge that read the answer in the first place, so
+    # the two halves cannot disagree about which questions they are for.
+    if not _is_escalate_offer_question(jsc.get(parse, "_open_question_before")):
+        return False
+    if not jsc.truthy(handler) or jsc.get(answer, "resolved") is not True:
+        return False
+    variables["open_question"] = open_question_mod.carry_after_answer(
+        jsc.get(parse, "_open_question_before"), handler, answer
+    )
+    # A TURN THAT SPENDS AN OFFER DOES NOT OPEN ONE. The lane re-composes its own copy on
+    # the answering turn - the miss lane prints its miss again, the ladder its rung - so the
+    # escalate sentence is still in the text that has just been ACCEPTED, and recording it
+    # again re-opened the very question `carry_after_answer` had spent: a second bare "yes"
+    # escalated the same thing twice. The accept is the news of this turn; the sentence is
+    # yesterday's.
+    return jsc.get(answer, "yes_no") == "yes"
+
+
 def _arm_cross_domain_offer(
     sealed: Mapping[str, Any],
     offer: Mapping[str, Any],
@@ -3495,7 +3593,30 @@ def _arm_cross_domain_offer(
     ctx: Mapping[str, Any],
     domain: Any,
 ) -> None:
-    """The cross-domain escalate offer, recorded as the ONE open question (AC-1015).
+    """THE escalate offer, recorded as part of the ONE open question - every arm, one writer
+    (owner ruling, 15 Sep 2026: "our fix needs to be general and not targeted to 1 scenario
+    only").
+
+    An offer EXISTS when the outgoing reply carries the frozen sentence and names a real
+    team. That is the whole test, and it is applied here because here is the only point at
+    which the reply is FINAL: `crossdomain_compose` appends the sentence after the tail has
+    compiled, so a writer inside the tail can only ever see a draft. Three tail arms used to
+    try - the standalone arm in `_ask_for_turn`, `_offer_rides_on_roster` for an offer over a
+    carried roster, and `_offer_born_beside_roster` for one born beside a fresh roster - and
+    between them they covered the shapes somebody had hit and missed the rest: a hit with a
+    cross-domain ladder armed nothing a `yes` could answer (R-I, owner turn
+    cca6b365 -> 570610f0), which is what proved the per-arm approach wrong.
+
+    What it covers now, from the one test: standalone after a hit, after a cross-domain
+    ladder, beside a did-you-mean roster, beside a multiple-matches picker, beside a customer
+    picker, beside an outstanding scope or detail question, beside a tier menu, and after a
+    fan-out section. `with_offer` is still the merge primitive, so a roster keeps its kind,
+    its rows and its clock and only gains the yes and the no.
+
+    (Original AC-1015 note, still true of the cross-domain case: without this the next
+    turn's "yes" resolves nothing - `_resolve_open_question` finds no question, the turn
+    falls through as a bare affirmative, and the customer who said yes is answered by
+    silence.)
 
     `crossdomain_compose` appends "Would you like me to escalate to X team?" AFTER the tail
     compiled the state, so the question it opens is the only one no lane and no compiler
@@ -3518,28 +3639,44 @@ def _arm_cross_domain_offer(
     first product all over again. `with_offer` merges the two, and the roster the tail
     carried (`compile_state`) is the one it merges onto.
     """
-    team = jsc.get(offer, "team")
-    if not jsc.truthy(team):
-        return
+    # THE ANSWER IS SPENT FIRST, and unconditionally: it is a fact about the turn that just
+    # happened, not about whether this reply carries an offer. Placed after the team read it
+    # was dead on exactly the turns it exists for - an accepted "yes" ends with the
+    # escalation copy, which names no team, so the function returned before spending it.
     patch = sealed.get("session_patch") if isinstance(sealed, Mapping) else None
     variables = patch.get("variables") if isinstance(patch, dict) else None
     if not isinstance(variables, dict):
         return
     parse = jsc.get(ctx, "parse")
+    if _spend_the_answer(variables, parse):
+        return
+
+    # THE PRINTED SENTENCE FIRST, because it is the promise the customer read (one source,
+    # see `open_question.team_from_reply`). `offer.team` is `crossdomain_compose`'s own and stays
+    # as the fallback for a composer that names a team the phrase does not spell out.
+    team = open_question_mod.team_from_reply(jsc.get(sealed, "text")) or jsc.get(offer, "team")
+    if not jsc.truthy(team):
+        return
     turn_no = int(jsc.js_number(jsc.get(parse, "_turn_no")) or 0)
-    question = open_question_mod.ask(
-        "team_pick",
-        options=[{"idx": 1, "team": team, "label": team}],
-        turn_no=turn_no,
-        expects="yes_no",
-        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
-        payload={"team": team, "domain": domain},
-    )
     previous = jsc.get(parse, "_open_question_before") or variables.get("open_question")
     carried = variables.get("open_question")
     roster = _live_roster(carried, previous)
     if roster is not None:
-        variables["open_question"] = open_question_mod.with_offer(roster, question)
+        # THE ONE IMPLEMENTATION (owner ruling, 15 Sep 2026, general rule 1) - the tail
+        # calls the same function with its own composed text.
+        variables["open_question"] = open_question_mod.record_offer(
+            roster, reply_text=sealed.get("text"), turn_no=turn_no, domain=domain,
+            fallback_team=team,
+        )
+        return
+    if "member_offer" in (jsc.get(carried, "kind"), jsc.get(previous, "kind")):
+        # A MEMBER OFFER IS ALREADY AN OPEN OFFER, with its own yes and no and its own
+        # re-prompt (the `offer_hold` lane, `cs-roster-plan` rebuilding the roster), and
+        # `offer_is_open` counts it as one. The escalate yes/no has nothing to add to it and
+        # must not replace the named people the customer is reading. Measured: two owner
+        # worlds (`sub-output-live/out-14875019`, `out-15145655`) turned a re-prompted
+        # six-person roster into a one-option team clarify as soon as this arm could read a
+        # team off the printed sentence.
         return
     if _the_tail_armed_its_own(carried, previous):
         # THE TAIL ASKED SOMETHING ELSE THIS TURN, and it is the one that knows (S1). A
@@ -3548,6 +3685,12 @@ def _arm_cross_domain_offer(
         # yes/no left them answering one thing while the bot waited for another. Only a
         # question the tail merely CARRIED (the same one `_open_question_before` holds) is
         # this arm's to replace, because then the offer is the only news of the turn.
+        return
+    question = open_question_mod.record_offer(
+        None, reply_text=sealed.get("text"), turn_no=turn_no, domain=domain,
+        fallback_team=team,
+    )
+    if question is None:
         return
     if open_question_mod.same_question(question, previous) and isinstance(previous, dict):
         question["asked_at_turn"] = int(previous.get("asked_at_turn", question["asked_at_turn"]))

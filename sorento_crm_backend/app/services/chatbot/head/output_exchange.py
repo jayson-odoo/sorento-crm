@@ -1229,7 +1229,7 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     axis_keys = {_ce_key(e) for e in [*(products or []), *([customer] if customer else [])]}
     kept_off_axis = [
         e
-        for e in getattr(outcome, "keep", None) or []
+        for e in (outcome.keep or [])
         if isinstance(e, dict) and _ce_key(e) not in axis_keys
     ]
     entities = [
@@ -1301,7 +1301,7 @@ def _outstanding_subject_capable_axes() -> frozenset[str]:
     )
 
 
-_OUTSTANDING_SUBJECT_CAPABLE_AXES = _outstanding_subject_capable_axes()
+_OUTSTANDING_SUBJECT_CAPABLE_AXES = _outstanding_subject_capable_axes()  # one constant, one call
 
 
 def _outstanding_subject_axes(filters: Any) -> set[str]:
@@ -1375,7 +1375,7 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
         # narrowing it, so the turn stays the new ask today's code already calls it.
         return False
     for e in jsc.array(o.get("entities")):
-        if jsc.get(e, "current_message") is not True:
+        if jsc.get(e, "current_message") is False:
             continue  # the question's own subject, carried - not this turn's ask
         axis = _axis_for_hint(jsc.get(e, "hint"), None)
         if axis is None or axis in _OUTSTANDING_SUBJECT_CAPABLE_AXES:
@@ -1531,6 +1531,28 @@ def _outstanding_scope_pick(prev_state: Any, o: Any) -> str | None:
     return None
 
 
+def _close_outstanding_pending(o: dict) -> None:
+    """The pending is CLOSED - one close, whichever arm decided it (owner ruling, 15 Sep
+    2026: "R22 stands and arms may not differ").
+
+    Two arms close an outstanding question: the new-ask arm and R22's way-out. They used to
+    differ in what the turn was owed afterwards - only the way-out stamped a DECLINE - so
+    once arm 1 stopped catching a decline (reviewer B2) the same "no" closed the question
+    through the other door and got no closing line. A decline is a decline wherever it is
+    recognised, so the stamping lives here, at the close, and neither arm carries copy of
+    its own.
+
+    `outstanding_offer_declined` is what makes the lane compose ONE closing reply and arm
+    nothing (`run_fetch`); the three routing fields are what get the turn to that lane.
+    """
+    o["outstanding_pending_dropped"] = True
+    if o.get("is_affirmative") is False:
+        o["outstanding_offer_declined"] = True
+        o["domain_hint"] = "order"
+        o["message_type"] = "business_query"
+        o["intent_hint"] = "check_order"
+
+
 def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -> None:
     """S4 points 4/5 (PLAN-chatbot-outstanding-report.md): read an OPEN
     `outstanding_scope` or `outstanding_detail` ask against this turn - answered,
@@ -1614,13 +1636,42 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
 
     named_entities = [e for e in jsc.array(o.get("entities")) if jsc.truthy(e)]
     names_entity = bool(named_entities)
-    names_own_dates = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(o.get("date_filter_end"))
-    own_question = names_entity or jsc.truthy(o.get("domain_hint"))
+    # WHAT THIS MESSAGE NAMED, which is a different question from what the emission carries
+    # (reviewer B2, 15 Sep 2026). `named_entities` counts the CARRIED subject too - the
+    # product this question has been about all along, merged back in by the executor - so
+    # after R-H made the refinement test ignore carried entities, a turn that picked nothing
+    # and merely echoed that subject read as a refinement: "no" re-ran the report and left
+    # `outstanding_detail` armed instead of closing it. Arm 1 asks the narrower question;
+    # arm 2 keeps `names_entity`, because a turn that CARRIES a subject and names its own
+    # entity is still the new ask it always was.
+    names_own_entity = any(
+        jsc.get(e, "current_message") is not False for e in named_entities
+    )
+    # WHAT THIS TURN SAID ABOUT THE DATE AXIS, which is not only a window. "all dates" is a
+    # refinement with no window at all - it WIDENS the axis (`broaden_axis: "date"`,
+    # `date_mode: "all"`) - and reading only the two filter fields made it look like a turn
+    # that said nothing, so it fell through to the new-ask arm and re-ran on the plain order
+    # lane (AC-1065, tester 2's parametrized red). The axis is the unit the rule is written
+    # in: a date is a filter this report can never take as its subject, whether the customer
+    # narrowed it or opened it up.
+    names_own_dates = (
+        jsc.truthy(o.get("date_filter_start"))
+        or jsc.truthy(o.get("date_filter_end"))
+        or jsc.js_string(o.get("broaden_axis") or "") == "date"
+        or jsc.js_string(o.get("date_mode") or "") == "all"
+    )
+    # WHAT THE TURN BROUGHT OF ITS OWN, and the domain word is not part of it (rule 3,
+    # owner ruling 15 Sep 2026). With the word in this test, "hi" under an open report was
+    # read two ways: `domain_hint: null` re-printed the question (R22's first unreadable
+    # reply) and `domain_hint: "order"` dropped it as a new ask - the same message, two
+    # readings, decided by a word the customer did not choose. An entity is the honest
+    # signal of a question of its own, and `picked` already covers the answer side.
+    own_question = names_entity
 
     if not already_read:
         if (
             picked is None
-            and (names_own_dates or names_entity)
+            and (names_own_dates or names_own_entity)
             and _outstanding_keeps_subject(o, filters)
         ):
             o["outstanding_refined"] = True
@@ -1661,7 +1712,7 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             # `tail/compile_state.py` both keyed off "an outstanding pending was open last
             # turn", so a hit's `outstanding_detail` marker silently suppressed the scope
             # question on the NEXT bare-word ask, however many turns later.
-            o["outstanding_pending_dropped"] = True
+            _close_outstanding_pending(o)
             return
         elif picked is None and _outstanding_leaves_the_offer(o, prev_pending):
             # R22 (owner round 9, 13 Sep 2026): THE WAY OUT. A customer who answers
@@ -1671,16 +1722,10 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             # can't reset now?" Both shapes close it through the SAME door the new ask
             # above uses, so the filters die with it; they differ only in what the turn is
             # owed afterwards.
-            o["outstanding_pending_dropped"] = True
-            if o.get("is_affirmative") is False:
-                # A DECLINE was aimed at this question, so it gets an answer to it: the
-                # lane composes one closing reply and arms nothing (`run_fetch`). Kept on
-                # the outstanding arm for that one line, exactly as the re-print it
-                # replaces already is.
-                o["outstanding_offer_declined"] = True
-                o["domain_hint"] = "order"
-                o["message_type"] = "business_query"
-                o["intent_hint"] = "check_order"
+            # A DECLINE aimed at this question gets an answer to it - the lane composes one
+            # closing reply and arms nothing (`run_fetch`) - and that is stamped at the
+            # close, not here, so the other arm cannot close the same "no" in silence.
+            _close_outstanding_pending(o)
             # The SECOND unreadable turn was not aimed at the question at all, so it takes
             # its own ordinary path with the offer simply gone - a greeting for "hi",
             # which is the right reply once nothing is open.
@@ -3901,7 +3946,16 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     if jsc.get(_mp_question, "kind") != "member_offer" and o.get("dym_pick_applied") is not True:
         st_o = parent_input.get("previous_conversation_state") or {}
         open_o = offer_is_open(st_o)
-        if open_o and not jsc.truthy(o.get("domain_hint")):
+        # NOT GATED ON THE DOMAIN WORD (rule 3, owner ruling 15 Sep 2026). A company word
+        # over an open offer is a company PICK - "Sorento" answers "which company?" - and
+        # whether the model also stamped a domain on that turn says nothing about it. The
+        # gate made the same word resolve a company with `domain_hint: null` and resolve
+        # nothing with `domain_hint: "order"`, which is the defect class R-B and R-H are:
+        # a reading that changes with a word the customer did not choose. What guards this
+        # arm is what it always was - an OPEN offer, no member-pick context, and no
+        # dym pick - plus `co_company_pick`, which only fires on a short reply that
+        # word-boundary matches exactly one offered company.
+        if open_o:
             co_o = co_company_pick(o)
             retarget_o = (
                 req_help
@@ -4073,4 +4127,5 @@ def suggest_follow_up(item: dict, parent_input: dict) -> dict:
                 e["raw"] = _DASHES.sub("-", e["raw"])
             if isinstance(jsc.get(e, "canonical_code"), str):
                 e["canonical_code"] = _DASHES.sub("-", e["canonical_code"])
+
     return output

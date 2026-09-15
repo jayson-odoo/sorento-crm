@@ -1309,7 +1309,13 @@ def _attach_question(
     # kept a sibling nothing downstream recognised as a product - issue #708 again, one
     # layer further in. `current_message` is True for the same reason it is on the pick
     # itself: the pick set IS this turn's scope.
-    keep = [
+    # THE GATE ANSWERS THIS DIRECTLY when it narrowed (R-C / R-D, 15 Sep 2026): a picker arm
+    # publishes the sibling on `keep_entities`, in this exact shape, because its
+    # `compatible_entities` holds only the rows it offered. This lane's own roster comes off
+    # a MISS, where the gate narrowed nothing and the conversion below is still the answer -
+    # so the published key wins when present and the conversion stays for every other turn.
+    published = [e for e in jsc.array(jsc.get(gate, "keep_entities")) if isinstance(e, dict)]
+    keep = [dict(e) for e in published] or [
         {
             "raw": jsc.get(entity, "code"),
             "hint": jsc.get(entity, "entity_type") or "product",

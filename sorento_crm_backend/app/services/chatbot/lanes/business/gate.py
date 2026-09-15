@@ -253,6 +253,96 @@ def _tokens_by_uuid(resolver: Any) -> dict[str, set[str]]:
     return out
 
 
+def _keep_entities(
+    parser: Any, resolver: Any, *, entities: Any, offered_uuids: set[str]
+) -> list[dict[str, Any]]:
+    """The co-resolved siblings a picker's PICK must keep (R-C / R-D, 15 Sep 2026).
+
+    What ANOTHER WORD in the same message resolved, in the entity shape `payload.keep`
+    carries, so `_keep_beside` and `miss_suggest._attach_question` can freeze it onto the
+    question the picker arms. Its own key, never `compatible_entities`: that list is what
+    the picker OFFERS, and a sibling put there becomes a pickable row the customer was
+    never shown (the owner's 13-row roster) and is then subtracted from `keep` by the very
+    rule meant to fill it.
+
+    SCOPED BY TOKEN, not by type. Capture rs09-t1: "7445" matched nine products by code
+    AND four customers by phone number, so those customers are a second reading of the
+    PICKED word rather than a sibling, and keeping them would answer about companies the
+    customer never named. A uuid with no token attribution (an AND-mode `intersection`
+    row) is dropped, because "no attribution" is not evidence of a different word.
+
+    ONE ENTITY PER TOKEN, and its shape depends on how many rows that token found:
+
+    * exactly one - the resolved row, uuid and all ("photo" -> one attachment type), so the
+      pick's re-run can filter on it;
+    * more than one - the customer's OWN WORD, `canonical_code: null` and no uuid, which is
+      the shape main's spine carried for exactly this case (capture b56-pick-turn:
+      `{raw: "srtwc286", hint: "product", canonical_code: null}`). Ten WC286 variants are
+      not a filter the customer asked for, and pinning any one of them would answer about
+      a variant they never named; the token echoes in the scope header, and
+      `fetch.entity_ids_transformer` is uuid-only so the fetch stays scoped as it was
+      (owner ruling, option (a), 15 Sep 2026 - scoping the fetch to a whole family is a
+      separate question and a behaviour main never shipped).
+    """
+    tokens_by_uuid = _tokens_by_uuid(resolver)
+    offered_tokens: set[str] = set()
+    for uuid in offered_uuids:
+        offered_tokens |= tokens_by_uuid.get(jsc.js_string(uuid), set())
+
+    by_token: dict[str, list[Any]] = {}
+    for e in jsc.array(entities):
+        own = tokens_by_uuid.get(jsc.js_string(jsc.get(e, "uuid")), set())
+        if not own or (own & offered_tokens):
+            continue
+        for token in own:
+            by_token.setdefault(token, []).append(e)
+
+    # The customer's own word for a token, off the parser's entities - the only place the
+    # raw wording and the hint they were typed with exist.
+    def _typed(token: str) -> Any:
+        return jsc.find(
+            jsc.array(jsc.get(parser, "entities")),
+            lambda e: jsc.truthy(e)
+            and jsc.js_string(jsc.get(e, "raw") or "").strip().casefold() == token,
+        )
+
+    out: list[dict[str, Any]] = []
+    for token, rows in by_token.items():
+        if len(rows) == 1:
+            row = rows[0]
+            code = jsc.get(row, "code") or jsc.get(row, "canonical_code")
+            out.append(
+                {
+                    "raw": code,
+                    "hint": jsc.get(row, "entity_type") or "product",
+                    "canonical_code": code,
+                    "uuid": jsc.get(row, "uuid") or None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            )
+            continue
+        typed = _typed(token)
+        hint = jsc.get(typed, "hint") if jsc.truthy(typed) else None
+        if not jsc.truthy(hint):
+            # Fall back to what the ROWS agree they are; a token whose rows disagree is
+            # not one subject and is left out rather than guessed at.
+            kinds = {jsc.lower_or_empty(jsc.get(r, "entity_type")) for r in rows}
+            if len(kinds) != 1:
+                continue
+            hint = next(iter(kinds))
+        out.append(
+            {
+                "raw": jsc.js_string(jsc.get(typed, "raw")) if jsc.truthy(typed) else token,
+                "hint": hint,
+                "canonical_code": None,
+                "current_message": True,
+                "confident": True,
+            }
+        )
+    return out
+
+
 def _cust_name(match: Any) -> str:
     """`_custName` - the legal name with the ACCOUNT suffix stripped, nothing else."""
     display = jsc.get(match, "display") or {}
@@ -342,6 +432,11 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_reason = "ok"
     gate_clarification = ""
     compatible_entities: list[dict[str, Any]] = entities
+    # What a PICKER's pick must keep - the sibling another word in this message resolved
+    # (R-C / R-D). Empty except on the two arms that raise a picker and therefore narrow
+    # `compatible_entities` to the rows they offer; every other turn keeps everything it
+    # resolved in that list already, so there is nothing to carry separately.
+    keep_entities: list[dict[str, Any]] = []
     # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
     # per token, the incompatible types it ONLY matched - never populated for a token that
     # also carries an allowed-type match. `token -> [types]`, so `miss_resolutions`
@@ -801,33 +896,22 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         # sibling-carry (issue #708) was fed an empty set by construction and the next turn
         # re-asked for a value the customer had already given.
         #
-        # The picker is about ONE WORD. What ANOTHER word in the same message resolved is
-        # not on offer, cannot be mis-picked, and must survive - that is the sibling
-        # `_keep_beside` and `miss_suggest._attach_question` freeze as `payload.keep`.
-        #
-        # SCOPED BY TOKEN, not by type (capture rs09-t1, which the type test moved): "7445"
-        # matched nine products by code AND four customers by phone number, and those
-        # customers are a second reading of the picked word, not a sibling - keeping them
-        # would answer about companies the customer never named. A uuid with no token
-        # attribution at all (an AND-mode `intersection` row) keeps the old behaviour and
-        # is dropped, because "no attribution" is not evidence of a different word.
-        #
-        # `_picker_rows` reads this list only when no numbered lines were flattened at all,
-        # so the rendered roster is unchanged.
+        # `compatible_entities` stays EXACTLY the rows on offer (R-C round 2, 15 Sep 2026).
+        # The co-resolved sibling travels on its own key, `keep_entities`, and the two
+        # reasons are both measured. This list is what `_picker_rows` falls back to when no
+        # numbered lines were flattened, so a sibling added here was FROZEN AS A PICKABLE
+        # ROW: the owner's live turn armed a 13-row roster over a reply that numbered 3,
+        # flipped the question's kind to `product_pick`, and a bare "2" would have resolved
+        # against a row nobody was shown - the S7a defect again. And `_keep_beside`
+        # subtracts the offered rows by uuid, so a sibling in this list is subtracted from
+        # the very `keep` it was meant to fill. One list cannot be both "what is on offer"
+        # and "what is not".
         if require_specific:
             opt_uuids = {c["uuid"] for o in specific_options for c in o["candidates"]}
-            tokens_by_uuid = _tokens_by_uuid(resolver)
-            offered_tokens: set[str] = set()
-            for uuid in opt_uuids:
-                offered_tokens |= tokens_by_uuid.get(jsc.js_string(uuid), set())
-
-            def _other_word(entity: dict[str, Any]) -> bool:
-                own = tokens_by_uuid.get(jsc.js_string(entity.get("uuid")), set())
-                return bool(own) and not (own & offered_tokens)
-
-            compatible_entities = [
-                e for e in entities if e["uuid"] in opt_uuids or _other_word(e)
-            ]
+            keep_entities = _keep_entities(
+                parser, resolver, entities=entities, offered_uuids=opt_uuids
+            )
+            compatible_entities = [e for e in entities if e["uuid"] in opt_uuids]
         elif len(exact_entities) > 0:
             compatible_entities = exact_entities
 
@@ -1015,10 +1099,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             # into the printed line: a customer who types the whole line back must resolve
             # to the row they read.
             #
-            # R-C: the OTHER AXES survive, for the reason the `require_specific` narrowing
-            # above states - "delivery for chin chun product wc286" resolved a product
-            # beside the ambiguous customer, and dropping it here is what fed the pick's
-            # `payload.keep` an empty set and answered "Product: all products".
+            # R-C/R-D: the co-resolved sibling survives on `keep_entities`, NOT in this
+            # list - "delivery for chin chun product wc286" resolved a ten-strong WC286
+            # family beside the ambiguous customer, and this roster replaces the list
+            # wholesale, which is what fed the pick's `payload.keep` an empty set and
+            # answered "Product: all products". Computed BEFORE the replacement, because
+            # after it there is nothing left to compute from.
             #
             # R-F: each row carries the ACCOUNT FAMILY it stands for. One rendered line can
             # stand for accounts in several ledgers (`_company_suffix` above prints them
@@ -1030,11 +1116,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             # outlives the roster: an entity keeps its uuid for as long as the customer
             # keeps talking about it, and `_entity_of` copies this onto the picked entity,
             # which `focus.customer` then carries for exactly that long.
-            other_axis_entities = [
-                c
-                for c in compatible_entities
-                if jsc.js_string(jsc.get(c, "entity_type")).lower() != "customer"
-            ]
+            keep_entities = _keep_entities(
+                parser,
+                resolver,
+                entities=compatible_entities,
+                offered_uuids={jsc.js_string(jsc.get(m, "uuid")) for m in reps},
+            )
             compatible_entities = [
                 {
                     "uuid": jsc.get(m, "uuid"),
@@ -1049,7 +1136,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     ),
                 }
                 for i, m in enumerate(reps)
-            ] + other_axis_entities
+            ]
 
     # ── A PINNED PICK WINS OVER FUZZY RE-RESOLUTION ─────────────────────────
     # An entity carrying a uuid came from a roster pick. The resolver still re-resolves
@@ -1663,6 +1750,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     out["compatible_entities"] = compatible_entities
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities
+    # The sibling a pick must keep, on its OWN key (R-C / R-D). Written only when there is
+    # one, so every capture of a turn that raised no picker is byte-identical.
+    if keep_entities:
+        out["keep_entities"] = keep_entities
     # A DIAGNOSTIC on this node's own output, and nothing more (R-F, 15 Sep 2026): no
     # session writer and no session reader remain - the `compile_state` write this once fed
     # was dropped by the five-key projection on every turn, which is the defect R-F fixes -

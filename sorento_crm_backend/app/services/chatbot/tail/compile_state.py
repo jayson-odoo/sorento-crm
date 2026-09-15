@@ -489,13 +489,21 @@ def _picker_rows(options: Any, sources: tuple[Any, ...]) -> list[dict[str, Any]]
 def _keep_beside(sources: tuple[Any, ...], rows: Any) -> list[dict[str, Any]]:
     """Issue #708's siblings: what already resolved this turn, MINUS the rows on offer.
 
-    Empty on today's `require_specific` turns, and measurably so rather than by accident:
-    `gate.run` narrows `compatible_entities` to the picker's own candidates on exactly
-    that arm (`opt_uuids`), so "already resolved" and "on offer" are the same set and the
-    subtraction leaves nothing. It is written as the subtraction anyway because that is
-    the RULE - the same one `_attach_question` applies to the did-you-mean roster - and a
-    gate that later stops narrowing must not silently start dropping siblings.
+    THE GATE ANSWERS THIS DIRECTLY NOW (R-C / R-D, 15 Sep 2026). On a picker arm it narrows
+    `compatible_entities` to the rows it OFFERS and publishes the sibling separately, on
+    `keep_entities`, already in entity shape. That key wins when present. It had to become a
+    separate list: while the sibling sat in `compatible_entities` it was both "what resolved"
+    and (through `_picker_rows`) a pickable row, so the owner's live turn froze a 13-row
+    roster over a reply that numbered 3, and this subtraction then removed the very siblings
+    it exists to keep, because they had become "offered".
+
+    The subtraction below is the fallback, and it is still right for every arm that narrows
+    nothing: the did-you-mean roster comes off a MISS, so the gate kept everything it
+    resolved and the sibling is in that list, minus the rows on offer.
     """
+    published = _from_sources(sources, "keep_entities")
+    if published:
+        return [dict(e) for e in published if isinstance(e, dict)]
     offered = {
         jsc.nullish_str(jsc.get(row, "uuid")).strip().lower()
         for row in jsc.array(rows)
@@ -664,13 +672,18 @@ def _ask_for_turn(
         # message to answer. The frozen phrase is the same contract `offer_is_open` and
         # `tail/compose` already hold, and by this line the text is final: the
         # miss-company arm that appends the phrase has already run.
-        return oq.ask(
-            "team_pick",
-            options=[{"idx": 1, "team": team, "label": team}] if jsc.truthy(team) else [],
+        # BUILT BY THE ONE IMPLEMENTATION (owner ruling, 15 Sep 2026, general rule 1):
+        # `open_question.record_offer` is the single place that knows what an escalate offer
+        # is, what team it names and how it attaches. The engine calls the same function
+        # after `crossdomain_compose`, because the reply becomes final twice; `with_offer`
+        # is idempotent so the second call is a no-op unless the sentence changed. This arm
+        # keeps only the CONDITION it always had - the flag plus the frozen phrase.
+        return oq.record_offer(
+            None,
+            reply_text=reply_text,
             turn_no=turn_no,
-            expects="yes_no",
-            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
-            payload=payload,
+            domain=domain,
+            fallback_team=team,
         )
     return None
 
@@ -1599,15 +1612,20 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
             # carries the escalate sentence takes the offer on board instead of dropping
             # it. `_offer_rides_on_roster` above only sees an offer asked over a roster the
             # tail CARRIED, so a list and an offer born together left the offer nowhere.
-            born_with_offer = _offer_born_beside_roster(
-                armed,
-                qf=qf,
-                gate=gate,
-                offer_open=offer_open,
-                reply_text=output.get("user_response"),
-                turn_no=turn_no,
+            # THE SAME ONE IMPLEMENTATION for a roster and an offer born together: the
+            # condition stays here (the flag, and the reply actually carrying the phrase),
+            # the knowledge of what an offer IS lives in `record_offer`.
+            variables["open_question"] = (
+                pending_open_question.record_offer(
+                    armed,
+                    reply_text=output.get("user_response"),
+                    turn_no=turn_no,
+                    domain=jsc.get(qf, "domain_hint"),
+                    fallback_team=_escalation_team(qf, gate),
+                )
+                if offer_open
+                else armed
             )
-            variables["open_question"] = born_with_offer or armed
     elif jsc.truthy(jsc.get(qf, "open_question_answered")):
         # ANSWERED, WHICH IS NOT THE SAME AS GONE (owner ruling D19). A ROSTER is still on
         # the customer's screen after they pick from it, so it survives its own pick with
@@ -2483,10 +2501,9 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         born: dict[str, Any] | None = {
             "set": last_result_set,
             "kind": "disambiguation",
-            "fam": (jsc.get(gate, "picker_families") if gate is not None else None) or None,
         }
     elif form_born_now:
-        born = {"set": last_result_set, "kind": "disambiguation", "fam": None}
+        born = {"set": last_result_set, "kind": "disambiguation"}
     else:
         born = None
 

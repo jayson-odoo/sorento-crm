@@ -76,6 +76,8 @@ Nothing here calls a model, opens a session or reads the customer's words.
 """
 from __future__ import annotations
 
+import re
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -257,6 +259,113 @@ def carry_after_answer(
     return {**question, "expects": "pick", "payload": payload}
 
 
+#: The one sentence an escalate offer is made with - the frozen phrase `tail/compose`,
+#: `offer_is_open` and the miss-company arm all hold. `team_from_reply` reads the promised
+#: team back off it.
+ESCALATE_PREFIX = "Would you like me to escalate to"
+#: EVERY composer's sentence, not one of them. `compile_state`'s two miss arms and
+#: `compose.crossdomain_compose` write the frozen prefix; `lanes/business/answer.py` writes
+#: a lower-case "would you like me to escalate to X team?" on one arm and "Reply a number to
+#: pick, or 'yes' to escalate to X." on another; and the miss-company arm inserts a BOLD
+#: company ("escalate to *Sorento* customer service team?"). The offer must be recognised
+#: from all of them (owner rule 1, tester 2's generality catch), so the anchor is the two
+#: words that never vary - "escalate to" - and the team is whatever follows up to the end of
+#: the sentence. Over-capture is harmless: `team_from_reply` only accepts a span that
+#: reduces to a real catalogue team.
+_ESCALATE_TEAM_RE = re.compile(
+    r"escalate to\s+(?P<team>[^.?!\n]+?)(?:\s+team)?\s*[.?!]", re.IGNORECASE
+)
+
+
+def team_from_reply(reply_text: Any) -> str | None:
+    """The team THE CUSTOMER WAS PROMISED, read off the sentence they will read.
+
+    ONE SOURCE for one fact (owner ruling, 15 Sep 2026). The printed sentence and the
+    recorded offer used to come from different places - the text from `roster_plan[0].team`
+    / `qf.routing.suggested_team` in `_miss_company_routing`, the record from
+    `_escalation_team`, which prefers `gate.company_team` - so a reply could promise one
+    team while the stored offer routed to another (security review, same day). Reading the
+    team back off the final text makes that impossible: whatever was said IS what a yes
+    assigns.
+
+    This parses the BOT's own frozen sentence, never the customer's words, so it is not the
+    word-list-over-customer-text D11 forbids. Display form is `_prettyTeam`'s (underscores
+    to spaces) so the reverse is spaces to underscores, and a COMPANY may sit in front of
+    the team ("escalate to Mocha warehouse team?"), so leading words are dropped one at a
+    time until what remains is a real catalogue team. No company list, and nothing invented:
+    an unmatched phrase returns None.
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    match = _ESCALATE_TEAM_RE.search(jsc.js_string(reply_text or ""))
+    if match is None:
+        return None
+    # Bold markers come off (the company insert is written `*Sorento*`), then leading words
+    # are dropped one at a time until what remains is a real catalogue team - which is how a
+    # company prefix, a lower-case composer and the "or 'yes' to escalate to X." shape all
+    # read the same without a list of companies or a list of sentences.
+    words = [w for w in match.group("team").replace("*", " ").strip().lower().split() if w]
+    for start in range(len(words)):
+        team = "_".join(words[start:])
+        if team in SUGGESTED_TEAMS:
+            return team
+    return None
+
+
+def record_offer(
+    question: Any,
+    *,
+    reply_text: Any,
+    turn_no: int,
+    domain: Any = None,
+    fallback_team: Any = None,
+) -> Any:
+    """THE escalate offer, recorded on whatever question the turn leaves open. ONE RULE,
+    ONE IMPLEMENTATION (owner ruling, 15 Sep 2026: "our fix needs to be general and not
+    targeted to 1 scenario only").
+
+    The rule: *an offer exists when the outgoing reply carries the frozen sentence and
+    names a real team; it is recorded on the question that turn leaves open, from one team
+    source.* No arm conditions - the caller does not say which shape it is, and there is
+    nothing here that knows about did-you-mean, pickers, ladders or fan sections.
+
+    Three tail arms and one engine arm used to try, each with its own conditions and its own
+    team, and between them they covered the shapes somebody had hit: a hit with a
+    cross-domain ladder armed nothing a "yes" could answer (R-I, owner turn
+    cca6b365 -> 570610f0), which is what proved the per-arm approach wrong.
+
+    **Called TWICE, because the reply is composed in two stages.** The tail composes the
+    answer and `crossdomain_compose` may then append the escalate sentence, so the text is
+    final at two different moments and a single call at either one is blind to the other.
+    `with_offer` is idempotent by construction (a second offer REPLACES `payload.offer`
+    rather than nesting), so the second call over the same question is a no-op when the
+    sentence has not changed and an update when it has. One rule, one implementation, one
+    team source, two invocations.
+
+    What rides and what does not: a ROSTER takes the offer on board (D19 rule 3 - it keeps
+    its kind, its rows and its clock and gains a yes and a no); NO question at all becomes
+    the plain one-team yes/no (D5); and any OTHER question the turn armed is left exactly as
+    it is, because a team clarify, a company clarify or a member offer is already what the
+    customer is being asked and the escalate yes/no has nothing to add to it.
+    """
+    team = team_from_reply(reply_text) or fallback_team
+    if not jsc.truthy(team):
+        return question
+    if isinstance(question, dict) and question.get("kind") and question.get("kind") not in ROSTER_KINDS:
+        return question
+    offer = ask(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        turn_no=turn_no,
+        expects="yes_no",
+        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+        payload={"team": team, "domain": domain},
+    )
+    if isinstance(question, dict) and question.get("kind") in ROSTER_KINDS:
+        return with_offer(question, offer)
+    return offer
+
+
 def with_offer(roster: Any, offer_question: Any) -> dict[str, Any]:
     """The one-team escalate offer, merged ONTO the roster instead of over it (D19 r3).
 
@@ -342,7 +451,50 @@ def resolve(
     handler = _HANDLERS.get(kind)
     if handler is None:
         return Outcome(handler="unknown", outcome=f"No handler for {kind!r}.")
-    return handler(answer, _freeze(options), payload)
+    return _apply_keep(handler(answer, _freeze(options), payload), payload)
+
+
+def _apply_keep(outcome: Outcome, payload: dict) -> Outcome:
+    """Issue #708's siblings, re-applied to EVERY resolved pick - one site (owner ruling,
+    15 Sep 2026: "our fix needs to be general and not targeted to 1 scenario only").
+
+    `payload.keep` is what the turn that armed the question had already resolved beside the
+    ambiguous word (`gate.keep_entities`). It used to be applied inside `_product_pick` and
+    then, for R-C, inside `_customer_pick` - two copies, and every other kind silently
+    without it, so a sibling survived a product pick and died on a tier pick for no reason
+    anybody chose. Applied here instead, after whichever handler ran, so the rule arrives
+    with the dispatcher and no kind can be forgotten.
+
+    Dropped from `keep`: anything the pick itself already produced, by code, so the same
+    subject is never stated twice. A kept PRODUCT also joins `focus.products`, because that
+    is its axis and the re-run has to be scoped by it; a sibling with no axis (an
+    `attachment_type`) travels on `keep` alone, which
+    `output_exchange.apply_open_question_outcome` puts back on the emission.
+    """
+    if not outcome.resolved:
+        return outcome
+    produced = [e for e in outcome.focus.values() if isinstance(e, dict)]
+    produced += [
+        e
+        for value in outcome.focus.values()
+        if isinstance(value, list)
+        for e in value
+        if isinstance(e, dict)
+    ]
+    keep = [
+        e
+        for e in payload.get("keep") or []
+        if isinstance(e, dict) and not _same_code(e, produced)
+    ]
+    if not keep:
+        return outcome
+    outcome.keep = keep
+    products = [e for e in keep if _is_product(e)]
+    if products:
+        existing = outcome.focus.get("products")
+        existing = [e for e in existing if isinstance(e, dict)] if isinstance(existing, list) else []
+        outcome.focus = {**outcome.focus, "products": existing + products}
+    return outcome
 
 
 # --------------------------------------------------------------------------- #
@@ -355,22 +507,14 @@ def _product_pick(answer: dict, options: list, payload: dict) -> Outcome:
     if not picked:
         return Outcome(handler="product_pick", outcome="No offered row was named.")
     entities = [_entity_of(row, "product") for row in picked]
-    # ISSUE #708. `payload.keep` is the scope that already resolved on the turn the
-    # picker was offered, minus whatever the pick itself replaces. Without it the turn
-    # answers about the pick alone and silently drops the sibling the customer asked
-    # about in the same message.
-    keep = [
-        e
-        for e in payload.get("keep") or []
-        if isinstance(e, dict) and not _same_code(e, entities)
-    ]
+    # `payload.keep` is applied ONCE, in `resolve` - see `_apply_keep`. Issue #708's rule
+    # belongs to every kind, not to the two handlers that happened to need it first.
     return Outcome(
         handler="product_pick",
         outcome=f"Picked {', '.join(_label_of(r) for r in picked)}.",
         resolved=True,
         picked=picked,
-        keep=keep,
-        focus={"products": entities + [e for e in keep if _is_product(e)]},
+        focus={"products": entities},
     )
 
 
@@ -378,31 +522,12 @@ def _customer_pick(answer: dict, options: list, payload: dict) -> Outcome:
     picked = _rows_for(answer.get("picks"), options)
     if not picked:
         return Outcome(handler="customer_pick", outcome="No offered row was named.")
-    entity = _entity_of(picked[0], "customer")
-    # ISSUE #708, ON THIS SIDE TOO (R-C, owner merge test 15 Sep 2026). This handler read
-    # no `payload` at all, so "delivery for chin chun product wc286" answered the picked
-    # customer with `Product: all products`: the product the SAME message resolved was
-    # dropped at the pick while `_product_pick` had kept its own siblings all along. Same
-    # rule, same words: what already resolved survives, minus whatever the pick replaces.
-    keep = [
-        e
-        for e in payload.get("keep") or []
-        if isinstance(e, dict) and not _same_code(e, [entity])
-    ]
-    products = [e for e in keep if _is_product(e)]
-    focus: dict[str, Any] = {"customer": entity}
-    if products:
-        # The kept product reaches its OWN axis, so the re-run is scoped to it. A non-
-        # product sibling (an `attachment_type`, say) has no axis and travels on `keep`,
-        # which `output_exchange.apply_open_question_outcome` puts back on the emission.
-        focus["products"] = products
     return Outcome(
         handler="customer_pick",
         outcome=f"Picked customer {_label_of(picked[0])}.",
         resolved=True,
         picked=picked[:1],
-        keep=keep,
-        focus=focus,
+        focus={"customer": _entity_of(picked[0], "customer")},
     )
 
 
@@ -626,8 +751,13 @@ def _entity_of(row: dict[str, Any], hint: str) -> dict[str, Any]:
         "current_message": True,
         "confident": True,
     }
+    # CUSTOMER rows only (security review n2, 15 Sep 2026). An account family is a fact
+    # about a customer - `gate.run_gate` computes it from `_cust_base` over customer
+    # matches, and `entity_ids_transformer` expands it into `customer_ids` - so copying the
+    # key off any row that happened to carry one would hand an unowned list to a type that
+    # has no notion of a family.
     family = row.get("family_uuids")
-    if isinstance(family, list) and len(family) > 0:
+    if jsc.lower_or_empty(kind) == "customer" and isinstance(family, list) and len(family) > 0:
         entity["family_uuids"] = list(family)
     return entity
 
