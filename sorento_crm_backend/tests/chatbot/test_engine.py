@@ -22,7 +22,14 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import TURN_STAGES, Envelope
 from app.services.chatbot.head import parser as parser_mod
 
-CONTACT_ID = "ZZT-contact-900000009"
+# An INTEGER, the shape Respond.io actually puts on the wire (`contact.id` in the
+# webhook body is a JSON number). Every envelope in this suite built it as a string
+# until #874 shipped a `contact_id: str` schema field the lane fed this id into raw,
+# and the whole business lane died in production with no test red. Anywhere this id
+# has to reach a text COLUMN (`respond_contacts.respond_io_id`,
+# `chatbot_turns.contact_respond_id` - the engine stringifies it on the way in) the
+# call site wraps it in `str(...)`; the envelope keeps the wire shape.
+CONTACT_ID = 437264483
 
 
 def _parser_output(**overrides: Any) -> dict[str, Any]:
@@ -99,7 +106,7 @@ def seeded(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
     )
     db.commit()
     return db
@@ -328,7 +335,7 @@ class TestDryRun:
         db = session_factory()
         before = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         envelope = _envelope(test_run_id="ZZT-run-1")
@@ -337,7 +344,7 @@ class TestDryRun:
 
         after = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
         assert after == before
         assert _turn_row(session_factory, result.turn_id).is_test is True
@@ -395,7 +402,7 @@ class TestIdempotency:
         rows = (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .all()
         )
         assert len(rows) == 1
@@ -445,7 +452,7 @@ class TestRetryReinjection:
         rows = (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             # NOT created_at: two inserts in the same test can tie on Postgres's `now()`
             # within one transaction (see LESSONS-LEARNT), and `attempt` is the column
             # that actually orders these deterministically.
@@ -483,7 +490,7 @@ class TestRetryReinjection:
         rows = (
             session_factory()
             .query(ChatbotTurn)
-            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
             .all()
         )
         assert len(rows) == 1
@@ -518,7 +525,7 @@ class TestPendingMarkerRead:
                 "WHERE respond_io_id = :c"
             ),
             {
-                "c": CONTACT_ID,
+                "c": str(CONTACT_ID),
                 "sv": json.dumps({"variables": {"pending": {"kind": "escalation_offer"}}}),
             },
         )

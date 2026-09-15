@@ -130,7 +130,10 @@ import {
   buildBoard,
   type BoardDemandLine,
 } from '../../_shared/lib/__testsupport__/boardFixture';
-import { MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE } from '../../_shared/__mocks__/planningChanges';
+import {
+  MOCK_PLANNING_CHANGE_BATCH_PENDING,
+  MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+} from '../../_shared/__mocks__/planningChanges';
 
 const TODAY = '2026-08-18';
 
@@ -186,58 +189,256 @@ beforeEach(() => {
   );
 });
 
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C9/AC-C10): was the inline
+ * Was / Now table's own suite. The table is retired from the matrix cell; a changed line -
+ * the advanced one and both cancelled ones alike - shows the hazard icon instead, and the
+ * dialog it opens is where every fact this block used to read off the table now lives.
+ */
 describe('the changed cell', () => {
-  it('shows a Was / Now table for the changed line and for both closed ones', async () => {
+  it('shows the hazard icon, not the inline table, for the changed line and for both cancelled ones', async () => {
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
 
-    const advanced = await screen.findByTestId('board-change-pcr-381895-1');
-    expect(within(advanced).getByText('Was')).toBeInTheDocument();
-    expect(within(advanced).getByText('Now')).toBeInTheDocument();
-    expect(within(advanced).getByText('Qty')).toBeInTheDocument();
-    expect(within(advanced).getByText('Date')).toBeInTheDocument();
-    expect(within(advanced).getByText('Decision')).toBeInTheDocument();
-    expect(within(advanced).getByTestId('change-now-qty')).toHaveTextContent(
-      '25',
-    );
-
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
     // A closed line has left the board, so it is annotated on the surviving cell of the same
-    // product on the same order rather than disappearing with its own cell.
-    expect(screen.getByTestId('board-change-pcr-381895-2')).toBeInTheDocument();
-    expect(screen.getByTestId('board-change-pcr-381895-3')).toBeInTheDocument();
+    // product on the same order rather than disappearing with its own cell - same as before,
+    // only the icon stands in for the table now.
+    expect(screen.getByTestId('board-change-icon-pcr-381895-2')).toBeInTheDocument();
+    expect(screen.getByTestId('board-change-icon-pcr-381895-3')).toBeInTheDocument();
+
+    expect(screen.queryByTestId('board-change-pcr-381895-1')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-pcr-381895-2')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-pcr-381895-3')).not.toBeInTheDocument();
   });
 
-  it('reads Closed in the Now column of a line the book closed', async () => {
+  it('reads Cancelled once for a line the book closed, with the suggestion beneath it', async () => {
     renderPanel();
-    const closed = await screen.findByTestId('board-change-pcr-381895-2');
-    expect(within(closed).getByTestId('change-now-qty')).toHaveTextContent(
-      'Closed',
-    );
-    expect(within(closed).getByTestId('change-now-decision')).toHaveTextContent(
-      'Closed',
-    );
+    fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-2'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(within(dialog).getByText('What changed, SO381895 (Line 2)')).toBeInTheDocument();
+    // The coder's own follow-up (ffeec9576): a cancelled line is a STATEMENT, not a Qty/
+    // Date/Decision field each moving to the same place, so the lightbox prints "Cancelled"
+    // once - what the held 10 became lives in the suggestion line beneath it instead.
+    expect(within(dialog).getByText('Cancelled')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/^Qty /)).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Release Buy 10, line cancelled'),
+    ).toBeInTheDocument();
   });
 
   it('says a transfer already moved for a cancelled line, and proposes no reversal', async () => {
     renderPanel();
-    const moved = await screen.findByTestId('board-change-moved-pcr-381895-2');
-    expect(moved).toHaveTextContent('10 moved BRW -> BRW-IB, line cancelled');
+    fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-2'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+
+    expect(
+      within(dialog).getByText('10 moved BRW -> BRW-IB, line cancelled'),
+    ).toBeInTheDocument();
   });
 
-  it('never prints the batch reaction vocabulary on screen', async () => {
+  it('never prints a retired reaction word in the dialog, and does print the composed suggestion', async () => {
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
-    const printed = document.body.textContent ?? '';
-    for (const verb of ['Retire', 'Replan', 'Reduce', 'Release']) {
+    fireEvent.click(await screen.findByTestId('board-change-icon-pcr-381895-1'));
+    const dialog = await screen.findByTestId('board-change-dialog');
+    const printed = dialog.textContent ?? '';
+    // Retired with the rule table (Slice C): a verb the row agreed with executed nothing.
+    // Keep / Reduce / Release / Reallocate are now the SUGGESTION's own words, so they are
+    // expected on screen - printed verbatim from the server's own sentence (AC-C1).
+    for (const verb of ['Retire', 'Replan', 'Accept']) {
       expect(printed).not.toContain(verb);
     }
+    expect(printed).toContain('Buy 25 (was 10)');
   });
 
-  it('shows no table at all on a board opened without a batch', async () => {
+  it('shows no table and no icon at all on a board opened without a batch', async () => {
     renderPanel(null);
     await screen.findByTestId('fulfilment-board-matrix');
     expect(screen.queryByTestId('board-change-pcr-381895-1')).toBeNull();
+    expect(screen.queryByTestId('board-change-icon-pcr-381895-1')).toBeNull();
     expect(getPlanningChangeBatch).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Owner feedback, 13 September 2026 (Slice C board display, AC-C9/AC-C10): through the FULL
+ * panel this time, not the isolated `BoardChangeTable` component
+ * (`BoardChangeTable.suggestion.test.tsx` owns that half) - the matrix cell must wire the
+ * SAME icon-and-dialog through to a real batch, not only when handed an annotation directly.
+ * RED: the matrix cell still renders `BoardChangeTable`'s full inline table today.
+ */
+describe('the changed cell shows the hazard icon and lightbox (owner feedback 13 Sep)', () => {
+  it('shows one hazard icon in the matrix cell instead of the inline Was/Now block', async () => {
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(await screen.findByTestId('board-change-icon-pcr-381895-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('board-change-pcr-381895-1')).not.toBeInTheDocument();
+  });
+
+  it('opens the lightbox on click, naming the SO and line, then the composed suggestion', async () => {
+    renderPanel();
+    const icon = await screen.findByTestId('board-change-icon-pcr-381895-1');
+    fireEvent.click(icon);
+
+    const dialog = await screen.findByTestId('board-change-dialog');
+    expect(within(dialog).getByText('What changed, SO381895 (Line 1)')).toBeInTheDocument();
+    expect(within(dialog).getByText('Buy 25 (was 10)')).toBeInTheDocument();
+  });
+
+  /**
+   * AC-C9's list half: `pcr-381895-1` (kind `advanced`) moved BOTH qty (10 -> 25) and date
+   * (25 Aug -> 19 Aug), so the icon must sit in BOTH the Required date and Outstanding
+   * columns of the row it lands on - never a single icon that leaves one column silent
+   * about what moved.
+   */
+  it('in the List view, shows the icon in both the Required date and Outstanding columns for a line where both moved', async () => {
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO381895');
+
+    const icons = screen.getAllByTestId('board-change-icon-pcr-381895-1');
+    const columns = icons.map((icon) => icon.getAttribute('data-column')).sort();
+    expect(columns).toEqual(['outstanding', 'required_date']);
+  });
+});
+
+/**
+ * S7 (AC-C5), through the FULL panel this time - `BoardChangeTable.suggestion.test.tsx`'s
+ * own S7 test calls `annotationOf` directly and never exercises `annotationsByCell`'s real
+ * cell-keying. Tester two saw SO400884's product-changed line render with NO icon at all in
+ * the live walk: the board's live line carries the NEW product code (B2155-NL-WHITE, what
+ * the SO now says) while the row (`pcr-s7`, reused verbatim from `MOCK_PLANNING_CHANGE_
+ * BATCH_PENDING`) carries the SAME new code as `item_code` and the OLD one only on
+ * `from.item_code` (`outstanding_diff.py`'s `_change_for_pair`: `Change.item_code` is always
+ * the AFTER side) - the fixture the captain asked for, run through the real pipeline rather
+ * than asserted as an isolated annotation.
+ */
+describe('the product-changed row, through the full panel (S7)', () => {
+  const ROW_S7 = MOCK_PLANNING_CHANGE_BATCH_PENDING.orders
+    .find((order) => order.so_number === 'SO400875')!
+    .rows.find((row) => row.id === 'pcr-s7')!;
+
+  function renderProductChangedPanel() {
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      id: 'pcb-so400875',
+      orders: [
+        {
+          ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders[0],
+          project_sales_order_id: 'pso-400875',
+          so_number: 'SO400875',
+          core_sales_order_id: 'so-400875',
+          rows: [ROW_S7],
+        },
+      ],
+    });
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand({
+            sales_order_id: 'so-400875',
+            so_number: 'SO400875',
+            line_no: 2,
+            // The board's live line: the product the SO says TODAY - the NEW one, the same
+            // code `pcr-s7.item_code` carries (never the one on `from.item_code`).
+            item_code: 'B2155-NL-WHITE',
+            qty: '134',
+            project_line_id: 'pl-400875-2',
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    return renderPanel('pcb-so400875', ['SO400875']);
+  }
+
+  it('shows the icon on the product row in the grid', async () => {
+    renderProductChangedPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(await screen.findByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
+  });
+
+  it('shows the icon in the List view, on the Outstanding or Suggested column', async () => {
+    renderProductChangedPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO400875');
+
+    const icons = screen.getAllByTestId('board-change-icon-pcr-s7');
+    expect(icons.length).toBeGreaterThan(0);
+    const columns = icons.map((icon) => icon.getAttribute('data-column'));
+    expect(columns.some((column) => column === 'outstanding' || column === 'suggested')).toBe(
+      true,
+    );
+  });
+
+  /**
+   * Measured, not assumed: with `project_line_id` set (as the fixture above does), the List
+   * view already finds the icon - `annotationsByLine` keys directly off it. The genuine red
+   * is the row this order's OWN header already states is possible: `SO400875` in the shared
+   * mock reads `is_adopted: false`, meaning a project_line_id is exactly what a row on an
+   * unadopted order does NOT reliably carry. `annotationsByCell` (the grid) has a FALLBACK
+   * for this - the FIRST cell of the same (so_number, item_code) pair - but `annotationsByLine`
+   * (`_shared/lib/boardChangeAnnotations.ts` ~348-364) has none: `if (!lineId) continue;`
+   * drops the row on the floor. This is the shape closest to tester two's "no icon at all" -
+   * the List view is silent on a changed line the grid still manages to show.
+   */
+  it('still shows the icon in the List view when the row carries no project_line_id (an unadopted order)', async () => {
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      id: 'pcb-so400875',
+      orders: [
+        {
+          ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE.orders[0],
+          project_sales_order_id: 'pso-400875',
+          so_number: 'SO400875',
+          core_sales_order_id: 'so-400875',
+          rows: [{ ...ROW_S7, project_line_id: null }],
+        },
+      ],
+    });
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand({
+            sales_order_id: 'so-400875',
+            so_number: 'SO400875',
+            line_no: 2,
+            item_code: 'B2155-NL-WHITE',
+            qty: '134',
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    renderPanel('pcb-so400875', ['SO400875']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    // The grid still finds it (its own cellByOrderItem fallback), so this is not a data gap.
+    expect(await screen.findByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    await screen.findByText('SO400875');
+
+    expect(screen.queryByTestId('board-change-icon-pcr-s7')).toBeInTheDocument();
+  });
+
+  it('reads "Product changed, was <old item code>" then the sourcing lines in the dialog', async () => {
+    renderProductChangedPanel();
+    const icon = await screen.findByTestId('board-change-icon-pcr-s7');
+    fireEvent.click(icon);
+
+    const dialog = await screen.findByTestId('board-change-dialog');
+    expect(within(dialog).getByText(/Product changed, was B2155-NL-BLUE/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Release 134 B2155-NL-BLUE, free at BRW-IB'),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('Buy 134 B2155-NL-WHITE for 4 Sep'),
+    ).toBeInTheDocument();
   });
 });
 
@@ -251,7 +452,7 @@ describe('the changed cell', () => {
 describe('the pre-marked decision, and Confirm', () => {
   it('arrives with the changed line already decided', async () => {
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
     fireEvent.click(
       await screen.findByRole('button', {
         name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
@@ -288,7 +489,7 @@ describe('the pre-marked decision, and Confirm', () => {
       ],
     });
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
     await waitFor(() =>
       expect(screen.getByTestId('board-confirm')).toHaveTextContent(
         'Confirm (1)',
@@ -329,7 +530,7 @@ describe('the pre-marked decision, and Confirm', () => {
       })),
     });
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
 
     expect(screen.queryByTestId('confirm-blocked')).not.toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toBeEnabled();
@@ -342,7 +543,7 @@ describe('the pre-marked decision, and Confirm', () => {
       applied_by_name: 'Cyndi Tee',
     });
     renderPanel();
-    await screen.findByTestId('board-change-pcr-381895-1');
+    await screen.findByTestId('board-change-icon-pcr-381895-1');
 
     const blocked = await screen.findByTestId('confirm-blocked');
     expect(blocked).toHaveTextContent('This planning change was applied');

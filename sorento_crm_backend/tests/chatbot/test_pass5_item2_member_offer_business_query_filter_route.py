@@ -169,7 +169,7 @@ def seeded(session_factory):
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
             "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
         ),
-        {"cid": CONTACT_ID, "phone": "+60000000010", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000010", "sv": json.dumps({"variables": {}})},
     )
     db.commit()
     return db
@@ -207,7 +207,7 @@ def _seed_member_offer(
     db.execute(
         text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
         {
-            "cid": CONTACT_ID,
+            "cid": str(CONTACT_ID),
             "sv": json.dumps(
                 {
                     "variables": {
@@ -315,7 +315,7 @@ def _wire_business_lane(session_factory, monkeypatch) -> None:
     """
     company_id = _seed_real_hanlim_and_srtwc286(session_factory)
     db = session_factory()
-    contact_row = db.query(RespondContact).filter(RespondContact.respond_io_id == CONTACT_ID).one()
+    contact_row = db.query(RespondContact).filter(RespondContact.respond_io_id == str(CONTACT_ID)).one()
     db.add(RespondContactCompany(respond_contact_id=contact_row.id, company_id=company_id))
     db.commit()
     monkeypatch.setattr(

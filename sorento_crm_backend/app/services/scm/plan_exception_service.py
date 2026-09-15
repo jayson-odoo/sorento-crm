@@ -591,18 +591,14 @@ def _po_numbers(db: Session, ids) -> dict[str, str]:
 
 
 def _actor_names(db: Session, ids) -> dict[str, str]:
-    """Human names, never user ids: the name is rendered beside the row."""
-    ids = [str(i) for i in ids if i]
-    if not ids:
-        return {}
-    rows = db.execute(
-        text(
-            "SELECT id::text AS id, COALESCE(NULLIF(TRIM(name), ''), email) AS label "
-            "FROM users WHERE id = ANY(:ids)"
-        ),
-        {"ids": ids},
-    ).mappings().all()
-    return {r["id"]: r["label"] for r in rows}
+    """Human names, never user ids: the name is rendered beside the row.
+
+    The shared helper (`actor_labels`), so this and the supplier's own memory cannot answer
+    differently about the same person.
+    """
+    from app.services.scm.actor_labels import actor_labels
+
+    return actor_labels(db, ids)
 
 
 def decide(

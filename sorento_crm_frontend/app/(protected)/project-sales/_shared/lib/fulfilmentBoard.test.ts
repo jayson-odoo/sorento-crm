@@ -1736,6 +1736,43 @@ describe('confirmSummaryFor: changed (C4)', () => {
 });
 
 /**
+ * R3 (captain's ruling, 13 Sep board-display round, scenario S5): a cancelled changed line
+ * (the book removed it; a pending 'cancelled' `PlanningChangeRow` is what will retire it)
+ * must count toward `toConfirm` when the board's Confirm(N) is pressed - it applies through
+ * the retire path same as any other decided line. `confirmSummaryFor` has no concept of
+ * `cancelled` at all today: an uncovered, undraft line - which is exactly what a cancelled
+ * contribution looks like without a new field naming it - hits the SAME "untouched, nobody
+ * saved it" skip (line ~627, `if (!contribution.covered && !decision) continue;`) an
+ * ordinary undecided line does, so it is silently left out of `toConfirm`.
+ */
+describe('confirmSummaryFor: a cancelled changed line (R3, 13 Sep board-display round)', () => {
+  it('counts a cancelled line toward toConfirm, not as an ordinary untouched line', () => {
+    const board = buildBoard(
+      [line({ sales_order_id: 'so-s5', so_number: 'SO400884', line_no: 1, qty: '72' })],
+      { today: TODAY },
+    );
+    const base = board.cells[0].contributions[0];
+    const cancelled = {
+      ...base,
+      qty: '0',
+      qty_outstanding: '0',
+      covered: false,
+      decision: null,
+      // Not yet on `BoardContribution` (grepped `fulfilmentPlanning.types.ts` - absent) -
+      // the field the board-side fix is expected to add; rename if the coder picks a
+      // different key.
+      cancelled: true,
+    } as BoardContribution & { cancelled: boolean };
+
+    // No draft at all - a cancelled line's own retire is not something a planner "saves" the
+    // way an amend or an approval is; it is inherent to the row itself.
+    const summary = confirmSummaryFor([cancelled], {});
+
+    expect(summary.toConfirm).toBe(1);
+  });
+});
+
+/**
  * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): a board of five lines
  * where only three were saved reads "3 to confirm", not five - the untouched line stays off
  * the count exactly as it stays off the body.
@@ -2371,4 +2408,64 @@ describe('rankingNote', () => {
   function cells_with_flags(cells: BoardCell[]): BoardCell[] {
     return cells.map((cell) => ({ ...cell, rank_separates: false, distinct_order_count: 1 }));
   }
+});
+
+/**
+ * Review round 1, B1: a composition is balanced against the PLAN quantity.
+ *
+ * The 14 September 2026 ruling split `qty` from `qty_outstanding` - the board asks for the
+ * whole ordered quantity because a delivered unit nobody sourced is a unit to put back - and
+ * the server's own balance check validates against that figure (`_LineFacts.open_qty`).
+ * Everything on this side that composes had gone on reading `qty_outstanding ?? qty`, so on
+ * any line with a delivery the client posted a body summing to less than the line asks for
+ * and the confirm refused the whole order.
+ */
+describe('a delivered line composes against its plan quantity', () => {
+  /** 3 ordered, 1 delivered: the plan quantity is 3 and 2 is merely what is still owed. */
+  const delivered: BoardContribution = {
+    key: 'so-d|1|WESERP10B|2026-08-17',
+    sales_order_id: 'so-d',
+    so_number: 'SO000009',
+    project_line_id: 'pl-so-d-1',
+    line_no: 1,
+    item_code: 'WESERP10B',
+    qty: '3',
+    qty_ordered: '3',
+    qty_delivered: '1',
+    qty_outstanding: '2',
+    qty_proposed_reserve: '0',
+    qty_proposed_incoming: '0',
+    qty_proposed_buy: '3',
+    fulfilment_location: 'BRW-BB',
+    fulfilment_warehouse_id: 'wh-BRW-BB',
+    rank_score: 1,
+    rank_factors: [],
+    sources: [
+      {
+        kind: 'buy',
+        qty: '3',
+        location: null,
+        warehouse_id: null,
+        reason: 'Nothing free at the location.',
+      },
+    ],
+    unplannable: false,
+    contested: false,
+  };
+
+  it('posts the whole 3 on an approval, not the 2 still owed', () => {
+    const [posted] = confirmLinesFor([delivered], 'so-d', {
+      [delivered.key]: { verdict: 'approved' },
+    });
+    expect(posted.buy_qty).toBe('3');
+    expect(
+      Number(posted.buy_qty) +
+        Number(posted.timely_spo_qty) +
+        posted.reserve.reduce((total, row) => total + Number(row.qty), 0),
+    ).toBe(3);
+  });
+
+  it('seeds the amend editor to balance against 3', () => {
+    expect(suggestionDraftFrom(delivered).open_qty).toBe('3');
+  });
 });

@@ -1311,3 +1311,87 @@ pre-existing parser-body-difference arm, and 1 multi-turn chain grading a shorte
 
 There is no flag and none is needed: nothing in n8n changed, so reverting the CRM commits
 restores the previous behaviour on the next turn.
+
+---
+
+## S-low-stock - the low stock report rides the existing send_attachments action
+
+**No n8n node moves, and none is edited.** The low stock report answers with a workbook,
+and a workbook reaches the customer through the `send_attachments` action the egress
+Switch already carries (S1) - the CRM emits it exactly as it does for a catalogue PDF or a
+product photo. The whole slice is CRM-side: an MCP tool, a presenter envelope, a lane gate
+and a route. It is written down here because the ONE operational step it does need is a
+per-contact grant nobody would find in a code diff.
+
+### Which turns this covers
+
+A staff contact typing "low stock report", "low stock report BRW", "low stock for
+SRTWT7408 until 30 Nov" or "reorder report". The bot runs a FRESH plan for that scope and
+answers with the workbook as a document, or - when the plan outruns the turn - says the
+file is on its way and the worker pushes it the moment it is ready.
+
+### Step 1 - deploy (nothing changes)
+
+The tool, the presenter, the gate and the route ship inert: with no contact holding
+`scm.low_stock_report`, every low stock ask is refused before any fetch with "Low stock
+report is not enabled for your account." and the existing team picker. No run is created,
+and no other turn changes - the tool is APPENDED to the inventory domain's pool, never its
+first tool, so a plain stock ask ("how many CB100 in BRW") still answers from stock
+balance.
+
+### Step 2 - the wiring change (none)
+
+There is no n8n node to add, move or re-point. `send_attachments` is already on the egress
+Switch, and the CRM emits the same action shape it has since S1.
+
+The only operational step is a GRANT, done on the CRM screen, per contact:
+
+1. **Contacts > Access > Field reveals**: tick **Low stock report over chat**
+   (`scm.low_stock_report`) for each staff contact who may run it. It is listed there with
+   no code change beyond the catalog entry, and it is what the lane checks BEFORE any
+   fetch - this tool's fetch creates a reorder run, so a refused contact must never reach
+   it.
+2. **Confirm the act-as user holds `scm.reorder.run`.** The route is reached with
+   `X-API-Key`, and its first gate is that permission on whichever user
+   `EXTERNAL_API_KEY_ACT_AS_USER_ID` (or the integration's own `act_as_user_id`) names.
+   Without it every contact - granted or not - gets a 403 from the first gate and the
+   feature is silently off.
+3. **Promote the parser prompt label** (System > AI prompts > `chatbot_semantic_parser`):
+   migration `517_chatbot_low_stock_vocab` publishes both bodies carrying the low stock
+   words as new UNLABELLED versions, and `ai_prompt_registry.render()` reads the version
+   the `production` label points at - never the Python constant. Until the label is moved
+   onto the newest FULL body, "low stock report" still parses as `check_stock` and the
+   intent never fires, exactly as the 14 Sep console run found. Move it after reading the
+   diff; rolling back is the reverse move.
+
+### Step 3 - watch one turn end to end
+
+Ask "low stock report" from a granted contact. Either the reply carries the workbook in
+the turn, or it says the report is being prepared and the file arrives seconds later from
+the worker's own push. Exactly one of the two happens, never both and never neither - two
+conditional updates on the download row decide it. The run appears in Procurement > Supply
+Chain > Reorder Planning marked **via chat**, so the buyer can see why a plan nobody here
+launched exists.
+
+### Step 4 - unpublish (nothing to unpublish)
+
+No n8n workflow version is published by this slice, so there is no label to move and
+nothing to retire.
+
+### Rollback
+
+Untick **Low stock report over chat** for every contact. Effective on the next turn, no
+deploy: the lane refuses before any fetch, exactly as it did before the grant. Move the
+`chatbot_semantic_parser` `production` label back to the previous version as well if the
+new vocabulary needs to go with it - the published versions are immutable, so a rollback
+is one label move either way.
+
+### Not covered by this slice
+
+- **Category scope** ("water tap low stock"): runs have no category filter, so the ask
+  would silently plan everything. Backlogged.
+- **A PDF flavour** of the same report, and per-warehouse quantity columns on the All
+  sheet. The workbook is what the client asked for.
+- **The plan-view export is unchanged.** The buyer's own "Low stock report Excel" item
+  on the Actions menu goes through My Downloads, has no reveal key, and always includes
+  the Supplier column - only the chat path narrows it.

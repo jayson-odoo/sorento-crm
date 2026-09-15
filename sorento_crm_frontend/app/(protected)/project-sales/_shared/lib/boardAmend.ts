@@ -187,7 +187,10 @@ function draftFromSources(
     project_line_id: contribution.project_line_id ?? '',
     line_no: contribution.line_no,
     item_code: contribution.item_code,
-    open_qty: contribution.qty_outstanding ?? contribution.qty,
+    // The PLAN quantity: what the editor balances against, and what the server's own
+    // check compares the posted composition to. Not `qty_outstanding`, which since the
+    // 14 Sep 2026 ruling is a different number on any line with a delivery.
+    open_qty: contribution.qty,
     // Dated supply, not a choice: it is shown and never typed, on the board exactly as on the
     // sheet, so an amendment cannot promise incoming stock that is not coming.
     timely_spo_qty: fromMinor(
@@ -248,7 +251,10 @@ function frozenDraft(
     project_line_id: contribution.project_line_id ?? '',
     line_no: contribution.line_no,
     item_code: contribution.item_code,
-    open_qty: contribution.qty_outstanding ?? contribution.qty,
+    // The PLAN quantity: what the editor balances against, and what the server's own
+    // check compares the posted composition to. Not `qty_outstanding`, which since the
+    // 14 Sep 2026 ruling is a different number on any line with a delivery.
+    open_qty: contribution.qty,
     timely_spo_qty: frozen.timely_spo_qty,
     reserve: rows,
     borrow: frozen.borrow.map((row, index) => ({
@@ -439,7 +445,15 @@ export function canQuickSave(
   contribution: BoardContribution,
   draft: BoardDraft,
 ): boolean {
-  return !contribution.covered && !contribution.unplannable && !draft[contribution.key];
+  return (
+    !contribution.covered &&
+    !contribution.unplannable &&
+    // A cancelled line has nothing left to decide FOR (R3): the book removed it, and Confirm
+    // retires it. Offering to save the engine's suggestion for it would be offering to
+    // source a quantity nobody is owed.
+    !contribution.cancelled &&
+    !draft[contribution.key]
+  );
 }
 
 /**

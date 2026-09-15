@@ -447,20 +447,184 @@ def _set_member_text(members: Sequence[dict]) -> str:
     return "\n".join(lines)
 
 
-def resolve_request_line_data(db: Session, request) -> list[dict]:
-    """Display data for every line of a price tag request.
+#: What a money figure is rounded to before it leaves the resolver. The engine
+#: already works in Decimal; this is only so a SUM of four products cannot print
+#: a third decimal place the customer would have to squint at.
+_MONEY = Decimal("0.01")
 
-    The one resolver behind both the designer's left panel and the print
-    payload, so what marketing approves on screen and what the PDF prints are
-    the same numbers from the same call. The marketing override wins over the
-    resolved offer (D9) - it is a decision somebody made and logged a reason
-    for, and the engine has no way to know about it.
+
+def _sum_prices(values: list) -> Optional[Decimal]:
+    """The package's price: the host plus its resolved parts (D4).
+
+    None when nothing in the list has a price at all, so a product with no list
+    price still prints an empty slot rather than a hard zero. An individual part
+    the engine cannot price contributes nothing rather than aborting the sum -
+    the rest of the package is still worth showing.
+    """
+    present = [Decimal(str(value)) for value in values if value is not None]
+    if not present:
+        return None
+    return sum(present, Decimal("0")).quantize(_MONEY)
+
+
+def _offer_or_list(price) -> Optional[Decimal]:
+    """What one part contributes to the SELLING sum.
+
+    The engine's offer when it has one, the list price when it does not. A part
+    with no promotion line is not free and is not discounted; it is simply
+    itself.
+    """
+    if price is None:
+        return None
+    return price.offer_price if price.offer_price is not None else price.list_price
+
+
+def _tag_label(line_index: int, tag_index: int) -> str:
+    """"1a", "1b", ... - the line's position plus a letter (D3).
+
+    An ordinal, never an id (AC-X-2). Past 26 tags on one line the letter wraps
+    and a number follows it ("1a1"), which nobody will ever see but which keeps
+    the labels unique rather than silently repeating.
+    """
+    letter = chr(ord("a") + (tag_index % 26))
+    wrap = tag_index // 26
+    return f"{line_index + 1}{letter}{wrap if wrap else ''}"
+
+
+def _open_groups_for(db: Session, line, tag) -> list[dict]:
+    """The choice groups this TAG has not resolved yet (D3).
+
+    A group is open when the line left it open (a part row with candidates and
+    no product) AND this tag has made no choice for it. Split and Pick one both
+    write `tag.choices`, so a tag that has answered simply reports nothing.
+
+    Candidates carry the product id beside the code: "Pick one" has to NAME the
+    candidate back to `PATCH .../tags/{tag_id}`, whose `choices` is
+    `{role: product_id}`, and only the code is ever rendered.
+    """
+    from app.models.product import Product
+
+    chosen = dict(tag.choices or {})
+    groups: list[dict] = []
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        if part.product_id or not part.candidates:
+            continue
+        role = part.role or ""
+        if role in chosen:
+            continue
+        products = {
+            product.id: product
+            for product in db.query(Product)
+            .filter(Product.id.in_([str(c) for c in part.candidates]))
+            .all()
+        }
+        groups.append(
+            {
+                "role": role,
+                "candidates": [
+                    {
+                        "product_id": str(candidate),
+                        "code": (
+                            products[str(candidate)].product_code
+                            if str(candidate) in products
+                            else ""
+                        ),
+                    }
+                    for candidate in part.candidates
+                ],
+            }
+        )
+    return groups
+
+
+def _resolved_part_products(db: Session, line, tag) -> list:
+    """The PRODUCTS printed under the host on this tag, in part order (D3/D4).
+
+    The line's resolved part rows, plus whatever this tag chose for a group the
+    line left open - so two tags split off one line list the same fixed parts
+    and a different basin. The product rows rather than a rendered dict, because
+    D4 needs to price them as well as print them, and asking the database twice
+    for the same four products would be two round trips for one answer.
+    """
+    from app.models.product import Product
+
+    chosen = dict(tag.choices or {})
+    wanted: list[str] = []
+    for part in sorted(line.parts or [], key=lambda p: (p.sort_order or 0, p.id)):
+        if part.product_id:
+            wanted.append(str(part.product_id))
+        elif (part.role or "") in chosen:
+            wanted.append(str(chosen[part.role or ""]))
+    if not wanted:
+        return []
+
+    products = {
+        product.id: product
+        for product in db.query(Product).filter(Product.id.in_(wanted)).all()
+    }
+    return [products[pid] for pid in wanted if pid in products]
+
+
+def _part_row(db: Session, product) -> dict:
+    """One part as the rail, the Lines tab and the tag text read it."""
+    return {
+        # The id rides along so a caller can match a part back to the choice that
+        # produced it (`tag_body`'s `choices_display`). Never rendered - the code
+        # is what a reader sees (AC-X-2).
+        "product_id": product.id,
+        "code": product.product_code,
+        "name": product.product_name,
+        "dimensions": dimensions_text(product),
+    }
+
+
+def _package_text(parts: list[dict], open_groups: list[dict]) -> str:
+    """The `set_members` slot text for a product tag with a package (AC-S4-1).
+
+    `set_members` on purpose: every template already carries that slot, so a
+    cabinet's package prints with no template touched (D4).
+
+    Two shapes, deliberately different. A resolved part is a thing that is IN the
+    box, so it leads with `+`; an open group is a choice the reader makes, so it
+    leads with its own label and lists the candidates. A tag with neither prints
+    nothing at all - most tags carry no package and must not grow a stray line.
+    """
+    lines = [
+        " ".join(
+            piece
+            for piece in (f"+ {part['code']}", part["name"], part["dimensions"])
+            if piece
+        )
+        for part in parts
+    ]
+    lines += [
+        f"{group['role']}: " + " / ".join(c["code"] for c in group["candidates"])
+        for group in open_groups
+    ]
+    return "\n".join(lines)
+
+
+def resolve_request_line_data(db: Session, request) -> list[dict]:
+    """Display data for every TAG of a price tag request (D3, S3).
+
+    One row per tag, not per line: a line whose package left a choice group open
+    is split by marketing into one tag per candidate, and each of those prints
+    its own basin at its own price. `line_id` still says which line asked for it.
+
+    The one resolver behind the designer's left panel, the detail body, the
+    portal payload and the print payload, so what marketing approves on screen
+    and what the PDF prints are the same numbers from the same call. The
+    marketing override wins over the resolved offer (D9) - it is a decision
+    somebody made and logged a reason for, and the engine has no way to know
+    about it. Since S3 that override is a TAG fact.
     """
     viewer = staff_viewer()
     promotion_id = getattr(request, "promotion_id", None)
     rows: list[dict] = []
 
-    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
+    for line_index, line in enumerate(
+        sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id))
+    ):
         data: dict
         set_members = ""
 
@@ -490,28 +654,73 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
         else:
             continue
 
-        sell_price = data["offer_price"]
-        if line.marketing_price_override is not None:
-            sell_price = Decimal(str(line.marketing_price_override))
+        for tag_index, tag in enumerate(
+            sorted(line.tags or [], key=lambda t: (t.sort_order or 0, t.id))
+        ):
+            open_groups = _open_groups_for(db, line, tag)
+            part_products = _resolved_part_products(db, line, tag)
+            part_rows = [_part_row(db, product) for product in part_products]
 
-        rows.append(
-            {
-                "line_id": line.id,
-                "code": code,
-                "name": name,
-                "dimensions": dimensions,
-                "spec_lines": specs,
-                "specs": spec_values,
-                "set_members": set_members,
-                "images": images,
-                "list_price": data["list_price"],
-                "sell_price": sell_price,
-                "show_promo_price": line.show_promo_price,
-                "included_accessories": line.included_accessories or "",
-                "quantity": line.quantity,
-                "barcode": barcode,
-            }
-        )
+            # D4. A tag with no parts is exactly today's product tag: the sums
+            # below are over an empty list, so both prices and the slot text are
+            # the ones this line has always answered with.
+            list_price = data["list_price"]
+            sell_price = data["offer_price"]
+            if part_products:
+                part_prices = resolve_prices(db, part_products, viewer, promotion_id)
+                list_price = _sum_prices(
+                    [list_price]
+                    + [
+                        (part_prices.get(product.id).list_price if part_prices.get(product.id) else None)
+                        for product in part_products
+                    ]
+                )
+                # The selling side takes the engine's offer where it HAS one and
+                # the list price where it does not: an offer the engine cannot
+                # answer for is not a discount, it is simply the price.
+                sell_price = _sum_prices(
+                    [sell_price if sell_price is not None else data["list_price"]]
+                    + [
+                        _offer_or_list(part_prices.get(product.id))
+                        for product in part_products
+                    ]
+                )
+                package_text = _package_text(part_rows, open_groups)
+                if package_text:
+                    set_members = package_text
+            elif open_groups:
+                set_members = _package_text([], open_groups)
+
+            # The override is a SELLING price and wins over the engine's sum. It
+            # never rewrites what the package LISTS at - the tag still shows what
+            # the customer is saving against.
+            if tag.marketing_price_override is not None:
+                sell_price = Decimal(str(tag.marketing_price_override))
+
+            rows.append(
+                {
+                    "tag_id": tag.id,
+                    "line_id": line.id,
+                    "tag_label": _tag_label(line_index, tag_index),
+                    "open_groups": open_groups,
+                    "parts": part_rows,
+                    "code": code,
+                    "name": name,
+                    "dimensions": dimensions,
+                    "spec_lines": specs,
+                    "specs": spec_values,
+                    "set_members": set_members,
+                    "images": images,
+                    "list_price": list_price,
+                    "sell_price": sell_price,
+                    "show_promo_price": line.show_promo_price,
+                    "included_accessories": line.included_accessories or "",
+                    # The TAG's own quantity, seeded from the line's at submit
+                    # and marketing's to change afterwards.
+                    "quantity": tag.quantity,
+                    "barcode": barcode,
+                }
+            )
 
     return rows
 

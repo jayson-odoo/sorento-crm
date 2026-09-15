@@ -340,6 +340,26 @@ export interface SalesOrderLine {
    * covers the line at all - the two are different answers and the column says so.
    */
   linked_to?: SalesOrderLineLink[] | null;
+  /**
+   * The planning-change BATCH ROW behind this line, when one exists. Enough for this screen
+   * to draw the same "what changed" reading the fulfilment board's own dialog gives it
+   * (`BoardChangeTable`, `board-change-icon-<id>` / `board-change-dialog`) - never the whole
+   * batch row, which carries fields (`from`/`to`, `facts`, `suggestion`, `inquiry_rows`...)
+   * this screen has no question for.
+   *
+   * Slice D: once Apply has run on a CANCELLED line, the line leaves the fulfilment board
+   * entirely (a closed line has no cell), so that dialog's "Where it went" list - where the
+   * line's held composition actually landed, e.g. `Reallocate 202607-S0080 3 to pool` - is
+   * unreachable there. This is the same fact, read here instead.
+   */
+  planning_change?: {
+    /** The batch row's own id - the `board-change-icon-<id>` / dialog title key. */
+    id: string;
+    kind: string;
+    applied_state: string;
+    /** `null` on a row Apply has not written yet. */
+    result?: { executed_reallocations: string[]; released_documents: string[] } | null;
+  } | null;
 }
 
 /** One link on the order inquiry row covering a sales order line. Never an id on screen. */
@@ -458,6 +478,21 @@ export interface SalesOrder {
    *  inquiries and nothing between them, so this is where an order says what has been
    *  done about it. */
   order_inquiries?: SalesOrderInquiry[];
+  /**
+   * How much of this order anybody has DECIDED, in two counts, on the LIST and on the single
+   * read (a field missing from either dict builder never reaches the screen).
+   *
+   * `plannable_lines` is how many of its lines the fulfilment board would admit - not
+   * cancelled, not marked no purchase needed, and asking for something. `planned_lines` is
+   * how many of those are already settled, by an active supply decision or by a live order
+   * inquiry row. The two are counted by the SAME predicates the board itself uses, so the
+   * list and the board cannot disagree about one order.
+   *
+   * Not the delivery question. A completed order whose stock shipped without anybody sourcing
+   * it reads 0 of 3, which is the whole point: it is the order nobody planned.
+   */
+  planned_lines?: number;
+  plannable_lines?: number;
   /**
    * The PENDING planning-change batch this order is in, when a re-uploaded book moved one of
    * its planned lines and nobody has applied the change yet (AC-P3-1). Present on the LIST,

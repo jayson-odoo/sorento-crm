@@ -1186,6 +1186,50 @@ describe('SalesOrderDetail - view and edit are the same layout', () => {
     expect(screen.queryByRole('button', { name: /^Edit$/ })).not.toBeInTheDocument();
   });
 
+  /**
+   * AC-S4-7. The Planned chip is read-only metadata about the whole record, so it lives in the
+   * header beside Status - not in a tab body - and there is nothing to change about it in an
+   * edit session. View and edit therefore show the SAME chip, which is the layout rule this
+   * describe block exists for.
+   */
+  it('shows the same Planned chip beside Status in view and in edit', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ planned_lines: 2, plannable_lines: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByText('Partly 2/3')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+
+    expect(screen.getByText('Partly 2/3')).toBeInTheDocument();
+    // Read-only: editing swaps a value for an input, and this one has no input to swap to.
+    expect(screen.queryByRole('combobox', { name: 'Planned' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Planned')).not.toBeInTheDocument();
+  });
+
+  it('reads Planned when every plannable line is decided, and a dash when there is none', () => {
+    useSalesOrder.mockReturnValue({
+      data: so({ planned_lines: 3, plannable_lines: 3 }),
+      isLoading: false,
+      isError: false,
+    });
+    const planned = renderDetail();
+    expect(screen.getByText('Planned')).toBeInTheDocument();
+    planned.unmount();
+
+    useSalesOrder.mockReturnValue({
+      data: so({ planned_lines: 0, plannable_lines: 0 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    expect(screen.queryByText('Planned')).not.toBeInTheDocument();
+    expect(screen.queryByText('Not planned')).not.toBeInTheDocument();
+  });
+
   it('Cancel discards the session and returns to the read values, unsaved', () => {
     useSalesOrder.mockReturnValue({ data: record(), isLoading: false, isError: false });
     renderDetail();
@@ -1724,6 +1768,46 @@ describe('SalesOrderDetail - what has already been planned about a line', () => 
     expect(within(row).getAllByText('-').length).toBeGreaterThanOrEqual(1);
     expect(within(row).queryByText('Not recorded')).not.toBeInTheDocument();
   });
+
+  /**
+   * Slice D: an applied cancellation leaves the fulfilment board (a closed line has no
+   * cell), so `BoardChangeTable`'s own "Where it went" list is unreachable there. The line
+   * is still ON this order, so this screen reads the same fact off `planning_change`
+   * instead of the plain, static `saved_stale` badge - which otherwise reads "Suggestion
+   * changed" for a line the book has actually CLOSED, not merely re-suggested.
+   */
+  it('opens the What-changed dialog with where a cancelled, applied line went, instead of the plain "Suggestion changed" badge', () => {
+    useSalesOrder.mockReturnValue({
+      data: planned({
+        line_status: 'cancelled',
+        supply_saved: [{ kind: 'buy', qty: '3', source_location: null, rung: null }],
+        saved_stale: true,
+        planning_change: {
+          id: 'pcr-so1-l-planned',
+          kind: 'cancelled',
+          applied_state: 'applied',
+          result: {
+            executed_reallocations: ['Reallocate 202607-S0080 3 to pool'],
+            released_documents: [],
+          },
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('SKU-PLANNED').closest('tr') as HTMLElement;
+    expect(within(row).queryByText('Suggestion changed')).not.toBeInTheDocument();
+
+    const icon = within(row).getByTestId('board-change-icon-pcr-so1-l-planned');
+    fireEvent.click(icon);
+
+    const dialog = screen.getByTestId('board-change-dialog');
+    expect(dialog).toHaveTextContent('Cancelled');
+    expect(dialog).toHaveTextContent('Reallocate 202607-S0080 3 to pool');
+  });
 });
 
 /**
@@ -1921,5 +2005,204 @@ describe('SalesOrderDetail - removing a line', () => {
     expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
     expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
     expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
+  });
+
+  // R2-S5c (`PLAN-scm-change-management-one-engine.md`, Slice A review round 2): a
+  // removal or a qty-to-zero edit leaves the CORE line `line_status: 'cancelled'` rather
+  // than deleting it (R-S5/R-B1), so it can still arrive on this same order's next load,
+  // inside an edit session, sitting beside lines that are still open. It must render
+  // read-only - not another line the planner can edit or remove again.
+  it('renders a cancelled line read-only, with no remove control, during an edit session', () => {
+    const THREE_LINES: SalesOrderLine[] = [
+      ...TWO_LINES,
+      {
+        id: 'l-3', sku: 'BASIN-OLD-99', product_name: 'Retired basin', qty_ordered: 72,
+        qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'cancelled',
+        required_date: '2026-08-01', unit_price: '50.00', discount: null, line_total: null,
+      },
+    ];
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: THREE_LINES, line_count: 3, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    expect(screen.queryByLabelText('Product on BASIN-OLD-99')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Unit price on BASIN-OLD-99')).not.toBeInTheDocument();
+    // Only the two OPEN lines get a remove control - a cancelled line cannot be removed
+    // again.
+    expect(screen.getAllByRole('button', { name: 'Remove line' })).toHaveLength(2);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+// Red tests for the SO400884 walk defects (captain's R4 ruling, 13 Sep browser round):
+// qty 0 is accepted on an EXISTING line (Cancelled after Save), still refused on a NEW
+// line, header/footer totals exclude a cancelled line, and Add line exists on the edit
+// screen.
+// --------------------------------------------------------------------------------------- //
+
+describe('SalesOrderDetail - R4: qty 0 on an existing line, never on a new one', () => {
+  const TWO_LINES: SalesOrderLine[] = [
+    {
+      id: 'l-a', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 10,
+      qty_delivered: 4, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-08-15', unit_price: '100.00', discount: '15.00',
+      line_total: '985.00',
+    },
+    {
+      id: 'l-b', sku: 'SKU-B', product_name: 'Beta basin', qty_ordered: 2,
+      qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+      required_date: '2026-09-01', unit_price: '10.00', discount: null,
+      line_total: null,
+    },
+  ];
+
+  function renderTwoLines() {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: TWO_LINES, line_count: 2, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+  }
+
+  const rowFor = (sku: string) =>
+    screen.getByLabelText(`Unit price on ${sku}`).closest('tr') as HTMLElement;
+
+  // R4: "the client validation 'quantity above zero' applies to create and to a new line
+  // only" - today `handleSave` (SalesOrderDetail.tsx ~1241-1242) refuses EVERY line whose
+  // qty_ordered is not > 0, existing lines included, so this is the genuine red: typing 0
+  // on an EXISTING line must save, not raise the banner below.
+  it('accepts qty 0 on an existing line and saves', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.change(within(rowFor('SKU-A')).getByDisplayValue('10'), {
+      target: { value: '0' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
+
+    await waitFor(() => expect(updateSalesOrderMutateAsync).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText('Every line needs a product and a quantity above zero.'),
+    ).not.toBeInTheDocument();
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    expect(body.lines.find((l: { id: string }) => l.id === 'l-a')).toMatchObject({
+      id: 'l-a',
+      qty_ordered: 0,
+    });
+  });
+
+  // Add line's shape (a new row with product / qty / date, the create modal's row control
+  // reused) is confirmed - owner said keep.
+  it('still refuses qty 0 on a new line', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(screen.getByRole('button', { name: /Add line/i }));
+    const newRowQty = screen.getAllByRole('spinbutton').at(-1) as HTMLElement;
+    fireEvent.change(newRowQty, { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText('Every line needs a product and a quantity above zero.'),
+      ).toBeInTheDocument(),
+    );
+    expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesOrderDetail - R4: footer totals exclude a cancelled line', () => {
+  // R4: "Header totals (Total, Qty ordered, Outstanding) exclude cancelled lines." The
+  // Lines-tab footer already floors `outstandingTotal` for any non-'open' status
+  // (SalesOrderDetail.tsx `outstandingOf`, ~line 529) - that half is measured GREEN below,
+  // kept as a guard rather than dropped, so a future regression on it is caught here too.
+  // `qtyOrderedTotal` (~592-601) sums every line's qty_ordered with no status check at all,
+  // which is the genuine red: the cancelled line's 72 must not land in the "Qty ordered"
+  // footer.
+  it('excludes a cancelled line from the Qty ordered and Outstanding footer totals', () => {
+    const LINES: SalesOrderLine[] = [
+      {
+        // 20 delivered, so Qty ordered (320) and Outstanding (300) print DIFFERENT
+        // figures - otherwise both totals read 320 and `getByText('320')` matches twice.
+        id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+        qty_ordered: 320, qty_delivered: 20, uom: 'PCS', warehouse_code: 'BRW-BB',
+        line_status: 'open', required_date: '2026-08-30',
+      },
+      {
+        id: 'l-cancelled', sku: 'BASIN-OLD-99', product_name: 'Retired basin',
+        qty_ordered: 72, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+        line_status: 'cancelled', required_date: '2026-08-01', unit_price: '50.00',
+        discount: null, line_total: '3600.00',
+      },
+    ];
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: LINES, line_count: 2, open_line_count: 1 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    // Qty ordered: 320 only - not 392 (320 + the cancelled line's 72).
+    expect(within(foot).getByText('320')).toBeInTheDocument();
+    expect(within(foot).queryByText('392')).not.toBeInTheDocument();
+    // Outstanding: 300 (320 - 20 delivered) only - not 372 (300 + the cancelled line's 72).
+    expect(within(foot).getByText('300')).toBeInTheDocument();
+    expect(within(foot).queryByText('372')).not.toBeInTheDocument();
+  });
+
+  it('excludes a cancelled line from the Total (amount) footer', () => {
+    const LINES: SalesOrderLine[] = [
+      {
+        id: 'l-1', sku: 'SKU-A', product_name: 'Alpha pan', qty_ordered: 10,
+        qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB', line_status: 'open',
+        required_date: '2026-08-15', unit_price: '100.00', discount: null,
+        line_total: '1000.00',
+      },
+      {
+        id: 'l-cancelled', sku: 'BASIN-OLD-99', product_name: 'Retired basin',
+        qty_ordered: 72, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+        line_status: 'cancelled', required_date: '2026-08-01', unit_price: '50.00',
+        discount: null, line_total: '3600.00',
+      },
+    ];
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: LINES, line_count: 2, open_line_count: 1 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    // RM 1,000.00 only - not RM 4,600.00 (1,000 + the cancelled line's stale 3,600).
+    expect(within(foot).getByText('RM 1,000.00')).toBeInTheDocument();
+    expect(within(foot).queryByText('RM 4,600.00')).not.toBeInTheDocument();
+  });
+});
+
+describe('SalesOrderDetail - R4: Add line on the edit screen', () => {
+  // Add line reuses the create modal's own row control (product / qty / date) - confirmed,
+  // owner said keep.
+  it('offers Add line in edit mode, appending an editable row', () => {
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    const before = screen.getAllByRole('spinbutton').length;
+    fireEvent.click(screen.getByRole('button', { name: /Add line/i }));
+    const after = screen.getAllByRole('spinbutton').length;
+
+    expect(after).toBeGreaterThan(before);
   });
 });

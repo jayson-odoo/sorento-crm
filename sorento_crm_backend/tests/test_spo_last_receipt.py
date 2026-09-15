@@ -571,3 +571,78 @@ def test_a_mocha_scoped_per_product_read_returns_no_sorento_owned_line(db):
 
     set_company_scope(db, frozenset({MOCHA_ID}))
     assert last_receipt_rows(db, product_ids=[str(mocha_product.id)], top_n=10) == []
+
+
+# ------------------------------------- PLAN-low-stock-last-in-and-list-scope.md, S1
+#
+# Owner ruling, second round, 15 Sep: "even haven't GR we also show as last in" - the
+# new helper `last_in_map(db, product_ids)` is the SAME pick as `last_receipt_rows`'s
+# per-product branch (newest visible line, received or not), with `qty` read off
+# `allocated_quantity` (the SPO's own ordered quantity, "same like our PO qty"), not
+# `quantity_received`. RED today: the function does not exist yet.
+
+
+def test_last_in_map_one_row_per_product_newest_any_status(db):
+    """The new helper, three products, mixed open/received lines:
+
+    * P1 - one line, partially received: answers with `allocated_quantity` (200), NOT
+      `quantity_received` (180) - the MCP row's own "SPO quantity".
+    * P2 - a NEWER OPEN line (`quantity_received=0`) sits above an older RECEIVED line:
+      the newer OPEN line wins (AC-49's flip - "even haven't GR we also show"), and its
+      `spo_number` equals what `last_receipt_rows` itself picks for the same seed.
+    * P3 - an open line only, nothing ever received: it STILL answers - a product is
+      absent from the map only when it has no VISIBLE line at all (AC-51/AC-50).
+    """
+    from app.services.spo_last_receipt_service import last_in_map, last_receipt_rows
+
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    p3 = product(db, company_id=DEFAULT_COMPANY_ID, code="P3")
+
+    _allocation(
+        db, product_id=p1.id, expected_date=date(2026, 8, 14), quantity=200,
+        qty_received=180, spo_number="202608-S0084", container_number="TLLU8306312",
+    )
+
+    _allocation(
+        db, product_id=p2.id, expected_date=date(2026, 8, 1), quantity=50,
+        qty_received=50, spo_number="P2-RECEIVED",
+    )
+    _allocation(
+        db, product_id=p2.id, expected_date=date(2026, 8, 20), quantity=40,
+        qty_received=0, spo_number="P2-OPEN-NEWER",
+    )
+
+    _allocation(
+        db, product_id=p3.id, expected_date=date(2026, 8, 5), quantity=10,
+        qty_received=0, spo_number="P3-OPEN-ONLY",
+    )
+    db.commit()
+
+    result = last_in_map(db, [str(p1.id), str(p2.id), str(p3.id)])
+
+    assert result[str(p1.id)] == {
+        "spo_number": "202608-S0084",
+        "container_number": "TLLU8306312",
+        "qty": 200,
+        "date": date(2026, 8, 14),
+    }, result[str(p1.id)]
+
+    reference = last_receipt_rows(db, product_ids=[str(p2.id)], top_n=1)
+    assert reference[0]["spo_number"] == "P2-OPEN-NEWER", (
+        "the fixture must be shaped so last_receipt_rows itself picks the newer OPEN "
+        f"line, or this test proves nothing: {reference}"
+    )
+    assert result[str(p2.id)]["spo_number"] == reference[0]["spo_number"], (
+        "the newer OPEN line must win, matching last_receipt_rows's own pick"
+    )
+    assert result[str(p2.id)]["qty"] == 40, (
+        "qty is the SPO's own allocated_quantity, not quantity_received"
+    )
+
+    assert str(p3.id) in result, (
+        "a product with only an OPEN line still answers - absence is reserved for a "
+        "product with no visible line at all"
+    )
+    assert result[str(p3.id)]["spo_number"] == "P3-OPEN-ONLY"
+    assert result[str(p3.id)]["qty"] == 10

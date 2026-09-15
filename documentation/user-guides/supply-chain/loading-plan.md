@@ -26,12 +26,26 @@ fresh list). The dialog is titled **Plan a container**:
 With a document chosen, click **Test** to read the file without writing anything, then
 **Confirm and start plan**. With **No file**, click **Start plan** directly.
 
-## The three tabs
+If the supplier's stock list merges a cell such as 品名 (product name), 商标 (brand), 规格
+(spec), a remark, or 体积 (cbm per unit) across several model rows, every row in that block now
+reads the merged value, so **Supplier says** on the **Supplier codes** tab shows the full
+description instead of only what the top row held. A merged quantity, such as packed or
+unfinished stock, still counts once, on the first row of the block, not once per row it covers.
 
-Once a plan is open, it has three tabs: **Lines** (the default), **Supplier codes**, and
-**Sent**. The header shows the supplier's name, a status badge (**Planning**, **Sent**, or
-**Cancelled**), and a line reading when the plan was started, the window it covers, and which
-document it was started from.
+## The four tabs
+
+Once a plan is open, it has four tabs: **General** (metadata), **Lines** (the default), **Supplier codes**, and
+**Sent**. The header shows the supplier's name and breadcrumb only.
+
+## The General tab
+
+The **General** tab (the first) holds the plan metadata as a card with five fields:
+
+* **Status** - a badge reading **Planning**, **Sent**, or **Cancelled**.
+* **Supplier** - the supplier's name (read-only).
+* **Started** - the date and time the plan was created.
+* **Plan window** - the sales-order date range the plan covers, or "every open order" when no dates are set.
+* **Stock list** - the document the plan was started from (stock list, proforma invoice, or none).
 
 ## The Lines tab
 
@@ -45,6 +59,8 @@ document it was started from.
   **Product-Suppliers**.
 * **A file whose codes have not been matched yet lists no rows at all**, until those codes are
   matched on the **Supplier codes** tab.
+* **A product or set with no open sales-order need still appears in the same table**, at the
+  bottom, muted and with no rank number, rather than in a separate collapsed line.
 
 ### Stat cards
 
@@ -57,7 +73,7 @@ These summarise every row on the plan and are not affected by the **Search produ
 The card heading reads "What to ask *\<supplier\>* to cover *\<window\>*" (or "... for" when the
 window is every open order). Beside it, a **Table** / **Schedule** toggle switches between the
 row list and a schedule view of the same rows. A **Search product** box sits next to the
-toggle: typing filters the ranked rows, the folded rows, and the Schedule view by product code,
+toggle: typing filters the whole table and the Schedule view by product code,
 product name, or set code (case-insensitive, matching anywhere in the text). The stat cards and
 **Save (N)** are not affected by what is typed here. Clearing the box restores every row; no
 match shows "No product matches" in the table body instead of rows.
@@ -65,8 +81,12 @@ match shows "No product matches" in the table body instead of rows.
 ### Columns
 
 Every column header sorts by clicking it, except **Remarks** (a free-text field with no natural
-order). **Suggested qty** sorts by the quantity currently shown for the row, so "what am I
-asking most of" is one click away even when you have typed over the engine's own figure.
+order). **Suggested qty** is read-only: it always shows the system's own figure (the open need
+minus on hand minus incoming SPO minus incoming packing list, never below zero), and hovering
+the cell shows the working. **Requested qty**, right beside it, is where you type what to
+actually ask the supplier for; sorting either column orders by what that column shows. Changing
+Requested qty never changes Suggested qty, so the original suggestion stays visible. A cancelled
+plan shows both columns as plain text.
 
 * **Product** shows the item code once. The product name only appears underneath when it
   differs from the code - a row whose name and code are the same no longer repeats itself. A
@@ -102,6 +122,22 @@ any quantities you had typed but not yet saved, the same as **Refresh suggestion
 
 A plan started before this window existed keeps whatever **To** date it already had, with no
 **From** date, until you set one.
+
+## The Supplier codes tab
+
+A search box sits above the two tables (**Needs a decision** and **Remembered**). Type a code fragment,
+part of a product name, or brand name to narrow both tables to matching rows. Several words narrow further
+together - for example, typing `CWC 250` shows only rows matching both words. The table headings show the
+filtered count while you are typing (e.g. "Needs a decision (12 of 61)"), and return to the plain total
+when the box is cleared.
+
+**Remembered table columns:**
+
+* **Code** - the supplier's code.
+* **Matched to** - the product or set code it has been matched to. **Dismissed** rows show "Dismissed".
+* **When** - the date and time it was matched.
+* **By** - the name (or email if no name is held) of the person who made the match.
+* **Forget** - a button that starts a 5-second countdown to delete the match; click **Cancel** to keep it.
 
 ## What's captured
 

@@ -76,6 +76,7 @@ from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.scm.reorder_engine import round_order_qty as eng_round_order_qty
 from app.services.scm.cost_capture_service import cost_variance
 from app.services.scm.trajectory_service import demand_context_for_product
+from app.services.spo_last_receipt_service import last_in_map
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
 log = logging.getLogger(__name__)
@@ -354,6 +355,8 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
         receipt = last_receipt.get(pid)
         row.last_receipt_date = receipt["date"] if receipt else None
         row.last_receipt_qty = receipt["qty"] if receipt else None
+        row.last_receipt_spo_number = receipt["spo_number"] if receipt else None
+        row.last_receipt_container_number = receipt["container"] if receipt else None
         row.pool_on_hand = pool_on_hand.get(pid, 0.0)
         # The run's OWN frozen level - the first recommendation carrying the key, even
         # when an earlier one carries none (AC-S14.1). The engine plans against ONE
@@ -946,8 +949,8 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
     link when one exists, else null - never another supplier's terms, so the Remarks
     column's MOQ always describes the same supplier the Supplier column names.
 
-    Raw SQL for the newest-PO-line lookup (`DISTINCT ON`, the same shape `_last_receipt_map`
-    uses beside it); the moq/order_multiple lookup is plain ORM over the resolved
+    Raw SQL for the newest-PO-line lookup (`DISTINCT ON`); the moq/order_multiple lookup
+    is plain ORM over the resolved
     (product, supplier) pairs, no raw predicate needed since `ProductSupplier` is read
     through the ORM's own company-scope listener.
     """
@@ -990,26 +993,29 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
 
 
 def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """``{product_id: {date, qty}}`` of the latest `goods_received` picking line, network-
-    wide - the sheet's "Last in" remark.
+    """``{product_id: {date, qty, spo_number, container}}`` of the newest VISIBLE
+    `spo_allocations` line per product, network-wide, received or not - the sheet's "Last
+    in" cell (PLAN-low-stock-last-in-and-list-scope S1, owner ruling second round, 15 Sep:
+    "for last in, please refer to our MCP service, i think even haven't GR we also show as
+    last in").
 
-    `DISTINCT ON (product_id)` picks the one row per product Postgres would otherwise hand
-    back for the whole batch to dedupe in Python - a batch of thousands of products each
-    with a receipt history is thousands of rows fetched to keep exactly one.
+    NOT goods_received picking lines any more: `picking_lines.qty_accepted` was measured
+    NULL on 10,567 of 10,567 lines, so the date printed and the quantity beside it printed
+    0 on every row that had one. The source is the same module the chatbot's own last-in
+    tool reads (`app.services.spo_last_receipt_service.last_in_map`), the EXACT pick
+    `last_receipt_rows(top_n=1)` makes for a product - `qty` is the SPO's own
+    `allocated_quantity`, never `quantity_received`.
     """
-    if not product_ids:
-        return {}
-    co, co_params = company_sql_predicate(db, "pl.company_id", param_prefix="lrm")
-    rows = db.execute(text(f"""
-        SELECT DISTINCT ON (pl.product_id) pl.product_id::text AS pid,
-               ph.picking_date, pl.qty_accepted
-        FROM picking_lines pl
-        JOIN picking_headers ph ON ph.id = pl.picking_header_id
-        WHERE pl.product_id::text = ANY(:pids) AND ph.picking_type = 'goods_received'
-          {("AND " + co) if co else ""}
-        ORDER BY pl.product_id, ph.picking_date DESC
-    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
-    return {pid: {"date": picking_date, "qty": _f(qty)} for pid, picking_date, qty in rows}
+    receipts = last_in_map(db, product_ids)
+    return {
+        pid: {
+            "date": r["date"],
+            "qty": _f(r["qty"]),
+            "spo_number": r["spo_number"],
+            "container": r["container_number"],
+        }
+        for pid, r in receipts.items()
+    }
 
 
 def _demand_aggregates(
@@ -1253,6 +1259,9 @@ def report(db: Session, *, run_id: Optional[str] = None) -> dict:
 #: site pool (`pool_predicate.ACTIVE_SITE_POOL_SQL`), for on hand, PO and incoming alike.
 #: issue #795 (Slice 2, AC-7): Suggested qty + Suggestion sit immediately left of Order
 #: qty - the engine's own figure and reason, beside the buyer's pen column.
+#: PLAN-low-stock-last-in-and-list-scope S1 (owner ruling, second round): NO new column -
+#: "Last in qty" itself becomes a text cell shaped like BRW PO qty/incoming qty
+#: (`_last_in_text`), so the column list stays exactly as it was.
 _EXPORT_COLUMNS = (
     "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
     "Suggested qty", "Suggestion", "Order qty", "Delivery", "Project / customer",
@@ -1280,6 +1289,23 @@ def _ddmmyyyy(iso: Optional[str]) -> str:
         return str(iso)
 
 
+def compact_ddmmyyyy(iso: Optional[str]) -> str:
+    """`2026-09-10` -> `10092026`, for a FILENAME (no separators). Falls back to today
+    when the run froze no rows (`report()`'s own `as_of` is then None) - the row itself
+    still needs a name, and today is the only date anyone has to stamp on it.
+
+    The ONE home for this (reviewer N3): the export route and `low_stock_report_service`
+    each carried a copy, and both import this module already."""
+    from datetime import date as _date
+
+    if not iso:
+        return _date.today().strftime("%d%m%Y")
+    try:
+        return datetime.strptime(str(iso)[:10], "%Y-%m-%d").strftime("%d%m%Y")
+    except ValueError:
+        return _date.today().strftime("%d%m%Y")
+
+
 def _month_text(groups: list[dict]) -> str:
     """"Jul - 1\\nAug - 1\\nUndated - 5" - one "Mon - qty" per line, oldest first, the
     undated bucket always last (S14, AC-S14.5). The printed sheet's cells wrap and grow,
@@ -1305,11 +1331,24 @@ def _docs_text(total: Any, docs: list[dict]) -> str:
     open document (issue #796, AC-13), shaped like `_month_text`/`_customers_text`. The
     bare total, with nothing to trace, when `docs` is empty (AC-14) - the H1 "quantities
     are numbers" rule yields on these two cells only once a document exists; a product
-    with nothing open keeps the plain figure exactly as before this slice."""
+    with nothing open keeps the plain figure exactly as before this slice.
+
+    A doc that names a CONTAINER prints "<number> - <container> - <qty>"
+    (PLAN-low-stock-report S2, AC-21), the client's own `TLLU8306312 - 180 nos` cell with
+    the document number kept in front of it: the sheet has always named the document, and
+    the container is extra traceability rather than a replacement for it. The key is read
+    with `.get`, so a run FROZEN BEFORE that slice - whose `incoming_spo_docs` carry only
+    `{number, qty}` - still prints the two-part line (AC-23, and why no migration is
+    needed). PO docs never carry one, by construction."""
     if not docs:
         return _qty_text(total)
     lines = [_qty_text(total)]
-    lines.extend(f"{d['number']} - {_qty_text(d['qty'])}" for d in docs)
+    for d in docs:
+        container = d.get("container")
+        lines.append(
+            f"{d['number']} - {container} - {_qty_text(d['qty'])}" if container
+            else f"{d['number']} - {_qty_text(d['qty'])}"
+        )
     return "\n".join(lines)
 
 
@@ -1321,6 +1360,26 @@ def _remarks_text(row: dict) -> str:
     supplier, never two."""
     moq = row.get("moq")
     return f"MOQ {_qty_text(moq)}" if moq is not None else ""
+
+
+def _last_in_text(receipt: Optional[dict]) -> str:
+    """"Last in qty" (PLAN-low-stock-last-in-and-list-scope S1, owner ruling second round -
+    "for last in quantity, it is SPO - container number - quantity, same like our PO
+    qty"): `"<SPO> - <container> - <qty>"`, `"<SPO> - <qty>"` when the line names no
+    container, the bare quantity when the frozen row predates migration 518 (SPO number
+    NULL but a qty/date were already frozen), `""` when there is no last-in line at all.
+
+    Shaped like `_docs_text`'s cell but with no total-then-lines split: there is exactly
+    ONE document behind this cell, never several to trace.
+    """
+    if not receipt:
+        return ""
+    qty_text = _qty_text(receipt.get("qty"))
+    spo_number = receipt.get("spo_number")
+    if not spo_number:
+        return qty_text
+    container = receipt.get("container")
+    return f"{spo_number} - {container} - {qty_text}" if container else f"{spo_number} - {qty_text}"
 
 
 def _project_qty(row: dict) -> float:
@@ -1393,7 +1452,7 @@ def _export_rows(rows: list[dict]) -> list[tuple]:
             row.get("supplier_name") or "",
             _docs_text(row.get("po_open_qty"), row.get("po_open_docs") or []),
             _docs_text(row.get("incoming_spo_qty"), row.get("incoming_spo_docs") or []),
-            _qty_text(receipt.get("qty")) if receipt else "",
+            _last_in_text(receipt),
             _ddmmyyyy(receipt.get("date")) if receipt else "",
             _remarks_text(row),
         ))
@@ -1404,17 +1463,20 @@ def _export_xlsx_rows(rows: list[dict]) -> list[tuple]:
     """One tuple per product, in `_EXPORT_COLUMNS` order, quantities as NUMBERS (H1) - a
     workbook is opened to be recalculated/summed, and a text "1,234" cell defeats that the
     moment somebody selects the column. BRW on hand / Reorder level / Order qty / Last in
-    qty / Last in date are BLANK ("") rather than 0 when the row has none (S14, AC-S14.4) -
-    a 0 there reads as a measured fact nobody measured. BRW on hand is NULL, never 0, on a
-    run frozen before migration 504 - it must print blank, not a false zero stock count.
+    date are BLANK ("") rather than 0 when the row has none (S14, AC-S14.4) - a 0 there
+    reads as a measured fact nobody measured. BRW on hand is NULL, never 0, on a run frozen
+    before migration 504 - it must print blank, not a false zero stock count.
 
     Suggested qty (issue #795, AC-8) is a MEASURED figure like BRW on hand's siblings, not
     a decision like Order qty: it is always a number, 0 included, never blank.
 
-    BRW PO qty / BRW incoming qty (issue #796, AC-13/AC-14) are the ONE exception to
-    "quantities are numbers": once a document exists behind the total, traceability
-    outranks summing the column, and the cell becomes `_docs_text`'s text. A row with
-    nothing open keeps the plain numeric total, unchanged."""
+    BRW PO qty / BRW incoming qty (issue #796, AC-13/AC-14) and Last in qty
+    (PLAN-low-stock-last-in-and-list-scope S1) are the exceptions to "quantities are
+    numbers": Last in qty is ALWAYS text now (`_last_in_text`), shaped like the SPO/
+    container/qty document line those two cells already print, because there is exactly
+    one document behind it. BRW PO qty / BRW incoming qty become text only once a document
+    exists behind the total; a row with nothing open keeps the plain numeric total,
+    unchanged."""
     out: list[tuple] = []
     for row in rows:
         chosen = row.get("chosen_qty")
@@ -1441,7 +1503,7 @@ def _export_xlsx_rows(rows: list[dict]) -> list[tuple]:
              else float(po_open_qty or 0)),
             (_xlsx_safe_text(_docs_text(incoming_spo_qty, incoming_spo_docs)) if incoming_spo_docs
              else float(incoming_spo_qty or 0)),
-            float(receipt.get("qty") or 0) if receipt else "",
+            _xlsx_safe_text(_last_in_text(receipt)),
             _xlsx_safe_text(_ddmmyyyy(receipt.get("date"))) if receipt else "",
             _xlsx_safe_text(_remarks_text(row)),
         ))
@@ -1453,12 +1515,16 @@ def _export_xlsx_rows(rows: list[dict]) -> list[tuple]:
 #: issue #795 (Slice 2): shifted two right by Suggested qty + Suggestion. issue #796
 #: (Slice 3): BRW PO qty / BRW incoming qty (11, 12) join the list once a document exists
 #: behind their total - `_docs_text` renders the same total-then-documents shape.
-_PDF_LIST_COLUMNS = (8, 9, 11, 12)
+#: PLAN-low-stock-last-in-and-list-scope S1: Last in qty (13) joins them too - `_last_in_text`
+#: is the same SPO/container/qty document shape, always, not only once a document exists.
+_PDF_LIST_COLUMNS = (8, 9, 11, 12, 13)
 #: Quantity columns, right-aligned on the PDF the way a printed sheet's numbers are. 11
 #: and 12 are NOT here (issue #796): a cell class is exclusive (`_export_pdf_html` picks
 #: "list" over "num" when both would apply), and right-aligning "PO-A - 4" under its own
-#: total reads worse than the pre-wrapped list style every other multi-line cell gets.
-_PDF_NUM_COLUMNS = (1, 2, 3, 4, 5, 7, 13)
+#: total reads worse than the pre-wrapped list style every other multi-line cell gets. 13
+#: (Last in qty) moved OUT (PLAN-low-stock-last-in-and-list-scope S1) for the same reason:
+#: it is text now, same shape as those two.
+_PDF_NUM_COLUMNS = (1, 2, 3, 4, 5, 7)
 
 
 def _export_pdf_html(rows: list[tuple], as_of: str) -> str:
@@ -1510,30 +1576,31 @@ def _render_export_pdf(rows: list[tuple], as_of: str) -> bytes:
 #: without truncating on screen (row height is left unset so the app autofits the wrap).
 #: issue #795 (Slice 2): Suggested qty (F, numeric) + Suggestion (G, a one-line reason)
 #: shift every later column two right - "Project / customer" is now J.
+#: N (Last in qty) widened to 34 (PLAN-low-stock-last-in-and-list-scope S1 fix round): the
+#: cell is a document line now, up to ~32 chars (`"<SPO> - <container> - <qty>"`), the same
+#: width class the incoming-document cells (L/M) would need if they routinely grew that
+#: long.
 _XLSX_COLUMN_WIDTHS = {
     "A": 16, "B": 11, "C": 11, "D": 11, "E": 11, "F": 11, "G": 30, "H": 11,
-    "I": 14, "J": 44, "K": 20, "L": 12, "M": 12, "N": 12, "O": 12, "P": 16,
+    "I": 14, "J": 44, "K": 20, "L": 12, "M": 12, "N": 34, "O": 12, "P": 16,
 }
 
 
-def _render_export_xlsx(rows: list[tuple]) -> bytes:
-    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
-    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
-    a different journey (a multi-sheet monthly register) this export does not have. Every
-    cell in `rows` has already been through `_export_xlsx_rows` (numbers for quantities,
-    `_xlsx_safe_text` for strings) - this function only writes what it is given, styled
-    like the paper sheet (S14, AC-S14.6): a dark bold white header, a thin border and
-    wrapped text on every cell, frozen at A2, explicit column widths.
-    """
-    from io import BytesIO
+def write_sheet(ws, columns, rows: list[tuple], widths: dict) -> None:
+    """Write ONE styled sheet - header, rows, borders, freeze, widths - into an openpyxl
+    worksheet the caller owns.
 
-    from openpyxl import Workbook
+    Lifted out of `_render_export_xlsx` (PLAN-low-stock-report S3) so the low stock
+    workbook can call it TWICE, for its "Low stock" and "All" sheets, instead of growing a
+    second copy of the same styling. Every cell in `rows` has already been shaped by the
+    caller's own row builder (numbers for quantities, `_xlsx_safe_text` for strings) - this
+    function only writes what it is given, styled like the paper sheet (S14, AC-S14.6): a
+    dark bold white header, a thin border and wrapped text on every cell, frozen at A2, the
+    caller's explicit column widths.
+    """
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Order summary"
-    ws.append(list(_EXPORT_COLUMNS))
+    ws.append(list(columns))
     for r in rows:
         ws.append(list(r))
 
@@ -1552,8 +1619,23 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
         cell.fill = header_fill
 
     ws.freeze_panes = "A2"
-    for col, width in _XLSX_COLUMN_WIDTHS.items():
+    for col, width in widths.items():
         ws.column_dimensions[col].width = width
+
+
+def _render_export_xlsx(rows: list[tuple]) -> bytes:
+    """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
+    accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
+    a different journey (a multi-sheet monthly register) this export does not have.
+    """
+    from io import BytesIO
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Order summary"
+    write_sheet(ws, _EXPORT_COLUMNS, rows, _XLSX_COLUMN_WIDTHS)
 
     buf = BytesIO()
     wb.save(buf)
@@ -1645,6 +1727,47 @@ def export_guard_stats(db: Session, *, run_id: Optional[str]) -> dict:
     }
 
 
+#: `low_stock_guard_stats` is GONE (PLAN-low-stock-last-in-and-list-scope S2): the low
+#: stock workbook's "All" sheet now drops hidden-by-default rows exactly like the order
+#: sheet does (owner ruling 15 Sep, "I prefer All to match the list exported"), so its
+#: guard reads `export_guard_stats` - the SAME count - rather than a twin that counted the
+#: unfiltered total.
+
+
+def visible_rows(db: Session, rep: dict) -> list[dict]:
+    """`rep["rows"]` with hidden-by-default rows dropped (S7, PLAN-plan-list-tile-sheet-
+    one-scope.md AC-3) - the SAME rule the plan list and the Decisions tile already read.
+
+    Lifted out of `export_report` (PLAN-low-stock-last-in-and-list-scope S2) so the low
+    stock workbook's "All" sheet can call the identical filter: the owner's 15 Sep ruling
+    is that All must match the list, and a second copy of this drop is exactly the kind of
+    independent rule that drifted apart before (the plan-tile-list-sheet measurement: list
+    415, tile "0 of 950", sheet 950).
+
+    `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
+    still sees every planned product; only a caller that asks for the printed/exported view
+    narrows to what the buyer would see on the list. `_hidden_product_ids_for_run` is keyed
+    on `product_id` (D2); `report()`'s own rows carry only `product_code` (never an id - no
+    UUID crosses this module's output), so the ids are resolved to codes with a SECOND,
+    narrow join scoped to just the hidden set - typically a handful of products, not the
+    whole run.
+    """
+    rows = rep["rows"]
+    hidden_ids = _hidden_product_ids_for_run(db, rep["run_id"])
+    if not hidden_ids:
+        return rows
+    hidden_codes = {
+        code for (code,) in
+        db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
+    }
+    # Matched by product_code, not product_id: safe because a run always freezes ONE
+    # company's products (`write_rows` stamps the run's own company; `report()`'s rows
+    # carry no id at all). `uq_products_company_product_code` makes code -> id 1:1 WITHIN
+    # that company, so a cross-company code collision would over-drop a visible row that
+    # merely shares a code with a hidden one elsewhere, never under-drop a hidden one.
+    return [r for r in rows if r["product_code"] not in hidden_codes]
+
+
 def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[bytes, str, str]:
     """The Order summary sheet as a document (AC-S9.3): landscape PDF or an Excel workbook,
     the same rows and figures the grid shows, so nothing on the export is typed twice.
@@ -1657,25 +1780,11 @@ def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[byte
     the book to products the run actually planned, and a covered/needs_level product still
     has a `suggestion` worth printing even with nothing to order.
 
-    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): hidden-by-default rows (the SAME
-    rule the list and the Decisions tile already read) are dropped here, AFTER `report()`
-    - `report()` itself stays untouched (AC-4), so a caller reading the frozen sheet whole
-    still sees every planned product; only the printed/exported document narrows to what
-    the buyer would see on the list. `_hidden_product_ids_for_run` is keyed on
-    `product_id` (D2); `report()`'s own rows carry only `product_code` (never an id - no
-    UUID crosses this module's output), so the ids are resolved to codes with a SECOND,
-    narrow join scoped to just the hidden set - typically a handful of products, not the
-    whole run.
+    S7, PLAN-plan-list-tile-sheet-one-scope.md (AC-3): hidden-by-default rows are dropped
+    via the shared `visible_rows` (PLAN-low-stock-last-in-and-list-scope S2).
     """
     rep = report(db, run_id=run_id)
-    rows = rep["rows"]
-    hidden_ids = _hidden_product_ids_for_run(db, rep["run_id"])
-    if hidden_ids:
-        hidden_codes = {
-            code for (code,) in
-            db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
-        }
-        rows = [r for r in rows if r["product_code"] not in hidden_codes]
+    rows = visible_rows(db, rep)
     if len(rows) > MAX_EXPORT_ROWS:
         raise AppException(422, "Narrow the plan first")
     stamp = rep.get("as_of") or _today().isoformat()
@@ -1783,7 +1892,15 @@ def _serialise_row(row: OrderSummaryRow, product: Product, supplier, pool,
         "po_open_qty": _f(row.po_open_qty) or 0.0,
         "incoming_spo_qty": _f(row.incoming_spo_qty) or 0.0,
         "last_receipt": (
-            {"date": row.last_receipt_date.isoformat(), "qty": _f(row.last_receipt_qty) or 0.0}
+            {
+                "date": row.last_receipt_date.isoformat(),
+                "qty": _f(row.last_receipt_qty) or 0.0,
+                # NULL on a run frozen before migration 518 (R4, no backfill) - the two
+                # new keys read `.get` everywhere downstream rather than assuming they
+                # exist.
+                "spo_number": row.last_receipt_spo_number,
+                "container": row.last_receipt_container_number,
+            }
             if row.last_receipt_date else None
         ),
         "moq": _f(row.moq),

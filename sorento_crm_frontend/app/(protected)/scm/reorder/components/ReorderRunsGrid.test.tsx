@@ -120,6 +120,13 @@ describe('ReorderRunsGrid - the columns (A1)', () => {
     expect(within(row).getByText(/6,232,043/)).toBeInTheDocument();
   });
 
+  it('the plan timestamp carries a title, because the badges beside it clip the truncate', () => {
+    renderList();
+    const stamp = screen.getByText(/27\/08\/2026/);
+    expect(stamp).toHaveClass('truncate');
+    expect(stamp).toHaveAttribute('title', stamp.textContent as string);
+  });
+
   it('reads "All" for a plan that narrowed to no product list', () => {
     renderList([run({ product_count: null })]);
     expect(screen.getByText('All')).toBeInTheDocument();
@@ -178,6 +185,19 @@ describe('ReorderRunsGrid - the status is derived (A5)', () => {
   it('never guesses "daily" from the clock when the backend has not said', () => {
     renderList([run()]);
     expect(screen.queryByText('daily')).not.toBeInTheDocument();
+  });
+
+  // PLAN-low-stock-report AC-4: a run the chatbot started is marked in the identity
+  // column, so the buyer knows why a plan nobody here launched exists.
+  it('a run requested over chat wears a "via chat" badge in the Plan column', () => {
+    renderList([run({ requested_via: 'chat' })]);
+    const row = screen.getByText(/27\/08\/2026/).closest('tr') as HTMLElement;
+    expect(within(row).getByText('via chat')).toBeInTheDocument();
+  });
+
+  it('a manual run carries no "via chat" badge', () => {
+    renderList([run()]);
+    expect(screen.queryByText('via chat')).not.toBeInTheDocument();
   });
 });
 

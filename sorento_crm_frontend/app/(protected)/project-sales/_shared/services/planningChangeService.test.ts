@@ -83,15 +83,17 @@ describe('getPlanningChangeBatch', () => {
 
 describe('updatePlanningChangeRow', () => {
   it('PUTs the one decision the row can hold', async () => {
-    mockedFetch.mockResolvedValue(okResponse({ id: 'pcr-1', decision: 'keep' }));
+    // Confirm or Amend, and nothing else (AC-C7): the rule table's `accept` / `keep` /
+    // `board` are retired with the verbs they agreed with.
+    mockedFetch.mockResolvedValue(okResponse({ id: 'pcr-1', decision: 'confirm' }));
 
-    await updatePlanningChangeRow('pcb-1', 'pcr-1', { decision: 'keep' });
+    await updatePlanningChangeRow('pcb-1', 'pcr-1', { decision: 'confirm' });
 
     expect(calledUrl().pathname).toBe(
       '/api/v1/project-sales/planning-changes/pcb-1/rows/pcr-1',
     );
     expect(calledInit().method).toBe('PUT');
-    expect(JSON.parse(String(calledInit().body))).toEqual({ decision: 'keep' });
+    expect(JSON.parse(String(calledInit().body))).toEqual({ decision: 'confirm' });
   });
 });
 

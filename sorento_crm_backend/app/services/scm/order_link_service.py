@@ -255,9 +255,13 @@ def _purchase_side(db: Session, po_numbers: set[str]):
     the import channels route on, and the only one that cannot disagree with itself - so a
     claim never has to be asked which table it meant.
 
-    Ordering is explicit on the SPO side: one shipping order can state the same product on
-    several lines (two containers), so the lowest line number wins rather than whichever row
-    the database happened to return first.
+    Ordering is explicit on BOTH sides: one document can state the same product on several
+    lines (two containers on a shipping order, two deliveries on a purchase order), so the
+    lowest line number - and, on the purchase order side, the oldest line - wins rather than
+    whichever row the database happened to return first. The purchase order side gained its
+    order on 14 Sep 2026: it was an unordered read feeding a dict comprehension, so `by_key`
+    took whichever same-item line came last, and the order inquiry sheet import paired the
+    same file differently on its preview and on its apply.
     """
     spo_numbers = {n for n in po_numbers if doc_family(n) == FAMILY_SPO}
     po_only = po_numbers - spo_numbers
@@ -266,23 +270,30 @@ def _purchase_side(db: Session, po_numbers: set[str]):
         db.query(PurchaseOrder.po_number, Product.product_code, PurchaseOrderLine.id)
         .join(PurchaseOrderLine, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
         .join(Product, Product.id == PurchaseOrderLine.product_id)
-        .filter(PurchaseOrder.po_number.in_(list(po_only)))
+        .filter(PurchaseOrder.po_number.in_(sorted(po_only)))
+        .order_by(
+            PurchaseOrder.po_number.asc(),
+            Product.product_code.asc(),
+            PurchaseOrderLine.created_at.asc(),
+            PurchaseOrderLine.id.asc(),
+        )
         .all()
         if po_only
         else []
     )
-    by_key: dict[tuple[str, str], tuple[str, str]] = {
-        (str(po), str(code)): (_PO_SIDE, str(line_id)) for po, code, line_id in rows
-    }
+    by_key: dict[tuple[str, str], tuple[str, str]] = {}
     by_number: dict[str, tuple[str, str]] = {}
-    for po, _code, line_id in rows:
+    for po, code, line_id in rows:
+        # First wins on both, which under the order above is the OLDEST line of that
+        # document for that item - the same rule the SPO side states with its line number.
+        by_key.setdefault((str(po), str(code)), (_PO_SIDE, str(line_id)))
         by_number.setdefault(str(po), (_PO_SIDE, str(line_id)))
 
     spo_rows = (
         db.query(SPOAllocation.spo_number, Product.product_code, SPOAllocation.id)
         .join(Product, Product.id == SPOAllocation.product_id)
         .filter(
-            SPOAllocation.spo_number.in_(list(spo_numbers)),
+            SPOAllocation.spo_number.in_(sorted(spo_numbers)),
             # Section 4 ruling: a claim's TARGET is never resolved onto a line
             # AutoCount deleted - `by_key`/`by_number` below pick the first
             # surviving row, or leave the claim unresolved on this side.
@@ -810,6 +821,7 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
             OrderLinkClaim.po_number,
             OrderLinkClaim.source,
             OrderLinkClaim.so_line_id,
+            OrderLinkClaim.claimed_at,
             SalesOrder.order_date,
             SalesOrderLine.qty_ordered,
             SalesOrderLine.qty_delivered,
@@ -836,7 +848,7 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
     rows = []
     for (
         claim_id, po_line_id, spo_allocation_id, so_number, po_number, source,
-        so_line_id, order_date, qty_ordered, qty_delivered, line_status,
+        so_line_id, claimed_at, order_date, qty_ordered, qty_delivered, line_status,
     ) in query.all():
         target_id = str(po_line_id or spo_allocation_id or "")
         if not target_id:
@@ -848,6 +860,11 @@ def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]
             "po_number": po_number,
             "source": source,
             "so_line_id": str(so_line_id),
+            # When the pairing was stated. Additive (ruling 14 Sep,
+            # `PLAN-scm-oi-sheet-migration.md` AC-S1-32): the order inquiry migration
+            # follows several stated pairings on one line and takes the earliest first
+            # within a kind, so "which was stated first" has to travel with the row.
+            "claimed_at": claimed_at,
             "so_date": order_date,
             # The claiming line's LIVE outstanding (G7): a fulfilled or cancelled line
             # reserves nothing, whatever the claim still names, and the claim row is never
@@ -1104,6 +1121,46 @@ def delete_own_claim(
     claim = query.first()
     if claim is not None:
         db.delete(claim)
+
+
+def free_claim_if_orphaned(
+    db: Session, claim_id: Optional[str], *, excluding: Sequence[str]
+) -> None:
+    """Delete a `source = 'order_inquiry'` claim, unless another surviving order-inquiry
+    link still leans on it (S3, review round - the guard `_remove_links`
+    [`project_order_inquiry_service.py`] and `_unclaim_shares`
+    [`planning_change_service.py`] each used to write out for themselves).
+
+    The claim's identity is the DOCUMENT, not the line - two links on one purchase-order
+    line share the one claim - so it only goes when nothing else still points at it.
+
+    `excluding` is every link id the CALLER is disposing of in this same pass, not only
+    the one link presently being removed: a link deleted earlier in the same pass has not
+    been flushed yet (both callers run with `autoflush=False`), so a query that excluded
+    only the current link would still see an about-to-be-deleted sibling as "surviving"
+    and wrongly keep a claim that nothing will be left to reference.
+    """
+    if not claim_id:
+        return
+    from app.models.project_so import OrderInquiryLink
+
+    claim = (
+        db.query(OrderLinkClaim)
+        .filter(OrderLinkClaim.id == claim_id, OrderLinkClaim.source == "order_inquiry")
+        .first()
+    )
+    if claim is None:
+        return
+    if (
+        db.query(OrderInquiryLink)
+        .filter(
+            OrderInquiryLink.claim_id == claim.id,
+            OrderInquiryLink.id.notin_(list(excluding)),
+        )
+        .first()
+    ):
+        return
+    db.delete(claim)
 
 
 def open_claims(db: Session) -> dict:

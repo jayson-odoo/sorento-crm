@@ -8,6 +8,13 @@ router.include_router(users.router, prefix="/users", tags=["users"])
 router.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
 router.include_router(contact_access_types.router, prefix="/contact-access-types", tags=["contact-access-types"])
 router.include_router(market_segments.router, prefix="/market-segments", tags=["market-segments"])
+# Spec visibility is NOT mounted here: its own `/effective` route must accept
+# X-API-Key (AC-11, n8n preflight), and this router's module gate
+# (`require_module_enabled("base")`, below in app/api/v1/__init__.py) requires
+# a JWT unconditionally at the dependency level - the "base" module has no
+# api-key variant applied to it. Mounted at the top level instead, alongside
+# its own `require_module_enabled_with_api_key("base")` gate, next to
+# `user_management.router`'s own inclusion.
 router.include_router(roles.router, prefix="/roles", tags=["roles"])
 router.include_router(permissions.router, prefix="/permissions", tags=["permissions"])
 router.include_router(access_agents.router, prefix="/access-agents", tags=["access-agents"])

@@ -122,3 +122,26 @@ def set_chatbot_switches(
     if ordering is not None:
         row.chatbot_ordering_enabled = ordering
     db.commit()
+
+
+def validating_resolve_entity(fake: Any) -> Any:
+    """Wrap a `resolve_entity` stub so the lane-built body still meets the ROUTE's
+    own schema (`ResolveReferenceRequest`).
+
+    Why this exists: in production the lane's `resolve_entity` seam IS that route
+    function (`app/services/chatbot/lanes/business/services.py::_resolve_entity`),
+    so the body is validated on every real turn. Every stub here replaced the seam
+    with a bare lambda, so the schema never ran over a lane-built body and #874's
+    integer `contact_id` reached production green (every `business_query` turn then
+    died on `contact_id  Input should be a valid string ... input_type=int`).
+
+    `fake` is either a callable taking the body, or a constant to return as is.
+    """
+
+    def _resolve_entity(body: dict[str, Any]) -> Any:
+        from app.api.v1.system.references import ResolveReferenceRequest
+
+        ResolveReferenceRequest(**body)
+        return fake(body) if callable(fake) else fake
+
+    return _resolve_entity

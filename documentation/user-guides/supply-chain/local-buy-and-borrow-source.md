@@ -66,6 +66,8 @@ Taken**
 
 ## See also
 
+* [Plan a sales order nobody decided](plan-undecided-lines.md) (which lines reach this board,
+  and the Planned pill on the Sales Orders list)
 * [Manage suppliers](../procurement/manage-suppliers.md) (Country is set there)
 * [Countries](../product/countries.md)
 * [Run a reorder plan](run-a-reorder-plan.md)

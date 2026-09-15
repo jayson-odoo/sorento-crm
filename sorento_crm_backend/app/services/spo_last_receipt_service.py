@@ -81,6 +81,25 @@ def _plain_number(v: Any) -> Any:
     return int(d) if d == d.to_integral_value() else float(d)
 
 
+def _key_expr():
+    """The ordering key every reader of this module shares: `expected_date`, falling back
+    to `issue_date`, then `created_at::date` (module docstring). Lifted to a module-level
+    helper (PLAN-low-stock-last-in-and-list-scope S1) so `last_in_map` orders its
+    own window the SAME way `last_receipt_rows` does, rather than a second copy that could
+    drift from it."""
+    return func.coalesce(
+        SPOAllocation.expected_date, SPOAllocation.issue_date, cast(SPOAllocation.created_at, Date)
+    )
+
+
+def _source_expr():
+    return case(
+        (SPOAllocation.expected_date.isnot(None), "expected"),
+        (SPOAllocation.issue_date.isnot(None), "issued"),
+        else_="recorded",
+    )
+
+
 def _gr_date_subquery(db: Session):
     """`allocation_id -> max(approved picking_date)`, ONE grouped read, never per row.
 
@@ -137,14 +156,8 @@ def last_receipt_rows(
     `spo_date_source`, `gr_date` (None when no approved GRN line), `warehouse`.
     """
     top_n = max(int(top_n or 1), 1)
-    key_expr = func.coalesce(
-        SPOAllocation.expected_date, SPOAllocation.issue_date, cast(SPOAllocation.created_at, Date)
-    )
-    source_expr = case(
-        (SPOAllocation.expected_date.isnot(None), "expected"),
-        (SPOAllocation.issue_date.isnot(None), "issued"),
-        else_="recorded",
-    )
+    key_expr = _key_expr()
+    source_expr = _source_expr()
     gr = _gr_date_subquery(db)
 
     if product_ids:
@@ -254,3 +267,89 @@ def last_receipt_rows(
             }
         )
     return out
+
+
+def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """``{product_id: {spo_number, container_number, qty, date}}`` - the newest VISIBLE
+    `spo_allocations` line PER PRODUCT, received or not, for the Summary Order Report / low
+    stock workbooks' "Last in" cell (PLAN-low-stock-last-in-and-list-scope S1, owner ruling
+    second round, 15 Sep: "for last in, please refer to our MCP service, i think even
+    haven't GR we also show as last in").
+
+    The EXACT pick `last_receipt_rows(product_ids=..., top_n=1)` makes for a product: same
+    key (`coalesce(expected_date, issue_date, created_at::date) DESC, created_at DESC`),
+    same `visible_line_clauses()` (a retired, never-received line still cannot answer; a
+    retired line WITH a receipt can - #753), same explicit company predicate on
+    `SPOAllocation` (`.subquery()` loses the session's `with_loader_criteria` listener, the
+    module docstring's own reason), PLUS a join to `Product` so that listener also scopes
+    the PRODUCT - a caller can name a `product_id` outside the scope, and the line's own
+    `company_id` matching the scope is not enough on its own (measured: a Mocha product
+    with a Sorento-owned line leaked through under a Sorento scope until this join was
+    added). `qty` is `allocated_quantity` - the SPO's OWN ordered quantity, the figure the
+    MCP row itself prints as "SPO quantity" - never `quantity_received`: the owner's
+    ruling surfaces an unreceived line too, and reading "received if any else ordered"
+    would hide which one a cell states.
+    """
+    if not product_ids:
+        return {}
+    key_expr = _key_expr()
+    rn = (
+        func.row_number()
+        .over(
+            partition_by=SPOAllocation.product_id,
+            order_by=(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc()),
+        )
+        .label("rn")
+    )
+    numbered = db.query(
+        SPOAllocation.product_id,
+        SPOAllocation.spo_number,
+        SPOAllocation.container_number,
+        SPOAllocation.allocated_quantity,
+        key_expr.label("spo_date"),
+        rn,
+    ).filter(
+        SPOAllocation.product_id.in_(product_ids),
+        *visible_line_clauses(),
+    )
+    # COMPANY SCOPE, EXPLICITLY - same reason as `last_receipt_rows`'s per-product branch.
+    # Belt-and-braces, not "the only copy": measured, the company predicate can land on
+    # this query from more than one path once the outer query below joins `Product` (its
+    # own `with_loader_criteria` fires there). Do not rely on the listener descending into
+    # this `.subquery()` on its own to cover `SPOAllocation`, and do not delete either
+    # copy - the explicit filter here or the join below - on the assumption the other one
+    # already does the job.
+    predicate = build_company_predicate(SPOAllocation, get_company_scope(db))
+    if predicate is not None:
+        numbered = numbered.filter(predicate)
+    sub = numbered.subquery()
+
+    rows = (
+        db.query(
+            sub.c.product_id,
+            sub.c.spo_number,
+            sub.c.container_number,
+            sub.c.allocated_quantity,
+            sub.c.spo_date,
+        )
+        # JOIN `Product` even though none of its columns are selected: the explicit
+        # predicate above scopes the LINE, but a caller can pass a product_id outside the
+        # scope (a product belonging to another company) and the line's own company_id can
+        # still match - measured, `test_last_receipt_map_company_scoped`'s positive-scope
+        # case leaked a Mocha product's Sorento-owned line under a Sorento scope. Naming
+        # `Product` as an entity here lets the session's `do_orm_execute` listener inject
+        # its OWN `with_loader_criteria(Product, ...)`, the same way `last_receipt_rows`'s
+        # per-product branch gets it for free by selecting Product columns.
+        .join(Product, Product.id == sub.c.product_id)
+        .filter(sub.c.rn == 1)
+        .all()
+    )
+    return {
+        str(row.product_id): {
+            "spo_number": row.spo_number,
+            "container_number": row.container_number,
+            "qty": _plain_number(row.allocated_quantity),
+            "date": row.spo_date,
+        }
+        for row in rows
+    }

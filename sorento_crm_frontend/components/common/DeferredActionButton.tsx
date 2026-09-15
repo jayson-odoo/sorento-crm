@@ -95,14 +95,18 @@ export function DeferredCountdown({
       )}
     >
       <div className="flex items-center gap-3">
-        <span className="text-sm font-medium tabular-nums" role="timer">
+        {/* The label is what gives way when there is not enough room - a countdown rendered
+            in a table cell has ~200px, and letting the two share the shortfall evenly is
+            how "Cancel" came out as "Canc". Truncated it still reads as a countdown; a
+            clipped button reads as a broken control. */}
+        <span className="min-w-0 truncate text-sm font-medium tabular-nums" role="timer">
           {label}
         </span>
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className="ms-auto h-7 px-2"
+          className="ms-auto h-7 shrink-0 px-2"
           // Guarded on the CLOCK, not only on the last render: a click can land
           // after the window closed, and by then the server has committed - so
           // the cancel would ask for something that no longer exists, and the

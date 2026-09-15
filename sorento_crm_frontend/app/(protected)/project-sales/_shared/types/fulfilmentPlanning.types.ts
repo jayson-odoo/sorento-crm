@@ -123,6 +123,13 @@ export interface FulfilmentPlanningRow {
   earliest_required_date?: string | null;
   review_state: ReviewState;
   updated_at?: string | null;
+  /**
+   * The newest PENDING planning-change batch on this order's core sales order, or null/absent
+   * (`PLAN-scm-board-picks-up-pending-change.md`, AC-B7). Same id the SCM Sales Orders list
+   * and the fulfilment board name off `planning_change_service.pending_batch_id_by_sales_order`
+   * - the `Changed` pill here links to the board with that batch already loaded.
+   */
+  planning_change_batch_id?: string | null;
 }
 
 export interface ReconciliationHeader {
@@ -526,11 +533,29 @@ export interface SupplyProposal {
 export interface ConfirmReserveComponent {
   warehouse_id: string;
   qty: string;
+  /**
+   * The warehouse CODE the id names, when whoever built this component knew it.
+   *
+   * Addressing is the id's job and the endpoint reads nothing else; this is here so a
+   * READER does not have to guess. A composition read back off a planning-change row is
+   * printed in board words ("Pool share 15 at BRW"), and with the id alone the only
+   * honest thing to print is "another location" - or, before this existed, the raw UUID
+   * (measured on SO419595 line 9, 13 September 2026).
+   */
+  location?: string | null;
 }
 
 export interface ConfirmBorrowComponent {
   source: BorrowSource;
   warehouse_id: string;
+  /**
+   * The donor warehouse's CODE, when whoever built this component knew it.
+   *
+   * The same field `ConfirmReserveComponent` carries, and it matters more here: a borrow's
+   * donor is by definition a warehouse this line does not hold at, so it appears nowhere
+   * else on a planning-change row for a reader to resolve the id against.
+   */
+  location?: string | null;
   donor_project_id?: string | null;
   qty: string;
   /** Mandatory: no Borrow is written without one (AC-B09). */
@@ -1110,7 +1135,18 @@ export interface BoardContribution {
   project_key?: string | null;
   line_no: number;
   item_code: string;
-  /** The still-owed quantity. `qty_outstanding` is the same number under its own name. */
+  /**
+   * What this line ASKS FOR: the PLAN quantity, `coalesce(qty_required, qty_ordered)`.
+   *
+   * NOT the still-owed figure, and no longer an alias of `qty_outstanding` below (14 Sep
+   * 2026 ruling). The board asks who decided where a line's stock comes from rather than
+   * whether delivery is outstanding, so a delivered unit nobody sourced is a unit to put
+   * back and the ladder is asked for the whole quantity.
+   *
+   * This is the number every composition must sum to: the server's balance check validates
+   * against it (`_LineFacts.open_qty`), so the editor, `lineFor` and the cell total all
+   * read this one and never `qty_outstanding`.
+   */
   qty: string;
   /**
    * What the sales order ORDERED on this line, as a fact off the server.
@@ -1120,7 +1156,14 @@ export interface BoardContribution {
    * moved one of them. Absent renders as a stated absence, never as a guess.
    */
   qty_ordered?: string | null;
-  /** The owed quantity under its own name. `qty` is kept as an alias of it. */
+  /**
+   * What is still owed the CUSTOMER: ordered less delivered, floored at zero.
+   *
+   * A FACT ABOUT DELIVERY, and nothing composes against it. It was an alias of `qty` until
+   * the 14 September 2026 ruling and the two now differ on every line with a delivery -
+   * printing one under the other's name would make the screen state a delivery that never
+   * happened, or ask a planner to balance against a figure the server will refuse.
+   */
   qty_outstanding?: string | null;
   /** What has already been delivered against the line. Ordered - delivered = outstanding. */
   qty_delivered?: string | null;
@@ -1188,6 +1231,16 @@ export interface BoardContribution {
   fulfilment_warehouse_id?: string | null;
   /** The line states no location, so it cannot be planned and blocks its order (AC-FP16). */
   unplannable: boolean;
+  /**
+   * The BOOK closed this line, and a pending planning change is what will retire it (R3,
+   * scenario S5).
+   *
+   * It owes nothing - the board carries it at zero - but it is still on screen, because a
+   * line that vanished the moment it was cancelled would take its change with it and leave
+   * nobody anywhere to press Confirm. Nothing is decided FOR it: its apply is the retire
+   * path, which is why it counts toward Confirm (N) while carrying no decision of its own.
+   */
+  cancelled?: boolean;
   /** `sales_order_lines.priority`, when anybody stated one. Almost nobody does. */
   priority?: 'high' | 'medium' | 'low' | null;
   /**
@@ -1690,6 +1743,12 @@ export interface BoardOrderStanding {
   carried_count?: number;
   /** Lines that can never be decided here because their sales order states no location. */
   unplannable_count: number;
+  /**
+   * The newest PENDING planning-change batch on this order, or null/absent
+   * (`PLAN-scm-board-picks-up-pending-change.md`, AC-B1). Lets the board load and draw a
+   * change's Was/Now table and pre-marked suggestion without a `?batch=` URL param.
+   */
+  pending_change_batch_id?: string | null;
 }
 
 /**
@@ -2263,15 +2322,22 @@ export interface PlanListEnvelope {
 export interface ConfirmManyOrderBody {
   pso_id: string;
   lines: ConfirmLine[];
+  /**
+   * This order's OWN planning-change batch (`PLAN-scm-board-picks-up-pending-change.md`,
+   * AC-B5/AC-B6): a board can show two orders on two different pending batches, so the
+   * batch an order answers travels WITH that order. `null`/absent when the order has none.
+   * Falls back to `ConfirmManyBody.batch_id` server-side when absent.
+   */
+  batch_id?: string | null;
 }
 
 export interface ConfirmManyBody {
   orders: ConfirmManyOrderBody[];
   /**
-   * The planning-change batch this press is answering (AC-P3-4). One per board: it is opened
-   * at `?orders=...&batch=<id>` and every order on it belongs to that batch. Absent on an
-   * ordinary Confirm; set, each order APPLIES its half of the batch rather than writing a
-   * plain revision beside it.
+   * DEPRECATED as the primary shape (change 4): the board-wide fallback for a single-batch
+   * press, kept so a caller that has not moved to `orders[].batch_id` still works. One per
+   * board: it was opened at `?orders=...&batch=<id>` and every order on it belonged to that
+   * batch. Absent on an ordinary Confirm.
    */
   batch_id?: string | null;
 }

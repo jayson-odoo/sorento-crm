@@ -49,6 +49,7 @@ import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/mone
 import { buildPlanActions } from '../lib/planActions';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { demandClassBadge } from '../../lib/demandClass';
+import { salesOrderPlannedBadge } from '../../lib/salesOrderPlanned';
 import {
   SALES_ORDER_STATUS_FILTER_OPTIONS,
   salesOrderPriorityVariant,
@@ -647,6 +648,34 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
         meta: { headerTitle: 'Status' },
       },
       {
+        id: 'planned',
+        // A PLAIN TITLE, not `DataGridColumnHeader` (AC-S4-8). That primitive renders a
+        // button whatever `enableSorting` says, so the header read as a control that does
+        // nothing when clicked.
+        header: () => <span>Planned</span>,
+        // BESIDE STATUS, because it is the question Status keeps being read as answering and
+        // does not: Completed says the book shipped it, this says whether anybody ever decided
+        // where the stock came from. SO421404 read Completed, 3 of 3 delivered, and had never
+        // been planned - which is exactly the order somebody has to go and plan.
+        //
+        // NOT SORTABLE AND NOT FILTERABLE in this lane: the counts are already on the row and
+        // nobody has asked to slice by them. Trigger for adding either: the owner asks.
+        cell: ({ row }) => {
+          const badge = salesOrderPlannedBadge(
+            row.original.planned_lines,
+            row.original.plannable_lines,
+          );
+          return (
+            <Badge variant={badge.variant} appearance="light" size="md">
+              {badge.label}
+            </Badge>
+          );
+        },
+        enableSorting: false,
+        size: 130,
+        meta: { headerTitle: 'Planned' },
+      },
+      {
         accessorKey: 'order_inquiries',
         header: ({ column }) => <DataGridColumnHeader title="Order inquiries" column={column} />,
         // What purchasing has been told to do about this order, by NUMBER. There is no
@@ -688,7 +717,6 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
           );
         },
         size: 180,
-        enableSorting: false,
         meta: { headerTitle: 'Order inquiries' },
       },
       {

@@ -74,6 +74,16 @@ CHATBOT_REPLY_OUT_OF_SCOPE_NO_TEAM = (
 # `case 'escalation_declined'` - FIXED canned reply, no LLM shaping.
 CHATBOT_REPLY_ESCALATION_DECLINED = "Escalation declined."
 
+# R22(a) (owner round 9, 13 Sep 2026): the customer said no to an OFFER the bot made -
+# the outstanding detail list, or the scope question. One short line and nothing else:
+# the first cut answered it with `clarify_menu` ("I see you're trying to decline, Let me
+# understand more. Are you asking about any of these? ...") and that is the wrong tone
+# for "no" - it re-opens a conversation the customer just closed. `escalation_declined`
+# above is the nearest thing that existed and it names an escalation nobody asked for,
+# so this is its sibling for every other offer. Editable by the owner like every key in
+# this table: the wording is a row in the prompt registry, not a string in a deploy.
+CHATBOT_REPLY_OFFER_DECLINED = "Okay, noted."
+
 # What the customer reads when a turn could not be finished - byte-identical to what the
 # spine sends today when `sub-query-reformulator` fails (`sub-error-logger`).
 #
@@ -167,6 +177,11 @@ CHATBOT_REPLY_COPY: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "escalation_declined": (
         "chatbot_reply_escalation_declined",
         CHATBOT_REPLY_ESCALATION_DECLINED,
+        (),
+    ),
+    "offer_declined": (
+        "chatbot_reply_offer_declined",
+        CHATBOT_REPLY_OFFER_DECLINED,
         (),
     ),
 }

@@ -31,7 +31,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.business import fetch
 from app.services.chatbot.lanes.business import gate
 from app.services.chatbot.lanes.business.services import AnswerServices, FetchServices, ResolveGateServices
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output, seeded, stub_access, stub_parser  # noqa: F401
 
 PRODUCT_UUID = "44444444-4444-4444-4444-444444444444"
@@ -87,7 +87,7 @@ def _m218_resolved_bundle() -> ResolveGateServices:
 
     return ResolveGateServices(
         access_types=lambda **_: [{"name": "Sorento Dealer"}],
-        resolve_entity=_resolve_entity,
+        resolve_entity=validating_resolve_entity(_resolve_entity),
         probe=lambda **_: None,
     )
 

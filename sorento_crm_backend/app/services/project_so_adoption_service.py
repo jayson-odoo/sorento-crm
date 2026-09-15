@@ -60,14 +60,19 @@ from app.models.project_so import (
     ProjectSalesOrderLine,
 )
 from app.services.error_handler import AppException
-from app.services.scm.demand import PROJECT_CLASS, is_open_demand
+from app.services.scm.demand import PROJECT_CLASS, is_open_demand, is_undecided_demand
 
 logger = logging.getLogger(__name__)
 
-#: The header half of "outstanding" (plan section 3). `is_open_demand()` is the line half
-#: and is imported rather than restated, so this worklist and the SCM sales-order book
-#: cannot disagree about which orders are still owed.
-_OPEN = "open"
+#: The header half of what the BOARD may plan, and since the 14 September 2026 ruling that
+#: is two statuses rather than one. `is_undecided_demand()` is the line half and is imported
+#: rather than restated, so adoption and the board cannot disagree about which lines exist to
+#: be planned - a Completed order whose stock shipped with nothing behind it could not be
+#: adopted at all, so CS had no record to confirm the order-back against.
+#:
+#: `cancelled` is deliberately absent. A closed book is one that shipped; a cancelled one says
+#: the demand went away, and there is nothing to put back for it.
+_PLANNABLE_STATUSES = ("open", "closed")
 
 #: Sorts an undated line last without ever comparing `None` to a date.
 _EARLIEST = date.min
@@ -98,6 +103,14 @@ class ProjectSOAdoptionService:
             .first()
         )
         if existing is not None:
+            # Attempt 6 (13 Sep 2026): an AutoCount re-ingest can close the lines this
+            # record already mirrored and insert new open ones nobody has mirrored yet -
+            # SO419851's own shape. The FE's own retry path for "already adopted" is to
+            # POST adopt again and expect it to be caught up, so this branch re-mirrors
+            # before answering rather than returning the record exactly as it stood the
+            # day it was first adopted.
+            self.mirror_missing_lines(existing)
+            self.db.flush()
             return self._result(existing, core, already_adopted=True)
 
         self._assert_plannable(core)
@@ -106,6 +119,61 @@ class ProjectSOAdoptionService:
         self.db.flush()
         logger.info(
             "Adopted core sales order %s as planning record %s", core.so_number, order.id
+        )
+        return self._result(order, core, already_adopted=False)
+
+    def adopt_for_migration(
+        self,
+        sales_order_id: str,
+        actor_user_id: Optional[str] = None,
+        core_line_ids: Optional[Sequence[str]] = None,
+    ) -> Dict[str, Any]:
+        """`adopt`'s sibling, for the order inquiry sheet's migration
+        (`PLAN-scm-oi-sheet-migration.md` section 2, AC-S1-7 / AC-S1-26).
+
+        Same record and the same `_mirror`, with two differences, both because HISTORY is
+        what this reads (the owner, 13 Sep 2026: "those historical sales orders won't have
+        outstanding already ... but we still need to migrate those in"):
+
+        * the only refusal kept is the project-class one. A closed order, and an order with
+          nothing outstanding, are the ORDINARY case here rather than a reason to stop;
+        * a closed line is mirrored when the caller NAMES it, because the sheet addresses
+          the line it names and a line with no mirror has nothing to address.
+
+        `core_line_ids` is what the upload matched. A FRESH record mirrors the STILL-OWED
+        lines (`_owed_and_named`, on `is_open_demand()`), plus those named lines; a record
+        the BOARD already owns gains only the named lines it does not carry yet, and nothing
+        else, because a mirror line nobody asked for moves that record's reconciliation
+        figures. Left as `None` the caller names nothing in particular and every line is
+        mirrored, which is what a direct call with no upload behind it means.
+
+        `adopt` and `mirror_missing_lines` moved to the board's predicate on 14 September
+        2026 (a Completed order had to become adoptable, and a line delivered before
+        adoption had to get a mirror for confirm to name); this stays where it was, because
+        its population is what the sheet's migration was measured and accepted against.
+        """
+        core = self._core_order_or_404(sales_order_id)
+        self._assert_project_class(core)
+        named = self._named_core_lines(str(core.id), core_line_ids)
+
+        existing = (
+            self.db.query(ProjectSalesOrder)
+            .filter(ProjectSalesOrder.so_id == core.id)
+            .first()
+        )
+        if existing is not None:
+            self._mirror_missing(existing, core, named)
+            self.db.flush()
+            return self._result(existing, core, already_adopted=True)
+
+        order = self._insert_record(core)
+        self._mirror(
+            order, core, self._owed_and_named(str(core.id), named), start_at=1
+        )
+        self.db.flush()
+        logger.info(
+            "Adopted core sales order %s for migration as planning record %s",
+            core.so_number, order.id,
         )
         return self._result(order, core, already_adopted=False)
 
@@ -134,6 +202,28 @@ class ProjectSOAdoptionService:
         core = self.db.query(SalesOrder).filter(SalesOrder.id == order.so_id).first()
         return self._mirror(order, core, missing, start_at=self._next_line_no(str(order.id)))
 
+    def _mirror_missing(
+        self,
+        order: ProjectSalesOrder,
+        core: Optional[SalesOrder],
+        core_lines: Sequence[SalesOrderLine],
+    ) -> List[ProjectSalesOrderLine]:
+        """Mirror whichever of `core_lines` this record does not carry yet.
+
+        The additive half `mirror_missing_lines` applies to the still-owed lines, taken out
+        so the migration can hand it a different line set (every line, not only the owed
+        ones) without changing what the board's own re-sync means.
+        """
+        held = {
+            str(line.core_sales_order_line_id)
+            for line in self._mirror_lines(str(order.id))
+            if line.core_sales_order_line_id
+        }
+        missing = [line for line in core_lines if str(line.id) not in held]
+        if not missing:
+            return []
+        return self._mirror(order, core, missing, start_at=self._next_line_no(str(order.id)))
+
     # ----------------------------------------------------------------- pieces
 
     def _core_order_or_404(self, sales_order_id: str) -> SalesOrder:
@@ -160,25 +250,37 @@ class ProjectSOAdoptionService:
         Each refusal names the sales order, never its id, and says which fact about it is
         the problem - a bare "cannot adopt" sends somebody to ask.
         """
+        self._assert_project_class(core)
+        if core.status not in _PLANNABLE_STATUSES:
+            # The actual status, not "is not open": two of the four ARE plannable now, so
+            # "not open" would be read as a bug by somebody looking at a Completed order
+            # that adopts perfectly well.
+            raise AppException(
+                409,
+                f"Sales order {core.so_number} is {core.status or 'in no state'}, so there "
+                "is nothing to plan.",
+                code="sales_order_not_open",
+            )
+        if not self._open_core_lines(str(core.id)):
+            raise AppException(
+                409,
+                f"Every line of sales order {core.so_number} is cancelled or marked no "
+                "purchase needed, so there is nothing to plan.",
+                code="sales_order_nothing_outstanding",
+            )
+
+    def _assert_project_class(self, core: SalesOrder) -> None:
+        """The one refusal BOTH entry points keep: this is not planning work at all.
+
+        One spelling, because the migration path keeps only this check and a second copy of
+        the sentence would let the two drift.
+        """
         if core.demand_class != PROJECT_CLASS:
             raise AppException(
                 409,
                 f"Sales order {core.so_number} is not project demand, so it is not planned "
                 "here.",
                 code="sales_order_not_project_class",
-            )
-        if core.status != _OPEN:
-            raise AppException(
-                409,
-                f"Sales order {core.so_number} is not open, so there is nothing to plan.",
-                code="sales_order_not_open",
-            )
-        if not self._open_core_lines(str(core.id)):
-            raise AppException(
-                409,
-                f"Every line of sales order {core.so_number} is already delivered, closed "
-                "or covered, so there is nothing to plan.",
-                code="sales_order_nothing_outstanding",
             )
 
     def _insert_record(self, core: SalesOrder) -> ProjectSalesOrder:
@@ -294,11 +396,75 @@ class ProjectSOAdoptionService:
     # ---------------------------------------------------------------- lookups
 
     def _open_core_lines(self, sales_order_id: str) -> List[SalesOrderLine]:
-        """The still-owed lines, by `is_open_demand()` verbatim (plan section 3).
+        """The lines the BOARD will walk, by `is_undecided_demand()` verbatim.
 
-        Imported, never restated: this is the predicate `scm.committed_v` counts and the
-        one the SCM sales-order screen's `outstanding=true` filter already means, so the
-        book and the planning sheet cannot disagree about which lines are owed.
+        Imported, never restated, and it is the BOARD's predicate rather than the netting
+        one since the 14 September 2026 ruling: the mirror is how a confirmation names a
+        line, so a line the board shows and the mirror omits cannot be confirmed at all.
+        A delivered line nobody sourced is exactly that line.
+
+        `covered` and `cancelled` lines are still left out, for the same reason the board
+        leaves them out - somebody already ruled on them - and because a mirror line no
+        screen accounts for moves the record's reconciliation figures
+        (`_authored_line_totals` sums mirror `qty` with no status filter).
+        """
+        return (
+            self.db.query(SalesOrderLine)
+            .filter(
+                SalesOrderLine.sales_order_id == str(sales_order_id),
+                is_undecided_demand(),
+            )
+            .all()
+        )
+
+    def _named_core_lines(
+        self, sales_order_id: str, core_line_ids: Optional[Sequence[str]]
+    ) -> List[SalesOrderLine]:
+        """The lines the caller named, whatever their status, scoped to THIS order.
+
+        Scoped rather than fetched by id alone: a caller that named a line of another sales
+        order would otherwise mirror it here, and the mirror is what every reader reaches
+        the core line through.
+
+        `None` means the caller named nothing in particular, and then every line is the
+        answer - the shape a direct call with no upload behind it has.
+        """
+        query = self.db.query(SalesOrderLine).filter(
+            SalesOrderLine.sales_order_id == str(sales_order_id)
+        )
+        if core_line_ids is None:
+            return query.all()
+        wanted = [str(value) for value in core_line_ids if value]
+        if not wanted:
+            return []
+        return query.filter(SalesOrderLine.id.in_(wanted)).all()
+
+    def _owed_and_named(
+        self, sales_order_id: str, named: Sequence[SalesOrderLine]
+    ) -> List[SalesOrderLine]:
+        """The STILL-OWED lines, plus the ones this upload named.
+
+        A record this upload CREATES is nobody else's, so it carries the work that is still
+        owed - or the next person to open it finds a planning record missing it - plus the
+        history the sheet addresses.
+
+        Deliberately `is_open_demand()` and NOT the board's predicate, unlike `adopt` since
+        the 14 September 2026 ruling. This population is what the sheet's own migration was
+        measured and accepted against; widening it here would mirror the whole delivered
+        history of an order the upload named one line of, and a mirror line nobody asked for
+        moves that record's reconciliation figures.
+        """
+        held = {str(line.id): line for line in self._still_owed_core_lines(sales_order_id)}
+        for line in named:
+            held.setdefault(str(line.id), line)
+        return list(held.values())
+
+    def _still_owed_core_lines(self, sales_order_id: str) -> List[SalesOrderLine]:
+        """`is_open_demand()` verbatim: what the customer is still owed.
+
+        The OI sheet's migration population (`_owed_and_named`), kept on the netting
+        predicate while `_open_core_lines` moved to the board's. The two answer different
+        questions and this one has not changed.
         """
         return (
             self.db.query(SalesOrderLine)

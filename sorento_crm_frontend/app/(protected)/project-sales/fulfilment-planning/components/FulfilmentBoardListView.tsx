@@ -2,7 +2,14 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, ChevronRight, Undo2 } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  Undo2,
+} from 'lucide-react';
 import { ColumnDef, RowSelectionState } from '@tanstack/react-table';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { Badge } from '@/components/ui/badge';
@@ -13,18 +20,17 @@ import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
 import { BoardDecisionPill } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
-import { SupplyBar } from '../../_shared/components/SupplyBar';
+import { BoardChangeTable } from './BoardChangeTable';
+import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
+import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
-  COLOURS,
-  LABELS,
   contributionDecision,
+  contributionInquiryDecision,
   contributionSuggestion,
-  contributionSupply,
   // Aliased the way `SalesOrderDetail` aliases it: bare `describe` is vitest's, and a file
   // that imports both reads as though the test runner were writing the column.
   describe as describeSupply,
-  segmentsOf,
 } from '../../_shared/lib/supplyVocabulary';
 import type { SupplyPart } from '../../_shared/lib/supplyVocabulary';
 import type {
@@ -49,6 +55,7 @@ export function FulfilmentBoardListView({
   draft,
   onDecide,
   onDecideMany,
+  annotations,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -59,16 +66,31 @@ export function FulfilmentBoardListView({
    * to confirm") rather than the N separate "Line N saved" toasts D14 shipped with.
    */
   onDecideMany: (keys: string[]) => Promise<{ saved: number; failed: number }>;
+  /**
+   * What the re-uploaded book did to each line, keyed by planning line (AC-C9). The row
+   * shows it as a hazard icon in the column that moved, and the lightbox behind the icon
+   * says the rest - the same component the grid cell uses.
+   */
+  annotations?: Map<string, BoardChangeAnnotation[]>;
 }) {
   /**
-   * Which row is open, ONE at a time - the same STATE the cell breakdown keeps, and the same
-   * panel inside it. The list used to carry Approve / Amend / Reject buttons in its Verdict
+   * Which rows are open - the same STATE the cell breakdown keeps, and the same panel inside
+   * it, opened as MANY at a time here (AC-C12: Expand all would mean nothing on a list that
+   * closes each row as the next one opens). The list used to carry Approve / Amend / Reject buttons in its Verdict
    * column and open the amend MODAL over the board; a decision is taken in the row on both
    * readings now, or the two would teach different gestures for one act - including the
    * question asked before an unsaved composition is thrown away (C5).
    */
-  const expansion = useDecisionRowExpansion();
-  const { expanded, setExpanded, setDirty, requestRow } = expansion;
+  const expansion = useDecisionRowExpansion({ multiple: true });
+  const {
+    expanded,
+    setExpanded,
+    openKeys,
+    dirtySetterFor,
+    requestRow,
+    expandAll,
+    requestCollapseAll,
+  } = expansion;
 
   /**
    * D14 (the captain: a quick save for the lines that need nothing amended). Selection is
@@ -86,6 +108,45 @@ export function FulfilmentBoardListView({
     void onDecideMany(selectedKeys);
     setRowSelection({});
   }, [selectedKeys, onDecideMany]);
+
+  /**
+   * The change icon this row shows in this column, or nothing (AC-C9).
+   *
+   * The column is read off what MOVED, through the same `changedFieldsOf` the lightbox
+   * prints, so a date icon can never sit on a row whose date did not move. A line the book
+   * touched without moving its quantity or its date still has a composed suggestion to
+   * read, and that is what the Suggested column's icon is for.
+   */
+  const changeIcons = React.useCallback(
+    (
+      contribution: BoardContribution,
+      column: 'required_date' | 'outstanding' | 'suggested',
+    ) => {
+      // The planning line first, then the sales order and line number - the address a row on
+      // an order nobody has adopted carries instead (R3).
+      const lineId = contribution.project_line_id;
+      const forLine =
+        (lineId ? annotations?.get(lineId) : undefined) ??
+        annotations?.get(lineKeyOf(contribution.so_number, contribution.line_no)) ??
+        [];
+      return forLine
+        .filter((annotation) => {
+          const keys = changedFieldsOf(annotation).map((field) => field.key);
+          if (column === 'required_date') return keys.includes('date');
+          if (column === 'outstanding') return keys.includes('qty');
+          return !keys.includes('date') && !keys.includes('qty');
+        })
+        .map((annotation) => (
+          <BoardChangeTable
+            key={`${annotation.rowId}-${column}`}
+            annotation={annotation}
+            column={column}
+            compact
+          />
+        ));
+    },
+    [annotations],
+  );
 
   const columns = React.useMemo<ColumnDef<BoardContribution>[]>(
     () => [
@@ -124,17 +185,26 @@ export function FulfilmentBoardListView({
                     aria-hidden
                   />
                 )}
-                <span className="truncate text-sm font-medium tabular-nums">
+                {/* ONE line, the line number folded in beside the sales order number
+                    (AC-C13, owner feedback 13 September 2026: "SOxxx (Line 1), so each row
+                    is thinner"). Two STACKED lines made every row two text lines tall for a
+                    fact that fits beside the first. Two spans rather than one string: the
+                    order number is what a reader scans for and what a search matches, and
+                    the line is a quieter qualifier of it. */}
+                <span
+                  className="truncate text-sm font-medium tabular-nums"
+                  title={`${contribution.so_number} (Line ${contribution.line_no})`}
+                >
                   {contribution.so_number}
+                </span>{' '}
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {`(Line ${contribution.line_no})`}
                 </span>
                 {/* The same tick the grid puts on a fully-decided cell, here per row: one
                     row IS one contribution, so it is decided or it is not. */}
                 <BoardDecidedMarker
                   revisions={decidedRevisions([contribution])}
                 />
-              </div>
-              <div className="truncate text-xs text-muted-foreground">
-                {`Line ${contribution.line_no}`}
               </div>
             </div>
           );
@@ -158,15 +228,24 @@ export function FulfilmentBoardListView({
           // Available included (C4). The figures ride on the CONTRIBUTION, netted of this
           // line's own quantity, so the list does not have to know which cell the line sits
           // in to quote the right pile.
-          expandedContent: (contribution: BoardContribution) => (
-            <BoardLineDecisionPanel
-              contribution={contribution}
-              decision={draft[contribution.key] ?? null}
-              locations={contribution.locations ?? []}
-              onDecide={(next) => onDecide(contribution.key, next)}
-              onDirtyChange={setDirty}
-            />
-          ),
+          expandedContent: (contribution: BoardContribution) =>
+            // A cancelled line has no decision to take (R3): the book removed it, and
+            // Confirm retires it. The row still opens, and says that rather than offering
+            // controls that would compose supply for a quantity nobody is owed.
+            contribution.cancelled ? (
+              <p className="px-4 py-3 text-sm text-muted-foreground">
+                This line was removed from the sales order. Confirm retires it; there is
+                nothing left to decide for it.
+              </p>
+            ) : (
+              <BoardLineDecisionPanel
+                contribution={contribution}
+                decision={draft[contribution.key] ?? null}
+                locations={contribution.locations ?? []}
+                onDecide={(next) => onDecide(contribution.key, next)}
+                onDirtyChange={dirtySetterFor(contribution.key)}
+              />
+            ),
         },
       },
       {
@@ -221,14 +300,18 @@ export function FulfilmentBoardListView({
         id: 'required_date',
         accessorFn: (row) => row.required_date ?? '',
         header: 'Required date',
-        cell: ({ row }) =>
-          row.original.required_date ? (
-            <span className="block truncate tabular-nums">
-              {formatDateInMalaysia(row.original.required_date)}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">No date</span>
-          ),
+        cell: ({ row }) => (
+          <span className="flex min-w-0 items-center gap-1">
+            {row.original.required_date ? (
+              <span className="block min-w-0 truncate tabular-nums">
+                {formatDateInMalaysia(row.original.required_date)}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">No date</span>
+            )}
+            {changeIcons(row.original, 'required_date')}
+          </span>
+        ),
         size: 130,
         minSize: 110,
       },
@@ -237,8 +320,11 @@ export function FulfilmentBoardListView({
         accessorFn: (row) => row.qty_outstanding ?? row.qty,
         header: 'Outstanding qty',
         cell: ({ row }) => (
-          <span className="block truncate tabular-nums">
-            {row.original.qty_outstanding ?? row.original.qty}
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="block min-w-0 truncate tabular-nums">
+              {row.original.qty_outstanding ?? row.original.qty}
+            </span>
+            {changeIcons(row.original, 'outstanding')}
           </span>
         ),
         size: 100,
@@ -267,28 +353,20 @@ export function FulfilmentBoardListView({
             return <span className="text-muted-foreground">Not recorded</span>;
           }
           const text = describeSupply(parts, contribution.fulfilment_location);
+          // NO BAR (AC-C13). The composition is already written out beside it in words, and
+          // the bar cost the row a second text line to say the same thing less precisely.
           return (
-            <div className="min-w-0 space-y-1">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="block min-w-0 truncate" title={text}>
-                  {text || (
-                    <span className="text-muted-foreground">
-                      Nothing proposed
-                    </span>
-                  )}
-                </span>
-                {contribution.buy_origin === 'local' && hasBuy(parts) && (
-                  <Badge variant="secondary">Local</Badge>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="block min-w-0 truncate" title={text}>
+                {text || (
+                  <span className="text-muted-foreground">Nothing proposed</span>
                 )}
               </span>
-              {/* Faded: a suggestion is not a decision. */}
-              <SupplyBar
-                segments={segmentsOf(parts, contribution.fulfilment_location)}
-                decided={false}
-                labels={LABELS}
-                colours={COLOURS}
-              />
-            </div>
+              {contribution.buy_origin === 'local' && hasBuy(parts) && (
+                <Badge variant="secondary">Local</Badge>
+              )}
+              {changeIcons(contribution, 'suggested')}
+            </span>
           );
         },
         size: 240,
@@ -303,32 +381,36 @@ export function FulfilmentBoardListView({
           const drafted = draft[contribution.key] ?? null;
           const parts = contributionDecision(contribution, drafted);
           if (!parts) {
-            return <span className="text-muted-foreground">Not decided</span>;
-          }
-          // The SAME bar the grid draws, off the same draft, so the two views cannot
-          // disagree about what this line is going to be supplied from.
-          const supply = contributionSupply(contribution, drafted);
-          // The composition alone, in section 2's words. NOT "Confirmed rev 1 · Buy 43":
-          // the revision is already on the Verdict column and on the row's tick, and
-          // repeating it here would cost the width the composition needs.
-          const text = describeSupply(parts, contribution.fulfilment_location);
-          return (
-            <div className="min-w-0 space-y-1">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <span className="block min-w-0 truncate" title={text}>
+            // DECIDED BY THE BOOK, not by a board (14 Sep 2026 ruling): a line carrying a
+            // live order inquiry row has no composition to print, so the slot names the
+            // instruction purchasing already holds. "Not decided" over it would invite a
+            // second Buy for a line somebody has already been told to buy.
+            const inquiry = contributionInquiryDecision(contribution);
+            if (inquiry) {
+              const text = inquiry.inquiry_no ?? 'Unnumbered inquiry';
+              return (
+                <span className="block min-w-0 truncate tabular-nums" title={text}>
                   {text}
                 </span>
-                {contribution.buy_origin === 'local' && hasBuy(parts) && (
-                  <Badge variant="secondary">Local</Badge>
-                )}
+              );
+            }
+            return <span className="text-muted-foreground">Not decided</span>;
+          }
+          // The composition alone, in section 2's words. NOT "Confirmed rev 1 · Buy 43":
+          // the revision is already on the Verdict column and on the row's tick, and
+          // repeating it here would cost the width the composition needs. No bar either
+          // (AC-C13) - the words carry it, and the grid still draws one where a cell has
+          // the room.
+          const text = describeSupply(parts, contribution.fulfilment_location);
+          return (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="block min-w-0 truncate" title={text}>
+                {text}
               </span>
-              <SupplyBar
-                segments={supply.segments}
-                decided={supply.decided}
-                labels={LABELS}
-                colours={COLOURS}
-              />
-            </div>
+              {contribution.buy_origin === 'local' && hasBuy(parts) && (
+                <Badge variant="secondary">Local</Badge>
+              )}
+            </span>
           );
         },
         size: 240,
@@ -404,7 +486,7 @@ export function FulfilmentBoardListView({
         enableResizing: false,
       },
     ],
-    [draft, onDecide, setDirty],
+    [changeIcons, dirtySetterFor, draft, onDecide],
   );
 
   return (
@@ -426,24 +508,57 @@ export function FulfilmentBoardListView({
       onRowSelectionChange={setRowSelection}
       enableRowSelection={(row) => canQuickSave(row.original, draft)}
       toolbar={
-        selectedKeys.length > 0 ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
-              {`${selectedKeys.length} selected`}
-            </Badge>
-            <Button type="button" size="sm" onClick={saveSelectedAsSuggested}>
-              {`Save as suggested (${selectedKeys.length})`}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => setRowSelection({})}
-            >
-              Clear
-            </Button>
-          </div>
-        ) : undefined
+        <div className="flex flex-wrap items-center gap-2">
+          {/* The same pair reorder planning carries, in the same place and the same shape
+              (AC-C12): two icon buttons, each dead when it has nothing to do, so the
+              control itself says whether the list is open or closed. */}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            mode="icon"
+            className="h-8 w-8"
+            data-testid="board-list-expand-all"
+            title="Expand all"
+            aria-label="Expand all"
+            disabled={openKeys.length >= contributions.length}
+            onClick={() => expandAll(contributions.map((row) => row.key))}
+          >
+            <ChevronsUpDown className="size-4" aria-hidden />
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            mode="icon"
+            className="h-8 w-8"
+            data-testid="board-list-collapse-all"
+            title="Collapse all"
+            aria-label="Collapse all"
+            disabled={openKeys.length === 0}
+            onClick={requestCollapseAll}
+          >
+            <ChevronsDownUp className="size-4" aria-hidden />
+          </Button>
+          {selectedKeys.length > 0 ? (
+            <>
+              <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
+                {`${selectedKeys.length} selected`}
+              </Badge>
+              <Button type="button" size="sm" onClick={saveSelectedAsSuggested}>
+                {`Save as suggested (${selectedKeys.length})`}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setRowSelection({})}
+              >
+                Clear
+              </Button>
+            </>
+          ) : null}
+        </div>
       }
       expanded={expanded}
       onExpandedChange={setExpanded}

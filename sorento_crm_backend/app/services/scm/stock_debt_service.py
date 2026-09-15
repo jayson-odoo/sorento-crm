@@ -43,7 +43,7 @@ from app.models.project_so import (
 )
 from app.models.sales_agent import SalesAgent
 from app.services.error_handler import AppException
-from app.services.project_supply_service import ProjectSupplyService
+from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 from app.services.scm import sales_agent_service, spo_supply
 from app.services.scm.demand import demand_qty, is_open_demand
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
@@ -666,7 +666,7 @@ class StockDebtService:
                 entities=(
                     ProjectSalesOrderLine.core_sales_order_line_id,
                     SOLineAllocation.warehouse_id,
-                    SOLineAllocation.qty,
+                    held_qty_expr(),
                     Warehouse.warehouse_code,
                 ),
             )

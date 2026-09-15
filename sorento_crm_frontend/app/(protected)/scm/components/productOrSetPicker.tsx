@@ -44,9 +44,23 @@ export function isSetOption(value: string): boolean {
   return value.startsWith(SET_OPTION_PREFIX);
 }
 
+/** One product, as a caller that has to fill a row from the pick needs it. */
+export interface PickedProductFacts {
+  id: string;
+  code: string;
+  uom: string;
+}
+
 export async function fetchProductOrSetOptions(
   query: string,
   pageIndex: number,
+  /**
+   * The product rows behind this page, for a caller that fills OTHER cells from the pick:
+   * the proforma invoice writes an added line's item code and UOM from the product chosen,
+   * and an option value alone cannot say either. A third argument, so `SearchableSelect`'s
+   * own two-argument call is unaffected.
+   */
+  onProductsLoaded?: (products: PickedProductFacts[]) => void,
 ): Promise<SearchableSelectOption[]> {
   const products = await getProducts({
     pageIndex,
@@ -55,10 +69,18 @@ export async function fetchProductOrSetOptions(
     searchQuery: query,
     status: 'active',
   });
+  onProductsLoaded?.(
+    (products.data ?? []).map((p) => ({
+      id: p.id,
+      code: p.product_code,
+      uom: p.base_uom?.uom_code ?? '',
+    })),
+  );
   const productOptions: SearchableSelectOption[] = (products.data ?? []).map((p) => ({
     value: p.id,
     label: `${p.product_code} - ${p.product_name}`,
     searchText: `${p.product_code} ${p.product_name}`,
+    code: p.product_code,
   }));
 
   if (pageIndex > 0) return productOptions;
@@ -78,6 +100,7 @@ export async function fetchProductOrSetOptions(
       label: `${s.set_code} - ${s.name}`,
       searchText: `${s.set_code} ${s.name}`,
       description: 'Set',
+      code: s.set_code,
     }));
   } catch {
     setOptions = [];

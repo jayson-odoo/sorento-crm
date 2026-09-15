@@ -24,12 +24,15 @@ from typing import Any
 import logging
 import time
 
+from app.services.chatbot import copy as reply_copy
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
+    outstanding_customer_echo,
+    resolve_warehouse_token,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +49,388 @@ ENTRY_BY_BRANCH_KIND: dict[str, str] = {
 # The n8n lane the caller must still run after S6a. One name for all three arms because
 # they converge on ONE node (`resolve-arm`), and the arm they take there is `_exit_kind`.
 DELEGATE = "business_query"
+
+# D13 (PLAN-chatbot-outstanding-report.md): the field-reveal key that gates SO figures
+# on the outstanding report. Read the way `answer._CROSSDOMAIN_RUNG_GRANT` reads its own
+# key - `ctx["access"]["attributes"]`, the same set `output_structurer`'s restricted-field
+# drop reads. Declared here (not in `answer.py`) because `run_fetch`, this module's own
+# function, is the one place that checks it, before any tool call.
+_OUTSTANDING_SO_GRANT = "sales_orders.outstanding"
+
+#: PLAN-low-stock-report S6 (AC-62/AC-64). The intent that overrides the inventory domain's
+#: default tool pick, the tool it picks, and the per-contact key that gates it - all three
+#: read in ONE place (`run_fetch`), before any tool call, because this tool's fetch creates
+#: a reorder run.
+_LOW_STOCK_INTENT = "low_stock_report"
+_LOW_STOCK_TOOL = "crm_low_stock_report"
+_LOW_STOCK_GRANT = "scm.low_stock_report"
+#: The one sentence a contact without that key sees, verbatim (AC-64) -
+#: `fetch.SO_NOT_ENABLED_MESSAGE`'s sibling, and a literal for the same reason: one
+#: wording, in one place, so the lane and the route's own 403 cannot drift.
+LOW_STOCK_NOT_ENABLED_MESSAGE = "Low stock report is not enabled for your account."
+#: Console round 3, defect A: what the customer hears when the CALL ITSELF failed - the
+#: lane's MCP client gives up at `chatbot_mcp_timeout_seconds` (10 s), and a run that
+#: outlasts it raises `httpx.ReadTimeout` in `call_tool`. The generic lane failure line
+#: ("Sorry, I ran into a problem understanding that") is wrong twice over: the bot
+#: understood perfectly, and the report is very likely still being built and about to be
+#: pushed. Same wording as the presenter's own error line, so the customer hears ONE
+#: sentence for this tool's failures however they arise.
+LOW_STOCK_UNAVAILABLE_MESSAGE = "Could not run the low stock report right now."
+
+_OUTSTANDING_SCOPE_OPTIONS: tuple[dict[str, Any], ...] = (
+    {"idx": 1, "label": "Sales orders", "value": "so"},
+    {"idx": 2, "label": "Delivery orders", "value": "do"},
+    {"idx": 3, "label": "Both", "value": "both"},
+)
+
+
+def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> dict[str, Any]:
+    """S4 point 4's `outstanding_filters`: the parsed product/dates/customer/location,
+    carried across the scope-question turn and the detail-offer turn so neither has to
+    re-parse the message that named them."""
+    # AC-1119 / console run 4 finding 5: the SAME rule the tool arguments use - the code
+    # the customer typed wins over a family sibling. Shared, because the question, its
+    # answer and the header all have to name one product.
+    product_code = fetch_mod.outstanding_product_code(entities, semantic_input)
+    customer_ids: list[Any] = []
+    for e in entities or []:
+        if not isinstance(e, dict):
+            continue
+        if e.get("entity_type") == "customer":
+            uid = e.get("uuid")
+            if uid and uid not in customer_ids:
+                customer_ids.append(uid)
+    if not customer_ids:
+        # R13/R15: the same fallback `fetch._outstanding_filters_from_ctx` makes. A turn
+        # that RE-ASKS this question (an out-of-range answer, or R15's refinement of an
+        # open one) resolved no customer of its own - the ids rode in on the carried
+        # filter set, already resolved, and they have to ride back out on it too or the
+        # re-asked question loses the only subject it has.
+        customer_ids = [
+            uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
+        ]
+    return {
+        "product_code": product_code,
+        "date_filter_start": semantic_input.get("date_filter_start"),
+        "date_filter_end": semantic_input.get("date_filter_end"),
+        "customer_ids": customer_ids,
+        "warehouse_codes": semantic_input.get("outstanding_warehouse_codes") or [],
+        # AC-1132 (review round, 13 Sep 2026): the TOKEN travels with the codes, so the
+        # answering turn prints the same `Location: IB (BRW-IB, MWH-IB)` header the
+        # asking turn did instead of re-running over every warehouse.
+        "location_token": semantic_input.get("outstanding_location_token"),
+    }
+
+
+def _low_stock_not_enabled() -> dict[str, Any]:
+    """AC-64: refuse the low stock ask BEFORE any fetch, and end in the team picker.
+
+    Two things ride on this fragment. The refusal LINE is the reply's first line, verbatim
+    (`LOW_STOCK_NOT_ENABLED_MESSAGE`) - the customer is told plainly that the report is not
+    enabled for them, not given a vague miss. And the outcome is `not_found`, which is the
+    lane's existing route into `_run_miss_half` - the same path a total miss takes
+    (`TestTotalMissEscalates`), so the escalate offer and the team picker that follow are
+    the ones already in place rather than a second copy of them here.
+
+    `escalate` states on the fragment itself that this turn must end that way, so a reader
+    of the fragment (or of a trace) can see the intent without replaying the miss half.
+
+    No tool is called, so no reorder run is created - which is the whole point of gating
+    here rather than letting the route answer 403 after the fetch.
+    """
+    structured: dict[str, Any] = {
+        "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": False,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+        "outcome": "not_found",
+        "escalate": True,
+        "response": LOW_STOCK_NOT_ENABLED_MESSAGE,
+    }
+
+
+def _low_stock_unavailable() -> dict[str, Any]:
+    """Console round 3, defect A: the low stock CALL failed - say so in this tool's own
+    words, never the lane's generic "I ran into a problem understanding that".
+
+    The lane's MCP client gives up after `chatbot_mcp_timeout_seconds` (10 s). The route
+    now answers `pending` inside that budget (`_sync_wait_seconds`'s cap), so this path is
+    the remainder: a genuine transport or tool failure. It is a TERMINAL answer rather than
+    the miss half's not-found arm (`has_result: True`, like the presenter's own error
+    envelope) - the miss half would compose the inventory domain's generic "Could not find
+    inventory" line, which says the wrong thing about a report that failed to build.
+    `escalate` still rides on the fragment for any consumer that offers the team picker.
+    """
+    structured: dict[str, Any] = {
+        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+        "response_intro": None,
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+        "escalate": True,
+        "response": LOW_STOCK_UNAVAILABLE_MESSAGE,
+    }
+
+
+def _outstanding_scope_ask(
+    entities: Any, semantic_input: dict[str, Any], *, db: Any = None
+) -> dict[str, Any]:
+    """AC-1130: ARM the scope question, no fetch this turn - the FIRST ask, filters
+    freshly parsed off this turn's resolved entities."""
+    return _outstanding_scope_ask_from_filters(
+        _outstanding_filters_from(entities, semantic_input), db=db
+    )
+
+
+def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: str = "") -> list[str]:
+    """The scope question's header: the SAME four lines the report prints, in the same
+    order and the same words (`sorento_crm_mcp.presenters._outstanding_report`, the
+    `Product:` / `Customer:` / `Location:` / `Order date:` block), one writer for every
+    scope question - the first ask, R15's refinement re-ask, an out-of-range re-ask and
+    the ask resumed after a customer picker (R16).
+
+    R19 (owner ruling, 13 Sep 2026): EVERY line prints, every time, `all` where the
+    filter was not given. The previous rule here printed only the filters that were set,
+    which read fine until a customer picked one off a picker and got back `Product:
+    SRTKT39SS` and nothing else: "i have chosen the customer already ... what about the
+    customer, sometimes i might even have dates, location filters, they should be stated
+    down in this message also." A question about to search is owed the same statement of
+    scope the answer gets.
+
+    The wording is the presenter's and is duplicated here, for the reason
+    `_outstanding_offer_block` already records about the offer text: the report's header
+    is rendered MCP-side and the backend container does not carry that package. The rule
+    is the same one - this copy FOLLOWS the presenter and invents nothing - and both
+    copies are pinned by tests that assert the exact bytes.
+
+    The `Customer:` line prints NAMES, never the resolved ids: they are uuids, and a
+    uuid never reaches a customer's screen. `customer_name` is handed in already
+    rendered by `outstanding_customer_echo` - the REPORT's own `_customer_echo`, run
+    over the same ids - so the question and the answer cannot say different things
+    about the same filter (R19b). They did: the question printed the picker's roster
+    label with its company-code suffix ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") while
+    the report named the ledger rows. AC-1163's distinct, first-seen rule comes with
+    it, because it lives in that one function.
+    """
+    product_code = jsc.js_string(filters.get("product_code") or "").strip()
+
+    codes = [jsc.js_string(c) for c in jsc.array(filters.get("warehouse_codes")) if jsc.truthy(c)]
+    token = jsc.js_string(filters.get("location_token") or "").strip()
+    if codes:
+        # The presenter's own rule: an exact code prints alone (brackets would only
+        # repeat it), a word that resolved to several codes names them.
+        location = (
+            f"{token} ({', '.join(codes)})" if token and [token] != codes else token or ", ".join(codes)
+        )
+    else:
+        location = "all"
+
+    start = _outstanding_ddmmyyyy(filters.get("date_filter_start"))
+    end = _outstanding_ddmmyyyy(filters.get("date_filter_end"))
+    if start and end:
+        order_date = start if start == end else f"{start} to {end}"
+    else:
+        order_date = start or end or "all"
+
+    return [
+        f"Product: {product_code or 'all'}",
+        f"Customer: {jsc.js_string(customer_name or '').strip() or 'all'}",
+        f"Location: {location}",
+        f"Order date: {order_date}",
+    ]
+
+
+def _outstanding_ddmmyyyy(value: Any) -> str:
+    """`2026-09-01` -> `01/09/2026`; anything else -> "" (nothing to print)."""
+    text = jsc.js_string(value or "").strip().split("T")[0]
+    parts = text.split("-")
+    if len(parts) != 3 or not all(p.isdigit() for p in parts):
+        return ""
+    return f"{parts[2]}/{parts[1]}/{parts[0]}"
+
+
+def _outstanding_scope_ask_from_filters(
+    filters: dict[str, Any], *, db: Any = None
+) -> dict[str, Any]:
+    """AC-1130/AC-1132: ARM the scope question, no fetch this turn. Builds the SAME
+    `structured` shape `output_structurer`'s `crm_outstanding_report` branch returns for
+    a real hit (`response` + `outstanding_ask`), so `tail/compile_state.py` reads both
+    through one code path - see that function's own docstring. `filters` is either
+    freshly parsed (the first ask) or carried forward unchanged (an out-of-range
+    re-ask, AC-1132)."""
+    # R19: the report's own four header lines, always all four - see
+    # `_outstanding_scope_filter_lines`. (R13 dropped the `Product:` line on a
+    # customer-only ask because it printed empty; the answer to that is a value on every
+    # line, `all` included, not a missing line.)
+    # R19b: the names come from the customer ROWS, through the report's own echo, so the
+    # question and the report cannot disagree about the same filter. `db` is None outside
+    # a real turn (this module's own direct `run_fetch` tests), which reads as `all` -
+    # the same no-op a turn with no customer gets.
+    header = "".join(
+        f"{line}\n"
+        for line in _outstanding_scope_filter_lines(
+            filters,
+            customer_name=(
+                outstanding_customer_echo(db, filters.get("customer_ids")) if db is not None else ""
+            ),
+        )
+    )
+    text = (
+        header + "Outstanding for which document?\n"
+        "1. Sales orders (not yet transferred to DO)\n"
+        "2. Delivery orders (not yet delivered)\n"
+        "3. Both"
+    )
+    structured: dict[str, Any] = {
+        "response": text,
+        "outstanding_ask": {
+            "kind": "outstanding_scope",
+            "last_result_set": [dict(row) for row in _OUTSTANDING_SCOPE_OPTIONS],
+            "filters": filters,
+        },
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        # AC-1139: this question carries nothing but itself - `tail/compile_state.py`
+        # reads the marker and skips the generic search-scope header.
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
+def _outstanding_offer_closed(parse_output: dict[str, Any], db: Any) -> dict[str, Any]:
+    """R22(a): the customer DECLINED the open outstanding question - one acknowledgement,
+    and nothing armed.
+
+    ONE short line, from the registry's own `offer_declined` key ("Okay, noted."),
+    rendered through the same `copy.render` path every canned reply uses so the owner can
+    edit the wording without a deploy. The first cut used `clarify_menu` - the closest
+    line that existed - and the live check showed why that is wrong: "I see you're trying
+    to decline, Let me understand more. Are you asking about any of these? ..." re-opens a
+    conversation the customer has just closed. `escalation_declined` is the other decline
+    line and names an escalation nobody asked for; `offer_declined` is its sibling for
+    every other offer the bot makes.
+
+    Same `structured` shape as the re-offer below, minus the `outstanding_ask` - that
+    absence is the whole difference, and it is what stops `tail/compile_state.py` arming
+    the question again.
+    """
+    templates = reply_copy.resolve(db) if db is not None else reply_copy.fallback_copy()
+    structured: dict[str, Any] = {
+        "response": templates.render("offer_declined"),
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        # This reply carries no search of its own, so the generic scope header has
+        # nothing to disclose about it (AC-1139's own marker).
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
+
+
+def _outstanding_detail_reoffer(filters: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """AC-1143(c): an out-of-range number against an OPEN detail offer re-prints that
+    offer, fetches nothing, and leaves it open - the same `structured` shape (and so the
+    same one code path in `tail/compile_state.py`) the scope question's own re-ask uses.
+
+    The option lines are the stored rows themselves, never rebuilt from a scope guess, so
+    the customer reads back exactly the list they replied to."""
+    # AC-1102: the SAME text the customer is already looking at, kept verbatim from the
+    # turn that offered it (`fetch._outstanding_offer_block`). Re-rendering it here is
+    # what produced two wordings for one offer: a single-scope report offers R9's one
+    # sentence and the re-print answered with the numbered form. The rebuild below is the
+    # fallback for a filter set stored before the text was carried.
+    text = jsc.js_string(filters.get("offer_text") or "").strip()
+    if not text:
+        text = "Reply with a number for detail:\n" + "\n".join(
+            f"{jsc.js_string(row.get('idx'))}. {jsc.js_string(row.get('label'))}" for row in rows
+        )
+    structured: dict[str, Any] = {
+        "response": text,
+        "outstanding_ask": {
+            "kind": "outstanding_detail",
+            "last_result_set": [dict(row) for row in rows],
+            "filters": filters,
+        },
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": True,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+        "outstanding_report": True,
+    }
+    item = fetch_mod.fetch_result(structured, tool=None, tier_probe=None)
+    return {
+        "kind": "result",
+        "_fetch_arm": item["_fetch_arm"],
+        "delegate": DELEGATE,
+        "delegate_payload": {"fetch": item},
+        "fetch": item,
+    }
 
 
 def handles(branch_kind: str | None) -> bool:
@@ -76,6 +461,52 @@ def run_until_exit(
     `system_settings.chatbot_stock_denial_enabled` is on (R1), so no second flag read is
     needed - with the switch off no turn reaches this branch at all.
     """
+    # AC-1132 out-of-range re-ask: `head/output_exchange.py::_post_process` restores
+    # the carried product as a RAW (unresolved) entity, since this turn re-typed no
+    # product for the resolver to match against - so resolve+gate's own gate would
+    # find nothing compatible and exit `not_found` before `run_fetch` ever saw the
+    # flag it actually checks. Skipped here, before that gate runs at all; `run_fetch`
+    # (via the ENGINE's normal `_exit_kind == "continue"` path) is where the flag is
+    # actually read and the SAME question gets re-armed.
+    parse_output_peek = ((ctx.get("parse") or {}).get("output")) or {}
+    # R13 (live failure, 13 Sep 2026): an ANSWERING turn whose subject was CARRIED has
+    # nothing of its own in its parse - the message is a position, and the subject came
+    # off the stored filters already resolved. resolve+gate would find nothing to put in
+    # scope and exit with the order lane's "I need at least one filter", which is what the
+    # owner read. Same short-circuit the re-ask arms use, for the same reason: there is
+    # nothing here to resolve.
+    #
+    # BOTH subjects, not just the customer (R21, owner round 8, 13 Sep 2026): the head
+    # gives an answering turn ONE entity when the stored subject is a product - a
+    # synthetic `{raw: <code>, hint: product}` it mints from the carried code itself - and
+    # that entity is not a token the resolver should look up. D10 already says so in
+    # words: the carried code WINS over any re-resolution, because re-resolving it is how
+    # a family sibling took its place. So a turn carrying a subject and naming nothing
+    # BEYOND it skips resolve+gate whichever kind of subject it is; before R21 the product
+    # half still went through, and a scope answer after an all-pick died at the gate.
+    carried_code = jsc.js_string(parse_output_peek.get("outstanding_carried_product_code") or "")
+    carried_subject = bool(
+        jsc.array(parse_output_peek.get("outstanding_carried_customer_ids"))
+    ) or bool(carried_code)
+    names_only_the_carried_subject = all(
+        jsc.js_string(jsc.get(e, "canonical_code") or "") == carried_code and bool(carried_code)
+        for e in jsc.array(parse_output_peek.get("entities"))
+        if jsc.truthy(e)
+    )
+    carried_subject_answer = carried_subject and names_only_the_carried_subject
+    if (
+        isinstance(parse_output_peek.get("outstanding_reask_filters"), dict)
+        or isinstance(parse_output_peek.get("outstanding_detail_reask"), dict)
+        # R22(a): a decline names nothing at all, so resolve+gate would exit `not_found`
+        # and answer with the order lane's miss text instead of the acknowledgement.
+        or jsc.truthy(parse_output_peek.get("outstanding_offer_declined"))
+        or carried_subject_answer
+    ):
+        return {
+            "delegate": DELEGATE,
+            "payload": {"gate": {}, "tier_gate": None, "ctx": ctx, "_exit_kind": "continue"},
+        }
+
     entry = ENTRY_BY_BRANCH_KIND[branch_kind]
     payload = resolve_gate.run(
         ctx,
@@ -145,6 +576,13 @@ def _fetch_semantic_input(
         # transformer omits a null rather than sending one.
         "group_by": parse_output.get("group_by"),
         "top_n": parse_output.get("top_n"),
+        # AC-1132: the outstanding-scope answer's carried customer_ids (ALREADY
+        # resolved UUIDs, not a raw token to re-resolve) - `entity_ids_transformer`
+        # restores them onto `crm_outstanding_report`'s own args directly.
+        "outstanding_carried_customer_ids": parse_output.get("outstanding_carried_customer_ids"),
+        # AC-1138: "1"/"2" against an OPEN outstanding_detail offer - which detail list
+        # to render, passed straight through to the MCP tool's own `detail` param.
+        "outstanding_detail_pick": parse_output.get("outstanding_detail_pick"),
     }
 
 
@@ -208,6 +646,7 @@ def run_fetch(
     dry_run: bool = False,
     space_id: str | None = None,
     trace: Any = None,
+    db: Any = None,
 ) -> dict[str, Any]:
     """S6b: the fetch step, the next call site after `run_until_exit`'s `continue` exit.
 
@@ -237,6 +676,11 @@ def run_fetch(
     "the read" below records one `tool` event (`name`, `args`, the envelope, `ms`) via
     `trace.add`. `None` is a no-op, so every existing caller (and every world/replay test)
     is unaffected by omitting it.
+
+    `db` (S4c, PLAN-chatbot-outstanding-report.md): the live Session, optional - only
+    `crm_outstanding_report`'s own location resolution (D5, AC-1133) reads it, through
+    `services.resolve_warehouse_token`. `None` is a no-op there too (a direct `run_fetch`
+    call, this module's own tests), same as no location word at all.
     """
     _ = dry_run
     raw_gate = payload.get("gate")
@@ -264,6 +708,32 @@ def run_fetch(
         return fetch_mod.parse_mcp_content(
             fetch_mod.call_tool(tool, args, mcp=_McpSeam(services.mcp_call))
         )
+
+    # ── AC-1132 out-of-range: re-ask the SAME outstanding_scope question ──────
+    # `head/output_exchange.py::_post_process` stamps this when the previous turn's
+    # `outstanding_scope` ask was answered with a number that named no option. It
+    # carries the ALREADY-KNOWN filters directly, independent of `entities`/gate
+    # resolution (this turn re-typed no product at all, so there is nothing there to
+    # resolve) - the same reason the tier-ask arm below short-circuits before any
+    # tool pick.
+    # ── AC-1143(c): re-print the SAME detail offer, fetch nothing ─────────────
+    # ── R22(a): the customer left the question - acknowledge, arm nothing ────
+    if jsc.truthy(parse_output.get("outstanding_offer_declined")):
+        return _outstanding_offer_closed(parse_output, db)
+
+    detail_reask = parse_output.get("outstanding_detail_reask")
+    if isinstance(detail_reask, dict):
+        reoffer_rows = [r for r in jsc.array(detail_reask.get("rows")) if isinstance(r, dict)]
+        if reoffer_rows:
+            return _outstanding_detail_reoffer(detail_reask.get("filters") or {}, reoffer_rows)
+
+    reask_filters = parse_output.get("outstanding_reask_filters")
+    if isinstance(reask_filters, dict):
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT in granted:
+            return _outstanding_scope_ask_from_filters(reask_filters, db=db)
 
     # ── the tier ask, with its per-tier probe ────────────────────────────────
     # `if-tier-ask` sits UPSTREAM of the rag call in n8n: there is nothing to fetch until
@@ -347,6 +817,247 @@ def run_fetch(
     # ── the read ─────────────────────────────────────────────────────────────
     tool_item = pick.items[0]["json"]
     tool_name = jsc.js_string(tool_item.get("name") or "")
+
+    # S4 point 2 (PLAN-chatbot-outstanding-report.md), REWRITTEN by R13 (owner ruling,
+    # 13 Sep 2026): domain "order" + an outstanding `order_status` picks the report over
+    # the plain order-list tool `tool_filter` would otherwise have chosen. A PRODUCT is no
+    # longer required - a customer is subject enough ("when we generate the outstanding
+    # summary for customer and for product it is different, they should be the same"), and
+    # the legacy `so_outstanding` bucket is no longer reachable for an outstanding ask at
+    # all. What is still required is a SUBJECT: with neither a product nor a customer
+    # resolved there is nothing to report on, and the plain order lane keeps that ask.
+    # PLAN-low-stock-report S6 (AC-62/AC-64): the low stock INTENT picks the tool, not the
+    # inventory domain - `crm_low_stock_report` is appended to that domain's pool, never
+    # `tools[0]`, so `tool_filter` would otherwise hand every low stock ask to
+    # `crm_inventory_stock_balance_list`. The outstanding override's own shape.
+    if jsc.js_string(parse_output.get("intent_hint") or "") == _LOW_STOCK_INTENT:
+        tool_name = _LOW_STOCK_TOOL
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "low_stock_override"}}
+
+        # THE GATE, before any fetch (AC-64). Every other tool on the chatbot's read list
+        # is a read; this one's fetch CREATES A REORDER RUN and sends a workbook, so a
+        # refused contact must be turned away HERE rather than by the route answering 403
+        # after the lane has already called it. The route checks the same key again
+        # (AC-41) - two gates, because this one protects the side effect and that one
+        # protects the data.
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = (
+            set(granted_raw)
+            if isinstance(granted_raw, (list, tuple, set, frozenset))
+            else set()
+        )
+        if _LOW_STOCK_GRANT not in granted:
+            return _low_stock_not_enabled()
+
+        # ── B (console round 3): a report ask is a FRESH SCOPE ────────────────
+        # `entity_op = replace_combine` merges the PREVIOUS turn's session entities into
+        # the gate's list, so a bare "low stock report" asked after an unrelated product
+        # question arrived carrying two products (`current_message: false`) and planned
+        # "0 of 0". Unlike the outstanding report - whose carried filters are deliberate,
+        # because an answering turn ("1", "both") has no subject of its own - a low stock
+        # ask always states its own scope, so ONLY entities the CURRENT message named may
+        # narrow the run. Everything carried is dropped.
+        current_tokens = {
+            jsc.js_string(tok).strip().casefold()
+            for e in jsc.array(parse_output.get("entities"))
+            if isinstance(e, dict) and e.get("current_message") is True
+            for tok in (e.get("raw"), e.get("canonical_code"))
+            if jsc.truthy(tok)
+        }
+        current_tokens.discard("")
+
+        # The location word, resolved to EXACT codes before the call: the route takes
+        # codes and does no suffix matching, so a token like "IB" has to be expanded here
+        # - the same `resolve_warehouse_token` pass, and the same one-word-per-turn rule,
+        # the outstanding report uses below.
+        for e in jsc.array(parse_output.get("entities")):
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
+                continue
+            if e.get("current_message") is not True:
+                continue  # carried from an earlier turn - not this ask's scope
+            token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+            if not token or db is None:
+                break
+            codes = resolve_warehouse_token(db, token)
+            if codes:
+                semantic_input["low_stock_warehouse_codes"] = codes
+            break
+
+        # The resolved entity list is PRUNED here, not in the transformer: only this side
+        # has `parse_output`, and the gate's entities carry no `current_message` flag, so
+        # the typed tokens are the only way to tell this turn's subjects from the ones the
+        # session carried in. Pruning the list (rather than publishing a second one) keeps
+        # the transformer's own contract - it still reads product codes off the entities it
+        # is handed - so every other tool's arg building is untouched.
+        #
+        # The match is SUBSTRING, not equality (reviewer round 3, item 2). The resolver
+        # answers a typed prefix with the full variant code, so "low stock for the CB100
+        # sink" arrives as raw "CB100" against a resolved "CB100-BL-DIY": equality pruned
+        # the very product the customer named and widened the run to the whole book - the
+        # opposite of what defect B's prune is for. Any token the CURRENT message carried
+        # is still the test, so a carried entity nothing was typed about still drops.
+        def _named_this_turn(entity: dict) -> bool:
+            codes = [
+                jsc.js_string(entity.get(field) or "").strip().casefold()
+                for field in ("code", "canonical_code")
+            ]
+            return any(
+                tok in code for code in codes if code for tok in current_tokens
+            )
+
+        entities = [
+            e
+            for e in jsc.array(entities)
+            if isinstance(e, dict) and _named_this_turn(e)
+        ]
+
+    order_status_raw = jsc.js_string(parse_output.get("order_status") or "").strip()
+    has_customer = (
+        any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
+        if isinstance(entities, list)
+        else False
+    )
+    # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
+    # product code, the customer ids, or both - and neither needs resolving again: they
+    # were resolved on the turn that asked.
+    carried_subject = bool(jsc.truthy(parse_output.get("outstanding_carried_product_code"))) or bool(
+        jsc.array(parse_output.get("outstanding_carried_customer_ids"))
+    )
+    if (
+        domain == "order"
+        and (has_product or has_customer or carried_subject)
+        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
+    ):
+        tool_name = "crm_outstanding_report"
+        tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
+
+        # -- AC-1119 (reviewer N5): the code the customer TYPED is the subject -- #
+        # The gate hands this report the whole prefix FAMILY: a single product token
+        # takes the resolver's OR-mode, which calls a candidate exact only when
+        # `match_tier == "exact"` - a tier `entity_resolver._prefix_probe_product` never
+        # stamps (product rows come back "prefix" / "substring" / "trgm"). AND-mode has
+        # the right rule already (`gate.py`: `prod_exacts` = canonical_code EQUALS a
+        # typed token), OR-mode does not, so `SRTWT7445` and its eight siblings all
+        # arrived and the transformer took whichever was FIRST - on the prod copy,
+        # `SRTWT7445-LV-GM`. Picked here rather than in the shared gate: this is the
+        # report's own contract (exact code, no sibling expansion), and every other
+        # domain keeps the family it deliberately widened to.
+        # D10: an ANSWERING turn ("1"/"2"/a scope word) carries the product the offer was
+        # made about, and that wins outright - re-resolving the carried token is what let a
+        # family sibling or another product in the resolver's scope take its place.
+        carried_code = parse_output.get("outstanding_carried_product_code")
+        if jsc.truthy(carried_code):
+            semantic_input["outstanding_product_code"] = jsc.js_string(carried_code)
+        else:
+            typed_codes = {
+                jsc.js_string(e.get("raw") or "").strip().casefold()
+                for e in jsc.array(parse_output.get("entities"))
+                if isinstance(e, dict) and jsc.js_string(e.get("hint") or "") == "product"
+            }
+            typed_codes.discard("")
+            for e in jsc.array(entities):
+                if not isinstance(e, dict) or e.get("entity_type") != "product":
+                    continue
+                code = e.get("code") or e.get("canonical_code")
+                if jsc.truthy(code) and jsc.js_string(code).strip().casefold() in typed_codes:
+                    semantic_input["outstanding_product_code"] = jsc.js_string(code)
+                    break
+
+        # -- S4c (D5, AC-1133 pipeline half): the location word, before any fetch -- #
+        # Read off the RAW parsed entities (`parse_output`), never the gated
+        # `entities`/`compatible_entities` above - those only ever carry what the
+        # GENERIC resolver matched, and D5's exact-then-suffix grammar is this
+        # report's own rule, not that resolver's job (a suffix token like "IB" is not
+        # any single warehouse's own code, so the generic resolver never returns it).
+        # `db` is None outside a real turn (this module's own direct `run_fetch`
+        # tests), which is a no-op, same as no location word at all.
+        # R17: a REFINEMENT's own filter entities are deliberately NOT in
+        # `parse_output["entities"]` - they belong to the offer, not to the conversation,
+        # so they never enter the list the session persists (`head/output_exchange.py`,
+        # R17's own note). They are read here, from the offer-scoped copy, so the location
+        # word still resolves on the turn that named it.
+        for e in [
+            *jsc.array(parse_output.get("entities")),
+            *jsc.array(parse_output.get("outstanding_refinement_entities")),
+        ]:
+            if not isinstance(e, dict) or jsc.js_string(e.get("hint") or "") != "warehouse":
+                continue
+            token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
+            if not token or db is None:
+                break
+            codes = resolve_warehouse_token(db, token)
+            if codes:
+                semantic_input["outstanding_warehouse_codes"] = codes
+                semantic_input["outstanding_location_token"] = token
+            break  # D5/AC-1105: one location word per turn
+
+        # AC-1132/AC-1138: the SCOPE-ANSWER and DETAIL-PICK turns re-type no location
+        # word at all (they are "2" / "1"), so the loop above finds nothing. The codes
+        # the asking turn already resolved are restored here - the alternative is a
+        # re-run over every warehouse under a header that says otherwise.
+        if not semantic_input.get("outstanding_warehouse_codes"):
+            carried_codes = parse_output.get("outstanding_carried_warehouse_codes")
+            if isinstance(carried_codes, list) and carried_codes:
+                semantic_input["outstanding_warehouse_codes"] = carried_codes
+                semantic_input["outstanding_location_token"] = parse_output.get(
+                    "outstanding_carried_location_token"
+                )
+
+        # -- R19: the NAMES for the question's own `Customer:` line ------------ #
+        # Worked out once, here, and stored on both filter builders. The ids are uuids
+        # and a uuid never reaches a customer's screen, so the question has to carry the
+        # names the resolution already produced - this turn's, when the gate resolved a
+        # customer, and otherwise the ones the CARRIED entities still hold (an answering
+        # or refining turn resolves nothing of its own; the report's own header is built
+        # from the ids by the route, which has the `customers` table to read).
+
+        # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        has_so_grant = _OUTSTANDING_SO_GRANT in granted
+
+        # S4 point 3 (AC-1130): bare "outstanding" + the grant arms the scope
+        # question instead of fetching. `outstanding_scope_ask_candidate` is a
+        # PURELY SYNTACTIC flag `head/output_exchange.py::_post_process` sets
+        # BEFORE resolve+gate even runs (domain/product/bare-order_status, no
+        # grant knowledge there) - the grant check happens HERE, the only place
+        # that already reads `ctx.access`, so a direct `run_fetch` call (this
+        # module's own tests) that never went through that step just fetches,
+        # which is what `TestToolPick` pins.
+        if (
+            order_status_raw == "outstanding"
+            and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
+            and has_so_grant
+        ):
+            return _outstanding_scope_ask(entities, semantic_input, db=db)
+
+        scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
+        so_refused = False
+        if scope in ("so", "both") and not has_so_grant:
+            scope = "do"
+            # AC-1140 vs AC-1141: a BARE "outstanding" silently redirects to `do` (no
+            # question was ever asked, so there is nothing to refuse); an EXPLICIT SO
+            # ask ("so_outstanding" / "outstanding_both") gets the refusal line.
+            so_refused = order_status_raw != "outstanding"
+        semantic_input["outstanding_scope"] = scope
+        semantic_input["outstanding_so_refused"] = so_refused
+    elif tool_name in fetch_mod.ORDER_TOOLS and order_status_raw == "so_outstanding":
+        # S2 (security review, 13 Sep 2026), narrowed by R13: the LEGACY bucket now only
+        # catches an `so_outstanding` ask with NO subject at all (no product and no
+        # customer) - every ask with one goes to the report above. The redirect stays for
+        # exactly that remainder, because the bucket serves the same per-SO outstanding
+        # quantities D13 gates: without the grant, redirect to `outstanding` (the DO
+        # bucket) rather than call the SO bucket, and prefix the reply
+        # (`output_structurer`'s generic path reads `so_bucket_refused`).
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
+        if _OUTSTANDING_SO_GRANT not in granted:
+            semantic_input["order_status"] = "outstanding"
+            semantic_input["so_bucket_refused"] = True
+
     trigger = {
         "tool": tool_name,
         "entities": entities,
@@ -383,6 +1094,12 @@ def run_fetch(
         return _error_fragment(str(refused), outcome="tool_not_allowed")
     except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
         logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
+        if tool_name == _LOW_STOCK_TOOL:
+            # Console round 3, defect A: a run that outlasts the client's 10 s raised
+            # `httpx.ReadTimeout` here and the customer read "I ran into a problem
+            # understanding that" - about a report the worker was still building and would
+            # push. This tool says its own line instead.
+            return _low_stock_unavailable()
         return _error_fragment(
             f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
         )
@@ -433,6 +1150,31 @@ def run_fetch(
                     "dropped": sorted(dropped),
                 },
             )
+        # AC-17 (PLAN-spec-visibility-policy.md "Chatbot seam"), beside `reveals`:
+        # which spec keys this contact has hidden, and which of them the
+        # projection ACTUALLY REMOVED from this envelope (code review S2:
+        # `spec_hidden_dropped`, which `_project_product_specs` sets on `e` -
+        # the SAME object as `envelope`, `output_structurer`'s own `group_by_
+        # dropped` reads back the identical way - not vocabulary membership,
+        # which says nothing about whether the product this turn showed even
+        # carried the key). Only for a PRODUCT envelope: every other result
+        # type never runs the projection at all, so the entry would always be
+        # empty noise.
+        is_product_envelope = (
+            isinstance(envelope, dict)
+            and jsc.js_string(envelope.get("result_type") or "") == "products"
+        )
+        if is_product_envelope:
+            access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
+            hidden_raw = access.get("hidden_spec_keys")
+            hidden_list = sorted(hidden_raw) if isinstance(hidden_raw, list) else []
+            if hidden_list:
+                dropped_raw = envelope.get("spec_hidden_dropped")
+                dropped_list = sorted(dropped_raw) if isinstance(dropped_raw, list) else []
+                trace.add(
+                    "spec_visibility",
+                    {"hidden": hidden_list, "dropped": dropped_list},
+                )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
     return {
         "kind": "result",

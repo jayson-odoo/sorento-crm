@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Plus, Pencil, Trash2 } from 'lucide-react';
+import { Plus, Pencil, Ruler, Trash2 } from 'lucide-react';
 import {
   getCoreRowModel,
   useReactTable,
@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SpecVisibilitySection } from '@/components/spec-visibility/SpecVisibilitySection';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
@@ -38,6 +39,10 @@ export default function MarketSegmentsAdmin() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<MarketSegment | null>(null);
+  // Spec visibility is one row per segment, so it is edited from the row it
+  // belongs to rather than as a column every segment would have to carry
+  // (same convention as `ContactAccessTypesAdmin`'s stock visibility dialog).
+  const [specSegment, setSpecSegment] = useState<MarketSegment | null>(null);
   // Delete asks nothing (D7): a toast counts down with Cancel. A segment still
   // assigned to a contact or a team member is refused by the server, and that
   // refusal now arrives as the toast's error rather than as a warning in a
@@ -222,12 +227,21 @@ export default function MarketSegmentsAdmin() {
       {
         id: 'actions',
         header: '',
-        size: 120,
+        size: 160,
         enableSorting: false,
         enableHiding: false,
         enableResizing: false,
         cell: ({ row }) => (
           <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSpecSegment(row.original)}
+              aria-label="Spec visibility"
+              title="Spec visibility"
+            >
+              <Ruler className="size-4" />
+            </Button>
             <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)} aria-label="Edit">
               <Pencil className="size-4" />
             </Button>
@@ -401,6 +415,21 @@ export default function MarketSegmentsAdmin() {
               {editing ? 'Update' : 'Create'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Spec visibility policy for one market segment */}
+      <Dialog open={!!specSegment} onOpenChange={(open) => !open && setSpecSegment(null)}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Spec visibility - {specSegment?.name}</DialogTitle>
+          </DialogHeader>
+          {specSegment ? (
+            <SpecVisibilitySection
+              heading={null}
+              scope={{ kind: 'segment', segmentCode: specSegment.code }}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
 

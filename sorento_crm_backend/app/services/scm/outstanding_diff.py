@@ -55,6 +55,12 @@ DATE_MOVED = "date_moved"
 DATE_AND_QTY_CHANGED = "date_and_qty_changed"
 CLOSED = "closed"
 UNCHANGED = "unchanged"
+# A line-identity pair (see `Line.line_id` below) whose product differs and whose after side
+# has not settled - `documentation/plans/scm/PLAN-scm-change-management-one-engine.md`,
+# Slice A rule 5: a product swap on the SAME line reads as one row, not a `CLOSED` plus an
+# unrelated `ADDED`. `CLOSED` keeps its value here - only the wire row kind is renamed
+# (`app/services/planning_change_service._map_kind`).
+PRODUCT_CHANGED = "product_changed"
 
 # A quantity difference below this is treated as no change. Extracts round differently
 # between exports and a 0.0001 drift is noise, not a decision.
@@ -67,6 +73,15 @@ class Line:
 
     `key_extra` exists so callers can carry the DB row id through the diff without this
     module knowing anything about the database.
+
+    `line_id` is a caller-supplied identity - a MATCHED before/after pair on this field
+    pairs FIRST, ahead of the `(doc, item, location)` + date-order fallback below, so a
+    product swap on the same line reads as one `PRODUCT_CHANGED` change rather than a
+    `CLOSED` plus an unrelated `ADDED` (Slice A rule 5). `None` (the default) opts a line
+    entirely out of identity pairing - it is matched only by the fallback, exactly as
+    before this field existed; a manual SO edit, which always knows the core line id, sets
+    it, while an uploaded extract (no line number in the file, see the module docstring)
+    leaves it unset.
     """
 
     doc_number: str
@@ -82,6 +97,7 @@ class Line:
     # date is real; an unreadable one states nothing USABLE, and must not be classified or
     # written as a move - see `_classify` and `outstanding_import_service._write_date`.
     date_unreadable: bool = False
+    line_id: Optional[str] = None
 
     @property
     def group(self) -> tuple[str, str, str]:
@@ -125,7 +141,7 @@ class Diff:
     @property
     def counts(self) -> dict[str, int]:
         out = {k: 0 for k in (ADDED, QTY_CHANGED, DATE_MOVED, DATE_AND_QTY_CHANGED,
-                              CLOSED, UNCHANGED)}
+                              CLOSED, UNCHANGED, PRODUCT_CHANGED)}
         for c in self.changes:
             out[c.kind] = out.get(c.kind, 0) + 1
         return out
@@ -177,26 +193,94 @@ def _classify(before: Line, after: Line) -> str:
     return UNCHANGED
 
 
-def diff_lines(existing: Iterable[Line], incoming: Iterable[Line]) -> Diff:
+def _classify_identity(before: Line, after: Line) -> str:
+    """Same as `_classify`, plus the product itself - for a pair matched by `line_id`.
+
+    Settlement still outranks everything, including a product swap: a line that arrives
+    stating nothing left on it has closed, whatever else also changed on the same row
+    (`test_a_line_id_pair_settling_to_zero_closes_even_with_a_different_item_code`).
+    """
+    if states_settled(after):
+        return CLOSED
+    if before.item_code != after.item_code:
+        return PRODUCT_CHANGED
+    return _classify(before, after)
+
+
+def _change_for_pair(before: Optional[Line], after: Optional[Line], kind: str) -> Change:
+    # The NEW product/location/document name the change, when there is an after side - a
+    # product swap must read as "changed to B", not "still A" (Slice A rule 5's "row
+    # item_code/product_name = the new product", mirrored in
+    # `planning_change_service._build_row`).
+    ref = after or before
+    return Change(kind, ref.doc_number, ref.item_code, ref.location, before=before, after=after)
+
+
+def diff_lines(
+    existing: Iterable[Line],
+    incoming: Iterable[Line],
+    *,
+    scope_documents: Optional[Iterable[str]] = None,
+) -> Diff:
     """Compare current state against an uploaded extract.
 
     Only documents present in `incoming` are in scope. Existing lines belonging to any other
     document are ignored entirely rather than being reported as closed.
+
+    `scope_documents`, when given, REPLACES that derivation rather than adding to it - a
+    manual SO edit removing every line off one order leaves `incoming` with nothing at all
+    for that document, and deriving scope from `incoming` alone would then read the whole
+    order as out of scope (untouched) rather than wholly closed. A caller that already knows
+    its scope (one order, being edited) states it directly; a caller comparing an extract
+    against everything it might mention (the book upload, AutoCount ingest) leaves this
+    unset and keeps today's derived behaviour.
+
+    **Pass 0, identity.** A `line_id`-carrying existing line and a `line_id`-carrying
+    incoming line sharing the SAME id pair first, classified by `_classify_identity` (which
+    reads a product swap as `PRODUCT_CHANGED`) - ahead of, and instead of, the
+    `(doc, item, location)` + date-order matching below. A line carrying a `line_id` that
+    finds no partner by that id is claimed by this pass too - it closes or adds directly,
+    and never enters the fallback grouping, so two DIFFERENTLY-identified lines that merely
+    happen to share item/location/date/qty are never zipped into one false "unchanged" pair
+    (`test_a_line_id_pair_with_no_match_on_either_side_closes_the_old_and_adds_the_new`).
+    Only lines with NO `line_id` (`None`, the default) reach the fallback, unaffected by any
+    of this - the identical algorithm this module always ran.
     """
     incoming_list = list(incoming)
-    scope = {l.doc_number for l in incoming_list}
+    scope = (
+        set(scope_documents) if scope_documents is not None
+        else {l.doc_number for l in incoming_list}
+    )
+
+    existing_in_scope = [l for l in existing if l.doc_number in scope]
+
+    changes: list[Change] = []
+
+    existing_by_lid = {l.line_id: l for l in existing_in_scope if l.line_id}
+    incoming_by_lid = {l.line_id: l for l in incoming_list if l.line_id}
+    matched_lids = set(existing_by_lid) & set(incoming_by_lid)
+
+    for lid in sorted(matched_lids):
+        o, n = existing_by_lid[lid], incoming_by_lid[lid]
+        changes.append(_change_for_pair(o, n, _classify_identity(o, n)))
+
+    for lid, o in existing_by_lid.items():
+        if lid not in matched_lids:
+            changes.append(_change_for_pair(o, None, CLOSED))
+    for lid, n in incoming_by_lid.items():
+        if lid not in matched_lids:
+            changes.append(_change_for_pair(None, n, ADDED))
+
+    fallback_existing = [l for l in existing_in_scope if not l.line_id]
+    fallback_incoming = [l for l in incoming_list if not l.line_id]
 
     by_group_existing: dict[tuple, list[Line]] = {}
-    for l in existing:
-        if l.doc_number not in scope:
-            continue          # out of scope: absence here means nothing at all
+    for l in fallback_existing:
         by_group_existing.setdefault(l.group, []).append(l)
 
     by_group_incoming: dict[tuple, list[Line]] = {}
-    for l in incoming_list:
+    for l in fallback_incoming:
         by_group_incoming.setdefault(l.group, []).append(l)
-
-    changes: list[Change] = []
 
     for group in sorted(set(by_group_existing) | set(by_group_incoming)):
         olds = sorted(by_group_existing.get(group, []), key=_sort_key)

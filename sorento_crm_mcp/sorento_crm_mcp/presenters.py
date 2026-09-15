@@ -54,6 +54,8 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_procurement_po_placed_list",
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_procurement_po_last_cost_list",
+        "crm_outstanding_report",
+        "crm_low_stock_report",
     }
 )
 
@@ -416,7 +418,14 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
 
 def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
     """A3 (AC-905): `order_status=so_outstanding` - open SO lines, a DIFFERENT
-    row shape from `_orders_list` (SO number, not order number; no lines[])."""
+    row shape from `_orders_list` (SO number, not order number; no lines[]).
+
+    `outstanding_qty` is RESTRICTED (S2, security review, 13 Sep 2026) - the SAME
+    per-contact figure `crm_outstanding_report`'s SO block gates on
+    `sales_orders.outstanding` (D13); defence in depth alongside the chatbot lane's
+    own redirect (`lanes/business/__init__.py::run_fetch`), which is what stops
+    this bucket being CALLED at all without the grant. The MCP itself stays
+    unfiltered - the actual gate is `output_structurer`, not here."""
     for r in rows:
         b.item(
             r.get("so_number"),
@@ -434,6 +443,7 @@ def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
                 ),
             ],
         )
+    b.restrict("outstanding_qty", "sales_orders.outstanding")
 
 
 def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
@@ -1531,6 +1541,30 @@ def present_response(tool_name: str, raw: str) -> str:
     if not isinstance(data, dict):
         return raw
 
+    # S4 point 5 (AC-1114b): `crm_outstanding_report` never goes through the
+    # generic item/field envelope below - the report's shape (two named
+    # blocks, each with its own By location / By customer subgroup, D6) has no
+    # row list to build items from. A `detail` key on the payload is the SAME
+    # "payload-keyed presenter swap" the `so_outstanding` bucket already uses
+    # a few lines down (`data.get("order_status") == "so_outstanding"`):
+    # present, it swaps in `_outstanding_detail` for that scope; absent, the
+    # report itself. Both ride in a MINIMAL envelope (`response` + `has_result`)
+    # rather than the generic item/field one: the chatbot lane's own
+    # `output_structurer` uses `response` as the reply verbatim
+    # (`app/services/chatbot/lanes/business/fetch.py`), and it needs `has_result`
+    # because the rendered header is never empty - the text alone cannot tell a
+    # total miss (which must escalate, AC-1107) from a hit.
+    if tool_name == "crm_outstanding_report":
+        return json.dumps(_outstanding_envelope(data))
+
+    # The same bypass, for the same reason: the low stock report's payload is a STATUS
+    # (ready / pending / busy) plus an attachment list, not a row collection the generic
+    # item/field envelope could build items from. `attachments` rides through untouched -
+    # the route decides what a Respond.io attachment entry looks like, and re-shaping it
+    # here would be a second copy of that contract.
+    if tool_name == "crm_low_stock_report":
+        return json.dumps(_low_stock_envelope(data))
+
     rows = data.get("data")
     if not isinstance(rows, list):
         rows = [] if rows is None else ([rows] if isinstance(rows, dict) else [])
@@ -1660,3 +1694,470 @@ def present_response(tool_name: str, raw: str) -> str:
             envelope["groups"] = rendered_groups
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)
+
+
+# --------------------------------------------------------------------------
+# outstanding report (SO backlog / DO pending) - PLAN-chatbot-outstanding-report.md
+# --------------------------------------------------------------------------
+# These two functions render the WHOLE WhatsApp reply directly as a string, not an
+# envelope: the report's shape (two named blocks, each with its own By location /
+# By customer subgroup, D6) does not fit the generic item/field envelope every
+# other tool builds above, and `present_response` never dispatches to them. The
+# chatbot business lane (S4) calls `_outstanding_report` / `_outstanding_detail`
+# straight, the same way `fetch.py`'s comments already describe this module as the
+# row->item mapping other lane code reuses.
+#
+# `report` is the shape `GET /api/v1/order-management/outstanding-report` returns
+# (S2). The header's location line is built from TWO keys on that body, both of
+# which the route echoes back from the caller's own query (review round, 13 Sep
+# 2026 - the presenter used to read a `location_codes` key that existed only in
+# the mock, so a live turn always printed `Location: all`):
+#   - `location_token`: the raw location word from the message (`"IB"`), echo-only.
+#   - `warehouse_codes`: the exact codes the lane resolved it to, which the route
+#     already echoes because they are what it filtered on.
+# `so_refused` is the third echo-only key: D13 withheld the SO block, and the one
+# sentence that says so prints between the header and the DO block.
+# The `do` half is PENDING DOs only (owner ruling, 13 Sep 2026) - `pending_qty`,
+# `do_count`, the date range and the two breakdowns, every one of them a pending
+# figure; a delivered DO reaches none of them, so no `do_qty` / `delivered_qty`
+# exists to print.
+# `so` / `do` is `None` when that scope was not asked (D1); present with
+# `so_count`/`do_count` == 0 keeps the block's own title but collapses its body to
+# one miss line (AC-1107, "the approved shape keeps the block titles") and drops
+# that scope from the detail offer, so a miss never advertises a list with
+# nothing in it. A partial miss (one scope empty, the other not) prints each
+# block independently - the empty one as title + miss line, the other in full.
+
+
+SO_NOT_ENABLED_MESSAGE = "Sales order figures are not enabled for your account."
+
+
+def _outstanding_fmt_int(v: Any) -> str:
+    """Thousands-separated integer (D8): ``2411`` -> ``"2,411"``. A value that is not
+    a clean int passes through as its plain string - a hostile mock must never crash
+    the reply."""
+    try:
+        return f"{int(v):,}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _outstanding_ddmmyyyy(iso: Any) -> str:
+    """``"2026-01-05"`` -> ``"05/01/2026"`` - the ONLY date form this report ever
+    prints (D8/AC-1104)."""
+    return datetime.strptime(str(iso), "%Y-%m-%d").strftime("%d/%m/%Y")
+
+
+def _outstanding_date_range(from_iso: Any, to_iso: Any) -> str:
+    """No window -> ``"all"``; a single day prints once; otherwise ``"dd/mm/yyyy to
+    dd/mm/yyyy"``. Never "oldest" / "newest" / "since" (AC-1104)."""
+    if not _filled(from_iso) and not _filled(to_iso):
+        return "all"
+    if _filled(from_iso) and _filled(to_iso):
+        if from_iso == to_iso:
+            return _outstanding_ddmmyyyy(from_iso)
+        return f"{_outstanding_ddmmyyyy(from_iso)} to {_outstanding_ddmmyyyy(to_iso)}"
+    return _outstanding_ddmmyyyy(from_iso or to_iso)
+
+
+def _outstanding_label(value: Any) -> str:
+    """A missing warehouse or a missing CUSTOMER renders as ``Unassigned`` (D8
+    transparency) - never hidden, never elided, and never Python's ``None``, which is
+    what the owner's smoke test read under *_By customer_* on 13 Sep 2026
+    (``None: 178 (O/S: 178)``). One word for both, because to the reader they are the
+    same fact: this row belongs to nobody the record names."""
+    return str(value) if _filled(value) else "Unassigned"
+
+
+def _outstanding_location_header(token: Any, codes: Any) -> str:
+    """``"IB"`` resolved to two codes -> ``"IB (BRW-IB, MWH-IB)"``; an exact code
+    prints alone (the token already equals the one code - brackets would only
+    repeat it, AC-1105); no token, or a token that resolved to nothing (AC-1133,
+    the lane's job, not this function's), prints ``"all"``."""
+    resolved = [c for c in (codes or []) if _filled(c)]
+    if not _filled(token) or not resolved:
+        return "all"
+    if len(resolved) == 1 and str(resolved[0]).casefold() == str(token).casefold():
+        return str(resolved[0])
+    return f"{token} ({', '.join(str(c) for c in resolved)})"
+
+
+def _outstanding_group(rows: list, *, name_key: str, total_key: str, outstanding_key: str) -> list[str]:
+    """One breakdown group's lines, `name: total (O/S: outstanding)`, in the order given.
+
+    R10: the ROUTE ranks them (outstanding desc, total desc, name asc) and this prints
+    them as they arrive - one sort, in the place that knows the numbers, so the reply and
+    any later reader agree. R13: the same renderer serves By location, By customer and By
+    product, because the owner's ruling is that the three read identically and only the
+    subject decides which of them the reader needs.
+    """
+    return [
+        f"{_outstanding_label(row.get(name_key))}: "
+        f"{_outstanding_fmt_int(row.get(total_key))} "
+        f"(O/S: {_outstanding_fmt_int(row.get(outstanding_key))})"
+        for row in rows
+    ]
+
+
+def _outstanding_second_group(report: dict, prefix: str) -> tuple[str, list]:
+    """Which group follows By location, and its rows (R13): `*_By customer_*` for a
+    product subject, `*_By product_*` for a customer subject, neither when the report was
+    asked about both (the route sends only the group the reader needs, and sends the other
+    as no key at all)."""
+    by_customer = report.get(f"{prefix}_by_customer")
+    if by_customer is not None:
+        return "customer_name", by_customer
+    by_product = report.get(f"{prefix}_by_product")
+    if by_product is not None:
+        return "product_code", by_product
+    return "", []
+
+
+def _outstanding_so_block(
+    so: dict, by_location: list, second_rows: list, second_key: str
+) -> str:
+    lines = [
+        "*Sales order outstanding*",
+        # R7 (owner testing round 3, 13 Sep 2026): the COUNT opens both blocks, then the
+        # quantities, then the window - one line order for the two, so the reader learns
+        # it once.
+        f"Sales orders: {_outstanding_fmt_int(so.get('so_count'))}",
+        f"Ordered: {_outstanding_fmt_int(so.get('ordered_qty'))}",
+        f"Transferred to DO: {_outstanding_fmt_int(so.get('transferred_qty'))}",
+        f"Outstanding: {_outstanding_fmt_int(so.get('outstanding_qty'))}",
+        f"Order date range: {_outstanding_date_range(so.get('order_date_min'), so.get('order_date_max'))}",
+        "*_By location_*",
+    ]
+    lines.extend(
+        _outstanding_group(
+            by_location, name_key="code", total_key="ordered_qty", outstanding_key="outstanding_qty"
+        )
+    )
+    if second_key:
+        lines.append("*_By customer_*" if second_key == "customer_name" else "*_By product_*")
+        lines.extend(
+            _outstanding_group(
+                second_rows, name_key=second_key, total_key="ordered_qty",
+                outstanding_key="outstanding_qty",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _outstanding_do_block(
+    do: dict, by_location: list, second_rows: list, second_key: str
+) -> str:
+    """R6/R7 (owner testing round 3, 13 Sep 2026): the DO block says OUTSTANDING, never
+    "pending", and states the delivered figure beside it - "need to show the delivered
+    also, so the by location and by customer needs to be the DO qty (O/S: {pending}) so
+    DO qty minus pending should be those quantity delivered".
+
+    Same five-line order as the SO block above (count, quantities, window), and the same
+    `name: total (O/S: outstanding)` breakdown shape - over EVERY DO in scope here, so a
+    location or customer whose outstanding is 0 still prints `(O/S: 0)` rather than being
+    dropped. `Delivery orders` stays the count of DOs still outstanding, which is what the
+    detail list below then shows."""
+    lines = [
+        "*Delivery order outstanding*",
+        f"Delivery orders: {_outstanding_fmt_int(do.get('do_count'))}",
+        f"DO qty: {_outstanding_fmt_int(do.get('do_qty'))}",
+        f"Delivered: {_outstanding_fmt_int(do.get('delivered_qty'))}",
+        f"Outstanding: {_outstanding_fmt_int(do.get('pending_qty'))}",
+        f"DO date range: {_outstanding_date_range(do.get('do_date_min'), do.get('do_date_max'))}",
+        "*_By location_*",
+    ]
+    lines.extend(
+        _outstanding_group(
+            by_location, name_key="code", total_key="do_qty", outstanding_key="pending_qty"
+        )
+    )
+    if second_key:
+        lines.append("*_By customer_*" if second_key == "customer_name" else "*_By product_*")
+        lines.extend(
+            _outstanding_group(
+                second_rows, name_key=second_key, total_key="do_qty", outstanding_key="pending_qty"
+            )
+        )
+    return "\n".join(lines)
+
+
+def _outstanding_report(report: dict) -> str:
+    """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
+    reply (contract for Phase 1)"). See the module-level note above for the
+    `report` shape."""
+    lines = [
+        # R13: `all` when no product was named, the same word the other header lines use
+        # for "every one of them" - a customer-subject report is about all their products.
+        f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
+        f"Customer: {report.get('customer_name') if _filled(report.get('customer_name')) else 'all'}",
+        f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
+        f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
+    ]
+
+    blocks: list[str] = []
+    offer: list[str] = []
+
+    so = report.get("so")
+    if so is not None:
+        if not so.get("so_count"):
+            blocks.append("*Sales order outstanding*\nNo open sales order.")
+        else:
+            so_second_key, so_second_rows = _outstanding_second_group(report, "so")
+            blocks.append(
+                _outstanding_so_block(
+                    so, report.get("so_by_location") or [], so_second_rows or [], so_second_key
+                )
+            )
+            offer.append("Sales order list")
+
+    do = report.get("do")
+    if do is not None:
+        if not do.get("do_count"):
+            blocks.append("*Delivery order outstanding*\nNo outstanding delivery order.")
+        else:
+            do_second_key, do_second_rows = _outstanding_second_group(report, "do")
+            blocks.append(
+                _outstanding_do_block(
+                    do, report.get("do_by_location") or [], do_second_rows or [], do_second_key
+                )
+            )
+            offer.append("Delivery order list")
+
+    text = "\n".join(lines)
+    # D13/AC-1141: the withheld half is named HERE, between the header and the block
+    # that did run - never in front of the whole reply, which reads as a refusal of the
+    # question itself. The wording is the one literal the chatbot lane also holds
+    # (`fetch.SO_NOT_ENABLED_MESSAGE`); the backend image cannot import this package, so
+    # the two copies are pinned by a test on each side.
+    if report.get("so_refused"):
+        text += "\n\n" + SO_NOT_ENABLED_MESSAGE
+    if blocks:
+        text += "\n\n" + "\n\n".join(blocks)
+    if len(offer) == 1:
+        # R9 (owner testing round 3, 13 Sep 2026): one option is a sentence, not a list -
+        # a numbered list of one asks the reader to choose from a single thing. The
+        # position is still 1, so the pick resolves exactly as it does for two.
+        text += f"\n\nReply 1 for the {offer[0].lower()}."
+    elif offer:
+        # R14 (owner ruling, 13 Sep 2026): with both lists on offer, asking for both at
+        # once is a third option rather than two round trips.
+        options = "\n".join(f"{i + 1}. {label}" for i, label in enumerate([*offer, "Both lists"]))
+        text += "\n\n" + "Reply with a number for detail:\n" + options
+    return text
+
+
+# field order fixed by scope (AC-1106); `kind` picks the value formatter below
+# (`label` is the Unassigned-when-missing one, shared by Customer and Location).
+_OUTSTANDING_SO_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("SO Number", "so_number", "text"),
+    ("Customer", "customer_name", "label"),
+    # R13: a row names both axes, so a customer-subject list says which product each row
+    # is for and a product-subject list still reads the same way.
+    ("Product", "product_code", "label"),
+    ("Location", "location", "label"),
+    ("Ordered", "ordered_qty", "qty"),
+    ("Transferred to DO", "transferred_qty", "qty"),
+    ("Outstanding", "outstanding_qty", "qty"),
+    ("Order Date", "order_date", "date"),
+)
+#: R3 (owner ruling, 13 Sep 2026): a DETAIL ROW states all three quantities, and
+#: `Delivered` prints its 0 rather than being hidden. The BLOCK above the list is
+#: pending-only (R1) - these are two different readers' questions: the block answers
+#: "how much is still coming", the row answers "what is this DO".
+_OUTSTANDING_DO_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("DO Number", "do_number", "text"),
+    ("Customer", "customer_name", "label"),
+    ("Product", "product_code", "label"),
+    ("Location", "location", "label"),
+    ("DO Qty", "do_qty", "qty"),
+    ("Delivered", "delivered_qty", "qty"),
+    # R7: the row says "Outstanding" like the block; the JSON field stays `pending_qty`.
+    ("Outstanding", "pending_qty", "qty"),
+    ("DO Date", "do_date", "date"),
+)
+
+
+def _outstanding_envelope(report: dict) -> dict:
+    """What `present_response` returns for `crm_outstanding_report`: the rendered text
+    plus the one fact the text cannot carry.
+
+    `has_result` is "a block that was asked for came back with rows" - `so_count` or
+    `do_count` for the report, the row list for a detail render. It is what the chatbot
+    lane reads to send a TOTAL miss down the existing escalate path (AC-1107); reading
+    the text instead can only ever say "yes", because the header renders either way.
+    """
+    detail = report.get("detail")
+    if detail in ("so", "do", "both"):
+        rows_present = (
+            bool(report.get("so_rows")) or bool(report.get("do_rows"))
+            if detail == "both"
+            else bool(report.get(f"{detail}_rows"))
+        )
+        return {
+            "result_type": "outstanding_detail",
+            "response": _outstanding_detail(report, detail),
+            "has_result": rows_present,
+        }
+    so = report.get("so")
+    do = report.get("do")
+    return {
+        "result_type": "outstanding_report",
+        "response": _outstanding_report(report),
+        "has_result": bool(
+            (isinstance(so, dict) and so.get("so_count"))
+            or (isinstance(do, dict) and do.get("do_count"))
+        ),
+    }
+
+
+#: The three lines the low stock report can answer with (AC-61). Written here, once, and
+#: handed to the lane verbatim: one writer, one wording.
+_LOW_STOCK_PENDING = "Preparing the low stock report - it will be sent here when ready."
+#: Both busy lines NAME the report (console round 3, defect C): "a plan is already running"
+#: alone left the reader - and the console assertion - guessing which plan, and the two
+#: busies have different fixes (wait a minute vs wait ten).
+_LOW_STOCK_BUSY_IN_FLIGHT = (
+    "A low stock report plan is already running - try again in a minute."
+)
+_LOW_STOCK_BUSY_RATE_LIMITED = (
+    "Too many low stock reports in the last 10 minutes - try again shortly."
+)
+_LOW_STOCK_ERROR = "Could not run the low stock report right now."
+#: defect D: a scope the plan admitted nothing for. Saying "Low: 0 of 0 planned products"
+#: beside an empty workbook reads as a broken report; this says what actually happened.
+_LOW_STOCK_EMPTY = "Nothing was planned for that scope - no low stock report to send."
+
+
+def _low_stock_as_of(iso: Any) -> str:
+    """dd/mm/yyyy, the only date form this product writes for a reader. An unparseable or
+    absent stamp prints as it arrived rather than as today's date: a run that froze no rows
+    has no as-of, and inventing one would date a book that was never built."""
+    try:
+        return _outstanding_ddmmyyyy(iso)
+    except (TypeError, ValueError):
+        return str(iso) if iso else "-"
+
+
+def _low_stock_envelope(payload: dict) -> dict:
+    """What `present_response` returns for `crm_low_stock_report` (AC-61).
+
+    Four shapes:
+
+    * `ready`   - two lines, the as-of date and how many of the planned products are low.
+                  The "of <m>" half is what stops "Low: 12" reading as the whole
+                  catalogue. The workbook itself rides in `attachments`, which is what
+                  makes the engine emit a `send_attachments` action. `has_result` is False
+                  when a count is missing (a `ready` payload that lost the count-write
+                  race), so the count line is never rendered as "Low: None of None".
+    * `pending` - the plan outran the turn; the worker pushes the file when it is ready
+                  (AC-44), so the bot says so and stops.
+    * `busy`    - one line, chosen by `reason`: a plan already running for the company
+                  (AC-49) or this contact over the rate limit. Both NAME the report.
+    * `ready` with `all_count == 0` (or no `as_of`) - the plan admitted nothing for that
+      scope: one line, no attachment, rather than "Low: 0 of 0" beside an empty workbook.
+    * anything else (an `error` status, an error body carrying `message`/`code`, or a
+      non-dict) - the report could not be produced (no company, an excluded product, a
+      broker down, a run the worker marked failed). The bot says so and STOPS: the fixed
+      "could not run" line, verbatim, `has_result` True.
+
+    `has_result` is True on every branch - each IS a terminal answer the bot gives. It is
+    NOT the miss path (reviewer S1 / AC-44a / N6 wanted "never pending"; the console then
+    found that a `has_result` False here routes into the inventory domain's GENERIC miss,
+    "Could not find inventory - escalate to warehouse team?", which is the wrong wording
+    for a run that failed). Rendering the error line verbatim, like busy / pending, is what
+    keeps the bot on THIS tool's own words. No UUID reaches the text - the payload carries
+    `run_id` and `download_id`, and neither is a thing to say to a customer.
+    """
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if status == "ready":
+        low = payload.get("low_count")
+        total = payload.get("all_count")
+        # defect D: the plan admitted NOTHING for this scope. The workbook is empty and
+        # `as_of` is null, so there is no report to send - say that in one line and send no
+        # attachment, rather than "Low: 0 of 0 planned products" beside an empty file.
+        if total == 0 or payload.get("as_of") in (None, ""):
+            return {
+                "result_type": "low_stock_report",
+                "response": _LOW_STOCK_EMPTY,
+                "attachments": [],
+                "has_result": True,
+            }
+        # A ready row that somehow reached here without its counts (reviewer S3 guards this
+        # server-side, but the presenter must not print "Low: None of None"): send the file,
+        # drop the count line, and let the lane treat the shorter reply as a real answer.
+        if low is None or total is None:
+            return {
+                "result_type": "low_stock_report",
+                "response": f"Low stock report - as of {_low_stock_as_of(payload.get('as_of'))}",
+                "attachments": payload.get("attachments") or [],
+                "has_result": True,
+            }
+        response = "\n".join((
+            f"Low stock report - as of {_low_stock_as_of(payload.get('as_of'))}",
+            f"Low: {low} of {total} planned products",
+        ))
+        return {
+            "result_type": "low_stock_report",
+            "response": response,
+            "attachments": payload.get("attachments") or [],
+            "has_result": True,
+        }
+    if status == "busy":
+        # defect C: WHICH busy. `in_flight` clears in about a minute; `rate_limited` needs
+        # the window to roll. An unknown/absent reason keeps the in-flight wording, which
+        # is the one a caller hits without doing anything wrong.
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        busy_line = (
+            _LOW_STOCK_BUSY_RATE_LIMITED if reason == "rate_limited"
+            else _LOW_STOCK_BUSY_IN_FLIGHT
+        )
+        return {"result_type": "low_stock_report", "response": busy_line,
+                "attachments": [], "has_result": True}
+    if status == "pending":
+        return {"result_type": "low_stock_report", "response": _LOW_STOCK_PENDING,
+                "attachments": [], "has_result": True}
+    # Unknown / error / a raw error body: the error line verbatim, never pending and never
+    # the generic inventory miss.
+    return {"result_type": "low_stock_report", "response": _LOW_STOCK_ERROR,
+            "attachments": [], "has_result": True}
+
+
+_OUTSTANDING_BOTH_HEADINGS = {"so": "*Sales order list*", "do": "*Delivery order list*"}
+
+
+def _outstanding_detail(report: dict, scope: str) -> str:
+    """Numbered SO (``scope="so"``) or DO (``scope="do"``) list (AC-1106), served
+    from the SAME report the presenter already rendered - no second fetch, no
+    re-parse (D10). Every row renders, in whatever order `so_rows` / `do_rows`
+    already carry (the route sorts them, per the backend contract); "no `+N
+    more`" - D8 - falls out of this loop never truncating."""
+    if scope == "both":
+        # R14: one reply, both lists, each under a heading so the reader can tell which
+        # one they are in. SO first, the same order the offer lists them.
+        parts = [
+            f"{_OUTSTANDING_BOTH_HEADINGS[one]}\n{_outstanding_detail(report, one)}"
+            for one in ("so", "do")
+        ]
+        return "\n\n".join(parts)
+
+    if scope == "so":
+        rows = report.get("so_rows") or []
+        field_defs = _OUTSTANDING_SO_FIELDS
+    else:
+        rows = report.get("do_rows") or []
+        field_defs = _OUTSTANDING_DO_FIELDS
+
+    items: list[str] = []
+    for i, row in enumerate(rows, start=1):
+        field_lines = []
+        for label, key, kind in field_defs:
+            value = row.get(key)
+            if kind == "qty":
+                value = _outstanding_fmt_int(value)
+            elif kind == "label":
+                value = _outstanding_label(value)
+            elif kind == "date" and _filled(value):
+                value = _outstanding_ddmmyyyy(value)
+            field_lines.append(f"*{label}:* {value}")
+        items.append(f"{i}. " + "\n".join(field_lines))
+    return "\n\n".join(items)

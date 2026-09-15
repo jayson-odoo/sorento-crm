@@ -139,10 +139,24 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         escalation_team="marketing_form",
     ),
     "inventory": DomainSpec(
-        intents=("check_stock",),
+        # `low_stock_report` (PLAN-low-stock-report S6, AC-62) is a SECOND intent on this
+        # domain, not a domain of its own: the ask is about stock, and the escalation team
+        # and entity vocabulary are the warehouse's either way.
+        intents=("check_stock", "low_stock_report"),
         bare_entity_type="product",
-        switch_words=("stock", "stocks", "inventory", "stok", "qty", "quantity"),
-        tools=("crm_inventory_stock_balance_list", "crm_inventory_warehouses_list"),
+        switch_words=(
+            "stock", "stocks", "inventory", "stok", "qty", "quantity",
+            "low stock", "reorder report", "below level",
+        ),
+        # The low stock tool is APPENDED, never `tools[0]`: `select_tool` falls back to the
+        # first-listed tool for a domain, so putting it in front would send every plain
+        # stock ask ("how many CB100 in BRW") into a full reorder run. The intent, not the
+        # domain, is what picks it (`run_fetch`'s override).
+        tools=(
+            "crm_inventory_stock_balance_list",
+            "crm_inventory_warehouses_list",
+            "crm_low_stock_report",
+        ),
         escalation_team="warehouse",
     ),
     "order": DomainSpec(
@@ -173,6 +187,12 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
             # The customer master is claimed HERE and not by `master_products`: a
             # customer is only ever looked up to narrow an order question.
             "crm_master_customers_list",
+            # S4 point 2 (PLAN-chatbot-outstanding-report.md): NEVER `tools[0]` - the
+            # override lives in `lanes/business/__init__.py::run_fetch`, which swaps
+            # the pick to this tool for domain "order" + a resolved product + an
+            # outstanding order_status. Listed here only so `CHATBOT_READ_ONLY_TOOLS`
+            # (derived from `DOMAIN_CLAIMED_TOOLS`, this tuple's own union) allows it.
+            "crm_outstanding_report",
         ),
         escalation_team="customer_service",
     ),
@@ -595,6 +615,9 @@ PENDING_KINDS = (
     "company_clarify",
     "tier_ask",
     "member_offer",
+    # PLAN-chatbot-outstanding-report.md, S4 points 4/5.
+    "outstanding_scope",
+    "outstanding_detail",
 )
 PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 
@@ -661,6 +684,13 @@ class Pending(BaseModel):
     # OWN string by equality instead of trying to understand it. Absent on a marker written
     # before this shipped, which is why that reader treats absence as "parser answer only".
     options: list[dict[str, Any]] | None = None
+    # `outstanding_scope` / `outstanding_detail` only (R22, owner round 9, 13 Sep 2026):
+    # this question has already been RE-PRINTED once over a reply that answered nothing
+    # (AC-1143(c)). The next such reply closes it instead of printing a third copy. A
+    # boolean, not a countdown: R2 keeps the offer sticky across picks and casual turns,
+    # and a TTL would close it behind a customer who is still reading it. Absent on every
+    # other kind and on a marker written before this shipped, which reads as "not yet".
+    reprinted: bool | None = None
 
 
 class SessionVars(BaseModel):
@@ -708,6 +738,15 @@ class SessionVars(BaseModel):
     routing_brand_source: Any = None
     routing_company: Any = None
     routing_companies: Any = None
+    # S4 point 4 (PLAN-chatbot-outstanding-report.md): the parsed product/dates/
+    # customer/location, carried across the scope-question turn and the detail-offer
+    # turn (see `tail/compile_state.py`).
+    outstanding_filters: Any = None
+    # R16 (owner round 5, 13 Sep 2026): the delivery status the question was asked about,
+    # written only on a turn that named one and read back by the head's `reuse` carry -
+    # the same axis-of-the-question role `date_filter_start` and `requested_attributes`
+    # above already have (see `tail/compile_state.py`).
+    order_status: Any = None
     pending: Pending | None = None
 
 

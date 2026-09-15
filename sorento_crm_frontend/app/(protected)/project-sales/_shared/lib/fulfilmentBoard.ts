@@ -382,7 +382,12 @@ function lineFor(
     return confirmLineFrom(contribution.project_line_id, suggested);
   }
 
-  const owed = toMinor(contribution.qty_outstanding ?? contribution.qty);
+  // THE PLAN QUANTITY, not the still-owed one (14 Sep 2026 ruling). `qty` is what the
+  // server's own balance check validates a composition against (`_LineFacts.open_qty`),
+  // and since a delivered unit nobody sourced is a unit to put back the two have stopped
+  // being the same number: a composition built against `qty_outstanding` on a delivered
+  // line sums to less than the line asks for and is refused at confirm.
+  const owed = toMinor(contribution.qty);
   // The engine's own numbers when it sends them. The board now proposes what the SHEET
   // proposes - pool and borrow are considered, not just own-location reserve then buy - so
   // re-deriving a composition from the source strip would be a second, worse allocator
@@ -582,6 +587,9 @@ export function plannedLineCount(
   return contributions.filter((contribution) => {
     if (contribution.sales_order_id !== salesOrderId) return false;
     if (contribution.unplannable) return false;
+    // A CANCELLED line posts nothing and is still one of the lines this press acts on (R3):
+    // its apply is the retire path, which needs no composition to build.
+    if (contribution.cancelled) return true;
     const built = lineFor(contribution, draft[contribution.key]);
     return built !== null && (typeof built !== 'string' || built === 'no_mirror');
   }).length;
@@ -619,6 +627,14 @@ export function confirmSummaryFor(
   const orderIds = new Set<string>();
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
+    // A CANCELLED line is decided BY THE BOOK (R3, scenario S5): the order it was on removed
+    // it, and Confirm retires it. Nobody saves a decision for it, so the untouched-line skip
+    // below would drop it from the count and the press would silently do one thing more than
+    // it said - which is the one thing the counter exists to stop.
+    if (contribution.cancelled) {
+      orderIds.add(contribution.sales_order_id);
+      continue;
+    }
     const decision = draft[contribution.key];
     // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
     // agreed - it must not pull its order into the confirmable set on its own. `decision`
@@ -902,11 +918,11 @@ export function boardAxis(
     item_code: entry.row.label,
     row_key: entry.row.key,
     bucket_key: entry.bucket,
+    // What this cell ASKS FOR, which is the plan quantity per line - the same figure the
+    // server totals a cell by. Summing `qty_outstanding` made a cell holding a delivered
+    // line read lower than the lines inside it.
     total_qty: fromMinor(
-      entry.lines.reduce(
-        (total, line) => total + toMinor(line.qty_outstanding ?? line.qty),
-        0,
-      ),
+      entry.lines.reduce((total, line) => total + toMinor(line.qty), 0),
     ),
     locations: [],
     contributions: entry.lines,

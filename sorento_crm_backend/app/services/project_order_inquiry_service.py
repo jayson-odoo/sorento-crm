@@ -64,7 +64,6 @@ from app.services.product_companion_service import (
     bundled_with_item_codes_map as _bundled_with_item_codes_map,
     resolve_bundled_item_codes as _resolve_bundled_item_codes,
 )
-from app.models.scm import OrderLinkClaim
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
@@ -140,6 +139,29 @@ _ZERO = Decimal("0")
 #: transaction and fired once the session actually commits - see
 #: `_dispatch_changed_with_links` / `register_order_inquiry_post_commit_dispatch`.
 _CHANGED_WITH_LINKS_PENDING_KEY = "oi_changed_with_links_pending"
+
+#: `Session.info` key for the "order inquiry raised" notifications a purchasing task
+#: queues mid-transaction, fired once the session actually commits - see
+#: `_notify_purchasing` / `register_order_inquiry_post_commit_dispatch`.
+_PURCHASING_NOTIFY_PENDING_KEY = "oi_purchasing_notify_pending"
+
+
+def _transaction_chain(session) -> List[Any]:
+    """The transaction a queued item was written under, and every one above it.
+
+    A batch apply gives EACH ORDER its own savepoint, and one order's rollback must not
+    take a sibling's already-earned notification with it (review round, C2: popping the
+    whole queue on `after_soft_rollback` discarded order 1's because order 2 failed). The
+    chain is what makes "was this item written inside the thing that just rolled back?"
+    answerable: an item is discarded only when the rolled-back transaction IS one of its
+    own ancestors. Identity, not `id()` - a dead object's id can be reused.
+    """
+    current = session.get_nested_transaction() or session.get_transaction()
+    chain: List[Any] = []
+    while current is not None:
+        chain.append(current)
+        current = getattr(current, "parent", None)
+    return chain
 
 #: How many purchase orders `relink_to_matching_lines` walks per pass. A purchase-history
 #: upload names thousands of documents in one call, and one `IN` list that long is a bad
@@ -1779,20 +1801,39 @@ class ProjectOrderInquiryService:
         row_count: int,
         to_buy: int,
     ) -> None:
-        from app.services.notification_service import NotificationService
+        """QUEUED, never sent from here.
 
+        `NotificationService.create_with_channel_preferences` COMMITS (its own docstring:
+        "never call it from inside a `db.begin_nested()` block"), and this runs deep inside
+        one - `refresh_for_decision` is called from the confirm, and the planning-change
+        apply wraps every order in a savepoint. The commit released that savepoint, so a
+        perfectly written revision came back as "This transaction is closed" the moment a
+        purchasing-role user existed to be notified (measured on `confirm-all` with a batch
+        whose confirmation raised a NEW inquiry - Slice C, where CS confirming a delayed
+        line's re-run does exactly that).
+
+        So the payload is queued on `Session.info` and fired by
+        `register_order_inquiry_post_commit_dispatch`'s `after_commit` listener on a FRESH
+        session - the same pattern `_dispatch_changed_with_links` above already uses, for
+        the same reason, and the same one `planning_change_service.apply` follows when it
+        notifies purchasing after each order's savepoint rather than inside it.
+        """
         reference = order.autocount_doc_no or order.provisional_ref
-        service = NotificationService(self.db)
-        for user_id in self._purchasing_user_ids():
-            service.create_with_channel_preferences(
-                user_id=str(user_id),
-                type="project_order_inquiry_raised",
-                title=f"Order inquiry {reference}",
-                body=(
+        user_ids = self._purchasing_user_ids()
+        if not user_ids:
+            return
+        self.db.info.setdefault(_PURCHASING_NOTIFY_PENDING_KEY, []).append(
+            {
+                #: Which savepoint this was earned under (C2), so a sibling order's
+                #: rollback cannot discard it.
+                "tx_chain": _transaction_chain(self.db),
+                "user_ids": [str(user_id) for user_id in user_ids],
+                "title": f"Order inquiry {reference}",
+                "body": (
                     f"{project.title}: {row_count} instruction"
                     f"{'' if row_count == 1 else 's'}, {to_buy} still to buy."
                 ),
-                data={
+                "data": {
                     "project_id": str(project.id),
                     "project_code": project.project_code,
                     "order_inquiry_id": str(inquiry.id),
@@ -1800,18 +1841,15 @@ class ProjectOrderInquiryService:
                     "row_count": row_count,
                     "to_buy": to_buy,
                 },
-                source_entity_type="order_inquiry",
-                source_entity_id=str(inquiry.id),
-                dedup_key=f"{inquiry.id}:order_inquiry_raised",
-                event_type="project_order_inquiry_raised",
-                send_in_app=True,
-                # Deliberately not email. AC-I4 is that this stops being an email: the
-                # task is the record, and a mailbox is the thing it replaces.
-                send_email=False,
-            )
+                "inquiry_id": str(inquiry.id),
+            }
+        )
 
     def _purchasing_user_ids(self) -> List[str]:
-        """Everyone holding the `purchasing` role, which is what SCM is granted through."""
+        """Everyone holding a purchasing role - `purchasing`, `purchasing_manager`,
+        `purchasing_executive`, or any other slug SCM's own family grows to (AC-X1) - which
+        is what SCM is granted through. Matched by prefix, not substring: a role that merely
+        contains the word (an admin role covering purchasing among other things) is not one."""
         from app.models.user import User, UserRole, UserRoleAssignment, UserStatus
 
         rows = (
@@ -1819,7 +1857,7 @@ class ProjectOrderInquiryService:
             .join(UserRole, UserRole.id == UserRoleAssignment.role_id)
             .join(User, User.id == UserRoleAssignment.user_id)
             .filter(
-                UserRole.slug == "purchasing",
+                UserRole.slug.like("purchasing%"),
                 User.status == UserStatus.ACTIVE.value,
                 User.is_trashed.is_(False),
             )
@@ -5647,28 +5685,12 @@ class ProjectOrderInquiryService:
             # item) and would have taken down the claim behind a SIBLING link on the same
             # document - a row linked to two lines of one purchase order lost both claims
             # when one line was given back. The link records which claim it wrote, so this
-            # removes exactly that one and nothing else.
-            if link.claim_id:
-                claim = (
-                    self.db.query(OrderLinkClaim)
-                    .filter(
-                        OrderLinkClaim.id == link.claim_id,
-                        OrderLinkClaim.source == "order_inquiry",
-                    )
-                    .first()
-                )
-                # Only when no OTHER surviving link leans on the same claim: two links on
-                # one document share the one claim, because the claim's identity is the
-                # document and not the line.
-                if claim is not None and not (
-                    self.db.query(OrderInquiryLink)
-                    .filter(
-                        OrderInquiryLink.claim_id == claim.id,
-                        OrderInquiryLink.id.notin_(list(going)),
-                    )
-                    .first()
-                ):
-                    self.db.delete(claim)
+            # removes exactly that one and nothing else (S3, review round: the shared
+            # guard lives in `order_link_service.free_claim_if_orphaned`, alongside
+            # `_unclaim_shares` [`planning_change_service.py`]'s own call).
+            order_link_service.free_claim_if_orphaned(
+                self.db, link.claim_id, excluding=going
+            )
             self.db.delete(link)
         self.db.flush()
         self._invalidate_link_cache()
@@ -6123,8 +6145,70 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         finally:
             fresh.close()
 
+    @event.listens_for(Session, "after_commit")
+    def _fire_pending_purchasing_notifications(session):  # noqa: ANN001
+        """Tell purchasing an inquiry was raised, once the write it is about has landed.
+
+        Queued by `_notify_purchasing` rather than sent there, because the notification
+        service commits and this runs inside somebody's savepoint. A FRESH session for the
+        same reason the dispatch above takes one: `after_commit` fires before this session
+        has re-begun a usable transaction.
+        """
+        pending = session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
+        if not pending:
+            return
+        from app.database import SessionLocal
+        from app.services.notification_service import NotificationService
+
+        fresh = SessionLocal()
+        try:
+            for item in pending:
+                for user_id in item["user_ids"]:
+                    try:
+                        NotificationService(fresh).create_with_channel_preferences(
+                            user_id=user_id,
+                            type="project_order_inquiry_raised",
+                            title=item["title"],
+                            body=item["body"],
+                            data=item["data"],
+                            source_entity_type="order_inquiry",
+                            source_entity_id=item["inquiry_id"],
+                            dedup_key=f"{item['inquiry_id']}:order_inquiry_raised",
+                            event_type="project_order_inquiry_raised",
+                            send_in_app=True,
+                            # Deliberately not email. AC-I4 is that this stops being an
+                            # email: the task is the record, and a mailbox is what it
+                            # replaces.
+                            send_email=False,
+                        )
+                    except Exception:  # noqa: BLE001 - post-commit work never raises
+                        fresh.rollback()
+                        logger.exception(
+                            "order inquiry %s raised, but purchasing was not notified",
+                            item.get("inquiry_id"),
+                        )
+        finally:
+            fresh.close()
+
     @event.listens_for(Session, "after_soft_rollback")
     def _discard_pending_changed_with_links(session, previous_transaction):  # noqa: ANN001
         session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
+        # A write that never landed has nothing to tell purchasing about either - but ONLY
+        # that write. This fires on a nested rollback too, and a batch apply gives each
+        # order its own savepoint, so popping the whole queue let a failing order discard a
+        # sibling's notification (C2, review round). An item goes only when the transaction
+        # that just rolled back is one of its own ancestors.
+        pending = session.info.get(_PURCHASING_NOTIFY_PENDING_KEY)
+        if not pending:
+            return
+        kept = [
+            item
+            for item in pending
+            if not any(tx is previous_transaction for tx in item.get("tx_chain") or ())
+        ]
+        if kept:
+            session.info[_PURCHASING_NOTIFY_PENDING_KEY] = kept
+        else:
+            session.info.pop(_PURCHASING_NOTIFY_PENDING_KEY, None)
 
     _POST_COMMIT_DISPATCH_REGISTERED = True

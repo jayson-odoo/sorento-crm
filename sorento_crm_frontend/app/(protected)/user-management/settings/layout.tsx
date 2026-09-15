@@ -14,6 +14,7 @@ import {
   Mail,
   MessageSquareWarning,
   Plug,
+  Ruler,
   Settings,
   Share2,
   SlidersHorizontal,
@@ -106,6 +107,12 @@ function mapSettingsFromApi(
     handlingLockEnabledTypes: Array.isArray(raw.handling_lock_enabled_types)
       ? (raw.handling_lock_enabled_types as string[])
       : [],
+    // Price tag packages (D2). On the GET dict AND on SystemSettingUpdate
+    // server-side, so it must appear in this manual mapper too or the picker
+    // would always render the default rather than the saved value.
+    priceTagGuardedClasses: Array.isArray(raw.price_tag_guarded_classes)
+      ? (raw.price_tag_guarded_classes as string[])
+      : ['Bathroom Furniture', 'Kitchen Sink'],
     // Portal submission revisions. Both columns are on the GET dict AND on
     // SystemSettingUpdate server-side; they must appear in this manual mapper too
     // or the UI would always render the default rather than the saved value.
@@ -221,6 +228,7 @@ function createDefaultSettings(): SystemSetting {
     notifySystemErrorRoleIds: [],
     complaintDoDeliveredNotifyTiers: '1,2',
     handlingLockEnabledTypes: [],
+    priceTagGuardedClasses: ['Bathroom Furniture', 'Kitchen Sink'],
     portalRevisionsEnabled: true,
     portalMaxRevisions: 2,
     healthDigestEnabled: false,
@@ -290,6 +298,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         title: 'Stock Visibility',
         icon: Eye,
         path: '/user-management/settings/stock-visibility',
+      },
+      'spec-visibility': {
+        title: 'Spec Visibility',
+        icon: Ruler,
+        path: '/user-management/settings/spec-visibility',
       },
       'search-ranking': {
         title: 'Search ranking',

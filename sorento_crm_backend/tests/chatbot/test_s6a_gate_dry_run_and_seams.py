@@ -19,7 +19,7 @@ from app.services.chatbot.lanes.business import pickers, resolve_gate
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices, production_services
 from app.services.error_handler import AppException
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     CONTACT_ID,
     _envelope,
@@ -47,7 +47,7 @@ def _stub_bundle(calls: list[str], *, names: list[str] | None = None) -> Resolve
         calls.append("probe")
         return None
 
-    return ResolveGateServices(access_types=_access_types, resolve_entity=_resolve_entity, probe=_probe)
+    return ResolveGateServices(access_types=_access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=_probe)
 
 
 # --------------------------------------------------------------------------- #
@@ -155,7 +155,7 @@ class TestShadowFailurePath:
             raise RuntimeError("resolve-entity is down")
 
         bundle = ResolveGateServices(
-            access_types=lambda **_: [], resolve_entity=_boom, probe=lambda **_: None
+            access_types=lambda **_: [], resolve_entity=validating_resolve_entity(_boom), probe=lambda **_: None
         )
         monkeypatch.setattr(
             engine_mod.business_services,
@@ -254,7 +254,7 @@ class TestD14ZeroWritesWithTheLaneOnRealResolver:
         usage_before = db.execute(text("SELECT COUNT(*) FROM ai_assistant_usage_logs")).scalar()
         session_vars_before = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
@@ -263,7 +263,7 @@ class TestD14ZeroWritesWithTheLaneOnRealResolver:
         usage_after = after_db.execute(text("SELECT COUNT(*) FROM ai_assistant_usage_logs")).scalar()
         session_vars_after = after_db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         assert result.branch_kind == "business_query"
@@ -310,7 +310,7 @@ class TestCapacityRuleDuringResolverSeam:
 
         bundle = ResolveGateServices(
             access_types=lambda **_: [{"name": "Sorento Dealer"}],
-            resolve_entity=_resolve_entity,
+            resolve_entity=validating_resolve_entity(_resolve_entity),
             probe=lambda **_: None,
         )
         monkeypatch.setattr(
@@ -356,7 +356,7 @@ class TestCheckPromotionRealAccessTypeService:
                 "FROM respond_workspaces w WHERE w.space_id = :space_id "
                 "ON CONFLICT DO NOTHING"
             ),
-            {"cid": CONTACT_ID, "phone": "+60000000010", "space_id": self.SPACE_ID},
+            {"cid": str(CONTACT_ID), "phone": "+60000000010", "space_id": self.SPACE_ID},
         )
         db.commit()
 
@@ -373,7 +373,7 @@ class TestCheckPromotionRealAccessTypeService:
                 "INSERT INTO respond_contact_access_types (contact_id, access_type_code) "
                 "SELECT c.id, :code FROM respond_contacts c WHERE c.respond_io_id = :cid"
             ),
-            {"code": code, "cid": CONTACT_ID},
+            {"code": code, "cid": str(CONTACT_ID)},
         )
         db.commit()
 
@@ -386,7 +386,7 @@ class TestCheckPromotionRealAccessTypeService:
             raise AssertionError("resolve-entity must not run when If4 takes its FALSE leg")
 
         return ResolveGateServices(
-            access_types=real.access_types, resolve_entity=_resolve_entity, probe=lambda **_: None
+            access_types=real.access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=lambda **_: None
         )
 
     def _ctx(self) -> dict[str, Any]:
@@ -417,7 +417,7 @@ class TestCheckPromotionRealAccessTypeService:
 
         real = production_services(db, space_id=self.SPACE_ID)
         services = ResolveGateServices(
-            access_types=real.access_types, resolve_entity=_resolve_entity, probe=lambda **_: None
+            access_types=real.access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=lambda **_: None
         )
         out = resolve_gate.run(
             self._ctx(), "access_check", {}, services=services, space_id=self.SPACE_ID
@@ -571,14 +571,14 @@ class TestFixtureObservesADeliberateWriteMidTurn:
         db = session_factory()
         before = db.execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         engine_mod.run_turn(_envelope(test_run_id="ZZT-run-canary-1"), session_factory=session_factory)
 
         after = session_factory().execute(
             text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": CONTACT_ID},
+            {"c": str(CONTACT_ID)},
         ).scalar()
 
         assert (before or {}).get("canary") is None
@@ -955,7 +955,7 @@ class TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam:
 
         services = ResolveGateServices(
             access_types=services.access_types,
-            resolve_entity=_resolve_entity,
+            resolve_entity=validating_resolve_entity(_resolve_entity),
             probe=services.probe,  # THE seam under test, production binding
         )
 

@@ -25,7 +25,7 @@ from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
 )
-from tests.chatbot.conftest import set_chatbot_switches
+from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures used by name
     _envelope,
     _parser_output,
@@ -103,7 +103,7 @@ def _bundle(code: str = CODE) -> ResolveGateServices:
 
     return ResolveGateServices(
         access_types=lambda **_: [{"name": "Sorento Dealer"}],
-        resolve_entity=_resolve_entity,
+        resolve_entity=validating_resolve_entity(_resolve_entity),
         probe=lambda **_: None,
     )
 

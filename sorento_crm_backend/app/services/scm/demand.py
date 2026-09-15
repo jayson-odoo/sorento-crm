@@ -24,7 +24,7 @@ finds the other.
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 
 from app.models.order import SalesOrder, SalesOrderLine
 
@@ -177,6 +177,140 @@ def is_open_demand():
     ) & (demand_qty() > 0)
 
 
+def plan_qty():
+    """What the BOARD plans for one line: `coalesce(qty_required, qty_ordered)`.
+
+    NOT `demand_qty()`, and the difference is the whole 14 September 2026 ruling. That one
+    nets what has already shipped, because the netting engine, the reorder plan and the
+    worklist all ask "what is still owed". The board asks a different question - "has anybody
+    decided where this line's stock comes from" - and a delivered unit nobody sourced is a
+    unit to put back, so it is planned at its full quantity.
+
+    `qty_required` leads for the same reason it does in `demand_qty()`: the Order Inquiry
+    sheet is CS's own statement of what to cover, and it beats the book's `qty_ordered` when
+    somebody has stated one.
+    """
+    return func.coalesce(SalesOrderLine.qty_required, SalesOrderLine.qty_ordered)
+
+
+def is_undecided_demand():
+    """THE BOARD'S predicate: which lines it admits, and why it is not `is_open_demand()`.
+
+    A line is admitted when nobody has ruled on it and there is something to rule on:
+
+    - not `cancelled` - it is owed to nobody, whatever its delivered column says;
+    - not `purchasing_status = covered` - a person already said no purchase is needed;
+    - `plan_qty() > 0` - a line for nothing is not a question.
+
+    DELIVERY IS DELIBERATELY ABSENT. SO421404 read Completed, three of three delivered, and
+    had never been planned: the stock left the bin with nothing behind it, so no ORDER row
+    ever reached purchasing and nothing was bought back. Under `is_open_demand()` that order
+    is invisible the moment the book says it shipped.
+
+    The two predicates diverge on purpose and BOTH stay (AC-S2-11), the way
+    `_cancelled_pending_change_rows` already diverges for pending changes. Whether an active
+    decision or a live inquiry row covers the line is a separate question this does not ask -
+    that is `is_decided_demand()`, because a decided line stays ON the board, read-only,
+    rather than being filtered out of it.
+    """
+    return (
+        SalesOrderLine.line_status.is_distinct_from("cancelled")
+        & (SalesOrderLine.purchasing_status.is_distinct_from(COVERED))
+        & (plan_qty() > 0)
+    )
+
+
+def live_inquiry_core_line_ids():
+    """The core lines a LIVE order inquiry row already names.
+
+    Live means the row still stands: its state is not `cancelled` and purchasing has not
+    rejected it. A rejected row is back in CS's hands and decides nothing; a cancelled one
+    went away. Reached through the mirror line, because an inquiry row is keyed to
+    `projects.sales_order_lines` and every reader here is keyed to the core line.
+
+    Three narrowings, and each one is load-bearing: the row belongs to no board decision (a
+    confirmation's own row is not somebody else telling purchasing), it still stands, and no
+    PENDING planning-change row names the line - the book moving a line beats purchasing
+    having been told, and apply cancels the placed row anyway.
+
+    Uncorrelated and over the TABLES, for the same two reasons `_decided_core_line_ids()` is:
+    callers arrive with `sales_order_lines` aliased, and the company-scope loader must not
+    rewrite a sub-select whose only job is to answer "which lines were purchasing told about".
+    The pending-change EXISTS correlates to `mirror` alone, which this select owns, so it is
+    safe against the same aliasing.
+    """
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+    from app.models.project_so import (
+        ACK_REJECTED,
+        INQUIRY_CANCELLED,
+        OrderInquiryRow,
+        ProjectSalesOrderLine,
+    )
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+    rows = OrderInquiryRow.__table__
+    mirror = ProjectSalesOrderLine.__table__
+    change_rows = PlanningChangeRow.__table__
+    batches = PlanningChangeBatch.__table__
+    query = (
+        select(mirror.c.core_sales_order_line_id)
+        .select_from(rows.join(mirror, mirror.c.id == rows.c.so_line_id))
+        .where(
+            mirror.c.core_sales_order_line_id.isnot(None),
+            rows.c.state.is_distinct_from(INQUIRY_CANCELLED),
+            rows.c.ack_state.is_distinct_from(ACK_REJECTED),
+            # RAISED BY SOMETHING OTHER THAN A BOARD DECISION, which is the whole point of
+            # the rule. A row a confirmation wrote carries its `supply_decision_id`; the
+            # migrated sheet's rows (#875) carry none, and those are the instructions the
+            # board would otherwise propose for a second time.
+            #
+            # Without this the predicate swallowed its own tail: a line whose decision a
+            # planning change had just SUPERSEDED still had that decision's live row, so
+            # the board read it as decided and stopped re-planning the very line the change
+            # had re-opened (eleven tests in `test_planning_change_apply_on_board.py`).
+            rows.c.supply_decision_id.is_(None),
+            # AND THE BOOK HAS NOT MOVED THE LINE SINCE (owner's ruling, 14 Sep 2026). A
+            # pending planning-change row says the book moved it after the instruction was
+            # written, and apply cancels and unlinks the placed row - so it is stale by
+            # definition and decides nothing. Read here rather than only on the board so
+            # the Sales Orders list's Planned pill and the board it opens cannot disagree
+            # about one line.
+            ~select(literal(1))
+            .select_from(
+                change_rows.join(
+                    batches, batches.c.id == change_rows.c.batch_id
+                )
+            )
+            .where(
+                change_rows.c.core_line_id == mirror.c.core_sales_order_line_id,
+                change_rows.c.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                batches.c.applied_at.is_(None),
+            )
+            .exists(),
+        )
+    )
+    return query
+
+
+def is_decided_demand():
+    """"Somebody has already ruled where this line's stock comes from", in ONE place.
+
+    Two ways a line is decided and they are equal in weight:
+
+    - an ACTIVE supply decision names it (`_decided_core_line_ids()`, what the board has
+      always meant by `covered`);
+    - a LIVE order inquiry row names it. Since #875 the migrated sheet raised rows on real
+      sales-order lines, so purchasing was told about 2,311 open lines the board would
+      otherwise propose for all over again.
+
+    The board's read-only row and the Sales Orders list's Planned count read THIS, so an
+    order cannot read "2 of 3 planned" on the list and open a board that disagrees.
+    """
+    return SalesOrderLine.id.in_(_decided_core_line_ids()) | SalesOrderLine.id.in_(
+        live_inquiry_core_line_ids()
+    )
+
+
 def qty_of(row) -> float:
     """The same rule against a fetched row, for callers that select the columns themselves."""
     required = getattr(row, "qty_required", None)
@@ -271,6 +405,50 @@ _PLANNED_ACK_SQL = ", ".join(f"'{state}'" for state in PLANNED_ACK_STATES)
 #: `CREATE OR REPLACE VIEW` may only append columns, never drop one, and dropping it would
 #: mean dropping and rebuilding `scm.net_position_v` and everything under it for a figure
 #: that is now always 0.
+#: What the sales order line still OWES, in SQL, over the alias `sol` every project leg
+#: already joins: `demand_qty()`'s own reading - the quantity CS stated (`qty_required`) when
+#: they stated one, else what the order holds, minus what has been delivered.
+_LINE_OUTSTANDING_SQL = (
+    "GREATEST(COALESCE(sol.qty_required, sol.qty_ordered)\n"
+    "       - COALESCE(sol.qty_delivered, 0), 0)"
+)
+
+#: What an order inquiry row still asks purchasing to buy (7.3, owner 14 Sep evening: Buy
+#: never exceeds what the line still owes). CAPPED at the line's outstanding: SO368872 /
+#: SRTWC286-SH ordered 364 and delivered 352, so twelve are owed, and the uncapped reading
+#: told the plan to buy 302 of goods the customer already had. Then less what is already on a
+#: document, less a "supplied with" bundle, floored at zero.
+#:
+#: ONE fragment, interpolated into the view body, into the horizon SELECT and into the
+#: needed-date SQL, so the card, the Remaining column and the engine cannot come to answer
+#: three different numbers for one row (reviewer S1, 15 Sep). The worklist's own ORM twin is
+#: `order_inquiry_worklist_service._CAPPED_QTY`.
+_OWED_SQL = (
+    f"GREATEST(LEAST(oir.qty, {_LINE_OUTSTANDING_SQL})\n"
+    "       - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)"
+)
+
+#: The FORM leg's twin, and the one the MIGRATED rows actually travel on: the order inquiry
+#: sheet raises rows with no supply decision, so this is the leg that counts them. It reaches
+#: the core line through `_FORM_CORE_LINE_JOIN_SQL` below rather than through the confirmed
+#: leg's mandatory join, because a form row may genuinely have no line at all - and where it
+#: has none, the CASE keeps today's reading. Without the CASE the cap would read 0 there:
+#: Postgres `GREATEST()` ignores NULLs, so the outstanding of a missing line is 0, not NULL.
+_OWED_FORM_SQL = (
+    "GREATEST(CASE WHEN csol.id IS NULL THEN oir.qty\n"
+    "              ELSE LEAST(oir.qty,\n"
+    "                         GREATEST(COALESCE(csol.qty_required, csol.qty_ordered)\n"
+    "                                - COALESCE(csol.qty_delivered, 0), 0)) END\n"
+    "       - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)"
+)
+
+#: How the form leg reaches that line: the row's mirror, then the core line it names. Both
+#: OUTER and both on a primary key, so neither can drop a row or multiply one.
+_FORM_CORE_LINE_JOIN_SQL = (
+    "LEFT JOIN projects.sales_order_lines cpsl ON cpsl.id = oir.so_line_id\n"
+    "    LEFT JOIN sales_order_lines csol ON csol.id = cpsl.core_sales_order_line_id"
+)
+
 COMMITTED_V_SQL = f"""
 CREATE OR REPLACE VIEW scm.committed_v AS
 WITH legs AS (
@@ -315,9 +493,8 @@ WITH legs AS (
            CASE WHEN oir.verb = 'ORDER_BACK'
                 THEN COALESCE(donor.id, sol.warehouse_id)
                 ELSE sol.warehouse_id END AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)
-               AS project_confirmed_qty,
+           {_OWED_SQL} AS project_qty,
+           {_OWED_SQL} AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -337,8 +514,9 @@ WITH legs AS (
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
       -- PLAN-scm-supplied-with-companions.md ruling 6: a bundled unit never reaches
-      -- reorder planning, whatever the item it rides with is covered by.
-      AND oir.qty > COALESCE(lk.linked, 0) + oir.bundled_qty
+      -- reorder planning, whatever the item it rides with is covered by. And 7.3: a row
+      -- whose line owes nothing more is not owed either, so the leg drops it.
+      AND {_OWED_SQL} > 0
     UNION ALL
     -- The FORM leg: an instruction the CS Order Inquiry Form raised that no supply decision
     -- points at (`PLAN-scm-cs-planning-uat.md` section 3.I; the fixture sheet's `[NL]`
@@ -378,9 +556,8 @@ WITH legs AS (
     -- counted by nothing else, and a class test alone would drop it.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)
-               AS project_confirmed_qty,
+           {_OWED_FORM_SQL} AS project_qty,
+           {_OWED_FORM_SQL} AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -390,6 +567,7 @@ WITH legs AS (
     LEFT JOIN warehouses fw
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
+    {_FORM_CORE_LINE_JOIN_SQL}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
         FROM projects.order_inquiry_links l
@@ -412,8 +590,10 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
-      -- Ruling 6, form leg: the same "never reaches reorder planning" rule.
-      AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
+      -- Ruling 6, form leg: the same "never reaches reorder planning" rule. No 7.3 cap
+      -- here: this leg matches on item code for rows no supply decision points at, so
+      -- there is no core sales order line in scope to owe anything.
+      AND {_OWED_FORM_SQL} > 0
 )
 SELECT product_id,
        warehouse_id,
@@ -495,9 +675,8 @@ WITH legs AS (
            CASE WHEN oir.verb = 'ORDER_BACK'
                 THEN COALESCE(donor.id, sol.warehouse_id)
                 ELSE sol.warehouse_id END AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(lk.linked, 0) - oir.bundled_qty, 0)
-               AS project_confirmed_qty,
+           {_OWED_SQL} AS project_qty,
+           {_OWED_SQL} AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -516,8 +695,9 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
-      -- Ruling 6: a bundled unit never reaches reorder planning.
-      AND oir.qty > COALESCE(lk.linked, 0) + oir.bundled_qty
+      -- Ruling 6: a bundled unit never reaches reorder planning. And 7.3: a row whose
+      -- line owes nothing more is nothing to buy, so the plan does not count it.
+      AND {_OWED_SQL} > 0
       -- Planning horizon, confirmed leg: same rule, off the inquiry row's own delivery
       -- date rather than the core line's required_date.
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
@@ -564,9 +744,8 @@ WITH legs AS (
     -- counted by nothing else, and a class test alone would drop it.
     SELECT fp.id AS product_id,
            fw.id AS warehouse_id,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0) AS project_qty,
-           GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0)
-               AS project_confirmed_qty,
+           {_OWED_FORM_SQL} AS project_qty,
+           {_OWED_FORM_SQL} AS project_confirmed_qty,
            0::numeric AS retail_qty,
            0::numeric AS unclassified_qty
     FROM projects.order_inquiry_rows oir
@@ -576,6 +755,7 @@ WITH legs AS (
     LEFT JOIN warehouses fw
       ON fw.warehouse_code = oir.stock_location
      AND fw.company_id = oir.company_id
+    {_FORM_CORE_LINE_JOIN_SQL}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
         FROM projects.order_inquiry_links l
@@ -598,8 +778,9 @@ WITH legs AS (
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
-      -- Ruling 6, form leg: the same rule again.
-      AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
+      -- Ruling 6, form leg: the same rule again, and no 7.3 cap for the same reason the
+      -- view's own form leg has none: no core line in scope.
+      AND {_OWED_FORM_SQL} > 0
       -- Planning horizon, form leg: the same rule again. An ORDER BACK row states no
       -- date at all, so it is always in - unscheduled demand is still demand.
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
@@ -645,7 +826,7 @@ def horizon_project_need_dates_sql() -> str:
     documents can both answer. `MIN` over an all-NULL group is NULL and is dropped: a Buy
     nobody has dated contributes no date at all, rather than a guess.
     """
-    return """
+    return f"""
 WITH legs AS (
     SELECT sol.product_id,
            COALESCE(oir.delivery_date, sol.required_date) AS needed
@@ -663,8 +844,9 @@ WITH legs AS (
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
-      -- Ruling 6: a fully bundled row is not owed, so it names no date either.
-      AND oir.qty > COALESCE(lk.linked, 0) + oir.bundled_qty
+      -- Ruling 6: a fully bundled row is not owed, so it names no date either, and 7.3's
+      -- cap reads the same way: a row whose line owes nothing dates nothing.
+      AND {_OWED_SQL} > 0
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
            OR oir.delivery_date <= CAST(:horizon AS date))
     UNION ALL
@@ -674,6 +856,7 @@ WITH legs AS (
     JOIN products fp
       ON fp.product_code = oir.item_code
      AND fp.company_id = oir.company_id
+    {_FORM_CORE_LINE_JOIN_SQL}
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS linked
         FROM projects.order_inquiry_links l
@@ -695,7 +878,7 @@ WITH legs AS (
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
       AND oir.qty > 0
-      AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
+      AND {_OWED_FORM_SQL} > 0
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
            OR oir.delivery_date <= CAST(:horizon AS date))
 )

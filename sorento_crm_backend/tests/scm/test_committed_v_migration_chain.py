@@ -85,6 +85,7 @@ def test_migration_bodies_are_frozen_not_imported():
         "426_committed_v_form_leg_scope",
         "428_order_inquiry_ack_state",
         "498_committed_v_bundled_qty",
+        "511_committed_v_line_owed",
     ):
         imported = app_imports(_VERSIONS / f"{name}.py")
         assert imported == [], (
@@ -97,17 +98,17 @@ def test_migration_bodies_are_frozen_not_imported():
 def test_newest_view_migration_matches_the_live_body():
     """Edit COMMITTED_V_SQL -> this goes red -> write a NEW migration with the new body.
 
-    The newest one is `498_committed_v_bundled_qty` (PLAN-scm-supplied-with-companions.md
-    ruling 6: the confirmed and form legs subtract a row's `bundled_qty`, in the quantity
-    and in the "still owed" predicate), which replaces the body
-    `428_order_inquiry_ack_state` installed. Every superseded freeze stays exactly as it
-    shipped, which is the whole point of the guard, so 428's, 426's, 424's, 423's, 422's,
-    384's, 376's and 374's are checked below rather than updated here.
+    The newest one is `511_committed_v_line_owed` (PLAN-scm-oi-sheet-pairing-repair.md 7.3,
+    owner 14 Sep 2026: a project row is capped at what its sales order line still OWES, so
+    the plan stops buying goods the customer has already been given), which replaces the
+    body `498_committed_v_bundled_qty` installed. Every superseded freeze stays exactly as
+    it shipped, which is the whole point of the guard, so 498's, 428's, 426's, 424's, 423's,
+    422's, 384's, 376's and 374's are checked below rather than updated here.
     """
-    m498 = _load("498_committed_v_bundled_qty")
-    assert _normalize(m498._AS_OF_498) == _normalize(COMMITTED_V_SQL), (
-        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 498; "
-        "add a new migration that freezes the new body (498's pattern), so a from-zero "
+    m511 = _load("511_committed_v_line_owed")
+    assert _normalize(m511._AS_OF_511) == _normalize(COMMITTED_V_SQL), (
+        "app.services.scm.demand.COMMITTED_V_SQL changed. Do not edit migration 511; "
+        "add a new migration that freezes the new body (511's pattern), so a from-zero "
         "replay stays true to history."
     )
 
@@ -158,8 +159,8 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     wrote. Five links in the chain now: 374 restores 346, 376 restores 374 (`depends_on`
     puts 374 directly beneath it, so 346 would be a step too far back), 384 restores
     376 for the same reason, 422 restores 384, 423 restores 422, 424 restores 423, 426
-    restores 424, 428 restores 426 and 498 restores 428 (425 and 427 touch no view, so
-    neither is a link in this chain).
+    restores 424, 428 restores 426, 498 restores 428 and 511 restores 498 (425, 427 and
+    everything from 499 to 510 touch no view, so none of them is a link in this chain).
     """
     m346 = _load("346_scm_demand_origin_split")
     m374 = _load("374_so_supply_decisions")
@@ -171,6 +172,7 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     m426 = _load("426_committed_v_form_leg_scope")
     m428 = _load("428_order_inquiry_ack_state")
     m498 = _load("498_committed_v_bundled_qty")
+    m511 = _load("511_committed_v_line_owed")
 
     assert _normalize(m374._AS_OF_346) == _normalize(m346._AS_OF_346)
     assert _normalize(m376._AS_OF_374) == _normalize(m374._AS_OF_374)
@@ -181,6 +183,7 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     assert _normalize(m426._AS_OF_424) == _normalize(m424._AS_OF_424)
     assert _normalize(m428._AS_OF_426) == _normalize(m426._AS_OF_426)
     assert _normalize(m498._AS_OF_428) == _normalize(m428._AS_OF_428)
+    assert _normalize(m511._AS_OF_498) == _normalize(m498._AS_OF_498)
 
 
 @requires_pg

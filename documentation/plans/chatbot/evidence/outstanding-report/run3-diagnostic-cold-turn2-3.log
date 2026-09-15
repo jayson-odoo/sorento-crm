@@ -1,0 +1,101 @@
+lane switches before: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']
+lane switches for the run: enabled=True lanes=13
+
+--- turn 1  contact 437264483 ---
+> SRTWT7445 outstanding in 2026
+  branch_kind: business_query
+  reply.text: Product: SRTWT7445-LV-GM
+Outstanding for which document?
+1. Sales orders (not yet transferred to DO)
+2. Delivery orders (not yet delivered)
+3. Both
+  send_message: Product: SRTWT7445-LV-GM
+Outstanding for which document?
+1. Sales orders (not yet transferred to DO)
+2. Delivery orders (not yet delivered)
+3. Both
+  trace: no tool call
+
+--- turn 2  contact 437264483 ---
+> 3
+  branch_kind: business_query
+  reply.text: Product: SRTWT7445-LV-GM
+Customer: all
+Location: all
+Order date: 01/01/2026 to 31/12/2026
+
+*Sales order outstanding*
+No open sales order.
+
+*Delivery order pending*
+DO qty: 74
+Delivered: 60
+Pending: 14
+Delivery orders: 25
+DO date range: 20/04/2026 to 07/09/2026
+*_By location_*
+BRW: 72 (O/S: 13)
+MKT-D: 2 (O/S: 1)
+*_By customer_*
+J & Y WORLD HARDWARE SDN BHD [A/C I]: 7 (O/S: 0)
+MURO WALL SDN BHD (PROJECT): 6 (O/S: 0)
+PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ [A/C I]: 1 (O/S: 0)
+HENG SENG HARDWARE SDN BHD [A/C I]: 1 (O/S: 0)
+BEST LIGHT CITY SDN BHD [A/C I]: 1 (O/S: 0)
+WH ELECTRICAL MARKETING (M) SDN BHD [A/C I]: 1 (O/S: 0)
+FULLSHUN SANITARYWARE SDN BHD [A/C I]: 18 (O/S: 0)
+GRAND WATERHOUSE SDN BHD [A/C I]: 1 (O/S: 1)
+1 LIVING DEPOT SDN BHD [A/C I]: 3 (O/S: 0)
+DELUXE HOME CENTRE SDN BHD [A/C I]: 1 (O/S: 0)
+PSM HOME CENTRE SDN BHD [A/C I]: 3 (O/S: 0)
+MIRAGE HARDWARE TRADING (PROJECT-CASH): 1 (O/S: 0)
+KBO LOGISTICS & SUPPLY SDN BHD [A/C I]: 4 (O/S: 0)
+ITOLI CERAMIC SDN BHD [A/C I]: 1 (O/S: 0)
+KIM SENG JAYA SDN BHD [A/C I]: 14 (O/S: 7)
+PERNIAGAAN MOZEK CHIN TAK SDN BHD [A/C I]: 6 (O/S: 6)
+DE BATHLABZ SDN BHD [A/C I]: 1 (O/S: 0)
+TOTAL HOME DIY SDN BHD [A/C I]: 4 (O/S: 0)
+
+Reply with a number for detail:
+1. Delivery order list
+  send_message: Product: SRTWT7445-LV-GM
+Customer: all
+Location: all
+Order date: 01/01/2026 to 31/12/2026
+
+*Sales order outstanding*
+No open sales order.
+
+*Delivery order pending*
+DO qty: 74
+Delivered: 60
+Pending: 14
+Delivery orders: 25
+DO date range: 20/04/2026 to 07/09/2026
+*_By location_*
+BRW: 72 (O/S: 13)
+MKT-D: 2 (O/S: 1)
+*_By customer_*
+J & Y WORLD HARDWARE SDN BHD [A/C I]: 7 (O/S: 0)
+MURO WALL SDN BHD (PROJECT): 6 (O/S: 0)
+PERNIAGAAN W JAYA (SEMENYIH) SDN BHD - HQ [A/C I]: 1 (O/S: 0)
+HENG SENG HARDWARE SDN BHD [A/C I]: 1 (O/S: 0)
+BEST LIGHT CITY SDN BHD [A/C I]: 1 (O/S: 0)
+WH ELECTRICAL MARKETING (M) SDN BHD [A/C I]: 1 (O/S: 0)
+FULLSHUN SANITARYWARE SDN BHD [A/C I]: 18 (O/S: 0)
+GRAND WATERHOUSE SDN BHD [A/C I]: 1 (O/S: 1)
+1 LIVING DEPOT SDN BHD [A/C I]: 3 (O/S: 0)
+DELUXE HOME CENTRE SDN BHD [A/C I]: 1 (O/S: 0)
+PSM HOME CENTRE SDN BHD [A/C I]: 3 (O/S: 0)
+MIRAGE HARDWARE TRADING (PROJECT-CASH): 1 (O/S: 0)
+KBO LOGISTICS & SUPPLY SDN BHD [A/C I]: 4 (O/S: 0)
+ITOLI CERAMIC SDN BHD [A/C I]: 1 (O/S: 0)
+KIM SENG JAYA SDN BHD [A/C I]: 14 (O/S: 7)
+PERNIAGAAN MOZEK CHIN TAK SDN BHD [A/C I]: 6 (O/S: 6)
+DE BATHLABZ SDN BHD [A/C I]: 1 (O/S: 0)
+TOTAL HOME DIY SDN BHD [A/C I]: 4 (O/S: 0)
+
+Reply with a number for detail:
+1. Delivery order list
+  trace: tool=crm_outstanding_report args={"scope": "both", "date_mode": null, "is_active": null, "product_code": "SRTWT7445-LV-GM", "access_levels": [], "order_date_to": "2026-12-31", "order_date_from": "2026-01-01"}
+lane switches restored: enabled=True lanes=['access_denied', 'escalate_offer', 'out_of_scope', 'ideate', 'offer_hold', 'escalation_declined', 'check_promotion', 'low_signal', 'clarify_menu', 'not_supported', 'stock_denied', 'demand_qty', 'business_query']

@@ -20,11 +20,17 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.dealer_kit import Page, PageVersion
-from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+from app.models.price_tag import (
+    PriceTagRequest,
+    PriceTagRequestLine,
+    PriceTagRequestTag,
+)
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
     ResolvedLineData,
-    PriceTagRequestLineUpdate,
+    PriceTagRequestTagResponse,
+    PriceTagRequestTagSplit,
+    PriceTagRequestTagUpdate,
     PriceTagRequestListItem,
     PriceTagRequestResponse,
     TagSheetDocPayload,
@@ -213,44 +219,154 @@ def transition_price_tag_request(
 
 
 # ---------------------------------------------------------------------------
-# Line update
+# Tags (D3): what actually gets printed for a line
+#
+# The line-level `PUT /{request_id}/lines/{line_id}` is GONE with the columns it
+# wrote. Left mounted it would keep accepting a blind `setattr` of fields that no
+# longer exist, so a stale frontend build would get a 200 for a write that did
+# nothing.
 # ---------------------------------------------------------------------------
 
 
-@router.put(
-    "/{request_id}/lines/{line_id}",
-    response_model=PriceTagRequestLineResponse,
-)
-def update_price_tag_request_line(
-    request_id: str,
-    line_id: str,
-    payload: PriceTagRequestLineUpdate,
-    db: Session = Depends(get_db),
-    _user: dict = Depends(_PROCESS),
-):
-    """Update a line (marketing_price_override, marketing_override_reason)."""
-    line = (
-        db.query(PriceTagRequestLine)
+def _tag_or_404(db: Session, request_id: str, tag_id: str) -> PriceTagRequestTag:
+    """One tag of THIS request, or 404.
+
+    The request is resolved FIRST, through `get_request`, and that is what makes
+    this safe: neither `price_tag_request_tags` nor `price_tag_request_lines` is
+    company-scoped on its own (both hang off the request, which carries the
+    partition), so a query that named only those two had no scoped entity for
+    `do_orm_execute` to attach the company predicate to - and PATCH, split and
+    DELETE all worked across companies. DELETE went further and rewrote the
+    other company's draft document.
+
+    `get_request` returns None for a request outside the caller's scope, which
+    reads here exactly like one that does not exist. That is the correct answer:
+    never confirm another company's id is real.
+    """
+    request = PriceTagRequestService.get_request(db, request_id)
+    if request is None:
+        raise AppException(status_code=404, message="Tag not found.", code="NOT_FOUND")
+    tag = (
+        db.query(PriceTagRequestTag)
+        .join(PriceTagRequestLine, PriceTagRequestLine.id == PriceTagRequestTag.line_id)
         .filter(
-            PriceTagRequestLine.id == line_id,
-            PriceTagRequestLine.request_id == request_id,
+            PriceTagRequestTag.id == tag_id,
+            PriceTagRequestLine.request_id == request.id,
         )
         .first()
     )
-    if not line:
-        raise AppException(
-            status_code=404,
-            message="Request line not found.",
-            code="NOT_FOUND",
-        )
+    if tag is None:
+        raise AppException(status_code=404, message="Tag not found.", code="NOT_FOUND")
+    return tag
 
-    update_data = payload.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(line, key, value)
 
+@router.patch(
+    "/{request_id}/tags/{tag_id}",
+    response_model=PriceTagRequestTagResponse,
+)
+def update_price_tag_request_tag(
+    request_id: str,
+    tag_id: str,
+    payload: PriceTagRequestTagUpdate,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """Quantity, the marketing override and its reason, and "Pick one" (D3).
+
+    All four are tag facts: two tags split off one line print two different
+    basins at two different prices, and a line-level figure would put the same
+    hand-set number on both.
+    """
+    tag = _tag_or_404(db, request_id, tag_id)
+    data = payload.model_dump(exclude_unset=True)
+    if "quantity" in data and data["quantity"] is not None:
+        tag.quantity = data["quantity"]
+    if "marketing_price_override" in data:
+        tag.marketing_price_override = data["marketing_price_override"]
+    if "marketing_override_reason" in data:
+        tag.marketing_override_reason = data["marketing_override_reason"]
+    if data.get("choices") is not None:
+        # MERGED, not replaced: a line may leave two groups open and Pick one
+        # answers them one at a time.
+        PriceTagRequestService.validate_choices(db, tag, data["choices"])
+        tag.choices = {**dict(tag.choices or {}), **data["choices"]}
+    # The body is built BEFORE the commit: it goes back through the resolver, and
+    # a failure there used to leave the write applied and answer 500.
     db.flush()
+    body = _tag_body(tag, _resolved_by_tag(db, request_id))
     db.commit()
-    return PriceTagRequestLineResponse.model_validate(line)
+    return body
+
+
+@router.post(
+    "/{request_id}/tags/{tag_id}/split",
+    response_model=list[PriceTagRequestTagResponse],
+)
+def split_price_tag_request_tag(
+    request_id: str,
+    tag_id: str,
+    payload: PriceTagRequestTagSplit,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """"Split into N tags" (AC-S3-4): one tag per candidate of an open group.
+
+    The tag that is there KEEPS ITS ID and takes candidate 1, so it keeps its
+    geometry in the saved document and its review pins; N-1 siblings follow it,
+    each resolved to one of the remaining candidates in combo order. A split that
+    minted N fresh tags would throw away the design marketing had already drawn.
+
+    Answers the LINE's tags, in order, because that is what the rail redraws.
+    """
+    tag = _tag_or_404(db, request_id, tag_id)
+    tags = PriceTagRequestService.split_tag(db, tag, payload.role)
+    db.flush()
+    resolved = _resolved_by_tag(db, request_id)
+    bodies = [_tag_body(row, resolved) for row in tags]
+    db.commit()
+    return bodies
+
+
+@router.delete("/{request_id}/tags/{tag_id}", status_code=204)
+def delete_price_tag_request_tag(
+    request_id: str,
+    tag_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """Remove one tag, never the line's last (AC-S3-6).
+
+    A line with no tags can never be printed and never be designed, and nothing
+    on screen would say why - so the last one is a named 422 rather than a
+    silent no-op.
+    """
+    tag = _tag_or_404(db, request_id, tag_id)
+    PriceTagRequestService.delete_tag(db, tag)
+    db.commit()
+    return None
+
+
+def _resolved_by_tag(db: Session, request_id: str) -> dict:
+    """The resolver's rows for one request, keyed by tag id.
+
+    Resolved ONCE per response. `_tag_body` used to do this itself, so a split
+    into four candidates ran four full resolves of the whole request - four
+    passes over every line, every part and the pricing engine - to answer one
+    list (review round 2, S3).
+    """
+    request = PriceTagRequestService.get_request(db, request_id)
+    if request is None:
+        return {}
+    return {
+        row["tag_id"]: row
+        for row in tag_data_service.resolve_request_line_data(db, request)
+    }
+
+
+def _tag_body(tag: PriceTagRequestTag, resolved: dict) -> dict:
+    """One tag in the shape every surface reads, off the ONE resolver so the
+    rail, the Lines tab and the PDF cannot disagree."""
+    return PriceTagRequestService.tag_body(tag, resolved.get(tag.id))
 
 
 # ---------------------------------------------------------------------------
@@ -447,19 +563,21 @@ def save_tag_sheet_design(
 @router.post("/{request_id}/resolve-prices", response_model=list[ResolvedLineData])
 def resolve_prices_for_lines(
     request_id: str,
-    line_ids: Optional[list[str]] = Body(default=None),
+    tag_ids: Optional[list[str]] = Body(default=None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    """Resolved display data - including prices - for this request's lines.
+    """Resolved display data - including prices - for this request's TAGS (D3).
 
     Through ``resolve_prices`` and the product master, never off the line row:
     the document stores no figures (ADR 0008), so this is the only place the
-    designer's left panel can learn what a line costs. A marketing override on
-    the line wins over the resolved offer (D9).
+    designer's left panel can learn what a tag costs. A marketing override on
+    the tag wins over the resolved offer (D9).
 
-    ``line_ids`` narrows the answer; omitting it resolves every line, which is
-    what the designer asks for when it opens.
+    ``tag_ids`` narrows the answer; omitting it resolves every tag, which is what
+    the designer asks for when it opens. The body used to be LINE ids and is tag
+    ids since S3 (D3) - a line may print several tags, so a line id could no
+    longer name one row.
     """
     req = PriceTagRequestService.get_request(db, request_id)
     if not req:
@@ -468,9 +586,9 @@ def resolve_prices_for_lines(
         )
 
     rows = tag_data_service.resolve_request_line_data(db, req)
-    if line_ids:
-        wanted = set(line_ids)
-        rows = [row for row in rows if row["line_id"] in wanted]
+    if tag_ids:
+        wanted = set(tag_ids)
+        rows = [row for row in rows if row["tag_id"] in wanted]
 
     return [ResolvedLineData.model_validate(row) for row in rows]
 
