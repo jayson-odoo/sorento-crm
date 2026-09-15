@@ -923,6 +923,52 @@ class TestReviseLinePromotionGate:
             ],
         )
         assert res.status_code == 422, res.text
+
+    def test_revise_rejects_out_of_bounds_manual_price(self, revise_client):
+        """R6: the revise composer's ``products[]`` line is a raw dict with
+        no pydantic schema at all - unlike create/update, where a `Decimal`
+        field type at least rejects a non-numeric string - so a bad
+        `manual_sell_price` here reaches `_as_decimal` completely
+        unvalidated. -5 and 0 convert cleanly (no bound check anywhere);
+        "abc" raises `decimal.InvalidOperation` uncaught."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        for bad in (-5, 0, "1E+400", "abc"):
+            res = self._revise(
+                c, row.id, headers,
+                expected_revision_no=0,
+                fields={"price_mode": "selling"},
+                products=[
+                    {"product_id": product_id, "quantity": 1, "manual_sell_price": bad}
+                ],
+            )
+            assert res.status_code == 422, (bad, res.text)
+
+    def test_revise_response_serialises_promotion_id_and_manual_sell_price(self, revise_client):
+        """R15: the revise route's own response has to carry the SAME two
+        line facts create/update already return, or a caller cannot show
+        what a revision just saved without a second GET."""
+        c, db = revise_client
+        contact, product_id, row = _setup(db)
+        _grant_audience_code(db, contact.id, "dealer")
+        promotion_id = _promotion_covering(db, product_id, access_levels=["dealer"])
+        headers = {"X-Portal-Token": _persisted_token(db, contact)}
+
+        res = self._revise(
+            c, row.id, headers,
+            expected_revision_no=0,
+            products=[
+                {"product_id": product_id, "quantity": 1, "promotion_id": promotion_id}
+            ],
+        )
+        assert res.status_code == 200, res.text
+        line = res.json()["submission"]["lines"][0]
+        assert line.get("promotion_id") == promotion_id, line
+        assert "manual_sell_price" in line, line
+
+
 class TestRevisionRoutesRequireFormVisibility:
     """Gap B: ``_require_own_request`` (the ownership check the generic
     revision routes dispatch to for price_tag_request) checks ownership

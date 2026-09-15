@@ -1569,6 +1569,63 @@ class TestPickerCompanyScope:
 
 
 # ---------------------------------------------------------------------------
+# R6 (Phase 3 review) - `manual_sell_price` has no bound at all: -5 and 0 are
+# valid `Decimal`s pydantic accepts as-is, and an absurd `1E+400` is a valid
+# arbitrary-precision `Decimal` too. 175.50 (the plan's own S6-4 example
+# figure) stays accepted throughout the existing suite.
+# ---------------------------------------------------------------------------
+
+
+class TestManualPriceBoundsOnCreateAndUpdate:
+    def test_create_rejects_out_of_bounds_manual_price(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+
+        for bad in (-5, 0, "1E+400"):
+            res = c.post(
+                _BASE,
+                json={
+                    "price_mode": "selling",
+                    "lines": [
+                        {
+                            "line_type": "product",
+                            "product_id": product_id,
+                            "manual_sell_price": bad,
+                        }
+                    ],
+                },
+            )
+            assert res.status_code == 422, (bad, res.text)
+
+    def test_update_rejects_out_of_bounds_manual_price(self, client):
+        c, db, _contact_id = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={
+                "price_mode": "selling",
+                "lines": [{"line_type": "product", "product_id": product_id}],
+            },
+        ).json()
+
+        for bad in (-5, 0, "1E+400"):
+            res = c.put(
+                f"{_BASE}/{created['id']}",
+                json={
+                    "price_mode": "selling",
+                    "lines": [
+                        {
+                            "line_type": "product",
+                            "product_id": product_id,
+                            "manual_sell_price": bad,
+                        }
+                    ],
+                },
+            )
+            assert res.status_code == 422, (bad, res.text)
+
+
+# ---------------------------------------------------------------------------
 # R4b/R5 (Phase 3 review) - the fail-closed promotion gate on CREATE, and the
 # same gate under a MULTI-company scope on REVISE.
 # ---------------------------------------------------------------------------

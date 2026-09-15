@@ -755,6 +755,37 @@ class TestLinePricePatch:
         )
         assert res.status_code == 404, res.text
 
+    def test_patch_line_404_for_a_malformed_line_id(self, api):
+        """R8a: `_line_or_404` filters `PriceTagRequestLine.id == line_id`
+        with NO `validate_uuid_path` on `line_id` (unlike `request_id`, which
+        the route DOES run through it) - a bad-format id must read as a
+        guaranteed-missing row (404), not a Postgres `DataError` (500)."""
+        client, db = api
+        request, _ = _submitted_request(db, lines=1, price_mode="selling")
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/not-a-uuid",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 404, res.text
+
+    def test_patch_line_manual_price_rejects_out_of_bounds_values(self, api):
+        """R6: `manual_sell_price` has no `Field` bound at all - -5 and 0 are
+        valid `Decimal`s pydantic happily accepts, and `1E+400` is a valid
+        (if absurd) arbitrary-precision `Decimal` too, so all three save
+        as-is today with no 422. 175.50 stays accepted (the existing
+        `test_patch_line_manual_price` already covers that at 888.5)."""
+        client, db = api
+        request, _ = _submitted_request(db, lines=1, price_mode="selling")
+        line_id = request.lines[0].id
+
+        for bad in (-5, 0, "1E+400"):
+            res = client.patch(
+                f"{_BASE}/{request.id}/lines/{line_id}",
+                json={"manual_sell_price": bad},
+            )
+            assert res.status_code == 422, (bad, res.text)
+
 
 @pytest.fixture(autouse=True)
 def no_respond(monkeypatch):

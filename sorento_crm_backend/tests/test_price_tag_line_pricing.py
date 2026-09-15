@@ -828,3 +828,32 @@ def test_malformed_product_id_in_line_pricing_is_422_not_500(portal_client):
         },
     )
     assert res.status_code == 422, res.text
+
+
+def test_malformed_promotion_id_with_a_candidate_is_422_not_500(portal_client):
+    """R8b: a junk `promotion_id`, given (not auto-picked), becomes `chosen_id`
+    unconditionally - and with at least one candidate present, reaches
+    `_offer_prices`' `PromotionProduct.promotion_id == promotion_id` filter,
+    a UUID column, as an unvalidated string (`_covering_promotions`/
+    `totals_by_promotion` never touch it as a filter, only as a dict key, so
+    this is the ONE place a junk promotion_id actually reaches Postgres)."""
+    client, db, _contact_id = portal_client
+    parent = _product(db, list_price="500.00")
+    candidate = _product(db, list_price="80.00")
+
+    res = client.post(
+        "/api/v1/public/portal/lookups/line-pricing",
+        json={
+            "price_mode": "selling",
+            "lines": [
+                {
+                    "key": "L1",
+                    "product_id": parent.id,
+                    "part_product_ids": [],
+                    "candidate_product_ids": [candidate.id],
+                    "promotion_id": "not-a-uuid",
+                }
+            ],
+        },
+    )
+    assert res.status_code == 422, res.text
