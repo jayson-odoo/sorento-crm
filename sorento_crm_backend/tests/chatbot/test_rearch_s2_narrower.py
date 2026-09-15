@@ -97,7 +97,7 @@ def test_promotion_with_no_tier_and_no_profile_tier_asks_tier():
     _state2, plan = apply(state, v, build_policy())
 
     assert plan.ask is not None
-    assert plan.ask.kind == "tier_ask"
+    assert plan.ask.kind == "tier_pick"
 
 
 def test_promotion_with_profile_tier_dealer_fetches_filtered_no_ask():

@@ -4,22 +4,24 @@ PLAN-chatbot-turn-rearch.md, contract lines 36/103/121).
 RIGHT NOW every test is RED with `ModuleNotFoundError: No module named
 'app.services.chatbot.turn'`.
 
-`OFFER_KINDS` vs "roster kinds" (whether the pending survives its own pick): the UAC's
-own text distinguishes them ("roster kinds keep the roster alive... offer kinds clear")
-without naming which of the eight is which. Assumed here, flagged in the tester's
-report: `escalation_offer`, `member_offer`, `tier_ask`, `team_clarify`,
-`company_clarify` are OFFERS (yes/no shaped, contract 40-43) and clear on a pick;
-`outstanding_scope`, `outstanding_detail`, `disambiguation` are ROSTERS (numbered
-options over entities/rows) and stay alive with `answered_positions` (contract 36).
+Kinds and roster/offer classification: captain ruling, item 1, 16 Sep 2026 -
+`PENDING_KINDS` / `ROSTER_KINDS` / `OFFER_KINDS` are the lane's eight names
+(`product_pick`, `customer_pick`, `tier_pick`, `team_pick`, `company_pick`,
+`member_offer`, `outstanding_scope`, `outstanding_detail`); `product_pick` and
+`customer_pick` are the roster kinds that stay alive with `answered_positions`, the
+other six clear on answer. See `_turn_helpers.py`'s module docstring.
 """
 from __future__ import annotations
 
 import pytest
 
-from tests.chatbot._turn_helpers import PENDING_KINDS, build_policy, verdict
-
-ROSTER_KINDS = ("outstanding_scope", "outstanding_detail", "disambiguation")
-OFFER_KINDS = tuple(k for k in PENDING_KINDS if k not in ROSTER_KINDS)
+from tests.chatbot._turn_helpers import (
+    OFFER_KINDS,
+    PENDING_KINDS,
+    ROSTER_KINDS,
+    build_policy,
+    verdict,
+)
 
 
 def _three_options():
@@ -98,7 +100,7 @@ def test_an_option_with_two_uuids_yields_two_entities():
             "payload": {},
         },
     ]
-    pending = ask("disambiguation", options, team=None, asked_at_turn=1)
+    pending = ask("product_pick", options, team=None, asked_at_turn=1)
     state = State(focus=Focus(), pending=pending, profile=Profile())
     v = verdict(reference_positions=[1], answers_open_question={"resolved": True, "picks": [1], "answer": None})
 
@@ -115,7 +117,7 @@ def test_a_pick_never_changes_domain_even_with_a_different_domain_hint():
     from app.services.chatbot.turn.state import Focus, Profile, State
 
     focus = Focus(domains=["incoming"])
-    pending = ask("disambiguation", _three_options(), team=None, asked_at_turn=1)
+    pending = ask("product_pick", _three_options(), team=None, asked_at_turn=1)
     state = State(focus=focus, pending=pending, profile=Profile())
     v = verdict(
         domain_hint="order",

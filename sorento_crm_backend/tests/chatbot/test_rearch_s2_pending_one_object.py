@@ -90,8 +90,8 @@ def test_pending_ask_constructs_from_kind_and_options():
 
 
 @pytest.mark.parametrize("kind", [
-    "escalation_offer", "member_offer", "team_clarify", "outstanding_scope",
-    "outstanding_detail", "tier_ask", "company_clarify", "disambiguation", "kind_pick",
+    "product_pick", "customer_pick", "tier_pick", "team_pick", "company_pick",
+    "member_offer", "outstanding_scope", "outstanding_detail", "kind_pick",
 ])
 def test_pending_kind_accepts_every_named_kind(kind):
     from app.services.chatbot.turn.pending import ask

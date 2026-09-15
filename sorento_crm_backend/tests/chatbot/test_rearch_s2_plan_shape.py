@@ -64,16 +64,32 @@ def test_domains_are_in_message_order_for_a_two_domain_verdict():
 
     state = State(focus=Focus(), pending=None, profile=Profile())
     v = verdict(
-        entities=[
-            entity("SRTWT2634", hint="product", domain="inventory"),
-            entity("SRTWT2634", hint="product", domain="incoming"),
+        entities=[entity("SRTWT2634", hint="product")],
+        # Two-domain messages (captain ruling, item 3, 16 Sep 2026): message-order
+        # list of {domain, intent}; `focus.domains` = [a["domain"] for a in asks].
+        asks=[
+            {"domain": "inventory", "intent": "check_stock"},
+            {"domain": "incoming", "intent": "check_incoming"},
         ],
     )
-    v["domains_hint"] = ["inventory", "incoming"]
 
-    _state2, plan = apply(state, v, build_policy())
+    state2, plan = apply(state, v, build_policy())
 
     assert plan.domains == ["inventory", "incoming"]
+    assert state2.focus.domains == ["inventory", "incoming"]
+
+
+def test_domains_falls_back_to_domain_hint_when_asks_is_empty():
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.state import Focus, Profile, State
+
+    state = State(focus=Focus(), pending=None, profile=Profile())
+    v = verdict(domain_hint="inventory", entities=[entity("SRTWT2634")], asks=[])
+
+    state2, plan = apply(state, v, build_policy())
+
+    assert plan.domains == ["inventory"]
+    assert state2.focus.domains == ["inventory"]
 
 
 def test_denied_lists_a_domain_the_profile_grants_forbid():

@@ -48,11 +48,8 @@ def test_2_reset_on_topic_clears_all_but_reset_keeps():
         tier=["dealer"],
         brands=["sorento"],
     )
-    # `topic_reset` has no home in the parser schema listed in the PLAN's Verdict shape -
-    # flagged in the report; assumed to travel as a top-level bool the coder's Verdict
-    # carries (mirrors the old engine's `turn.signals["topic_reset"]`).
-    v = verdict(entities=[])
-    v["topic_reset"] = True
+    # `topic_reset` is a v3 Verdict key (captain ruling, item 2, 16 Sep 2026).
+    v = verdict(entities=[], topic_reset=True)
 
     state2, _plan = apply(_state(focus), v, build_policy())
 

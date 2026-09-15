@@ -3,41 +3,36 @@ AC-1528, PLAN-chatbot-turn-rearch.md).
 
 Not itself a test file (no `test_` prefix - pytest never collects it).
 
-`verdict(**overrides)` is a PLAIN DICT, not a pydantic class: neither the PLAN nor the
-UAC asserts `Verdict` is a pydantic model, and every existing reader in this package
-(`jsc.get`, the lane modules) already consumes the parser's output as a dict - so the
-tests build the same shape `apply()` is expected to accept. Every key defaults to the
-parser schema's own "said nothing" value. `document`/`status`/`anaphora.
-backward_reference`/`answers_open_question`/`escalation.escalation_declined` are NEW
-keys the S0/S4 schema does not carry today (`head/parser.py::_build_json_schema` has no
-`document`, `status`, `anaphora` or `answers_open_question` key yet, and `escalation`
-carries only `is_escalation_confirmation`/`company_pick`) - included here because S2's
-contract needs them; this is itself one of the ambiguities in the tester's report (the
-exact shape of `answers_open_question`/`escalation.escalation_declined` is inferred from
-the captain's brief, not read off an existing schema).
+`verdict(**overrides)` is a PLAIN DICT, not a pydantic class (captain ruling, 16 Sep
+2026, item 6: Verdict is a plain dict). Every key defaults to the parser schema's own
+"said nothing" value.
 
-`PENDING_KINDS` (the "eight existing" pending kinds AC-1521 names) has no home today as
-a single named constant - `contracts.OPEN_QUESTION_KINDS` does not exist. Derived here by
-grepping every literal `"kind": "..."` a `pending`-shaped dict is built with across
-`app/services/chatbot/` (`tail/pending.py`, `lanes/business/__init__.py`,
-`lanes/escalation.py`, `tail/compile_state.py`): `escalation_offer`, `member_offer`,
-`team_clarify`, `outstanding_scope`, `outstanding_detail`, `tier_ask`, `company_clarify`,
-`disambiguation` - eight, matching the UAC's own count. Flagged as derived-not-literal.
+`PENDING_KINDS` (captain ruling, item 1, 16 Sep 2026): the LANE's eight names, not
+main's - `product_pick`, `customer_pick`, `tier_pick`, `team_pick`, `company_pick`,
+`member_offer`, `outstanding_scope`, `outstanding_detail`, plus `kind_pick` as the ninth
+(reconciliation-only) kind, not counted in the eight. `ROSTER_KINDS` (stay alive after
+their own pick, with `answered_positions`) = `product_pick`, `customer_pick` (+
+`kind_pick`, outside the eight); the other six clear when answered.
 """
 from __future__ import annotations
 
 from typing import Any
 
 PENDING_KINDS: tuple[str, ...] = (
-    "escalation_offer",
+    "product_pick",
+    "customer_pick",
+    "tier_pick",
+    "team_pick",
+    "company_pick",
     "member_offer",
-    "team_clarify",
     "outstanding_scope",
     "outstanding_detail",
-    "tier_ask",
-    "company_clarify",
-    "disambiguation",
 )
+
+# Within PENDING_KINDS, which stay alive (with `answered_positions`) after their own
+# pick vs. clear once answered (captain ruling, item 1, 16 Sep 2026).
+ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick"})
+OFFER_KINDS: frozenset[str] = frozenset(PENDING_KINDS) - ROSTER_KINDS
 
 # `reset_on_topic`'s survivors (PLAN AC-1525 / the ported `test_focus_rules.py` on
 # `feat/chatbot-focus`, `TestResetOnTopic.test_topic_reset_clears_the_question_and_
@@ -104,6 +99,12 @@ def verdict(**overrides: Any) -> dict[str, Any]:
         },
         "anaphora": {"backward_reference": False},
         "answers_open_question": {"resolved": False, "picks": [], "answer": None},
+        # v3 emits this (captain ruling, item 2, 16 Sep 2026).
+        "topic_reset": False,
+        # Two-domain messages (captain ruling, item 3, 16 Sep 2026): message-order list
+        # of {domain, intent}; `focus.domains` = [a["domain"] for a in asks] when
+        # non-empty, else the single `domain_hint`.
+        "asks": [],
     }
     base.update(overrides)
     return base
