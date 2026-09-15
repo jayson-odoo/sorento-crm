@@ -549,3 +549,117 @@ def test_export_guard_walks_line_promotions(db):
         _check_promotion_expired(db, request)
     assert excinfo.value.status_code == 409
     assert "line 2" in excinfo.value.message.lower()
+
+
+# ---------------------------------------------------------------------------
+# R11b/R13/R16 (Phase 3 review) - per-tag basis after auto-split, List mode
+# with a stray line promotion, and `resolve_tags_live`'s show_promo_price.
+# ---------------------------------------------------------------------------
+
+
+def test_split_tags_answer_basis_and_show_promo_price_per_their_own_candidate(db):
+    """R11b: `_line_sell_price_basis` is computed ONCE and cached PER LINE
+    (its own docstring: "a split line answers this question identically for
+    every one of its tags") - but after D6 auto-split, each tag has
+    RESOLVED to a different candidate, and only ONE of them (`white`, under
+    the promotion below) is actually covered. The covered tag must print SP,
+    the uncovered sibling must print LP - not the same answer twice.
+    """
+    cabinet = _product(db, "SRT11SPLIT", list_price="1599.00")
+    white = _product(db, "SRT11WH", list_price="299.00")
+    black = _product(db, "SRT11BK", list_price="349.00")
+    combo = _combo(db, cabinet, "2 in 1", [(white, "Basin"), (black, "Basin")])
+    promotion = _promotion(db, [(white, "249.00")], description="ZZT White Only")
+
+    request = _request(
+        db,
+        product=cabinet,
+        combo=combo,
+        promotion_id=promotion.id,
+        price_mode="selling",
+        parts=[{"role": "Basin", "candidates": [white.id, black.id]}],
+    )
+    db.flush()
+    assert len(request.lines[0].tags) == 2, "D6: auto-split off the open Basin group"
+
+    rows = _rows(db, request)
+    by_candidate = {}
+    for row in rows:
+        choices = row.get("open_groups") or []
+        # `open_groups` shape aside, the tag resolved a candidate - find it
+        # through `set_members`'s first token (matches
+        # `test_two_split_tags_price_their_own_candidate`).
+        code_line = row["set_members"].splitlines()[0]
+        candidate = white if white.product_code in code_line else black
+        by_candidate[candidate.id] = row
+
+    assert by_candidate[white.id]["sell_price_basis"] == "promotion"
+    assert by_candidate[white.id]["show_promo_price"] is True
+    assert by_candidate[black.id]["sell_price_basis"] == "list"
+    assert by_candidate[black.id]["show_promo_price"] is False
+
+
+def test_list_mode_line_with_a_stray_promotion_id_prints_parts_at_list(db):
+    """R13: a line can carry `promotion_id` while `price_mode == 'list'`
+    (AC-S6-4 only refuses a MANUAL price outside Selling mode, never a
+    promotion pick) - `_part_row` is handed `line.promotion_id` with no
+    price_mode check at all, so a part's `sell_price` still resolves an
+    offer even though the line's own price prints at list.
+    """
+    cabinet = _product(db, "SRT13CAB", list_price="1599.00")
+    mirror = _product(db, "SRT13MIRR", list_price="199.00")
+    combo = _combo(db, cabinet, "2 pc", [(mirror, None)])
+    promotion = _promotion(db, [(mirror, "149.00")])
+
+    request = _request(
+        db,
+        product=cabinet,
+        combo=combo,
+        promotion_id=promotion.id,
+        price_mode="list",
+        parts=[{"product_id": mirror.id}],
+    )
+    db.flush()
+
+    part = _rows(db, request)[0]["parts"][0]
+    assert part["sell_price"] is None, (
+        "List mode must never print a part at its promotion offer"
+    )
+
+
+def test_resolve_tags_live_derives_show_promo_price_live_not_from_the_saved_column(db):
+    """R16: `show_promo_price` on a resolved row must be the SAME live
+    derivation `sell_price_basis` already gets (`_line_sell_price_basis`,
+    called fresh on every read) - but the row literally echoes
+    `line.show_promo_price`, the column written once at save time. Expiring
+    the line's promotion AFTER save must flip what a fresh read reports,
+    with no re-save in between.
+
+    `resolve_tags_live` directly, NOT `_rows`/`resolve_request_line_data`
+    (r9/D17 PINS a tag's data on its first read - a second `_rows` call would
+    answer the frozen pin, not a fresh live resolve, and this test is about
+    the LIVE resolver specifically).
+    """
+    from app.services.dealer_kit import tag_data_service
+
+    cabinet = _product(db, "SRT16CAB", list_price="899.00")
+    promotion = _promotion(db, [(cabinet, "799.00")])
+
+    request = _request(
+        db, product=cabinet, promotion_id=promotion.id, price_mode="selling"
+    )
+    db.flush()
+    row = tag_data_service.resolve_tags_live(db, request)[0]
+    assert row["sell_price_basis"] == "promotion"
+    assert row["show_promo_price"] is True, "seed assumption: covered at save time"
+
+    promotion.end_date = date.today() - timedelta(days=1)
+    db.flush()
+
+    fresh_row = tag_data_service.resolve_tags_live(db, request)[0]
+    assert fresh_row["sell_price_basis"] == "list", (
+        "sell_price_basis IS re-derived live - this much already works"
+    )
+    assert fresh_row["show_promo_price"] is False, (
+        "show_promo_price must be re-derived live too, not echo the stale saved column"
+    )
