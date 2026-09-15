@@ -13,15 +13,25 @@ reason `keep` comes back empty on every `require_specific` turn today) and the C
 side (`dialogue/open_question.py::_customer_pick` ignoring `payload.keep` and
 `_entity_of`'s `raw`/`canonical_code` swap - see `tests/chatbot/test_open_question.py`,
 flipped in this same round). R-A is tested in `tests/chatbot/test_sticky_roster_tail.py`
-(`TestTheOfferRidesOnABornDisambiguationRoster`, flipped in this same round). R-B and R-F
-are separate mechanisms, tested here and in `tests/chatbot/test_outstanding_lane.py`.
+(`TestTheOfferRidesOnABornDisambiguationRoster`, flipped in this same round). R-F (the
+picked family's `family_uuids`, NOT `open_question.payload.families` - design revised
+15 Sep 2026 per the 2026-08-24 "family outlives the roster" ruling) is tested here at its
+two seats, `dialogue/open_question.py::_entity_of` and
+`lanes/business/fetch.py::entity_ids_transformer`. R-B is a separate mechanism, tested in
+`tests/chatbot/test_outstanding_lane.py`.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from app.services.chatbot.dialogue import open_question as oq
+from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business.gate import run_gate
-from tests.chatbot.test_tail_units import _compile, _ctx
+from app.services.chatbot.head import output_exchange as ox
+
+
+def _answer(**kw: Any) -> dict[str, Any]:
+    return {**ox.NO_OPEN_QUESTION_ANSWER, **kw}
 
 
 def _ambiguous_product_matches(*codes: str) -> list[dict[str, Any]]:
@@ -167,65 +177,65 @@ class TestRCTheArmingSideFreezesCoResolvedSiblings:
 
 
 class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
-    """R-F (coder a1f1112d diagnosis, same round): a customer roster row that spans two
-    ledgers - "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)" - must fetch BOTH ledgers' uuids
-    when picked. `gate.run_gate` already computes the per-row family map
-    (`out["picker_families"]`, `cust_families` in `lanes/business/gate.py`) on the
-    ARMING turn, but `tail/compile_state.py:1593`'s five-key projection
-    (`output["variables"] = {key: variables.get(key) for key in SESSION_VAR_KEYS}`) drops
-    ANY key that is not one of the five, and `picker_families` is not one of them - so by
-    the pick turn, `variables.picker_families` is always empty and the family-widening
-    block in `gate.py` (~line 1011, `if all_present: ... fam_mem = variables.get(
-    "picker_families")`) never has anything to read. The fix moves the family map onto
-    `open_question.payload.families` (a key `open_question`, one of the five, already
-    carries) instead. This test proves the projection drops it today, at the seat that
-    actually drops it - `compile_current_state`'s own five-key wall - rather than
-    guessing at gate.py's read-back side, which a fix would rewire onto a different key
-    entirely."""
+    """R-F (coder a1f1112d diagnosis, 15 Sep 2026, design revised same day - NO
+    `open_question.payload.families`, per the 2026-08-24 ruling that a family outlives
+    the roster): a customer roster row that spans two ledgers - "CHIN CHUN HARDWARE SDN
+    BHD (MCH, SRT)" - must fetch BOTH ledgers' uuids when picked. The family travels ON
+    the roster ROW and the PICKED ENTITY as `family_uuids` - a row field `gate.run_gate`
+    composes (`lanes/business/gate.py:956-966`'s picker-row construction) and
+    `dialogue/open_question.py::_entity_of` copies onto the entity it builds for
+    `focus.customer`. Neither exists today: `_entity_of` (573-586) builds `{raw, hint,
+    canonical_code, uuid, current_message, confident}` and nothing else, so a
+    `family_uuids` key on the row is silently dropped at the pick. Two seats, two tests:
+    the pick-time copy (`_entity_of`, `dialogue/open_question.py`), and the tool-call
+    expansion (`entity_ids_transformer`, `lanes/business/fetch.py`) that has to turn
+    `focus.customer.family_uuids` into every uuid the `customer_ids` argument carries -
+    today it reads only `e.get("uuid")`, one value per entity."""
 
-    def test_the_family_map_a_picker_turn_computes_does_not_survive_the_five_key_wall(
-        self,
-    ) -> None:
-        codes = ["CHIN CHUN HARDWARE SDN BHD (MCH, SRT)"]
-        ctx = _ctx(
-            message_type="business_query",
-            domain_hint="order",
-            intent_hint="check_order",
-        )
-        ctx["parse"]["_turn_no"] = 1
-        item = {
-            "outcome": {
-                "central-exchange": {
-                    "require_specific": True,
-                    "compatible_entities": [
-                        {"uuid": "uuid-mch-srt", "entity_type": "customer", "code": codes[0]}
-                    ],
-                    # `gate.run_gate`'s own output key, computed on this arming turn -
-                    # the per-row family map the pick turn needs to widen to both
-                    # ledgers.
-                    "picker_families": {
-                        "chin chun hardware": ["uuid-mch", "uuid-srt"],
-                    },
+    def test_a_picked_row_carries_its_family_uuids_onto_the_entity(self) -> None:
+        outcome = oq.resolve(
+            "customer_pick",
+            _answer(resolved=True, picks=[1]),
+            [
+                {
+                    "idx": 1,
+                    "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                    "code": "300-C043",
+                    "uuid": "uuid-mch",
+                    "entity_type": "customer",
+                    # `gate.run_gate`'s own row field (956-966): every uuid this
+                    # roster row's family spans, computed on the ARMING turn.
+                    "family_uuids": ["uuid-mch", "uuid-srt"],
                 }
-            }
+            ],
+            {},
+        )
+
+        assert outcome.focus["customer"].get("family_uuids") == ["uuid-mch", "uuid-srt"], (
+            f"_entity_of must copy the row's family_uuids onto the picked entity so "
+            f"the report fetches both ledgers, not just the row's own uuid: "
+            f"{outcome.focus.get('customer')!r}"
+        )
+
+    def test_the_tool_call_expands_family_uuids_into_every_ledger(self) -> None:
+        trigger = {
+            "tool": "crm_order_management_orders_list",
+            "entities": [
+                {
+                    "entity_type": "customer",
+                    "uuid": "uuid-mch",
+                    "code": "300-C043",
+                    "family_uuids": ["uuid-mch", "uuid-srt"],
+                }
+            ],
+            "semantic_input": {},
         }
 
-        result = _compile(item, ctx)
+        args = fetch_mod.entity_ids_transformer(trigger)
 
-        variables = result["variables"]
-        assert "picker_families" not in variables, (
-            "AC-1001's five-key wall: no key outside SESSION_VAR_KEYS should even be "
-            "attempted here - if this now fails because picker_families started "
-            "surviving as a TOP-LEVEL key, that is still the wrong seat (see the fix "
-            "direction in this test's own docstring)"
-        )
-        open_question = variables.get("open_question") or {}
-        payload = open_question.get("payload") or {}
-        assert payload.get("families"), (
-            f"the family map must ride open_question.payload.families - one of the "
-            f"five keys that survives the wall - so the pick turn can widen "
-            f"'CHIN CHUN HARDWARE SDN BHD (MCH, SRT)' to both uuid-mch and uuid-srt "
-            f"instead of the one row it was pinned to: open_question={open_question!r}"
+        assert sorted(args.get("customer_ids") or []) == ["uuid-mch", "uuid-srt"], (
+            f"the tool call must carry every ledger the picked row's family spans, "
+            f"not only the row's own uuid: {args.get('customer_ids')!r}"
         )
 
 
