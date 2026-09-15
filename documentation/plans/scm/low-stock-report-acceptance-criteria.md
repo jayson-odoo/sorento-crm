@@ -130,6 +130,8 @@ suggestion even with no open sales order. Dead products (no outbound movement in
   row can still be below raw level), sorted by Category then Item code.
 - **AC-33 [BE]** "All" rows = every row `report()` returns for the run, hidden-by-default rows
   included, same sort. The order sheet export keeps dropping hidden rows (unchanged).
+  Superseded 15 Sep 2026 by PLAN-low-stock-last-in-and-list-scope: the All sheet drops
+  hidden_by_default rows like the list.
 - **AC-34 [BE]** Description = `products.description` (NOT `product_name`, which repeats the
   code); Category = the product's `product_categories.category_code`; Reorder qty =
   `products.reorder_quantity`, blank when NULL or 0. All three are joined at export time

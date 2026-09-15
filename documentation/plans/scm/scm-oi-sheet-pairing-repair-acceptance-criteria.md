@@ -191,3 +191,50 @@ that file stays green unchanged.
   300 delivered, each reads 2. A row that says "nothing left to buy" on the card and 302 to
   the engine is worse than one that says 302 in both, because only one of the two is on a
   screen anybody checks.
+
+## Follow-up, 15 Sep: remark out, exact date wins, cancelled lines never a target (plan section 8, issue #915)
+
+Every criterion below is a pytest in `tests/test_oi_sheet_pairing_repair.py` over the
+`blank_session` world, unless it names another file. Postgres only.
+
+- **AC-R-39 The remark does not pick the line.** Two open lines of one item on one order,
+  A dated the sheet's date and named by no document, B dated a month later and named by PO
+  P (`from_so_line_ref` = B's ref). A sheet row for the item, dated A's date, whose remark
+  cites P. The row lands on A. (Under #904 it landed on B by term 1.)
+- **AC-R-40 The remark does not link.** One open line named by no document; PO P has a
+  free line of the item with capacity; the sheet row cites P. The row is raised with NO
+  link, `links_written` 0, `documents_not_linkable` empty, and the note still ends with the
+  operator's remark text (AC-S1-28 kept).
+- **AC-R-41 The exact date beats a bought line.** Two lines, A closed and fully delivered
+  dated the sheet's date with no document naming it, B closed dated later and named by PO P
+  which SPO S shipped in full. Row dated A's date, no remark. Lands on A, unlinked, and the
+  raised row's `delivery_date` is A's date (7.4). B is not touched.
+- **AC-R-42 Bought still decides when no line carries the sheet's date.** Same two lines,
+  the sheet row dated a third date. Lands on B and links to S (section 7 preserved, AC-R-32's
+  premise restated against the new order).
+- **AC-R-43 No cascade.** Three dated lines L1 < L2 < L3 of equal quantity, L1 named by
+  nothing, L2 and L3 each named by a PO line shipped on one SPO; an open balance line L4
+  dated 2030-01-01 of a larger quantity. Three sheet rows dated L1, L2, L3 in that order.
+  Each row lands on its own dated line; L2 and L3 rows link to the SPO; L1's row is
+  unlinked; nothing lands on L4 and no raised row carries 2030-01-01.
+- **AC-R-44 A cancelled purchase order line is never a target, from any source.** (a) PO
+  line X cancelled with `from_so_line_ref` = the row's line: no link from the ref source and
+  the line does NOT rank as "bought" because of X. (b) An `order_link_claim` naming
+  cancelled line X: no link from the claim source. (c) A non-cancelled sibling line of the
+  same PO with capacity IS still linked in the same run, so the exclusion is per line, not
+  per document.
+- **AC-R-45 The result contract is whole.** `preview` over the AC-R-43 world returns every
+  key it returned before (`ok problems orders_adopted orders_stamped rows rows_raised
+  rows_already_raised rows_line_not_found line_not_found sales_orders_not_found
+  orders_not_plannable links_written links_partial links_from_autocount
+  documents_not_linkable sheets_read sheets_skipped`) and `links_from_autocount ==
+  links_written`.
+- **Flipped tests** (plan 8.3): AC-R-8, AC-R-9, AC-R-12, AC-R-23 and the six `test_cited_*`
+  / `test_*citation*` / `test_autocount_wins_over_remark` tests in
+  `tests/test_project_order_inquiry_import_migration.py` are rewritten to the new rulings or
+  deleted with the reason in the PR body; AC-R-32, AC-R-33, AC-R-11 stay as they are.
+- **AC-R-46 An undated row does not prefer an undated line** (reviewer finding 1, 15 Sep).
+  Two lines: L1 with no required date, named by nothing; L2 dated, named by a PO line that an
+  SPO shipped. One ORDER BACK sheet row (no delivery date). The row lands on L2 and links to
+  the SPO; the raised row's `delivery_date` is L2's date, not NULL. (Under the first cut of
+  section 8 the date term read `None == None` as a match and put the row on L1, unlinked.)

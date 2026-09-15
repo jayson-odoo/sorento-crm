@@ -58,6 +58,7 @@ from .test_project_order_inquiry_import_migration import (  # the seeded world, 
     D_NOV,
     D_OCT,
     MARKER,
+    RESULT_KEYS,
     World,
     _n,
     _uid,
@@ -284,29 +285,10 @@ def test_ac_r_4_po_history_claim_alone_links_nothing():
         assert result["links_written"] == 0
         assert result["links_from_autocount"] == 0
 
-    with world() as w:
-        order = w.order()
-        line = _with_ref(w, w.line(order, qty_ordered="50"), _ref())
-        history, history_line = w.po_line(qty_ordered="50")
-        w.claim(
-            order=order, core_line=line, document=history.po_number,
-            po_line=history_line, source="po_history",
-        )
-        cited, cited_line = w.po_line(qty_ordered="50")
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, cited.po_number),
-        ])
-
-        result = _apply(w, data)
-
-        links = w.links(w.one_row())
-        assert len(links) == 1, _documents(links)
-        assert str(links[0].po_line_id) == str(cited_line.id), (
-            "source 3 must still run once the August claim stops answering"
-        )
-        assert links[0].auto is False, "the sheet's remark is a person, not the book"
-        assert result["links_from_autocount"] == 0
+        # The second world this test carried before #915 ("source 3 must still run once
+        # the August claim stops answering") is DELETED: source 3, the sheet's citation, no
+        # longer exists at all (8.1 change 1), so there is nothing left for the August
+        # claim's absence to fall through to.
 
 
 def test_ac_r_5_autocount_claim_without_ref_still_links():
@@ -371,7 +353,10 @@ def test_ac_r_6_ref_beats_claim_to_other_document():
 
 def test_ac_r_7_named_line_with_no_capacity_is_skipped():
     """AC-R-7. The capacity rule is unchanged by the new source: a named line that existing
-    links have already filled is SKIPPED, and the need falls through to the sheet's citation.
+    links have already filled is SKIPPED, and the need falls through to the NEXT purchase
+    order line the ref itself names (issue #915 retired the sheet's citation as a fallback;
+    the ref can name more than one document for the same line, and the walk over them -
+    still inside source 1 - is what this criterion is about).
 
     Green before the repair too - source 1 does not exist yet, so nothing tries the named
     line at all. It is here so the repair cannot make the ref a special case that overruns a
@@ -384,24 +369,30 @@ def test_ac_r_7_named_line_with_no_capacity_is_skipped():
         full_po, full_line = w.po_line(qty_ordered="20")
         _names(w, full_line, ref)
         _link_row(w, po_line=full_line, document=full_po.po_number, qty="20")
-        cited, cited_line = w.po_line(qty_ordered="50")
+        spare_po, spare_line = w.po_line(qty_ordered="50")
+        _names(w, spare_line, ref)
         data = sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, cited.po_number),
+             w.warehouse.warehouse_code, ""),
         ])
 
         result = _apply(w, data)
 
-        raised = [row for row in w.rows() if row.cited_document == cited.po_number]
+        raised = [
+            row for row in w.rows()
+            if (row.note or "").startswith(importer._MIGRATION_STAMP)
+        ]
         assert len(raised) == 1, [row.item_code for row in raised]
         links = w.links(raised[0])
         assert len(links) == 1, _documents(links)
-        assert str(links[0].po_line_id) == str(cited_line.id)
+        assert str(links[0].po_line_id) == str(spare_line.id)
+        assert links[0].document == spare_po.po_number
         assert Decimal(str(links[0].qty)) == Decimal("30")
         assert all(
             str(link.po_line_id) != str(full_line.id) for link in links
         ), "a line with no capacity was linked anyway"
         assert result["links_partial"] == 0
+        assert result["links_from_autocount"] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -410,13 +401,15 @@ def test_ac_r_7_named_line_with_no_capacity_is_skipped():
 
 
 def test_ac_r_8_cited_po_ref_picks_the_named_line():
-    """AC-R-8. Two lines of the same item both fit; the cited purchase order names the
-    second; the row is raised against the SECOND.
+    """AC-R-8, restated by AC-R-39 (`PLAN-scm-oi-sheet-pairing-repair.md` section 8, issue
+    #915). The remark no longer picks the line: two lines of the same item both fit, the
+    cited purchase order names the SECOND, but the row's own delivery date is the FIRST
+    line's - and the row now lands on the FIRST, not the second.
 
-    This is prod row 113 of tab "JAN 26". The shipped ranking reads the required date and
-    nothing else, so the row landed on a 90-qty line the cited PO says nothing about. The
-    sheet's own delivery date is deliberately the FIRST line's, so only the citation can
-    move the row.
+    Before #915 the citation was term 1 of `_rank_for` and picked the second line off a
+    90-qty candidate the sheet's own date says nothing about (prod row 113, tab "JAN 26").
+    The owner's ruling ("let's ignore the sheet remark at all") retires that term outright,
+    so the row's own date decides and the citation is not even tried for a link.
     """
     with world() as w:
         order = w.order()
@@ -435,26 +428,22 @@ def test_ac_r_8_cited_po_ref_picks_the_named_line():
 
         assert result["rows_raised"] == 1, result
         row = w.one_row()
-        mirror = w.mirror_of(second)
-        assert mirror is not None, "the line the citation names was never mirrored"
+        mirror = w.mirror_of(first)
+        assert mirror is not None, "the line whose date matches the sheet was never mirrored"
         assert str(row.so_line_id) == str(mirror.id), (
-            "the row landed on the line the cited purchase order says nothing about"
+            "the remark still picked the line the cited purchase order names"
         )
-        assert w.mirror_of(first) is None or str(row.so_line_id) != str(
-            w.mirror_of(first).id
+        assert w.mirror_of(second) is None or str(row.so_line_id) != str(
+            w.mirror_of(second).id
         )
-        links = w.links(row)
-        assert len(links) == 1, _documents(links)
-        assert str(links[0].po_line_id) == str(cited_line.id)
+        assert w.links(row) == [], "the remark linked the row to the document it cites"
 
 
 def test_ac_r_9_cited_spo_chain_picks_the_named_line():
-    """AC-R-9. The same pick, with the chain read BACKWARDS: the sheet cites a shipping
-    order, whose allocation carries `from_po_number`, whose purchase order line names the
-    second sales order line.
-
-    `SPO-2026/01-0140 <- 202511-S0097 <- AED_SORENTO:41576559:41604391` is the owner's own
-    chain, stated in that direction by the two feeds.
+    """AC-R-9, restated (issue #915). The same retraction over the chain read BACKWARDS:
+    the sheet cites a shipping order, whose allocation carries `from_po_number`, whose
+    purchase order line names the SECOND sales order line - and the row still lands on the
+    FIRST, matching its own date, with no link at all.
     """
     with world() as w:
         order = w.order()
@@ -474,14 +463,15 @@ def test_ac_r_9_cited_spo_chain_picks_the_named_line():
 
         assert result["rows_raised"] == 1, result
         row = w.one_row()
-        assert str(row.so_line_id) == str(w.mirror_of(second).id), (
-            "the shipping order's own purchase order names the second line"
+        mirror = w.mirror_of(first)
+        assert mirror is not None
+        assert str(row.so_line_id) == str(mirror.id), (
+            "the remark's shipping-order chain still picked the second line"
         )
-        assert w.mirror_of(first) is None or str(row.so_line_id) != str(
-            w.mirror_of(first).id
+        assert w.mirror_of(second) is None or str(row.so_line_id) != str(
+            w.mirror_of(second).id
         )
-        links = w.links(row)
-        assert _documents(links) == [allocation.spo_number], _documents(links)
+        assert w.links(row) == [], "the cited shipping order linked the row anyway"
 
 
 def test_ac_r_10_cancelled_ghost_loses_to_real_line():
@@ -604,36 +594,12 @@ def test_ac_r_11_differing_remark_is_a_restatement():
         )
 
 
-def test_ac_r_12_restatement_lends_its_citation():
-    """AC-R-12. The FIRST row states the delivery with a blank remark and the SECOND names
-    the purchase order: the one raised row is linked to it.
-
-    Which tab carries the remark is an accident of how the customer keeps the book, so the
-    citation is merged onto the match that was kept rather than discarded with the row that
-    restated it. The sales order line here holds both quantities, so the shipped behaviour
-    raises two rows rather than failing on capacity - what is measured is the count and the
-    link, not a refusal.
-    """
-    with world() as w:
-        order = w.order()
-        _with_ref(w, w.line(order, qty_ordered="100"), _ref())
-        cited, cited_line = w.po_line(qty_ordered="50")
-        blank = (order.so_number, w.product.product_code, 30, D_OCT,
-                 w.warehouse.warehouse_code, "")
-        naming = (order.so_number, w.product.product_code, 30, D_OCT,
-                  w.warehouse.warehouse_code, cited.po_number)
-
-        result = _apply(w, book(JAN26=[blank], ROLLUP=[naming]))
-
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        links = w.links(row)
-        assert len(links) == 1, _documents(links)
-        assert str(links[0].po_line_id) == str(cited_line.id)
-        assert Decimal(str(links[0].qty)) == Decimal("30")
-        assert row.cited_document == cited.po_number, (
-            "the restatement's citation never reached the row it restates"
-        )
+# AC-R-12 ("the FIRST row's blank remark takes the SECOND row's citation, and the one
+# raised row is linked to it") is DELETED here (issue #915, plan section 8.3): 8.1 change 1
+# removes `_Match.cited` and the citation pre-pass entirely, so there is no longer a
+# citation for a restatement to lend, and nothing but the removed source was under test.
+# The restatement-dedup behaviour it shared with AC-R-11 (kept, unchanged) is still covered
+# there.
 
 
 # --------------------------------------------------------------------------- #
@@ -660,16 +626,18 @@ def _rollback():
 
 
 def _uploaded(w: World, *, file_name: str, qty: int = 30, product=None):
-    """One sales order, one line, one cited purchase order - raised under `file_name`."""
+    """One sales order, one line, one purchase order line that NAMES it (the ref, source 1
+    - issue #915 retired the remark as a link source) - raised under `file_name`."""
     order = w.order()
     product = product or w.product
-    w.line(order, product=product, qty_ordered="50")
+    line = _with_ref(w, w.line(order, product=product, qty_ordered="50"), _ref())
     po, po_line = w.po_line(qty_ordered="50", product=product)
+    _names(w, po_line, line.source_ref)
     result = _apply(
         w,
         sheet([
             (order.so_number, product.product_code, qty, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ]),
         file_name=file_name,
     )
@@ -817,11 +785,12 @@ def test_ac_r_16_rows_raise_again_after_rollback():
     """
     with world() as w:
         order = w.order()
-        w.line(order, qty_ordered="50")
-        po, _po_line = w.po_line(qty_ordered="50")
+        line = _with_ref(w, w.line(order, qty_ordered="50"), _ref())
+        po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, line.source_ref)
         data = sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ])
 
         first = _apply(w, data, file_name="a.xlsx")
@@ -856,8 +825,9 @@ def test_ac_r_17_rollback_keeps_another_feeds_claim():
     """
     with world() as w:
         order = w.order()
-        line = w.line(order, qty_ordered="50")
+        line = _with_ref(w, w.line(order, qty_ordered="50"), _ref())
         po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, line.source_ref)
         foreign = w.claim(
             order=order, core_line=line, document=po.po_number,
             po_line=po_line, source="autocount",
@@ -866,7 +836,7 @@ def test_ac_r_17_rollback_keeps_another_feeds_claim():
 
         result = _apply(w, sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ]), file_name="a.xlsx")
 
         assert result["rows_raised"] == 1, result
@@ -891,16 +861,25 @@ def test_ac_r_17_rollback_keeps_another_feeds_claim():
 
     with world() as w:
         order = w.order()
-        w.line(order, qty_ordered="50", required_date=D_OCT)
-        w.line(order, qty_ordered="50", required_date=D_NOV)
-        po, _po_line = w.po_line(qty_ordered="60")
+        first_line = _with_ref(
+            w, w.line(order, qty_ordered="50", required_date=D_OCT), _ref()
+        )
+        second_line = _with_ref(
+            w, w.line(order, qty_ordered="50", required_date=D_NOV), _ref()
+        )
+        po, first_po_line = w.po_line(qty_ordered="30")
+        _names(w, first_po_line, first_line.source_ref)
+        second_po_line = _sibling_po_line(
+            w, po, qty_ordered="30", source_ref=f"AED_SORENTO:{_n()}:2",
+            from_so_line_ref=second_line.source_ref,
+        )
         first = _apply(w, sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ]), file_name="a.xlsx")
         second = _apply(w, sheet([
             (order.so_number, w.product.product_code, 30, D_NOV,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ]), file_name="b.xlsx")
 
         assert first["rows_raised"] == 1 and second["rows_raised"] == 1, (first, second)
@@ -1269,11 +1248,18 @@ def test_ac_r_22_ambiguous_ref_never_promotes_a_ghost():
         elsewhere = w.order()
         _with_ref(w, w.line(elsewhere, qty_ordered="50"), "1")
 
-        cited, cited_line = w.po_line(qty_ordered="50")
-        _names(w, cited_line, "1")
+        # A purchase order line naming the AMBIGUOUS ordinal - proves it links nothing,
+        # not even by the ref (source 1 drops it, same guard `_ref_targets` applies).
+        ambiguous_po, ambiguous_line = w.po_line(qty_ordered="50")
+        _names(w, ambiguous_line, "1")
+        # A SEPARATE purchase order line naming `real`'s own, UNAMBIGUOUS ref - issue #915
+        # retired the sheet's citation as a link source, so the row's own book link is
+        # stated through this instead (coordinator round 2, group 3).
+        real_po, real_po_line = w.po_line(qty_ordered="50")
+        _names(w, real_po_line, real.source_ref)
         data = sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, cited.po_number),
+             w.warehouse.warehouse_code, ""),
         ])
 
         result = _apply(w, data)
@@ -1285,61 +1271,25 @@ def test_ac_r_22_ambiguous_ref_never_promotes_a_ghost():
             "the real line was never mirrored: the ordinal promoted the cancelled ghost"
         )
         assert str(row.so_line_id) == str(mirror.id), (
-            "an ambiguous ref made the cancelled ghost the line the citation names"
+            "an ambiguous ref made the cancelled ghost outrank the real line"
         )
         ghost_mirror = w.mirror_of(ghost)
         assert ghost_mirror is None or str(row.so_line_id) != str(ghost_mirror.id)
         links = w.links(row)
-        assert [str(link.po_line_id) for link in links] == [str(cited_line.id)], (
+        assert [str(link.po_line_id) for link in links] == [str(real_po_line.id)], (
             _documents(links)
         )
-        assert result["links_from_autocount"] == 0, (
-            "the ambiguous ref paired the row as though the book had stated it"
-        )
-        assert links[0].auto is False
+        assert all(
+            str(link.po_line_id) != str(ambiguous_line.id) for link in links
+        ), "the ambiguous ref paired the row as though the book had stated it"
+        assert result["links_from_autocount"] == 1
 
 
-def test_ac_r_23_lent_citation_picks_the_line_before_matching():
-    """AC-R-23. The citation a restatement lends has to reach the LINE PICK, not just the
-    pairing.
-
-    The customer's month tab carries the delivery with no remark and the roll-up tab carries
-    the same delivery with the purchase order number on it. AC-R-12 already says the number
-    is merged onto the row that was kept - but a merge that happens after that row has been
-    matched changes only which document it links to, and the row is by then already on the
-    wrong line. Which tab holds the remark is an accident of how the book is kept; it must
-    not decide which line of the order the quantity lands on.
-    """
-    with world() as w:
-        order = w.order()
-        first = w.line(order, qty_ordered="50", required_date=D_OCT)
-        second = _with_ref(
-            w, w.line(order, qty_ordered="50", required_date=D_NOV), _ref()
-        )
-        cited, cited_line = w.po_line(qty_ordered="50")
-        _names(w, cited_line, second.source_ref)
-        blank = (order.so_number, w.product.product_code, 30, D_OCT,
-                 w.warehouse.warehouse_code, "")
-        naming = (order.so_number, w.product.product_code, 30, D_OCT,
-                  w.warehouse.warehouse_code, cited.po_number)
-
-        result = _apply(w, book(JAN26=[blank], ROLLUP=[naming]))
-
-        assert result["rows"] == 2, result
-        assert result["rows_raised"] == 1, result
-        row = w.one_row()
-        mirror = w.mirror_of(second)
-        assert mirror is not None, "the line the lent citation names was never mirrored"
-        assert str(row.so_line_id) == str(mirror.id), (
-            "the row was matched before the roll-up tab lent it the purchase order number"
-        )
-        assert w.mirror_of(first) is None or str(row.so_line_id) != str(
-            w.mirror_of(first).id
-        )
-        links = w.links(row)
-        assert [str(link.po_line_id) for link in links] == [str(cited_line.id)], (
-            _documents(links)
-        )
+# AC-R-23 ("the citation a restatement lends has to reach the LINE PICK, not just the
+# pairing") is DELETED here (issue #915, plan section 8.3): its whole premise was the
+# citation reaching the line pick, and 8.1 change 1 removes `_Match.cited` and the citation
+# pre-pass entirely, so there is no lent citation left to reach anything. Nothing but the
+# removed source was under test.
 
 
 def test_ac_r_24_ref_shared_by_two_orders_pairs_nothing():
@@ -1388,11 +1338,15 @@ def test_ac_r_32_bought_line_outranks_unbought_without_citation():
     sit like that - on an unbought line with a free, bought sibling of the same sales order
     and item standing beside it.
 
-    The sheet's date here is the UNBOUGHT line's own required date, so the existing terms
-    all point at line 1 and only the new one can move the row.
+    The sheet's date here carries a THIRD date neither line owns (issue #915, section 8.1
+    change 2 promoted "required_date == sheet date" ABOVE "bought" - AC-R-41's own ruling -
+    so a sheet date equal to the unbought line's own date would land there on the date term
+    alone, before "bought" is ever consulted, and this criterion would stop testing what it
+    names). With the date term tied for both lines, "bought" is what moves the row.
     """
     with world() as w:
         order = w.order()
+        third_date = date(2026, 12, 1)
         unbought = _born_at(
             w,
             _with_ref(w, w.line(order, qty_ordered="50", required_date=D_OCT), _ref()),
@@ -1406,7 +1360,7 @@ def test_ac_r_32_bought_line_outranks_unbought_without_citation():
         po, po_line = w.po_line(qty_ordered="50")
         _names(w, po_line, bought.source_ref)
         data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
+            (order.so_number, w.product.product_code, 30, third_date,
              w.warehouse.warehouse_code, ""),
         ])
 
@@ -1438,7 +1392,13 @@ def test_ac_r_33_bought_beats_open_but_not_cancelled():
     line is different in kind: 10,499 August-extract ghosts are still in the book, and a
     ghost that happens to carry a `from_so_line_ref` must not outrank a real open line. So
     the ordering the two halves pin is `cancelled-last` first, then `bought`, then `open`.
+
+    The sheet's date is a THIRD date neither line owns (issue #915: "required_date == sheet
+    date" now ranks above "bought", AC-R-41's own ruling - a sheet date equal to the open
+    line's own date would win on the date term alone, before "bought" is ever reached, and
+    this half would stop proving what it names).
     """
+    third_date = date(2026, 12, 1)
     with world() as w:
         open_line = _born_at(
             w,
@@ -1460,7 +1420,7 @@ def test_ac_r_33_bought_beats_open_but_not_cancelled():
         _po, po_line = w.po_line(qty_ordered="50")
         _names(w, po_line, closed_bought.source_ref)
         data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
+            (order.so_number, w.product.product_code, 30, third_date,
              w.warehouse.warehouse_code, ""),
         ])
 
@@ -1758,17 +1718,19 @@ def _remaining_open(db, row) -> Decimal:
 
 def _seed_partly_delivered(w, *, delivered: str):
     """One migrated row of 364 on a line that has already delivered most of itself, with
-    62 of the rest on a purchase order the sheet cites."""
+    62 of the rest on a purchase order line that NAMES it (the ref, source 1 - issue #915
+    retired the remark as a link source)."""
     order = w.order()
-    line = w.line(order, qty_ordered="364", qty_delivered=delivered)
+    line = _with_ref(w, w.line(order, qty_ordered="364", qty_delivered=delivered), _ref())
     # A document number from a year no real book holds. This test runs on the REAL
     # database (the view), which on a developer's machine is a copy of production and
     # already carries every `2026MM-Snnnn` the parent file's `_po_number()` can mint -
     # `uq_purchase_orders_company_po_number` then aborts the seed, on that machine only.
-    po, _po_line = w.po_line(qty_ordered="62", number=f"209901-S{_n():04d}")
+    _po, po_line = w.po_line(qty_ordered="62", number=f"209901-S{_n():04d}")
+    _names(w, po_line, line.source_ref)
     result = _apply(w, sheet([
         (order.so_number, w.product.product_code, 364, D_OCT,
-         w.warehouse.warehouse_code, po.po_number),
+         w.warehouse.warehouse_code, ""),
     ]))
     assert result["rows_raised"] == 1, result
     assert result["links_written"] == 1, result
@@ -1852,3 +1814,410 @@ def test_ac_r_38c_the_plans_own_select_is_capped():
         _line, _row = _seed_partly_delivered(w, delivered="300")
 
         assert _committed(w.db, w.product.id, planned=True) == Decimal("2")
+
+
+# --------------------------------------------------------------------------- #
+# follow-up, 15 Sep: the remark leaves the match, exact date wins, a cancelled  #
+# purchase order line is never a target (plan section 8, issue #915)          #
+# --------------------------------------------------------------------------- #
+
+
+def test_ac_r_39_remark_does_not_pick_the_line():
+    """AC-R-39. The remark no longer picks the line, not even to choose between two that
+    fit.
+
+    Two open lines of one item on one order: A dated the sheet's own date and named by no
+    document, B dated a month later and named by purchase order P. Under #904 (before this
+    lane) P's citation was term 1 of `_rank_for` and outranked everything, including the
+    exact date match, so the row landed on B. The owner: "let's ignore the sheet remark at
+    all."
+    """
+    with world() as w:
+        order = w.order()
+        a = w.line(order, qty_ordered="50", required_date=D_OCT)
+        b = _with_ref(
+            w, w.line(order, qty_ordered="50", required_date=D_NOV), _ref()
+        )
+        cited, cited_line = w.po_line(qty_ordered="50")
+        _names(w, cited_line, b.source_ref)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, cited.po_number),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror_a = w.mirror_of(a)
+        assert mirror_a is not None
+        assert str(row.so_line_id) == str(mirror_a.id), (
+            "the remark still picked the line the cited purchase order names, over the "
+            "line whose own date matches the sheet"
+        )
+        mirror_b = w.mirror_of(b)
+        assert mirror_b is None or str(row.so_line_id) != str(mirror_b.id)
+        assert w.links(row) == [], (
+            "the row landed on the unnamed line yet still carried a link"
+        )
+
+
+def test_ac_r_40_remark_does_not_link():
+    """AC-R-40. The remark does not link either, even where the cited document has room.
+
+    One open line named by no document; purchase order P has a free line of the item with
+    capacity; the sheet row cites P. The row is raised with NO link, `links_written` 0,
+    `documents_not_linkable` empty (source 3 is gone, so nothing is ever reported against
+    it - `_pair` loses source 3 and the `_purchase_side` read entirely, 8.1 change 1), and
+    the note still ends with the operator's own remark text (AC-S1-28 kept, `_note_for` is
+    untouched).
+    """
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50")
+        cited, _cited_line = w.po_line(qty_ordered="50")
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, cited.po_number),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert w.links(row) == [], "the remark linked the row anyway"
+        assert result["links_written"] == 0, result
+        assert result["documents_not_linkable"] == [], result
+        assert row.note.endswith(cited.po_number), row.note
+
+
+def test_ac_r_41_exact_date_beats_bought_line():
+    """AC-R-41. The exact date beats a bought line - the part of section 7's ranking this
+    lane reverses.
+
+    Two lines: A closed and fully delivered, dated the sheet's own date, with no document
+    naming it; B closed, dated later, named by purchase order P which shipping order S
+    shipped in full. Under #904, section 7 put "bought" above "date equals the sheet date"
+    in `_rank_for`, so B won even though nothing about the sheet's own date points at it.
+    The row now lands on A, unlinked, and the raised row's `delivery_date` is A's own date
+    (7.4, unaffected by this lane). B is not touched by this row at all.
+    """
+    with world() as w:
+        order = w.order()
+        a = w.line(
+            order, qty_ordered="50", required_date=D_OCT,
+            line_status="closed", qty_delivered="50",
+        )
+        b = _with_ref(
+            w,
+            w.line(
+                order, qty_ordered="50", required_date=D_NOV,
+                line_status="closed", qty_delivered="50",
+            ),
+            _ref(),
+        )
+        po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, b.source_ref)
+        w.spo_allocation(quantity=50, from_po_number=po.po_number)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror_a = w.mirror_of(a)
+        assert mirror_a is not None, (
+            "A is closed and fully delivered, so it is mirrored only if a row lands on "
+            "it or it is named - and neither happened: the row went to the bought line"
+        )
+        assert str(row.so_line_id) == str(mirror_a.id), (
+            "a line the book bought for outranked the line whose date matches the sheet"
+        )
+        mirror_b = w.mirror_of(b)
+        assert mirror_b is None or str(row.so_line_id) != str(mirror_b.id)
+        assert w.links(row) == [], (
+            "the row on the exact-date line took a link meant for the bought line"
+        )
+        assert row.delivery_date == D_OCT
+
+
+def test_ac_r_42_bought_decides_when_no_line_matches_sheet_date():
+    """AC-R-42. Bought still decides when no line carries the sheet's date - section 7
+    preserved, AC-R-32's premise restated against the new term order.
+
+    Same two lines as AC-R-41, but the sheet row is dated a THIRD date neither line
+    carries: the date term ties for both, and the bought term - unchanged in meaning,
+    only moved one place down - still picks B and links it to the shipping order.
+    """
+    third_date = date(2026, 12, 1)
+    with world() as w:
+        order = w.order()
+        w.line(
+            order, qty_ordered="50", required_date=D_OCT,
+            line_status="closed", qty_delivered="50",
+        )
+        b = _with_ref(
+            w,
+            w.line(
+                order, qty_ordered="50", required_date=D_NOV,
+                line_status="closed", qty_delivered="50",
+            ),
+            _ref(),
+        )
+        po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, b.source_ref)
+        allocation = w.spo_allocation(quantity=50, from_po_number=po.po_number)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, third_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror_b = w.mirror_of(b)
+        assert mirror_b is not None
+        assert str(row.so_line_id) == str(mirror_b.id), (
+            "the bought line no longer decides once no line carries the sheet's date"
+        )
+        links = w.links(row)
+        assert len(links) == 1, _documents(links)
+        assert str(links[0].spo_allocation_id) == str(allocation.id)
+
+
+def _cascade_world(w: World):
+    """The SO388822 shape (plan section 8 opening story): three dated lines of ONE order,
+    the first named by nothing, the second and third each named by a purchase order line
+    that one shipping order shipped in full, and an open balance line dated 2030-01-01 that
+    must never receive a row. Three sheet rows, dated L1/L2/L3, carry DIFFERENT quantities
+    (10/20/30) rather than the UAC's "equal quantity" - the LINES are equal (50 each), and
+    giving the rows distinct quantities is what lets the test tell which line each one
+    landed on: `delivery_date` always reads back the LINE's own required date once a row is
+    raised (7.4), whichever line a row ends up on, so it cannot testify to a cascade on its
+    own.
+    """
+    d1, d2, d3 = date(2026, 3, 31), date(2026, 4, 14), date(2026, 4, 28)
+    order = w.order()
+    l1 = w.line(order, qty_ordered="50", required_date=d1)
+    l2 = _with_ref(w, w.line(order, qty_ordered="50", required_date=d2), _ref())
+    l3 = _with_ref(w, w.line(order, qty_ordered="50", required_date=d3), _ref())
+    w.line(order, qty_ordered="1000", required_date=date(2030, 1, 1))  # the balance line
+
+    po, po_line2 = w.po_line(qty_ordered="50")
+    po_line2.source_ref = f"AED_SORENTO:{_n()}:2"
+    w.db.flush()
+    _names(w, po_line2, l2.source_ref)
+    po_line3 = _sibling_po_line(
+        w, po, qty_ordered="50", source_ref=f"AED_SORENTO:{_n()}:3",
+        from_so_line_ref=l3.source_ref,
+    )
+    spo_number = f"SPO-2026/04-{_n():04d}"
+    alloc2 = _allocation(
+        w, spo_number=spo_number, line_number=1, quantity=50,
+        from_po_number=po.po_number, from_po_line_ref=po_line2.source_ref,
+    )
+    alloc3 = _allocation(
+        w, spo_number=spo_number, line_number=2, quantity=50,
+        from_po_number=po.po_number, from_po_line_ref=po_line3.source_ref,
+    )
+    data = sheet([
+        (order.so_number, w.product.product_code, 10, d1, w.warehouse.warehouse_code, ""),
+        (order.so_number, w.product.product_code, 20, d2, w.warehouse.warehouse_code, ""),
+        (order.so_number, w.product.product_code, 30, d3, w.warehouse.warehouse_code, ""),
+    ])
+    return order, (l1, l2, l3), (alloc2, alloc3), data
+
+
+def test_ac_r_43_no_cascade_across_dated_lines():
+    """AC-R-43. No cascade: promoting bought over exact-date pushed a whole sheet's rows off
+    their own dated lines, one delivery at a time - this is the SO388822 story plan section 8
+    opens with. Each row must land on its OWN dated line, not slide onto a bought neighbour.
+    """
+    with world() as w:
+        _order, (l1, l2, l3), (alloc2, alloc3), data = _cascade_world(w)
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 3, result
+        mirror1, mirror2, mirror3 = w.mirror_of(l1), w.mirror_of(l2), w.mirror_of(l3)
+        assert mirror1 is not None and mirror2 is not None and mirror3 is not None
+        by_line: dict = {}
+        for row in w.rows():
+            by_line.setdefault(str(row.so_line_id), []).append(row)
+
+        row1 = by_line.get(str(mirror1.id)) or []
+        row2 = by_line.get(str(mirror2.id)) or []
+        row3 = by_line.get(str(mirror3.id)) or []
+        assert [Decimal(str(r.qty)) for r in row1] == [Decimal("10")], (
+            "L1's own row (named by nothing) did not land on L1"
+        )
+        assert [Decimal(str(r.qty)) for r in row2] == [Decimal("20")], (
+            "L2's own row did not land on L2"
+        )
+        assert [Decimal(str(r.qty)) for r in row3] == [Decimal("30")], (
+            "L3's own row did not land on L3"
+        )
+        assert w.links(row1[0]) == [], "L1, named by nothing, was linked anyway"
+        links2 = w.links(row2[0])
+        assert len(links2) == 1 and str(links2[0].spo_allocation_id) == str(alloc2.id), (
+            _documents(links2)
+        )
+        links3 = w.links(row3[0])
+        assert len(links3) == 1 and str(links3[0].spo_allocation_id) == str(alloc3.id), (
+            _documents(links3)
+        )
+        assert all(row.delivery_date != date(2030, 1, 1) for row in w.rows()), (
+            "a raised row carried the balance line's 2030 date"
+        )
+
+
+def test_ac_r_44_cancelled_po_line_never_a_target():
+    """AC-R-44. A cancelled purchase order line is never a target, from any source - and the
+    exclusion is per LINE, not per document.
+
+    (a) A cancelled purchase order line X names a sales order line: X links nothing, and
+    the line it names does NOT rank as "bought" because of X - a competing line nothing
+    names, dated to match the sheet, wins instead.
+    (c) A NON-cancelled sibling line of the same purchase order still links a different
+    row in the SAME run, so the exclusion does not poison the whole document.
+    """
+    with world() as w:
+        order = w.order()
+        other_product = w.product_row()
+        sheet_date = date(2026, 6, 15)  # matches neither candidate below
+        never_named = w.line(order, qty_ordered="50", required_date=date(2026, 1, 10))
+        named_by_cancelled = _with_ref(
+            w, w.line(order, qty_ordered="50", required_date=date(2026, 8, 20)), _ref(),
+        )
+        linked_line = _with_ref(
+            w,
+            w.line(order, product=other_product, qty_ordered="50", required_date=D_OCT),
+            _ref(),
+        )
+
+        po, cancelled_line = w.po_line(qty_ordered="50", line_status="cancelled")
+        _names(w, cancelled_line, named_by_cancelled.source_ref)
+        sibling_line = _sibling_po_line(
+            w, po, qty_ordered="50", source_ref=f"AED_SORENTO:{_n()}:S",
+            from_so_line_ref=linked_line.source_ref, product=other_product,
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, sheet_date,
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, other_product.product_code, 20, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 2, result
+        by_line: dict = {}
+        for row in w.rows():
+            by_line.setdefault(str(row.so_line_id), []).append(row)
+
+        mirror_never = w.mirror_of(never_named)
+        mirror_named = w.mirror_of(named_by_cancelled)
+        mirror_linked = w.mirror_of(linked_line)
+        assert mirror_never is not None and str(mirror_never.id) in by_line, (
+            "a cancelled purchase order line still ranked the line it names as bought"
+        )
+        assert mirror_named is None or str(mirror_named.id) not in by_line
+        assert w.links(by_line[str(mirror_never.id)][0]) == [], (
+            "the cancelled purchase order line linked the row anyway"
+        )
+        assert mirror_linked is not None
+        linked_rows = by_line.get(str(mirror_linked.id)) or []
+        assert len(linked_rows) == 1, "the second row never even landed on its own line"
+        links = w.links(linked_rows[0])
+        assert len(links) == 1 and str(links[0].po_line_id) == str(sibling_line.id), (
+            "a cancelled sibling poisoned the whole purchase order, not just its own line"
+        )
+
+    with world() as w:
+        # (b) A claim naming the cancelled line links nothing either.
+        order = w.order()
+        line = w.line(order, qty_ordered="50")
+        po, cancelled_line = w.po_line(qty_ordered="50", line_status="cancelled")
+        w.claim(
+            order=order, core_line=line, document=po.po_number,
+            po_line=cancelled_line, source="autocount",
+        )
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        assert w.links(row) == [], (
+            "an autocount claim naming a cancelled purchase order line still linked it"
+        )
+        assert result["links_written"] == 0, result
+
+
+def test_ac_r_45_result_contract_is_whole():
+    """AC-R-45. The result keeps every key AC-S1-22 named, over the AC-R-43 world, and
+    `links_from_autocount` equals `links_written` now that the citation is not a source of
+    any link at all."""
+    with world() as w:
+        _order, _lines, _allocs, data = _cascade_world(w)
+
+        result = w.preview(data)
+
+        assert set(result) == RESULT_KEYS, sorted(set(result) ^ RESULT_KEYS)
+        assert result["links_from_autocount"] == result["links_written"], result
+
+
+def test_ac_r_46_undated_row_does_not_prefer_an_undated_line():
+    """AC-R-46 (reviewer finding, `PLAN-scm-oi-sheet-pairing-repair.md` section 8.1 item 2b,
+    issue #915). An ORDER BACK row's `delivery_date` is None - the words in the date cell
+    are never a date - and `_rank_for`'s date term reads `line.required_date == wanted`
+    with no guard against BOTH sides being None. An undated line then ties that term with
+    the row for the wrong reason (the sheet stated no date at all, not "the same date as
+    this undated line") and wins ahead of a line the book actually bought for and shipped
+    in full.
+
+    Two lines of one item on one order: L1 undated and named by nothing, L2 dated and
+    named by a purchase order line that a shipping order shipped in full. One ORDER BACK
+    row for the item. The row must land on L2, take the shipment, and report L2's own
+    date - not None.
+    """
+    with world() as w:
+        order = w.order()
+        l1 = w.line(order, qty_ordered="50", required_date=None)
+        l2 = _with_ref(
+            w, w.line(order, qty_ordered="50", required_date=date(2026, 11, 1)), _ref()
+        )
+        po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, l2.source_ref)
+        allocation = w.spo_allocation(quantity=50, from_po_number=po.po_number)
+        data = sheet([
+            (order.so_number, w.product.product_code, 30, "ORDER BACK",
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 1, result
+        row = w.one_row()
+        mirror_l2 = w.mirror_of(l2)
+        assert mirror_l2 is not None
+        assert str(row.so_line_id) == str(mirror_l2.id), (
+            "an undated line tied the date term with the ORDER BACK row's own lack of a "
+            "date, and won ahead of the line the book bought for and shipped in full"
+        )
+        mirror_l1 = w.mirror_of(l1)
+        assert mirror_l1 is None or str(row.so_line_id) != str(mirror_l1.id)
+        links = w.links(row)
+        assert len(links) == 1, _documents(links)
+        assert str(links[0].spo_allocation_id) == str(allocation.id)
+        assert row.delivery_date == l2.required_date, (
+            "the raised row's delivery date is not the line it actually landed on"
+        )

@@ -444,3 +444,106 @@ and auto-place horizon reads the ROW's `delivery_date` (`delivery_date <= :horiz
 Both are consequences of following the sales order line, which is what was asked for. If
 the owner wants the near plan to keep them, the horizon rule is what to revisit, not the
 row's date.
+
+## 8. Follow-up, 15 Sep: the remark leaves the match, the exact date wins the line pick, a cancelled purchase order line is never a target
+
+Status of this section: IMPLEMENTED 15 Sep 2026 (tests 84 + 12 green, copy replay 8,265 raised / 5,460 with a link / 0 cancelled, SO388822 exact), review pending. Owner go ("okay go"). Issue #915. Branch
+`fix/oi-sheet-remark-out-date-wins` from main 85e0279fe (#911), same worktree. Importer only:
+no table, no endpoint, no migration, no frontend change. Result contract (the same keys)
+unchanged; `links_from_autocount` now equals `links_written` because no other source is left.
+
+**Seen on prod after #904 deployed and the owner ran rollback + re-upload:** SO388822 /
+C-FHSS12. The sheet has 12 rows (150 + 110 on 31/03, 14/04, 28/04, 12/05, 26/05 and 58 + 48
+on 04/06) and the sales order has 12 CLOSED lines with exactly those dates and quantities,
+plus one open 1414 @ 01/01/2030 balance line, a cancelled `order_inquiry` ghost (106, no
+warehouse) and an 8 @ 11/09 line in warehouse BRW. AutoCount bought for ten of the twelve
+dated lines (PO 202603-S0014 names the 150 @ 14/04, PO 202603-S0035 the other nine, all
+shipped on SPO-2026/04-0076); the 31/03 pair was delivered from stock and no purchase
+document names it. The worklist showed the two 26/05 rows at 01/01/2030, one of them with a
+PO link to 202603-S0035.
+
+**Replayed on the 3am 14 Sep prod copy (`sorento_ai_automation_0913`, rollback inside the
+same transaction, then `_plan` + `_pair`), three causes:**
+
+1. **Section 7 put "bought" above "date equals the sheet date"** in `_rank_for`. The 31/03
+   row saw its own 31/03 line (right date, nobody bought for it) and the 14/04 line (wrong
+   date, bought) and took 14/04. The 14/04 row, citing S0014 which names that very line,
+   found it taken and slid to 28/04; every later row slid one delivery; the 26/05 pair had
+   nothing left but the 1414 @ 2030 balance line, and 7.4 then stamped the rows with that
+   line's date. Whole sheet, current code: 1,180 raised rows sit on a line whose date is
+   not the sheet's while a same-item sibling line carrying the sheet's date exists.
+2. **The remark's PO number both picks the line (term 1) and links (source 3).** The 150 @
+   2030 row's "PO 202603-S0035" was not AutoCount: the citation reader
+   (`scm/order_link_service._purchase_side`, PO branch) took 48 units from S0035 line "126",
+   which is CANCELLED. 223 of the 5,833 links on the copy come from the remark.
+3. **A cancelled purchase order line is a link target.** `_purchase_side` filters PO lines by
+   number only and `_target_facts` never looks at `line_status`. 305 rows / 19,373 units on
+   the copy take from a cancelled PO line; 14 of those come through the claim source, not
+   the remark, so the remark leaving does not close this on its own.
+
+**Owner rulings (15 Sep):** "let's ignore the sheet remark at all"; the cancelled case is
+"straightforward"; the exact-date fix as proposed. The ruling reverses the part of R2 /
+section 7 that read the remark; it keeps section 7's principle (bought decides) for the
+case that created it, a sheet date no line carries.
+
+### 8.1 Changes, all in `app/services/project_order_inquiry_import_service.py`
+
+1. **The remark leaves the match and the pairing.** `_cited_from` and the citation
+   pre-pass go; `_Match.cited` goes; `_named_lines` and its four queries go (nothing reads
+   them); `_rank_for` loses its first term; `_pair` loses source 3 and the `_purchase_side`
+   read. The remark is still written into the row note by `_note_for` (AC-S1-28 unchanged),
+   so a person can read what the sheet said. `documents_not_linkable` stays in the result,
+   always empty now, so the contract keeps its keys.
+2. **Exact date above bought.** `_rank_for` key becomes: real line before cancelled ghost;
+   `required_date == sheet date`; bought (section 7's term, unchanged in meaning); open
+   before closed; undated last; earliest required date; oldest `created_at`; id. One line
+   moves. When no line carries the sheet's date the date term ties and bought decides, so
+   SO395635 / SRTWC8317-RL's Nov row still lands on the bought line and links to
+   SPO-2026/08-0045 (section 7's own verification case).
+2b. **The date term only fires for a dated row** (reviewer finding 1): `wanted is not None and line.required_date == wanted`. An ORDER BACK row has no date, and `None == None` would otherwise reward an undated line above the bought one, costing the row its link and stamping NULL on the worklist. AC-R-46.
+3. **A cancelled purchase order line is never a target**, applied in `_target_facts` (the one
+   place every source's PO-line facts pass through): a PO line with `line_status ==
+   "cancelled"` gets no fact, so `take()` finds nothing and the source moves on. `_ref_targets`
+   and `_bought_rows` also exclude cancelled PO lines so a cancelled line does not mark an SO
+   line as "bought" for the rank term either. SPO allocations already carry the visibility
+   test; nothing changes there.
+
+### 8.2 Measured on the copy (scratch replay, 15 Sep)
+
+| | #904 code | remark out + date wins (cancelled still in) |
+| --- | --- | --- |
+| rows raised | 8,256 | 8,265 |
+| rows with a link (`links_written`, rows not links) | 5,833 | 5,476 (5,460 once cancelled lines leave the claim source too) |
+| of which partial | 547 | 497 |
+| rows whose only link came from the remark | 223 | 0 |
+| distinct cancelled PO lines linked | 262 | 14 (0 after 8.1 change 3; with a link then 5,460, the 16 rows whose only link was a cancelled line) |
+
+Every lost link sampled is a row whose sheet date equals a line AutoCount delivered
+without buying for, parked today on a differently dated bought sibling to earn the link
+(SO354098 / CB4702 123 @ 20/01/2026 sits on the 20/12/2025 line). SO388822 becomes exact:
+ten rows on their own dated lines linked to SPO-2026/04-0076 (PO pill S0014 / S0035 from
+the 7.2 chain), the two 31/03 rows on the 31/03 lines unlinked with Buy 0 (closed and fully
+delivered, 7.3 cap), no 2030 row. SO347594 / CB2154-DIY 87 and SO368872 / SRTWC286-SH 364
+(the #886 and #904 cases) land the same as today.
+
+### 8.3 Tests (UAC AC-R-39 to AC-R-45) and the ones that flip
+
+New, in `tests/test_oi_sheet_pairing_repair.py`: AC-R-39 to AC-R-45 as the UAC states them.
+Existing tests whose premise was the remark: AC-R-8, AC-R-9, AC-R-12, AC-R-23 in the same
+file and `test_cited_po_is_linked_in_full`, `test_cited_spo_is_linked`,
+`test_two_cited_documents_in_order`, `test_dedicated_line_still_links_when_cited`,
+`test_autocount_first_then_citation_fills_rest`, `test_autocount_wins_over_remark` in
+`tests/test_project_order_inquiry_import_migration.py` are rewritten to assert the remark
+is ignored (row lands by date, no link from the citation) or deleted where nothing but the
+removed source was under test; each deletion is named in the PR body. AC-R-32 / AC-R-33
+keep their premise (sheet date matches no line) and stay green; AC-R-11 (restatement key
+ignores the remark) is unchanged.
+
+### 8.4 Verification and owner steps
+
+Replay on the copy after the change must print: raised 8,265, with a link 5,460 (the
+16 rows whose only link was a cancelled line lose it), cancelled PO lines
+linked 0, and SO388822 exactly as 8.2 states. After deploy the owner runs
+`scripts/rollback_oi_sheet_upload.py --file-name "<name>" --apply` on prod and re-uploads;
+spot-check SO388822 / C-FHSS12 (12 rows, none at 2030, ten with SPO-2026/04-0076) and
+SO395635 / SRTWC8317-RL (three rows, all linked).
