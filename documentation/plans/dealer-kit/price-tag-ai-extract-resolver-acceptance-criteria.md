@@ -93,6 +93,26 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
   that row with `contact_name` and `contact_phone` filled and `message_text` equal to the sent
   copy.
 
+## S8 Rail badge never overlaps the actions
+
+- AC-S8-1 `[FE]` On a tag row (and a folded line block) with open pins, the count element is a
+  sibling of the row button inside the action group, not a descendant of the button, and it
+  precedes the "Use template for tag 1a" button in DOM order.
+- AC-S8-2 `[FE]` The row button carries a right padding class that clears the action group
+  (`pr-20` or wider).
+
+## S9 Done from the designer's pin popover
+
+- AC-S9-1 `[FE]` Opening a pin marker on the canvas shows the comment with a "Done" button when
+  the comment is open, "Reopen" when it is resolved.
+- AC-S9-2 `[FE]` Clicking Done calls `setReviewCommentResolved(requestId, commentId, true)`, then
+  the list is re-fetched: the marker turns grey, the caption reads "Round N / Done", the rail
+  count for that tag drops by one and the CTA reads `Mark design ready` with the new count.
+- AC-S9-3 `[FE]` A failed PATCH toasts "Could not update the change request" and the pin stays
+  open.
+- AC-S9-4 `[FE]` `TagCanvasEditor` without `onReviewPinResolve` renders the popover with no
+  Done button (the template page and any read-only surface are unchanged).
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and

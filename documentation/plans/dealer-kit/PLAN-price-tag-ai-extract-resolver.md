@@ -56,6 +56,15 @@ straight through as the send identifier and logs it as `external_reference`; the
 resolves name and phone by `respond_io_id`, so the UUID never resolves. The OTP path already
 does it right: `contact.respond_io_id or contact.id`.
 
+Eighth finding (owner screenshot 15 Sep, designer rail): the orange open-pins count on a tag
+row sits under the Use template button. `TagRailRow` puts the count inside the row button
+with `ml-auto` and `pr-8`, while the actions are `absolute right-1` and two icons wide.
+
+Ninth finding (owner question 15 Sep): "how do I dismiss the comment" on the design page. The
+canvas pin popover only closes; Done lives on the request detail page's Design section
+(`RequestDesignSection`, AC-S2-5 of r9). The designer is where the fix is made, so the
+decision belongs there too.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -120,6 +129,18 @@ does it right: `contact.respond_io_id or contact.id`.
   (`app/services/respond_identifier.py`), and uses that value for the window check, the send,
   the webhook, and BOTH log rows' `external_reference` and endpoint. The outbox list and modal
   then show the contact's name and phone, the way stock inquiry / purchase request rows do.
+- D12 `TagRailRow` (and the folded line block of D8): the open-pins count moves OUT of the row
+  button into the absolute action group, first in the group (`[pins][changed dot][Use
+  template][Remove]`), and the row button's right padding clears the whole group (`pr-20`).
+  Nothing overlaps at any count.
+- D13 The canvas pin popover in `TagCanvasEditor` gains a Done / Reopen button (same copy and
+  icons as `RequestDesignSection`: `Check` "Done", `Undo2` "Reopen") through one optional
+  prop `onReviewPinResolve?: (pinId: string, resolved: boolean) => void | Promise<void>`. The
+  button renders only when the prop is given. `RequestTagDesigner` passes it: call
+  `setReviewCommentResolved(request.id, pinId, resolved)`, then `listReviewComments` and
+  `setReviewComments`, so the marker greys, the rail count drops and the CTA's `(N open)`
+  updates; a failure toasts "Could not update the change request" (same text as the detail
+  page). No new endpoint: PATCH review-comments already does it.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -143,7 +164,10 @@ FE
 - `app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestDetail.tsx`: D7.
 - `app/(protected)/dealer-kit/price-tag-requests/[id]/design/components/RequestTagDesigner.tsx`: D8.
 - `app/(protected)/dealer-kit/components/TagSizeControl.tsx`: D9.
-- tests: `TagSizeControl.test.tsx` (collapsed by default with the size inline; click opens;
+- `app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx`: D13 (popover).
+- `RequestTagDesigner.tsx`: D12 (rail), D13 (wiring).
+- tests: `RequestTagDesigner.review.test.tsx` (Done from the popover), `RequestTagDesigner.tags.test.tsx`
+  (pins count outside the row button), `TagSizeControl.test.tsx` (collapsed by default with the size inline; click opens;
   state read from localStorage), `RequestTagDesigner.tags.test.tsx` (one tag + no parts = one selectable block, no "1a";
   two tags = tag rows), `PriceTagRequestDetail.test.tsx` (one tag + no parts = one row; two tags = sub-rows),
   `PriceTagRequestForm.aiExtractApply.test.tsx` (update the mocks: no `lookupTagItems`
