@@ -113,6 +113,22 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
 - AC-S9-4 `[FE]` `TagCanvasEditor` without `onReviewPinResolve` renders the popover with no
   Done button (the template page and any read-only surface are unchanged).
 
+## S10 Approved: back to the designer to print and hand over
+
+- AC-S10-1 `[FE]` `priceTagActions('approved', ...)` returns `design` labelled "Open design"
+  first, for `print_by` office and self alike; the same at `ready_for_collection`. The other
+  actions at those statuses are unchanged (existing cases in `priceTagRequestActions.test.ts`
+  keep passing with the new first element).
+- AC-S10-2 `[FE]` The detail page at `approved` shows "Open design" as the primary and the
+  per-tag Design buttons in the Actions column.
+- AC-S10-3 `[FE]` The designer at `approved` + office shows "Export PDF" and the primary
+  "Mark ready for collection" in the request bar; no "Mark design ready". Clicking Export
+  calls `exportTagSheet(requestId)` once with no sheet filter; clicking Mark ready calls
+  `markReadyForCollection(requestId)`, toasts "Marked ready for collection" and re-fetches
+  the request.
+- AC-S10-4 `[FE]` The designer at `approved` + self shows "Export PDF" only; at `designing` the
+  bar is exactly as today (the existing "exactly one button" test still passes).
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and

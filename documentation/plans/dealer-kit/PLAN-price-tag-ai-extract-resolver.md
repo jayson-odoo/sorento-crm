@@ -65,6 +65,19 @@ canvas pin popover only closes; Done lives on the request detail page's Design s
 (`RequestDesignSection`, AC-S2-5 of r9). The designer is where the fix is made, so the
 decision belongs there too.
 
+Tenth finding (owner, live 15 Sep, PT-202609-0004 at `approved`, office print): the detail
+page's only primary is "Mark ready for collection", the per-tag Design buttons are gone
+(`canDesign` is false because `priceTagActions` offers no `design` at `approved`), and the
+office cannot get back to the designer to print. Owner: the CTA at `approved` is "go to the
+design"; the PDF is exported from the designer and "ready for collection" is marked there,
+in the same slot "Mark design ready" occupies during designing.
+
+The "Export PDF" failure in the same screenshot (`Page.goto: net::ERR_CONNECTION_REFUSED`)
+is the prod worker reaching `http://localhost:3000` for the render because
+`DEALER_KIT_PRINT_BASE_URL` is unset in the server compose; the fix is the two-line compose
+change in `CONTAINER-PDF-EXPORT-RUNBOOK.md` (frontend alias + worker env) and is an owner
+action on the server, not code on this lane.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -141,6 +154,18 @@ decision belongs there too.
   `setReviewComments`, so the marker greys, the rail count drops and the CTA's `(N open)`
   updates; a failure toasts "Could not update the change request" (same text as the detail
   page). No new endpoint: PATCH review-comments already does it.
+- D14 `priceTagActions`: at `approved` (either print choice) and `ready_for_collection`, the
+  FIRST action is `design` with label "Open design". Every other action at those statuses
+  stays where it is (export, mark_ready_for_collection, mark_collected, void), so the detail
+  page's secondary menu is unchanged and `canDesign` brings the per-tag Design buttons back.
+- D15 `RequestTagDesigner` request bar, at `approved` with `print_by === 'office'`: a secondary
+  "Export PDF" button (the whole-request `exportTagSheet(request.id)` + the same toast the
+  detail page's `handleExport` shows) and the primary "Mark ready for collection"
+  (`markReadyForCollection(request.id)` + "Marked ready for collection" toast + reload the
+  request, same as the detail page). Rendered in the exact slot `Mark design ready` occupies
+  (`canMarkProofReady` branch), so the bar still holds one primary. At `approved` with
+  `print_by === 'self'` only "Export PDF" shows. Whatever read-only behaviour the designer has
+  at `proof_ready` today applies unchanged; this slice does not touch canvas editability.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -165,8 +190,10 @@ FE
 - `app/(protected)/dealer-kit/price-tag-requests/[id]/design/components/RequestTagDesigner.tsx`: D8.
 - `app/(protected)/dealer-kit/components/TagSizeControl.tsx`: D9.
 - `app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor.tsx`: D13 (popover).
-- `RequestTagDesigner.tsx`: D12 (rail), D13 (wiring).
-- tests: `RequestTagDesigner.review.test.tsx` (Done from the popover), `RequestTagDesigner.tags.test.tsx`
+- `RequestTagDesigner.tsx`: D12 (rail), D13 (wiring), D15 (approved bar).
+- `app/(protected)/dealer-kit/price-tag-requests/components/priceTagRequestActions.ts`: D14.
+- tests: `priceTagRequestActions.test.ts` (D14), `RequestTagDesigner.test.tsx` (approved bar),
+  `RequestTagDesigner.review.test.tsx` (Done from the popover), `RequestTagDesigner.tags.test.tsx`
   (pins count outside the row button), `TagSizeControl.test.tsx` (collapsed by default with the size inline; click opens;
   state read from localStorage), `RequestTagDesigner.tags.test.tsx` (one tag + no parts = one selectable block, no "1a";
   two tags = tag rows), `PriceTagRequestDetail.test.tsx` (one tag + no parts = one row; two tags = sub-rows),
