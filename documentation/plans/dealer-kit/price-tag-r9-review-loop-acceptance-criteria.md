@@ -135,10 +135,10 @@ tell them.
   images, "promotion ended" when the offer disappears) and offers `Keep current` and
   `Update tag`; `Update all` appears on the card when N > 1.
 - AC-S5-5 `Update tag` creates a version titled "Before product update: <fields>" carrying
-  `pinned_line_data`, replaces the pin, and the canvas, preview and PDF payload now show the
+  the old pins and a second version "Product update: <fields>" carrying the new ones, replaces the pin, and the canvas, preview and PDF payload now show the
   new values (`pytest` + browser). `Keep current` clears the label until the product changes
   again (`pytest`: ack hash).
 - AC-S5-6 `History` (CRM Design section and designer toolbar) opens the request Versions
-  sheet: newest first, View opens the read-only version, Restore writes the version's doc and
-  pins back, creates "Restored v<n>", and the canvas reflects it (`pytest` on the routes).
+  sheet: newest first, View opens the read-only version, Restore first snapshots the state being left as
+  "Before restore to v<n>", then writes the version's doc and pins back, and the canvas reflects it (`pytest` on the routes).
 - AC-S5-7 Marketing price override still wins over the pinned offer price (`pytest`).

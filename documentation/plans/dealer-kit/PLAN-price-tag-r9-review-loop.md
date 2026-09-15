@@ -358,7 +358,7 @@ S5
 - AC-S5-3 `pytest test_data_changes_diff`: data_changes lists changed fields (price, barcode, spec, image, promotion ended); terminal request performs no live resolve (assert resolver not called).
 - AC-S5-4 `vitest ProductDataReviewDialog`: old/new rows, thumbnails, promotion-ended copy, Keep / Update buttons; `Update all` at N > 1.
 - AC-S5-5 `pytest test_pin_update_and_keep`: update writes a page_version with pinned_line_data and commit message prefix, replaces the pin, clears ack; keep sets ack hash and silences the diff.
-- AC-S5-6 `pytest test_request_versions_routes`: list newest first, get one, restore writes draft + pins and a new "Restored v<n>" version; `vitest RequestVersionsSheet`.
+- AC-S5-6 `pytest test_request_versions_routes`: list newest first, get one, restore snapshots the state being left as "Before restore to v<n>" then writes draft + pins from v<n>; update writes a before AND an after version; `vitest RequestVersionsSheet`.
 - AC-S5-7 `pytest test_override_beats_pin`: marketing override wins over pinned offer.
 
 ## Risks
