@@ -74,8 +74,10 @@ Parent: `documentation/plans/scm/PLAN-low-stock-report.md` (PR #909, merged 14 S
   the picking-lines SQL entirely.
 - `write_rows` (~355) also freezes `row.last_receipt_spo_number` and
   `row.last_receipt_container_number`.
-- Migration `518_osr_last_receipt_spo` (down_revision `517_chatbot_low_stock_vocab`): two nullable
-  `VARCHAR(100)` columns on `scm.order_summary_row`; model `OrderSummaryRow` gains both.
+- Migration `518_osr_last_receipt_spo` (down_revision `ptag_0009_combos_tags` - re-parented from
+  the originally-named `517_chatbot_low_stock_vocab`, which `ptag_0009_combos_tags` had already
+  merged on top of by the time this lane branched): two nullable `VARCHAR(100)` columns on
+  `scm.order_summary_row`; model `OrderSummaryRow` gains both.
 - `report()` row `last_receipt` becomes `{"date", "qty", "spo_number", "container"}` (new keys None
   on a run frozen before 518; readers use `.get`). `app/schemas/scm_order_summary.py`: extend the
   typed shape if one exists (`response_model` drops undeclared fields - a route test asserts it).

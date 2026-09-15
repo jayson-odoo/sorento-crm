@@ -34,7 +34,10 @@ Plan: `PLAN-low-stock-last-in-and-list-scope.md`. Numbering continues the parent
 - **AC-57** A run frozen BEFORE migration 518 (SPO/container NULL, qty and date present) prints
   the bare quantity text (`"300"`) and its date; no data backfill.
 - **AC-58** Migration `518_osr_last_receipt_spo` upgrades and downgrades cleanly on top of
-  `517_chatbot_low_stock_vocab`; `alembic heads` shows one head.
+  `ptag_0009_combos_tags` (re-parented from the plan's originally-named
+  `517_chatbot_low_stock_vocab`, which `ptag_0009_combos_tags` had already merged on top of
+  by the time this lane branched - `./scripts/alembic-reparent.sh`); `alembic heads` shows
+  one head.
 - **AC-59** The order summary route's response declares the two new keys (a route test asserts
   `spo_number` and `container` survive `response_model`).
 

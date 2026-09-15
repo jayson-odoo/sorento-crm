@@ -1489,16 +1489,31 @@ def test_last_receipt_map_company_scoped(db, chain):
 
 
 def test_report_last_receipt_none_when_no_spo_line(db, chain):
-    """AC-51: a product with NO `spo_allocations` line at all (visible or not) freezes
-    all four last-receipt columns NULL, and `report()` returns `last_receipt = None` -
-    never a dict carrying a zero qty."""
+    """AC-51: a product with NO VISIBLE `spo_allocations` line freezes all four
+    last-receipt columns NULL, and `report()` returns `last_receipt = None` - never a
+    dict carrying a zero qty.
+
+    A RETIRED, never-received line is seeded on the product so this absence is a claim
+    about `visible_line_clauses()` filtering it out, not merely "the table has no row for
+    this product at all" - a fact any implementation, including the old picking-lines one,
+    would already get right. Without this seed the test cannot distinguish the new
+    `last_in_map`-backed `_last_receipt_map` from the old GR-based one it replaced."""
     f = chain
+    db.add(SPOAllocation(
+        id=_u(), spo_number=_code("RETIRED-NEVER-RECEIVED")[:50], product_id=f["product"].id,
+        allocated_quantity=15, quantity_received=0, expected_date=date(2026, 8, 1),
+        retired_at=datetime(2026, 9, 1, 0, 0, 0),
+    ))
+    db.flush()
+
     assert svc.write_rows(db, f["run"].id) == 1
     row = db.query(OrderSummaryRow).filter(
         OrderSummaryRow.run_id == f["run"].id, OrderSummaryRow.product_id == f["product"].id,
     ).one()
     assert row.last_receipt_date is None
     assert row.last_receipt_qty is None
+    assert row.last_receipt_spo_number is None
+    assert row.last_receipt_container_number is None
 
     report_row = svc.report(db, run_id=f["run"].id)["rows"][0]
     assert report_row["last_receipt"] is None, report_row["last_receipt"]

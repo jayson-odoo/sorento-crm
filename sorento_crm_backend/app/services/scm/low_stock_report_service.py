@@ -51,7 +51,10 @@ LOW_STOCK_COLUMNS = (
 
 #: Widths parallel to `LOW_STOCK_COLUMNS`, so dropping the Supplier column (AC-47) shifts
 #: the widths with it rather than leaving every later column sized for its neighbour.
-_LOW_STOCK_WIDTHS = (16, 42, 14, 12, 12, 12, 12, 30, 12, 12, 20, 14, 14, 12, 12, 16)
+#: index 13 (Last in qty) widened to 34 (PLAN-low-stock-last-in-and-list-scope S1 fix
+#: round), same as the order sheet's N: the cell is a document line now, same width class
+#: as the incoming-document cells.
+_LOW_STOCK_WIDTHS = (16, 42, 14, 12, 12, 12, 12, 30, 12, 12, 20, 14, 14, 34, 12, 16)
 
 #: This kind's OWN cap, on the "All" sheet (AC-35). `summary_order_service.MAX_EXPORT_ROWS`
 #: (2,000) is untouched - two documents, two sizes.

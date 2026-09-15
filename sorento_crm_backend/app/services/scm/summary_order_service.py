@@ -1576,9 +1576,13 @@ def _render_export_pdf(rows: list[tuple], as_of: str) -> bytes:
 #: without truncating on screen (row height is left unset so the app autofits the wrap).
 #: issue #795 (Slice 2): Suggested qty (F, numeric) + Suggestion (G, a one-line reason)
 #: shift every later column two right - "Project / customer" is now J.
+#: N (Last in qty) widened to 34 (PLAN-low-stock-last-in-and-list-scope S1 fix round): the
+#: cell is a document line now, up to ~32 chars (`"<SPO> - <container> - <qty>"`), the same
+#: width class the incoming-document cells (L/M) would need if they routinely grew that
+#: long.
 _XLSX_COLUMN_WIDTHS = {
     "A": 16, "B": 11, "C": 11, "D": 11, "E": 11, "F": 11, "G": 30, "H": 11,
-    "I": 14, "J": 44, "K": 20, "L": 12, "M": 12, "N": 12, "O": 12, "P": 16,
+    "I": 14, "J": 44, "K": 20, "L": 12, "M": 12, "N": 34, "O": 12, "P": 16,
 }
 
 
@@ -1756,6 +1760,11 @@ def visible_rows(db: Session, rep: dict) -> list[dict]:
         code for (code,) in
         db.query(Product.product_code).filter(Product.id.in_(hidden_ids)).all()
     }
+    # Matched by product_code, not product_id: safe because a run always freezes ONE
+    # company's products (`write_rows` stamps the run's own company; `report()`'s rows
+    # carry no id at all). `uq_products_company_product_code` makes code -> id 1:1 WITHIN
+    # that company, so a cross-company code collision would over-drop a visible row that
+    # merely shares a code with a hidden one elsewhere, never under-drop a hidden one.
     return [r for r in rows if r["product_code"] not in hidden_codes]
 
 

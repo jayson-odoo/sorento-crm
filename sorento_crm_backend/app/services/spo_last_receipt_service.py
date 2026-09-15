@@ -312,9 +312,13 @@ def last_in_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
         SPOAllocation.product_id.in_(product_ids),
         *visible_line_clauses(),
     )
-    # COMPANY SCOPE, EXPLICITLY - same reason as `last_receipt_rows`'s per-product branch:
-    # `.subquery()` below loses the `with_loader_criteria` the session's `do_orm_execute`
-    # listener injects, and nothing else in this query names `SPOAllocation` as an entity.
+    # COMPANY SCOPE, EXPLICITLY - same reason as `last_receipt_rows`'s per-product branch.
+    # Belt-and-braces, not "the only copy": measured, the company predicate can land on
+    # this query from more than one path once the outer query below joins `Product` (its
+    # own `with_loader_criteria` fires there). Do not rely on the listener descending into
+    # this `.subquery()` on its own to cover `SPOAllocation`, and do not delete either
+    # copy - the explicit filter here or the join below - on the assumption the other one
+    # already does the job.
     predicate = build_company_predicate(SPOAllocation, get_company_scope(db))
     if predicate is not None:
         numbered = numbered.filter(predicate)

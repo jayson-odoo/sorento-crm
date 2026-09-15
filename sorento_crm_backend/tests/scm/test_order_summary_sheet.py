@@ -780,6 +780,16 @@ def test_last_in_text_pre_518_row_prints_the_bare_quantity():
     }) == "300"
 
 
+def test_low_stock_sheet_last_in_qty_pre_518_row_prints_the_bare_quantity():
+    """Workbook-level AC-57: the low stock sheet's own cell builder gets the same
+    pre-518 fallback, not just the order sheet's."""
+    from app.services.scm.low_stock_report_service import _sheet_row
+
+    row = {"product_code": "X", "last_receipt": {"qty": 300, "date": None,
+                                                   "spo_number": None, "container": None}}
+    assert _sheet_row(row, {}, include_supplier=True)[13] == "300"
+
+
 def test_last_in_text_blank_when_no_receipt():
     assert svc._last_in_text(None) == ""
 
