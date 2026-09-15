@@ -59,6 +59,17 @@ harness takes step N's `session_patch` and writes it onto the contact's
 carry nothing forward under the new shape. Flagged as a design decision, not a
 silent guess.
 
+**`system_settings` switches are per-case, applied before each step (`_apply_switches`,
+S6 tester triage cluster 6).** `engine.py::_read_switches` / `turn/policy.py::
+load_policy` read `chatbot_stock_denial_enabled` etc. off the singleton row once per
+turn; a blank private schema starts with no row, so before this fix every replay ran
+under the hard-coded all-off `_TurnSwitches()` default regardless of what the recorded
+turn actually ran under, and `stock_denied`/`demand_qty` were structurally unreachable.
+`scripts/chatbot_record_turn.py` now captures the source DB's singleton at record time
+(`turn["switches"]`, `switches_source` says whether a source row existed); a case
+recorded before that field existed carries no `switches` key and this is a no-op for
+it, unchanged from before.
+
 **No network.** `tests/chatbot/conftest.py`'s autouse fixture blocks the real MCP
 server at the application seam; this file adds a socket-level backstop (any outbound
 connection that is not to `localhost`/`127.0.0.1` - Postgres/Redis - raises) so a
@@ -210,6 +221,54 @@ def _seed_contact(session_factory, *, contact_id: Any) -> None:
             {"rcid": contact_row_id, "cid": SORENTO_COMPANY_ID},
         )
         db.commit()
+
+
+_SWITCH_FIELDS = (
+    "chatbot_stock_denial_enabled",
+    "chatbot_business_lane_enabled",
+    "chatbot_ordering_enabled",
+    "chatbot_unsupported_domains",
+    "chatbot_completed_lanes",
+    "chatbot_crossdomain_ladder",
+    "chatbot_tier_order",
+)
+
+
+def _apply_switches(session_factory, switches: dict[str, Any] | None) -> None:
+    """Write a recorded case's `system_settings` switches onto the private test DB's
+    singleton row before the turn runs (S6 tester triage cluster 6, root cause flagged
+    in `DIVERGENCES.md`): `engine.py::_read_switches` / `turn/policy.py::load_policy`
+    read this row once per turn, and a blank schema starts with NO row at all, so every
+    switch silently took its hard-coded ALL-FALSE `_TurnSwitches()` default regardless
+    of what the recorded turn actually ran under - `stock_denied`/`demand_qty` were
+    structurally unreachable in replay on every case, not case-by-case noise.
+
+    No-op for a case recorded before `scripts/chatbot_record_turn.py` captured this
+    field (`switches` is `None`) - leaves whatever a prior step in the same chain
+    already wrote, or no row at all, which is the pre-existing behaviour. A JSONB
+    field recorded as `None` (no source row at record time - `switches_source:
+    "no_source_row_defaults"`) is skipped rather than written, since those columns are
+    NOT NULL and a fresh `SystemSetting()` row's own column `default=` already supplies
+    the real default; only a genuinely recorded value overrides it.
+
+    Restored automatically, not explicitly: `session_factory`'s one shared
+    connection/transaction is rolled back at fixture teardown
+    (`tests/chatbot/conftest.py::session_factory`), so nothing written here survives
+    past the one parametrized case it was set for.
+    """
+    if not switches:
+        return
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    row = db.query(SystemSetting).first()
+    if row is None:
+        row = SystemSetting()
+        db.add(row)
+    for field in _SWITCH_FIELDS:
+        if field in switches and switches[field] is not None:
+            setattr(row, field, switches[field])
+    db.commit()
 
 
 def _write_session_vars(session_factory, *, contact_id: Any, payload: dict[str, Any]) -> None:
@@ -400,6 +459,7 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
 
     failures: list[str] = []
     for step_no, turn in enumerate(turns, start=1):
+        _apply_switches(session_factory, turn.get("switches"))
         _install_stubs(monkeypatch, stub_parser, turn=turn)
         envelope = _build_envelope(turn, message_id=f"ZZT-replay-{case_id}-{step_no}")
         result = engine_mod.run_turn(envelope, session_factory=session_factory)

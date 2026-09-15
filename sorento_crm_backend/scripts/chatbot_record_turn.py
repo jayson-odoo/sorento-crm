@@ -109,6 +109,49 @@ def _access_of(trace: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     return access.get("raw") if access else None
 
 
+# The per-turn switches `engine.py::_read_switches`/`turn/policy.py::load_policy` read off
+# the `system_settings` singleton - S6 tester triage cluster 6: `test_turn_replay.py` never
+# set these on the private test DB, so every replay ran under the hard-coded ALL-FALSE
+# `_TurnSwitches()` default regardless of what the original live turn actually ran under,
+# making `stock_denied`/`demand_qty` structurally unreachable in replay. No trace stage
+# captures these (checked: neither `received` nor `understood` carries them), and the
+# singleton has no history, so this is a best-effort "what is it set to NOW" read at record
+# time, not the value at the turn's original instant - `switches_source` says which.
+_SWITCH_COLUMNS = (
+    "chatbot_stock_denial_enabled",
+    "chatbot_business_lane_enabled",
+    "chatbot_ordering_enabled",
+    "chatbot_unsupported_domains",
+    "chatbot_completed_lanes",
+    "chatbot_crossdomain_ladder",
+    "chatbot_tier_order",
+)
+
+_SWITCH_DEFAULTS: dict[str, Any] = {
+    "chatbot_stock_denial_enabled": False,
+    "chatbot_business_lane_enabled": False,
+    "chatbot_ordering_enabled": False,
+    "chatbot_unsupported_domains": None,
+    "chatbot_completed_lanes": None,
+    "chatbot_crossdomain_ladder": None,
+    "chatbot_tier_order": None,
+}
+
+
+def _source_switches(conn: Any) -> dict[str, Any]:
+    """One read of the source DB's `system_settings` singleton, reused for every turn
+    this script invocation records (the columns above are not per-turn history - a
+    singleton row only ever has ONE current value)."""
+    row = conn.execute(
+        text(f"SELECT {', '.join(_SWITCH_COLUMNS)} FROM system_settings LIMIT 1")
+    ).first()
+    if row is None:
+        return {**_SWITCH_DEFAULTS, "switches_source": "no_source_row_defaults"}
+    values = {col: getattr(row, col) for col in _SWITCH_COLUMNS}
+    values["switches_source"] = "source_db_at_record_time"
+    return values
+
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
 )
@@ -313,7 +356,7 @@ def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
     return envelope
 
 
-def _record_row(row: dict[str, Any], *, db_label: str) -> dict[str, Any]:
+def _record_row(row: dict[str, Any], *, db_label: str, switches: dict[str, Any]) -> dict[str, Any]:
     trace = row.get("trace") or []
     tool_events = _tool_events(trace)
     verdict = _verdict_of(trace)
@@ -334,6 +377,7 @@ def _record_row(row: dict[str, Any], *, db_label: str) -> dict[str, Any]:
         "access": _access_of(trace),
         "resolutions": _derive_resolutions(verdict, tool_events),
         "expected": _expected_of(row, trace, tool_events),
+        "switches": switches,
     }
 
 
@@ -406,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     written: list[Path] = []
 
     with engine.connect() as conn:
+        switches = _source_switches(conn)
         if args.turn_id:
             row = conn.execute(
                 text(f"SELECT {_ROW_COLUMNS} FROM chatbot.turns WHERE id = :id"),
@@ -414,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
             if row is None:
                 print(f"no turn found for id={args.turn_id}", file=sys.stderr)
                 return 1
-            turn = _record_row(_row_to_dict(row), db_label=db_label)
+            turn = _record_row(_row_to_dict(row), db_label=db_label, switches=switches)
             written.append(_write(args.group, args.slug, [turn]))
         elif args.turn_ids:
             ids = [i.strip() for i in args.turn_ids.split(",") if i.strip()]
@@ -429,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
             if missing:
                 print(f"turn id(s) not found: {missing}", file=sys.stderr)
                 return 1
-            turns = [_record_row(_row_to_dict(by_id[i]), db_label=db_label) for i in ids]
+            turns = [_record_row(_row_to_dict(by_id[i]), db_label=db_label, switches=switches) for i in ids]
             written.append(_write(args.group, args.slug, turns))
         elif args.test_run_id:
             rows = conn.execute(
@@ -442,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
             if not rows:
                 print(f"no turns found for test_run_id={args.test_run_id}", file=sys.stderr)
                 return 1
-            turns = [_record_row(_row_to_dict(r), db_label=db_label) for r in rows]
+            turns = [_record_row(_row_to_dict(r), db_label=db_label, switches=switches) for r in rows]
             slug = args.slug_prefix or _slugify(args.test_run_id)
             written.append(_write(args.group, slug, turns))
         elif args.contact:
@@ -468,7 +513,7 @@ def main(argv: list[str] | None = None) -> int:
             prefix = args.slug_prefix or _slugify(f"contact-{args.contact}")
             if args.chain_by == "none":
                 for i, row in enumerate(rows, start=1):
-                    turn = _record_row(_row_to_dict(row), db_label=db_label)
+                    turn = _record_row(_row_to_dict(row), db_label=db_label, switches=switches)
                     written.append(_write(args.group, f"{prefix}-{i:03d}", [turn]))
             else:
                 chains: dict[str, list[Any]] = {}
@@ -476,7 +521,7 @@ def main(argv: list[str] | None = None) -> int:
                     run_id = (row.envelope or {}).get("test_run_id") or "no-run-id"
                     chains.setdefault(run_id, []).append(row)
                 for i, (run_id, chain_rows) in enumerate(sorted(chains.items()), start=1):
-                    turns = [_record_row(_row_to_dict(r), db_label=db_label) for r in chain_rows]
+                    turns = [_record_row(_row_to_dict(r), db_label=db_label, switches=switches) for r in chain_rows]
                     written.append(_write(args.group, f"{prefix}-chain-{i:03d}-{_slugify(run_id)}", turns))
         else:  # --branch-kind (prod_sample): independent real turns, one per file
             clauses = ["branch_kind = :branch_kind"]
@@ -494,7 +539,7 @@ def main(argv: list[str] | None = None) -> int:
             ).fetchall()
             prefix = args.slug_prefix or _slugify(args.branch_kind)
             for i, row in enumerate(rows, start=1):
-                turn = _record_row(_row_to_dict(row), db_label=db_label)
+                turn = _record_row(_row_to_dict(row), db_label=db_label, switches=switches)
                 written.append(_write(args.group, f"{prefix}-{i:03d}", [turn]))
 
     for path in written:
