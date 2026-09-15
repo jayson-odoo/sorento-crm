@@ -4959,3 +4959,236 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
         assert "outstanding_filters" not in stored, (
             f"the old question's filter set dies with it: {_stored_oq_filters(stored)!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# R-D, revised diagnosis (coder a1f1112d, 15 Sep 2026, second pass): the coder's
+# earlier widening appended the co-resolved product candidates onto
+# `compatible_entities`, which `tail/compile_state.py::_picker_rows` falls back to
+# on the ambiguous-customer arm (no `specific_options` there) - so the frozen roster
+# ended up 13 rows (3 customers + 10 hidden products), `kind` flipped away from
+# `customer_pick`, and `_customer_pick` never ran at all. The fix publishes the
+# co-resolved siblings on a SEPARATE `out["keep_entities"]` instead. Driven through
+# the real turn path (`_run_turn`, not `gate.run_gate` alone) with a custom
+# `resolve_entity` seam returning the LIVE shape measured on
+# sorento_ai_automation_focus_full (two newest chatbot.turns rows for contact
+# 437264483, 15 Sep 2026): "chin chun" ambiguous across three real companies, "wc286"
+# a ten-way product multi-match, neither exact.
+# --------------------------------------------------------------------------- #
+
+_CHIN_CHUN_MATCHES = [
+    {
+        "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+        "entity_type": "customer",
+        "canonical_code": "300-C043",
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+        "display": {"customer_name": "CHIN CHUN HARDWARE SDN BHD"},
+    },
+    {
+        "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+        "entity_type": "customer",
+        "canonical_code": "300-C124",
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+        "display": {"customer_name": "CHIN CHUN HOMEMART SDN BHD"},
+    },
+    {
+        "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+        "entity_type": "customer",
+        "canonical_code": "300-C001",
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+        "display": {"customer_name": "CHIN CHUN HARDWARE AND TIMBER TRADING"},
+    },
+]
+
+_WC286_MATCHES = [
+    {
+        "uuid": f"wc286-uuid-{i}",
+        "entity_type": "product",
+        "canonical_code": code,
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+    }
+    for i, code in enumerate(
+        [
+            "SRTWC286-SH", "SRTWC286-SH-P", "SRTWC286-SH-200", "SRTWC286-SH-NEW",
+            "SRTWC286-SH-NEW-P", "SRTWC286-SH-NEW-200", "SRTWC286-S-150-RL",
+            "SRTWC286A-P-RL", "SRTWC286A-RL-320", "SRTWC286-P",
+        ],
+        start=1,
+    )
+]
+
+
+def _chin_chun_wc286_resolve_services() -> ResolveGateServices:
+    """Only resolves the two tokens the ARMING turn's own text carries - a bare
+    positional pick ("1"/"2") asks the resolver nothing (no free-text token to
+    re-search), and this stub must say so rather than re-offering the same
+    ambiguous pair on every call regardless of what the body actually asked for
+    (which would re-arm the picker on the pick turn itself)."""
+
+    def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        asked = " ".join(
+            [str(body.get("query") or "")] + [str(t) for t in (body.get("tokens") or [])]
+        ).lower()
+        resolutions = []
+        if "chin chun" in asked:
+            resolutions.append(
+                {"raw": "chin chun", "token": "chin chun", "matches": list(_CHIN_CHUN_MATCHES)}
+            )
+        if "wc286" in asked:
+            resolutions.append(
+                {"raw": "wc286", "token": "wc286", "matches": list(_WC286_MATCHES)}
+            )
+        return {
+            "tokens": [r["token"] for r in resolutions],
+            "resolutions": resolutions,
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve_entity),
+        probe=lambda **_: None,
+    )
+
+
+def _delivery_chin_chun_wc286_qf() -> dict[str, Any]:
+    return _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order",
+        entity_op="replace_combine", requested_attributes=["delivery"],
+        entities=[
+            {"raw": "chin chun", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": "wc286", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+        ],
+        reference_positions=[],
+    )
+
+
+class TestRDCustomerAmbiguityArmKeepsTheCoResolvedProductToken:
+    """R-D, live regression on the coder's fixed head (9d5b66dd1 and later). Real
+    cause (coder's own diagnosis, 15 Sep 2026): the customer-ambiguity `require_specific`
+    arm must arm EXACTLY its own three-row customer roster (`kind: "customer_pick"`),
+    with the co-resolved "wc286" multi-match token frozen onto `payload.keep` (or
+    wherever the fix's `out["keep_entities"]` ends up riding on the persisted
+    question) - never appended into the roster's own `options`, which is what
+    flipped `kind` away from `customer_pick` and skipped `_customer_pick` entirely
+    in the coder's first pass."""
+
+    def test_the_customer_roster_arms_with_exactly_three_rows_and_keeps_wc286(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_delivery_chin_chun_wc286_qf(),
+            text_body="delivery for chin chun product wc286",
+            msg_id="ZZT-outstanding-rd-arm-1",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Which customer do you mean?" in reply, reply
+
+        stored = _session_of(session_factory)["variables"]
+        oq = _stored_oq(stored)
+        assert oq.get("kind") == "customer_pick", (
+            f"the ten co-resolved WC286 candidates must not flip the roster's own "
+            f"kind away from customer_pick: {oq!r}"
+        )
+        options = _stored_oq_options(stored)
+        assert len(options) == 3, (
+            f"exactly the three customer rows, none of the ten hidden product "
+            f"candidates: {options!r}"
+        )
+        assert {o.get("entity_type") for o in options} == {"customer"}, options
+
+        keep = (oq.get("payload") or {}).get("keep") or []
+        keep_raws = [k.get("raw") for k in keep if isinstance(k, dict)]
+        assert "wc286" in keep_raws, (
+            f"the co-resolved product token must survive somewhere the pick can read "
+            f"it back - payload.keep, ruling (a) parity with main: {oq.get('payload')!r}"
+        )
+        kept = next(k for k in keep if isinstance(k, dict) and k.get("raw") == "wc286")
+        assert kept.get("hint") == "product", kept
+        assert kept.get("canonical_code") is None, kept
+
+    def test_picking_the_first_row_scopes_the_delivery_answer_to_wc286(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_delivery_chin_chun_wc286_qf(),
+            text_body="delivery for chin chun product wc286",
+            msg_id="ZZT-outstanding-rd-pick1-arm",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-rd-pick1-answer",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+            mcp_response=REPORT_HIT,
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Product: all products" not in reply, (
+            f"the picked customer's delivery answer must stay scoped to wc286, "
+            f"never widen to every product: {reply!r}"
+        )
+        assert "wc286" in reply.lower(), (
+            f"the header must name the product filter the arming turn carried: {reply!r}"
+        )
+        # Deliberately NOT asserting the tool call's product_ids or exact args here
+        # (coordinator's own ruling): the product filter's internal shape is the
+        # coder's to design - the header line is the one fact this test pins on the
+        # customer-scoped fetch. `captured` is not asserted either: this mock's
+        # `mcp_response` is shaped for the outstanding-report tool, not
+        # `crm_order_management_orders_list`, so a real fetch here may legitimately
+        # come back empty without that being this test's own defect.
+        _captured_unused = captured
+
+    def test_a_bare_two_resolves_the_second_customer_row_never_a_hidden_product(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """S7a-class blocker: the roster still has to number 1-3 for the customer
+        rows the reply actually showed - a bare '2' must resolve CHIN CHUN HOMEMART
+        (row 2 of the three), never one of the ten hidden WC286 candidates that
+        would sit at position 2 if they had ever been appended to the roster."""
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_delivery_chin_chun_wc286_qf(),
+            text_body="delivery for chin chun product wc286",
+            msg_id="ZZT-outstanding-rd-pick2-arm",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+            ),
+            text_body="2",
+            msg_id="ZZT-outstanding-rd-pick2-answer",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the pick must reach the fetch"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", (name, args)
+        assert args.get("customer_ids") == ["13eb525b-985c-44a5-abc4-4be5c7db6cd6"], (
+            f"'2' must resolve CHIN CHUN HOMEMART, the roster's own second row - "
+            f"never a hidden product candidate: {args}"
+        )
+        _result_unused = result
