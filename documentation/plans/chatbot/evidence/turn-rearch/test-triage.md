@@ -111,3 +111,37 @@ replaces `head/route.py`) has a stable shape - porting against a module that
 `engine.run_tail` does not yet call for most paths (measured this session) would be
 guessing at a contract line the coder has not built yet, which is exactly what
 "write to the test list, do not invent scope" warns against.
+
+## Execution log (AC-1592, this session, continuing from `a5419f97e`)
+
+Executing the 15 pending verdicts above. One row updated per action; the analysis
+above is left as-is (historical record) rather than rewritten in place.
+
+- **`test_dry_run_isolation.py` - URGENT, done (`8a64a713b`).** Only one of its nine
+  classes used the doomed import (`TestLiveTailSessionPatchAbsentIsPreserved`,
+  finding 6). Confirmed the rewritten `engine.py::run_tail` has no "sealed reply" /
+  `session_patch` concept at all - it builds the five-key payload directly from
+  `State`/`Pending` every call, so the absent-vs-explicit-empty ambiguity that class
+  existed to guard cannot occur in the new write site. RETIRED that one class (rule
+  named in the file and the commit body); the other 8 classes (findings 1-5,
+  escalation preview, canned words) are unrelated to the doomed import and were not
+  touched. File now collects; 13/13 pass.
+
+- **`test_output_exchange_unit.py` - PORT, done, RED for real reasons.** New file
+  `test_rearch_port_output_exchange_unit.py`. Both properties probed directly
+  against the real current code (no mocking): (1) the Unicode-dash fold - the old
+  normaliser moved conceptually to `resolve_gate._PRODUCT_FOLD`/`_token_of`, but
+  that regex is ASCII-only (`[-\s]+`), so a MINUS SIGN (U+2212) or EN DASH (U+2013)
+  in a product code's raw text now survives into the resolver's match token
+  unchanged - **exec 12053189's original production incident is reproduced in the
+  new architecture**, confirmed by direct call to `_token_of`. (2) The F3
+  domain-hint enum guard - `contracts.coerce_domain_hint` exists but has no call
+  site anywhere in this worktree (`grep -rn coerce_domain_hint app/services/
+  chatbot/` finds only its own definition and one comment); `turn/apply.py` reads
+  `verdict.get("domain_hint")` raw into `Plan.domains` with no coercion - confirmed
+  by direct call to `apply()` with `domain_hint="purchasing"` (F3's own incident
+  value), which survives straight through. Both are genuine engine regressions
+  found by this triage, not fixture bugs - 3 of 5 ported tests RED for that reason,
+  2 control tests (declared domain, ASCII hyphen) green. **Not the tester's fix to
+  make** - flagged for the captain/coder. Original file retired (`git rm`), fully
+  superseded by the port.
