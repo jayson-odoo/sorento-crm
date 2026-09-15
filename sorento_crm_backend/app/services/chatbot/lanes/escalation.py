@@ -782,7 +782,7 @@ def _person_routing(
             if matched
             else _team_clarify_pairs([])
         )
-    from app.services.chatbot.head.output_exchange import offer_is_open
+    from app.services.chatbot.session_state import offer_is_open
 
     if offer_is_open(_prev_variables(ctx)):
         return _clarify_over(_team_clarify_pairs([]))

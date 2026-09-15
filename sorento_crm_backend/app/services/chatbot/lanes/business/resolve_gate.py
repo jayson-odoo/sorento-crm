@@ -332,7 +332,7 @@ def resolve_bare_reply_under_member_offer(
     arms. Never restricted to a single-word CODE SHAPE: the customer's own words decide
     nothing here, the resolver does.
     """
-    from app.services.chatbot.head.output_exchange import offer_is_open
+    from app.services.chatbot.session_state import offer_is_open
 
     prev = _prev_variables(ctx)
     if jsc.get(prev, "selection_context") != "member_offer" or not offer_is_open(prev):

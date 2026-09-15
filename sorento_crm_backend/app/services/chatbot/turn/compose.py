@@ -133,9 +133,22 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
 
         label = row.label if row else domain
         codes = ", ".join(str(e) for e in entities)
-        block = f"*{label}* for {codes}:"
+        header = f"*{label}* for {codes}:" if codes else f"*{label}*:"
+        # A tool that renders its own answer - a report, a refusal, a miss suggestion -
+        # hands it over as `lane_text` and the section prints THAT; rows go through the
+        # grammar above (contract 102). One or the other, never both.
+        lane_words = env.get("lane_text")
         if rows_text:
-            block += "\n" + "\n\n".join(rows_text)
+            block = header + "\n" + "\n\n".join(rows_text)
+        elif isinstance(lane_words, str) and lane_words.strip():
+            # The header still names the domain: one section per domain is the grammar
+            # (contract 122), and a fan-out whose second leg found nothing must still say
+            # WHICH leg that was.
+            block = header + "\n" + lane_words.strip()
+        elif env.get("denied"):
+            block = f"*{label}*: this is not enabled for your account."
+        else:
+            block = header
         text_parts.append(block)
 
         for f in env_files:
@@ -171,3 +184,51 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     return Answer(
         sections=sections, question=question, offer=offer, canned=[], files=files, actions=actions, text=text
     )
+
+
+# The sentence each pending kind opens with. One wording per question, in one place, so
+# the ask a customer reads and the pending the tail stores can never describe different
+# questions (contract 29, 37, 50).
+_ASK_HEADERS: dict[str, str] = {
+    "product_pick": "Which product do you mean?",
+    "customer_pick": "Which customer do you mean?",
+    "tier_pick": "Which price tier applies to you?",
+    "team_pick": "Which team should take this?",
+    "company_pick": "Which company do you mean?",
+    "member_offer": "Who should take this?",
+    "outstanding_scope": "Sales orders, delivery orders, or both?",
+    "outstanding_detail": "Which list would you like?",
+    "kind_pick": "Which one do you mean?",
+    "attachment_type_ask": "Which kind of file do you need?",
+}
+
+
+def compose_question(pending: Any) -> Answer:
+    """The ask, as an Answer: the header, the numbered roster, and the same pending back.
+
+    A roster the customer can see is what a bare "1" answers next turn, so the options
+    that are PRINTED here are exactly the options the tail stores - one list, never two.
+    """
+    # A did-you-mean is its own question (contract 26): the customer named something the
+    # resolver could not place, so the ask offers what it DID find rather than asking them
+    # to choose from a roster they did not ask for.
+    did_you_mean = any((o.get("payload") or {}).get("did_you_mean") for o in pending.options)
+    header = (
+        "Did you mean:" if did_you_mean else _ASK_HEADERS.get(pending.kind, "Which one do you mean?")
+    )
+    lines = [header]
+    labels: list[str] = []
+    for option in pending.options:
+        label = option.get("label")
+        if label is None:
+            continue
+        labels.append(str(label))
+        lines.append(f"{option.get('position')}. {label}")
+    body = "\n".join(lines)
+    action: dict[str, Any] = {
+        "kind": "send_message",
+        "text": body,
+        "quick_replies": ", ".join(labels) if labels else None,
+        "result_set": list(pending.options),
+    }
+    return Answer(sections=[], question=pending, offer=None, canned=[], files=[], actions=[action], text=body)

@@ -69,3 +69,38 @@ def with_answered_positions(pending: Pending, positions: list[int]) -> Pending:
         payload=payload,
         asked_at_turn=pending.asked_at_turn,
     )
+
+
+# Offer kinds clear when they are answered; the roster kinds above stay alive.
+OFFER_KINDS: frozenset[str] = frozenset(PENDING_KINDS) - ROSTER_KINDS
+
+
+def to_wire(pending: Pending | None) -> dict[str, Any] | None:
+    """`session_vars.open_question` - the ONE open question, as stored (AC-1504)."""
+    if pending is None:
+        return None
+    return {
+        "kind": pending.kind,
+        "expects": pending.expects,
+        "options": list(pending.options),
+        "team": pending.team,
+        "asked_at_turn": pending.asked_at_turn,
+        "payload": dict(pending.payload),
+    }
+
+
+def from_wire(raw: Any) -> Pending | None:
+    """The inverse. An `open_question` written by an older build carries only `kind` and
+    `options`; the missing members read as "not stated", never as a failed turn."""
+    if not isinstance(raw, dict) or not raw.get("kind"):
+        return None
+    options = raw.get("options")
+    payload = raw.get("payload")
+    return Pending(
+        kind=str(raw["kind"]),
+        expects=raw.get("expects"),
+        options=[o for o in options if isinstance(o, dict)] if isinstance(options, list) else [],
+        team=raw.get("team"),
+        payload=dict(payload) if isinstance(payload, dict) else {},
+        asked_at_turn=raw.get("asked_at_turn"),
+    )

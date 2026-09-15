@@ -20,6 +20,12 @@ class Trace:
     state_diff: dict[str, Any] = field(default_factory=dict)
     narrowing: list[str] = field(default_factory=list)
     reconciled: list[tuple[str, str, str]] = field(default_factory=list)
+    # The non-business lane this turn belongs to, when the verdict named one:
+    # "escalation", "escalation_declined", "not_supported", "clarification", "casual".
+    # `route()` reads it and nothing else does. It lives on the Trace rather than as a
+    # sixth Plan field because the Plan's own field set is the contract (AC-1528) - and
+    # because "which lane, and why" is exactly what an operator reads the trace for.
+    lane: str | None = None
 
 
 @dataclass

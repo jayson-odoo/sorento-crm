@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
+from app.services.chatbot.turn import policy_rows
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -99,23 +101,47 @@ def load_policy(db: "Session") -> Policy:
     """The real loader: `chatbot_domains` + `chatbot_entity_kinds` + `system_settings.
     chatbot_tier_order` (AC-1501/AC-1502/AC-1535) - loaded once per turn, frozen.
 
-    Raw SQL, not an ORM model: no `ChatbotDomain`/`ChatbotEntityKind` model exists yet
-    (S1's FE screens and S5's CRUD routes are the ones that will need one; S3's only
-    reader is this loader).
+    Raw SQL, not an ORM read: `app/models/chatbot_policy.py` declares both tables only so
+    `create_all` builds them for a blank-schema fixture; the columns are read positionally
+    here because the loader wants whatever the row carries, not a mapped subset.
+
+    A table that exists but holds no rows falls back to `policy_rows.py`'s seed - the
+    blank-schema case, where `create_all` made the table and no migration ever seeded it.
+    The fallback is the SAME data the migration writes (one copy, imported by both), so a
+    test and a migrated database see one policy.
     """
     from sqlalchemy import text
 
-    domain_rows = db.execute(
-        text("SELECT * FROM chatbot_domains ORDER BY sort_order")
-    ).mappings().all()
-    kind_rows = db.execute(
-        text("SELECT * FROM chatbot_entity_kinds ORDER BY sort_order")
-    ).mappings().all()
-    tier_row = db.execute(text("SELECT chatbot_tier_order FROM system_settings LIMIT 1")).first()
-    tier_order = list(tier_row[0]) if tier_row and tier_row[0] else []
+    domain_rows = _rows(db, "SELECT * FROM chatbot_domains ORDER BY sort_order")
+    kind_rows = _rows(db, "SELECT * FROM chatbot_entity_kinds ORDER BY sort_order")
+
+    tier_order: list[str] = []
+    try:
+        tier_row = db.execute(
+            text("SELECT chatbot_tier_order FROM system_settings LIMIT 1")
+        ).first()
+        tier_order = list(tier_row[0]) if tier_row and tier_row[0] else []
+    except Exception:  # noqa: BLE001 - no settings row yet is the seed default, not a failure
+        tier_order = []
 
     return Policy.from_rows(
-        domains=[dict(row) for row in domain_rows],
-        kinds=[dict(row) for row in kind_rows],
-        tier_order=tier_order,
+        domains=domain_rows or [dict(row) for row in policy_rows.DEFAULT_DOMAIN_ROWS],
+        kinds=kind_rows or [dict(row) for row in policy_rows.DEFAULT_KIND_ROWS],
+        tier_order=tier_order or list(policy_rows.DEFAULT_TIER_ORDER),
     )
+
+
+def _rows(db: "Session", sql: str) -> list[dict[str, Any]]:
+    """Read a policy table, or return an empty list when it is not there at all.
+
+    A missing table aborts the enclosing Postgres transaction, and every engine test
+    shares one - so the existence check runs first (`to_regclass`) rather than being
+    caught after the fact.
+    """
+    from sqlalchemy import text
+
+    table = sql.split(" FROM ")[1].split(" ")[0]
+    exists = db.execute(text("SELECT to_regclass(:t)"), {"t": table}).scalar()
+    if not exists:
+        return []
+    return [dict(row) for row in db.execute(text(sql)).mappings().all()]

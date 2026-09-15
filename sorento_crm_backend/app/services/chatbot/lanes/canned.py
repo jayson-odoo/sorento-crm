@@ -28,7 +28,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
-from app.services.chatbot.tail.compile_state import EM_DASH
+from app.services.chatbot.tail.reply_ladder import EM_DASH
 from app.services.chatbot.contracts import (
     CRM_COMPLETED_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,

@@ -102,10 +102,15 @@ def _focus_rules(
     trace: Trace,
 ) -> Focus:
     if verdict.get("topic_reset"):
+        # Every axis the old topic filled goes; the tier and the brand are the contact's,
+        # not the topic's, so they stay. The rules BELOW still run on the emptied focus -
+        # a reset turn is a new topic, and it names that topic's own domain and entities
+        # in the same breath ("never mind, promotions?"). Returning here left the new
+        # topic with no domain at all, so the next reset had nothing to close an episode
+        # on (AC-1546).
         kept = {k: getattr(focus, k) for k in RESET_KEEPS}
         focus = Focus(**kept)
         trace.rules_fired.append("reset_on_topic")
-        return focus
 
     confident_entities = [e for e in entities if e.get("confident") is not False]
     by_kind: dict[str, list[dict[str, Any]]] = {}
@@ -185,12 +190,80 @@ def _reconcile_step(
     return result.entities, domain_override, None
 
 
+# The message types that carry no business question of their own (contract 49, 51).
+_CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation"})
+# Domains that answer a request for help rather than escalating it (contract 21, 22).
+_HELP_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
+
+
+def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | None:
+    """Which NON-business lane this turn belongs to, or None for a business question.
+
+    Read off the verdict's own structured signals and the policy's `supported` flag -
+    never off the message. `route()` is the only reader (AC-1528: the router takes a plan
+    and nothing else), so the decision is made here, where the verdict is.
+    """
+    escalation = verdict.get("escalation") or {}
+    message_type = verdict.get("message_type")
+
+    if escalation.get("escalation_declined") is True:
+        return "escalation_declined"
+    if escalation.get("is_escalation_confirmation") is True:
+        return "escalation"
+    if message_type == "escalation":
+        return "escalation"
+    if message_type == "request_for_help" and verdict.get("domain_hint") not in _HELP_EXEMPT_DOMAINS:
+        return "escalation"
+    if domains and all(
+        (policy.domain(name) is not None and not policy.domain(name).supported) for name in domains
+    ):
+        return "not_supported"
+    if message_type == "clarification":
+        return "clarification"
+    if message_type in _CASUAL_TYPES:
+        return "casual"
+    if message_type == "business_query" and not domains:
+        return "casual"
+    return None
+
+
+def _did_you_mean(entities: list[dict[str, Any]], policy: Policy, state: State, trace: Trace):
+    """An entity the parser could not place asks before anything else does (contract 26,
+    111: did-you-mean before the team question).
+
+    `confident is False` is the parser's own "I read a token here and could not pin it".
+    The kind's `did_you_mean` flag (AC-1502) decides whether that kind is worth asking
+    about at all; a kind that is not stays silent and simply does not narrow.
+    """
+    unsure = [e for e in entities if e.get("confident") is False and e.get("hint")]
+    if not unsure:
+        return None
+    kind = unsure[0]["hint"]
+    row = policy.kind(kind)
+    if row is not None and not row.did_you_mean:
+        return None
+    options = [
+        {
+            "position": i + 1,
+            "label": e.get("raw"),
+            "uuid": e.get("canonical_code") or e.get("raw"),
+            "uuids": [e.get("canonical_code") or e.get("raw")],
+            "entity_type": kind,
+            "payload": {"did_you_mean": True},
+        }
+        for i, e in enumerate(unsure)
+    ]
+    trace.rules_fired.append("did_you_mean")
+    return pending_ask(f"{kind}_pick", options, asked_at_turn=state.turn_no, expects="pick")
+
+
 def _narrow_and_plan(
     focus: Focus,
     policy: Policy,
     domains: list[str],
     state: State,
     trace: Trace,
+    attributes: tuple[str, ...] = (),
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -200,6 +273,10 @@ def _narrow_and_plan(
     for name in domains:
         row = policy.domain(name)
         if row is None:
+            continue
+        if not row.supported:
+            # The bot refuses this domain out of the box (contract 63). Nothing is
+            # fetched and nothing is asked; `_lane` has already routed the turn.
             continue
         if state.profile.grants is not None:
             required = row.reveal_key or row.name
@@ -211,7 +288,13 @@ def _narrow_and_plan(
         domain_ask_kind = None
         domain_ask_options: list[dict[str, Any]] = []
         for kind, policy_value in row.narrowing.items():
-            outcome = narrow_decide(kind=kind, policy_value=policy_value, focus=focus, profile=state.profile)
+            outcome = narrow_decide(
+                kind=kind,
+                policy_value=policy_value,
+                focus=focus,
+                profile=state.profile,
+                attributes=attributes,
+            )
             trace.narrowing.append(f"{name}.{kind}:{policy_value}")
             if outcome.ask_kind:
                 domain_ask_kind = outcome.ask_kind
@@ -226,7 +309,23 @@ def _narrow_and_plan(
     if asking:
         name, ask_kind, ask_options, _entities, _filters = asking
         team = policy.domain(name).escalation_team_code if policy.domain(name) else None
-        ask = pending_ask(ask_kind, ask_options, team=team, asked_at_turn=state.turn_no)
+        if ask_kind == "tier_pick" and not ask_options:
+            # The tier menu is the policy's own order (AC-1502), not a hand-built list:
+            # the narrower knows a tier is missing, the policy knows which tiers exist.
+            ask_options = [
+                {
+                    "position": i + 1,
+                    "label": tier.replace("_", " "),
+                    "uuid": tier,
+                    "uuids": [tier],
+                    "entity_type": "tier",
+                    "payload": {"tier": tier},
+                }
+                for i, tier in enumerate(policy.tier_order)
+            ]
+        ask = pending_ask(
+            ask_kind, ask_options, team=team, asked_at_turn=state.turn_no, expects="pick"
+        )
     else:
         for name, _ask_kind, _ask_options, entities, filters in outcomes:
             row = policy.domain(name)
@@ -284,6 +383,21 @@ def apply(
         domains = list(focus.domains)
 
     new_state = State(focus=focus, pending=pending_after, profile=state.profile, turn_no=state.turn_no)
-    plan = _narrow_and_plan(focus, policy, domains, new_state, trace)
+    trace.lane = _lane(verdict, domains, policy)
+
+    # A did-you-mean outranks both the narrower and the lane: an entity nobody could place
+    # is the first thing worth asking about (contract 26, 111).
+    answers = verdict.get("answers_open_question") or {}
+    if answers.get("resolved") is not True:
+        dym = _did_you_mean(entities, policy, new_state, trace)
+        if dym is not None:
+            return new_state, Plan(
+                domains=list(domains), fetch=[], ask=dym, denied=[], trace=trace
+            )
+
+    attributes = tuple(
+        a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
+    )
+    plan = _narrow_and_plan(focus, policy, domains, new_state, trace, attributes)
 
     return new_state, plan

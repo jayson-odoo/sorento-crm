@@ -317,6 +317,8 @@ def build_user_block(
     latest_user_message: Any,
     pending_kind: str | None,
     pending_options: list[str] | None = None,
+    profile_block: str | None = None,
+    episodes_block: str | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -348,6 +350,15 @@ def build_user_block(
         # assistant actually offered - and so the head only ever has to map the number
         # back. Absent for every other turn, which keeps their block byte-identical.
         lines.append("Open question options: " + "; ".join(pending_options))
+    if profile_block:
+        # AC-1548: what the system already knows about this contact - tier, language,
+        # default ledgers - stated on EVERY parse, so the model never asks for a fact the
+        # profile already holds (journey A's own rule: nothing already known is re-asked).
+        lines.append(profile_block)
+    if episodes_block:
+        # AC-1547: the recalled frames, on the SECOND parse of a turn that pointed
+        # backwards. Absent on every other turn, which keeps their block unchanged.
+        lines.append(episodes_block)
     return "\n".join(lines)
 
 

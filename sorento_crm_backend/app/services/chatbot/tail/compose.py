@@ -23,7 +23,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
-from app.services.chatbot.tail.compile_state import sanitize_em_dash, seal, strip_undefined
+from app.services.chatbot.tail.reply_ladder import sanitize_em_dash, seal, strip_undefined
 
 # Earliest wins, matched case-insensitively.
 MARKERS = (
