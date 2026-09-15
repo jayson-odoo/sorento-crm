@@ -1564,3 +1564,54 @@ describe('price badge currency on the print page (S3c, AC-14/15)', () => {
     expect(screen.getByText('599')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// D7 - a layer's subjectPart follows it onto the print path (S4/S12-4,
+// AC-S4-3). Already wired in `renderProductSlotLayer`/`imageUrlFor` through
+// `subjectOf` - this pins the PDF path stays in lockstep with the canvas.
+// ---------------------------------------------------------------------------
+
+describe('subjectPart on the print page (D7, AC-S4-3)', () => {
+  it('a product_slot layer with subjectPart 0 renders the PART\'s own image and code, not the parent\'s', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'product_slot',
+            props: { kind: 'product_slot', fieldKey: 'product_image', subjectPart: 0 },
+          }),
+          layer({
+            type: 'product_slot',
+            slot_binding: 'code',
+            props: { kind: 'product_slot', fieldKey: 'code', subjectPart: 0 },
+          }),
+        ])}
+        resolvedData={{
+          [TAG_ID]: resolved({
+            parts: [
+              {
+                product_id: 'part-1',
+                code: 'TAP-1',
+                name: 'Kitchen Tap',
+                dimensions: '120 x 45 x 300 mm',
+                images: [
+                  { attachment_id: 'att-part-1', url: 'https://cdn/part-1.jpg', is_primary: true },
+                ],
+              },
+            ],
+          }),
+        }}
+        images={{ 'att-part-1': 'https://signed.example/part-1.jpg' }}
+      />,
+    );
+
+    // `alt=""` (the renderer's own choice, decorative) drops the "img" role
+    // from the accessibility tree, so this queries the DOM directly rather
+    // than through `getByRole`.
+    const images = Array.from(document.querySelectorAll('img'));
+    expect(images.map((img) => img.src)).toContain('https://signed.example/part-1.jpg');
+    expect(screen.getByText('TAP-1')).toBeInTheDocument();
+    // The parent's own code never prints on either layer.
+    expect(screen.queryByText('SK-1234')).not.toBeInTheDocument();
+  });
+});

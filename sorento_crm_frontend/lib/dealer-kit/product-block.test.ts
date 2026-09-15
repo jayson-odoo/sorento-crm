@@ -10,9 +10,12 @@
 import { describe, expect, it } from 'vitest';
 
 import type {
+  LineTagData,
   ProductSetTagData,
   ProductTagData,
+  TagBindingData,
   TagLayer,
+  TagPartData,
 } from './tag-template-types';
 import {
   bindTemplateLayers,
@@ -21,6 +24,7 @@ import {
   buildProductBlock,
   buildSetBlock,
   formatSetMemberLine,
+  imagesOf,
   isUnlinked,
   layerDisplay,
   layerText,
@@ -29,6 +33,7 @@ import {
   resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
+  subjectOf,
 } from './product-block';
 
 let seq = 0;
@@ -721,5 +726,151 @@ describe('bindTemplateLayers clears a barcode override on clone (S9 review S5)',
     // bindTemplateLayers is only ever called on a COPY (tagForTag clones
     // via structuredClone before calling it).
     expect(overriddenTemplateLayers[0].text_override).toBe('4006381333931');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D7 - subjectOf, the combo subject picker (S4/S12-3, AC-S4-3/S4-4/S4-6)
+// ---------------------------------------------------------------------------
+
+function part(overrides: Partial<TagPartData> = {}): TagPartData {
+  return {
+    product_id: 'part-1',
+    code: 'TAP-1',
+    name: 'Kitchen Tap',
+    dimensions: '120 x 45 x 300 mm',
+    spec_lines: ['Chrome finish'],
+    specs: [],
+    images: [{ attachment_id: 'att-part-1', url: 'https://cdn/part-1.jpg', is_primary: true }],
+    barcode: '4009999999991',
+    list_price: 99,
+    sell_price: null,
+    ...overrides,
+  };
+}
+
+function line(overrides: Partial<LineTagData> = {}): LineTagData {
+  return {
+    tag_id: 'tag-1',
+    line_id: 'line-1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [part()],
+    code: 'CAB-01',
+    name: 'Cabinet',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: 'Stainless steel',
+    specs: [],
+    set_members: '',
+    images: [{ attachment_id: 'att-parent', url: 'https://cdn/parent.jpg', is_primary: true }],
+    list_price: 1698,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    barcode: '4008888888882',
+    ...overrides,
+  };
+}
+
+function lineData(overrides: Partial<LineTagData> = {}): TagBindingData {
+  return { kind: 'line', line: line(overrides) };
+}
+
+describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
+  it('a layer with no subjectPart reads the parent - an existing design renders unchanged', () => {
+    const data = lineData();
+    const textLayer = { props: { kind: 'text' as const, subjectPart: undefined } };
+
+    expect(resolveSlotText({ slot_binding: 'code', ...textLayer }, data)).toBe('CAB-01');
+    expect(
+      resolveBarcodeValue({ text_override: null, props: textLayer.props }, data),
+    ).toBe('4008888888882');
+  });
+
+  it('subjectPart: n resolves that PART, for text, image and barcode alike', () => {
+    const data = lineData({
+      parts: [part({ code: 'TAP-1', barcode: '4009999999991' }), part({ product_id: 'part-2', code: 'BASIN-1', barcode: '4009999999992', images: [{ attachment_id: 'att-part-2', url: 'https://cdn/part-2.jpg', is_primary: true }] })],
+    });
+    const textLayer = { slot_binding: 'code' as const, props: { kind: 'text' as const, subjectPart: 1 } };
+    const barcodeLayerRef = { text_override: null, props: { kind: 'barcode' as const, show_code: true, subjectPart: 1 } };
+    const imageLayer = {
+      slot_binding: 'product_image' as const,
+      props: { kind: 'product_slot' as const, fieldKey: 'product_image', subjectPart: 1 },
+    };
+
+    expect(resolveSlotText(textLayer, data)).toBe('BASIN-1');
+    expect(resolveBarcodeValue(barcodeLayerRef, data)).toBe('4009999999992');
+    expect(
+      slotImageAttachmentId(imageLayer, imagesOf(subjectOf(data, imageLayer))),
+    ).toBe('att-part-2');
+  });
+
+  it('a price badge set to a part shows that part\'s own list price and offer', () => {
+    const data = lineData({ parts: [part({ list_price: 99, sell_price: 79 })] });
+    const badgeLayer = {
+      props: { kind: 'price_badge' as const, subjectPart: 0 } as never,
+    };
+
+    expect(priceBadgeInput(data, badgeLayer)).toEqual({ listPrice: 99, offerPrice: 79 });
+  });
+
+  it('a price badge with NO subjectPart reads Tag total - the roll-up the badge always printed', () => {
+    const data = lineData({ list_price: 1698, sell_price: 1500, show_promo_price: true });
+    const badgeLayer = { props: { kind: 'price_badge' as const } as never };
+
+    expect(priceBadgeInput(data, badgeLayer)).toEqual({ listPrice: 1698, offerPrice: 1500 });
+  });
+
+  it('a price badge set to the parent (-1) shows the parent alone, NOT the roll-up', () => {
+    // AC-S4-4: "-1 is the parent's own price alone" - distinct from Tag
+    // total once a combo actually has priced parts. The parent's OWN price
+    // (599) is less than the combo's summed total (698 = 599 + 99 tap), so a
+    // badge reading -1 must show 599, never 698.
+    const data = lineData({
+      list_price: 698,
+      sell_price: null,
+      parts: [part({ list_price: 99, sell_price: null })],
+    });
+    const badgeLayer = { props: { kind: 'price_badge' as const, subjectPart: -1 } as never };
+
+    expect(priceBadgeInput(data, badgeLayer).listPrice).toBe(599);
+  });
+
+  it('an out-of-range subjectPart falls back to the parent, same as -1 (AC-S4-6)', () => {
+    const data = lineData({ parts: [part()] });
+    const textLayer = { slot_binding: 'code' as const, props: { kind: 'text' as const, subjectPart: 7 } };
+
+    expect(resolveSlotText(textLayer, data)).toBe('CAB-01');
+  });
+
+  it('a part missing D7\'s optional fields (a Phase 1 part) fails soft - no photo, no price, never the parent\'s', () => {
+    const bareLine = lineData({
+      parts: [
+        {
+          product_id: 'part-1',
+          code: 'TAP-1',
+          name: 'Kitchen Tap',
+          dimensions: '120 x 45 x 300 mm',
+        },
+      ],
+    });
+    const imageLayer = {
+      slot_binding: 'product_image' as const,
+      props: { kind: 'product_slot' as const, fieldKey: 'product_image', subjectPart: 0 },
+    };
+    const badgeLayer = { props: { kind: 'price_badge' as const, subjectPart: 0 } as never };
+
+    expect(
+      slotImageAttachmentId(imageLayer, imagesOf(subjectOf(bareLine, imageLayer))),
+    ).toBeNull();
+    expect(priceBadgeInput(bareLine, badgeLayer)).toEqual({ listPrice: null, offerPrice: null });
+  });
+
+  it('a single-product tag (no parts) has nothing for subjectOf to change', () => {
+    const data: TagBindingData = { kind: 'product', product: product() };
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+
+    expect(subjectOf(data, layer)).toBe(data);
   });
 });

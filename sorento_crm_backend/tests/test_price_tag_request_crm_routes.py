@@ -579,6 +579,109 @@ class TestTheDesignRouteOnlySavesFromADesignableStatus:
         assert self._page_version_count(db, request.id) == before
 
 
+# ---------------------------------------------------------------------------
+# S11 - PATCH one line's price basis (D5). Written test-FIRST: the route does
+# not exist yet, so every call below 404s where it should not, which is the
+# accepted "missing route" red.
+# ---------------------------------------------------------------------------
+
+
+class TestLinePricePatch:
+    def test_patch_line_promotion_sets_and_clears_pins(self, api):
+        client, db = api
+        promotion_id = _promotion(db, "ZZT Line Promo")
+        request, _contact = _submitted_request(db, lines=1)
+        line = request.lines[0]
+        from app.services.dealer_kit import tag_data_service
+
+        tag_data_service.pin_tags(db, request, only_unpinned=True)
+        db.commit()
+        tag = line.tags[0]
+        assert tag.pinned_tag_data is not None, "seed assumption: the tag is pinned"
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{line.id}", json={"promotion_id": promotion_id}
+        )
+        assert res.status_code == 200, res.text
+        body_line = next(l for l in res.json()["lines"] if l["id"] == line.id)
+        assert body_line["promotion_id"] == promotion_id
+
+        db.expire_all()
+        from app.models.price_tag import PriceTagRequestTag
+
+        refreshed = (
+            db.query(PriceTagRequestTag).filter(PriceTagRequestTag.id == tag.id).first()
+        )
+        assert refreshed.pinned_tag_data is None, (
+            "the line's own promotion changed, so its tags' pins must clear"
+        )
+
+    def test_patch_line_manual_price(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db, lines=1)
+        line = request.lines[0]
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{line.id}", json={"manual_sell_price": 888.5}
+        )
+        assert res.status_code == 200, res.text
+        body_line = next(l for l in res.json()["lines"] if l["id"] == line.id)
+        assert body_line["manual_sell_price"] == 888.5
+
+    def test_patch_line_409_on_a_terminal_request(self, api):
+        client, db = api
+        request, _contact = _submitted_request(db, lines=1)
+        request.status = "collected"
+        db.commit()
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{request.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 409, res.text
+
+    def test_patch_line_403_without_process(self, api):
+        client, db = api
+        from app.models.user import UserPermission, UserRolePermission
+
+        db.query(UserRolePermission).filter(
+            UserRolePermission.permission_id.in_(
+                db.query(UserPermission.id).filter(
+                    UserPermission.slug == "dealer_kit.price_tag_requests.process"
+                )
+            )
+        ).delete(synchronize_session=False)
+        db.commit()
+        request, _contact = _submitted_request(db, lines=1)
+
+        res = client.patch(
+            f"{_BASE}/{request.id}/lines/{request.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 403, res.text
+
+    def test_patch_line_404_for_a_line_on_another_request(self, api):
+        """A 404 has to come from the CROSS-REQUEST check, not from the route
+        being absent - proven by first patching request_a's OWN line and
+        requiring that to succeed, so a coincidental "every unknown path 404s"
+        cannot pass this test for the wrong reason."""
+        client, db = api
+        request_a, _ = _submitted_request(db, lines=1)
+        request_b, _ = _submitted_request(db, lines=1)
+
+        own_line = client.patch(
+            f"{_BASE}/{request_a.id}/lines/{request_a.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert own_line.status_code == 200, own_line.text
+
+        res = client.patch(
+            f"{_BASE}/{request_a.id}/lines/{request_b.lines[0].id}",
+            json={"manual_sell_price": 100},
+        )
+        assert res.status_code == 404, res.text
+
+
 @pytest.fixture(autouse=True)
 def no_respond(monkeypatch):
     """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.

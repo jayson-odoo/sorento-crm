@@ -20,7 +20,12 @@ vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/lib/dealer-kit/mock-line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(async () => []),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(async () => []),
@@ -37,7 +42,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   listReviewComments: vi.fn(async () => []),
   collectRequest: vi.fn(),
   downloadPriceTagPdf: vi.fn(),
-}));
+  };
+});
 
 vi.mock('../lib/portal-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/portal-client')>();

@@ -14,6 +14,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+// D5 (line-level promotion, Phase 1 mock): the Lines tab now gates its
+// Promotion/Selling price cells on `price_tag_requests.process` via
+// `useHasPermission`, which reaches `next-auth/react`'s `useSession` -
+// unmocked, that throws "must be wrapped in a <SessionProvider />" before a
+// single assertion runs. Same idiom as
+// `app/(protected)/forms-management/forms/components/FormsList.rowOpen.test.tsx`.
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+  usePermissions: () => ({ permissions: [], permissionSet: new Set(), isLoading: false }),
+}));
+
 const push = vi.fn();
 
 vi.mock('next/navigation', () => ({
@@ -99,18 +110,32 @@ vi.mock('@/hooks/useDeferredAction', () => ({
   },
 }));
 
-vi.mock('../../services/priceTagRequestService', () => ({
-  getPriceTagRequest: vi.fn(),
-  getTagSheetDoc: vi.fn(),
-  claimPriceTagRequest: vi.fn(),
-  transitionPriceTagRequest: vi.fn(),
-  exportTagSheet: vi.fn(),
-  listPriceTagRequests: vi.fn(),
-  // r9 S1/D3: the Request tab now opens with `RequestDesignSection`, which
-  // asks for the payload on mount. Resolving to null is the "no design yet"
-  // answer, which is what every fixture in this file is.
-  getRequestDesignPayload: vi.fn(async () => null),
-}));
+vi.mock('../../services/priceTagRequestService', async () => {
+  // D5 (line-level promotion, Phase 1 mock): `lookupLinePricing` on the real
+  // service delegates to this SAME pure function - real, deterministic
+  // per-candidate/per-promotion figures instead of an empty stand-in, so a
+  // control that reads a price off the resolved row (the part-row candidate
+  // select's "CODE  RM x" label, e.g.) sees the price it will see in the app.
+  const { computeLinePricing } = await import('@/lib/dealer-kit/mock-line-pricing');
+  return {
+    getPriceTagRequest: vi.fn(),
+    getTagSheetDoc: vi.fn(),
+    claimPriceTagRequest: vi.fn(),
+    transitionPriceTagRequest: vi.fn(),
+    exportTagSheet: vi.fn(),
+    listPriceTagRequests: vi.fn(),
+    // r9 S1/D3: the Request tab now opens with `RequestDesignSection`, which
+    // asks for the payload on mount. Resolving to null is the "no design yet"
+    // answer, which is what every fixture in this file is.
+    getRequestDesignPayload: vi.fn(async () => null),
+    // D5 (line-level promotion, Phase 1 mock): the Lines tab calls this on
+    // mount to fill each line's List/Promotion/Selling price cells.
+    lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+      computeLinePricing(mode as 'list' | 'selling', lines as never),
+    ),
+    updatePriceTagLinePrice: vi.fn(),
+  };
+});
 
 import {
   getPriceTagRequest,

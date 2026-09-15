@@ -385,3 +385,180 @@ def test_two_split_tags_price_their_own_candidate(db):
         white.product_code,
         black.product_code,
     ]
+
+
+# ---------------------------------------------------------------------------
+# S9 - subject parts carry full product data, basis per line, pin diff by part,
+# per-line export guard (line promotion supersedes the header one, D1/D3/D10).
+#
+# Written test-FIRST against the CURRENT resolver. `_part_row` today returns
+# only `{product_id, code, name, dimensions}` and `resolve_tags_live` writes no
+# `sell_price_basis` key at all, so every assertion below that reads a NEW key
+# off the resolved row is a plain `KeyError` - no raw SQL, no ImportError, just
+# the field genuinely not there yet. The export-guard test is the one exception:
+# it needs a PER-LINE promotion, which is a column `ptag_0011` has not added, so
+# it writes it with raw SQL and lets Postgres's own `UndefinedColumn` be the red.
+# ---------------------------------------------------------------------------
+
+
+def test_parts_carry_full_product_data(db):
+    """AC-S9-1: a part is a first-class product, not a code and a dimension string.
+
+    D7 needs every part resolvable on its own - a layer may pick ANY part as its
+    subject - so `_part_row` has to carry what `_line_product_data` already
+    resolves for the host: images, specs, barcode, both prices.
+    """
+    cabinet = _product(db, "SRT9PART", list_price="1599.00")
+    mirror = _product(db, "SRT9MIRR", list_price="199.00")
+    combo = _combo(db, cabinet, "2 pc", [(mirror, None)])
+
+    request = _request(
+        db, product=cabinet, combo=combo, parts=[{"product_id": mirror.id}]
+    )
+    db.flush()
+
+    part = _rows(db, request)[0]["parts"][0]
+    for field in (
+        "product_id",
+        "code",
+        "name",
+        "dimensions",
+        "spec_lines",
+        "specs",
+        "images",
+        "barcode",
+        "list_price",
+        "sell_price",
+    ):
+        assert field in part, f"{field} missing from a resolved part"
+    assert part["product_id"] == mirror.id
+    assert part["list_price"] == Decimal("199.00")
+
+
+def test_combo_without_offer_prints_lp(db):
+    """AC-S9-3: `sell_price_basis` decides `show_promo_price`, not "is there a sum".
+
+    The 1299+199+249 combo (a promotion covering the parent and one part) now
+    asserts `basis == 'promotion'`; a second combo under a promotion that covers
+    NONE of its products is `basis == 'list'` and prints like a plain product -
+    the defect D3 retires (a combo summed at list used to still show as SP).
+    """
+    cabinet = _product(db, "SRT9COVER", list_price="1599.00")
+    mirror = _product(db, "SRT9MIRR2", list_price="199.00")
+    white = _product(db, "SRT9WH", list_price="299.00")
+    combo = _combo(db, cabinet, "3 in 1", [(mirror, None), (white, "Basin")])
+    promotion = _promotion(db, [(cabinet, "1299.00"), (white, "249.00")])
+
+    covered = _request(
+        db,
+        product=cabinet,
+        combo=combo,
+        promotion_id=promotion.id,
+        price_mode="selling",
+        parts=[{"product_id": mirror.id}, {"product_id": white.id}],
+    )
+    db.flush()
+    covered_row = _rows(db, covered)[0]
+    assert covered_row["sell_price_basis"] == "promotion"
+    assert covered_row["show_promo_price"] is True
+
+    other_cabinet = _product(db, "SRT9NOCOV", list_price="899.00")
+    other_combo = _combo(db, other_cabinet, "solo", [])
+    not_covered = _request(
+        db,
+        product=other_cabinet,
+        combo=other_combo,
+        # A promotion exists but does not price THIS product at all.
+        promotion_id=promotion.id,
+        price_mode="selling",
+    )
+    db.flush()
+    not_covered_row = _rows(db, not_covered)[0]
+    assert not_covered_row["sell_price_basis"] == "list"
+    assert not_covered_row["show_promo_price"] is False
+
+
+def test_pin_includes_parts_and_diff_names_part_code(db):
+    """AC-S9-4: the pin freezes `parts[]`, and a part's own change diffs under its code."""
+    from app.services.dealer_kit import tag_data_service
+
+    cabinet = _product(db, "SRT9PIN", list_price="1599.00")
+    mirror = _product(db, "SRT9PINMIRR", list_price="199.00")
+    combo = _combo(db, cabinet, "2 pc", [(mirror, None)])
+    request = _request(
+        db, product=cabinet, combo=combo, parts=[{"product_id": mirror.id}]
+    )
+    db.flush()
+
+    tag_data_service.pin_tags(db, request, only_unpinned=True)
+    db.commit()
+
+    tag = request.lines[0].tags[0]
+    pinned = tag.pinned_tag_data
+    assert pinned is not None
+    assert pinned.get("parts"), "the pin carries parts[]"
+    assert pinned["parts"][0].get("code") == mirror.product_code
+
+    # Master data moves under the part after the pin was taken.
+    mirror.list_price = Decimal("259.00")
+    db.flush()
+
+    diffed = tag_data_service.resolve_request_line_data(db, request)[0]
+    changed_fields = {change["field"] for change in diffed.get("data_changes") or []}
+    assert any(mirror.product_code in field for field in changed_fields), (
+        "a part's own price change is reported keyed under the PART's code, "
+        f"not folded into the tag's own list_price - saw {changed_fields}"
+    )
+
+
+def test_export_guard_walks_line_promotions(db):
+    """AC-S9-5: the export guard checks EVERY line's own promotion, names the line.
+
+    `_check_promotion_expired` today reads only `request.promotion_id` - the
+    header. Since D1 drops that column, this writes a promotion straight onto
+    LINE 2 with raw SQL: the column does not exist yet, so this fails with
+    Postgres's own `UndefinedColumn` naming exactly what is missing.
+    """
+    from sqlalchemy import text
+
+    from app.services.dealer_kit.tag_sheet_export_service import (
+        _check_promotion_expired,
+    )
+    from app.services.error_handler import AppException
+
+    first = _product(db, "SRT9EXP1", list_price="199.00")
+    second = _product(db, "SRT9EXP2", list_price="299.00")
+    expired = _promotion(
+        db, [(second, "199.00")], description="ZZT expired line promo"
+    )
+    expired.end_date = date.today() - timedelta(days=1)
+    db.flush()
+
+    request = PriceTagRequestService.submit_request(
+        db,
+        contact_id=_contact(db).id,
+        company_id=SORENTO,
+        data={
+            "debtor_name": "ZZT Dealer",
+            "price_mode": "selling",
+            "lines": [
+                {"line_type": "product", "product_id": first.id, "quantity": 1},
+                {"line_type": "product", "product_id": second.id, "quantity": 1},
+            ],
+        },
+    )
+    db.flush()
+    line_two_id = sorted(request.lines, key=lambda line: line.sort_order or 0)[1].id
+
+    # THE red statement: `price_tag_request_lines.promotion_id` does not exist
+    # until ptag_0011 lands.
+    db.execute(
+        text("UPDATE price_tag_request_lines SET promotion_id = :p WHERE id = :l"),
+        {"p": expired.id, "l": line_two_id},
+    )
+    db.flush()
+
+    with pytest.raises(AppException) as excinfo:
+        _check_promotion_expired(db, request)
+    assert excinfo.value.status_code == 409
+    assert "line 2" in excinfo.value.message.lower()

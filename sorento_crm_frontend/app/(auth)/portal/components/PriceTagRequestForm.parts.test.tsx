@@ -25,7 +25,12 @@ vi.mock('next/navigation', () => ({
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/lib/dealer-kit/mock-line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
@@ -35,7 +40,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
-}));
+  };
+});
 
 /** Same native-select stand-in the other form suites use: a pick is one change. */
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -206,8 +212,15 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
 
     // The two basins are ONE open row, not two product rows: the salesperson
     // picks one of them, and listing both as parts would read as buying both.
-    expect(screen.queryByText(BASIN_WHITE.code)).toBeNull();
-    expect(screen.queryByText(BASIN_BLACK.code)).toBeNull();
+    // D1 (this lane, mocked): the row's own select labels each candidate
+    // `CODE  RM x` once `lookupLinePricing` resolves (AC-S2-1) - a SEPARATE
+    // async effect from the combo fill this test already awaited above, so
+    // the bare code can still be on screen for one more tick; `waitFor`
+    // gives it the same settle before checking it never renders standalone.
+    await waitFor(() => {
+      expect(screen.queryByText(BASIN_WHITE.code)).toBeNull();
+      expect(screen.queryByText(BASIN_BLACK.code)).toBeNull();
+    });
     const open = screen.getByLabelText('Not sure, any of 2');
     expect(open).toBeInTheDocument();
     // D18: the open-row explanation sentence is retired - the select with
