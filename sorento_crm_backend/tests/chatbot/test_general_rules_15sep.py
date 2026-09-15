@@ -12,10 +12,13 @@ and each arm's shape was MEASURED on this head before the assertion was written.
 
 The three rules, as the coder is implementing them:
 
-1. **THE OFFER HAS ONE WRITER AND ONE TEAM.** The escalate offer is armed once, at the
-   engine's post-compose arm (the three tail arms - `_ask_for_turn`'s offer arm,
-   `_offer_rides_on_roster`, `_offer_born_beside_roster` - collapse into it; `with_offer`
-   stays the merge primitive). The team the SENTENCE prints and `payload.offer.team` /
+1. **THE OFFER HAS ONE WRITER AND ONE TEAM.** As shipped: the arms keep their own
+   selection condition and delegate CONSTRUCTION to `dialogue/open_question.record_offer`,
+   which is the single implementation of what an offer is - called from two sites, the
+   tail (over its own composed text) and the engine's post-compose arm (over the text
+   `crossdomain_compose` may have appended), idempotent through `with_offer`. One team
+   source: `team_from_reply` reads the team back off the sentence the customer will read.
+   The team the SENTENCE prints and `payload.offer.team` /
    `payload.team` come from ONE source, and a `yes` routes to THAT team. A v1-shaped
    `yes` - the PROMOTED prompt's own shape, with `escalation.is_escalation_confirmation:
    true` and NO `answers_open_question` key at all - resolves the question through the
@@ -82,6 +85,7 @@ from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_enti
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output  # noqa: F401
 from tests.chatbot.test_outstanding_lane import (
     REPORT_HIT,
+    _capturing_mcp,
     _open_question,
     _seed_contact,
     _session_of,
@@ -368,6 +372,20 @@ def _final_vars(session_factory, result) -> dict[str, Any]:
             return variables
     return _vars(session_factory)
 
+
+def _report_call(report: dict[str, Any]):
+    """A `mcp_call` that answers `crm_outstanding_report` the way PRODUCTION does.
+
+    The lane always sends `view=render` (`fetch.entity_ids_transformer`), so what comes
+    back from that tool is what `sorento_crm_mcp.presenters.present_response` rendered
+    from the route body - never the body itself. `test_outstanding_lane._capturing_mcp`
+    is the double that does that, and it is reused here rather than re-implemented: a
+    test that hands the lane a raw dict feeds the reply composer a shape production never
+    produces, which is precisely what hid six user-visible defects behind 33 green tests.
+    """
+    call, _captured = _capturing_mcp(report)
+    return call
+
 def _tokens_of(body: dict[str, Any]) -> set[str]:
     """The tokens THIS resolver request actually asked about, lower-cased and exact."""
     asked = [str(body.get("query") or "")] + [str(t) for t in (body.get("tokens") or [])]
@@ -378,6 +396,7 @@ def _exact_services(
     *,
     multi: dict[str, list[dict[str, Any]]] | None = None,
     single: dict[str, dict[str, Any]] | None = None,
+    unresolved: tuple[str, ...] = (),
 ) -> ResolveGateServices:
     """A `resolve_entity` seam keyed on EXACT tokens (see the module docstring).
 
@@ -399,10 +418,12 @@ def _exact_services(
                 resolutions.append(
                     {"raw": token, "token": token, "resolved": True, "matches": [dict(row)]}
                 )
+        missed = [token for token in unresolved if token.lower() in asked]
         return {
-            "tokens": [r["token"] for r in resolutions],
-            "resolutions": resolutions,
-            "unresolved_tokens": [],
+            "tokens": [r["token"] for r in resolutions] + missed,
+            "resolutions": resolutions
+            + [{"raw": token, "token": token, "resolved": False, "matches": []} for token in missed],
+            "unresolved_tokens": missed,
         }
 
     return ResolveGateServices(
@@ -796,7 +817,7 @@ def test_a_number_still_repicks_under_a_riding_offer(arm, session_factory, monke
     result, calls = _run_turn(
         session_factory, monkeypatch, qf=_pick_v1(2), text_body="2",
         msg_id="ZZT-gr-repick-answer", resolve_services=services, lanes=arm.lanes,
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
     tool_calls = [c for c in calls if not c[0].startswith("probe:")]
@@ -1128,7 +1149,7 @@ def test_a_number_past_the_last_printed_row_picks_nobody(
     result, _calls = _run_turn(
         session_factory, monkeypatch, qf=_pick_v1(beyond), text_body=str(beyond),
         msg_id=f"ZZT-gr-hidden-{arm.id}", resolve_services=services, lanes=arm.lanes,
-        attributes=["sales_orders.outstanding"], fetch_response=REPORT_HIT,
+        attributes=["sales_orders.outstanding"], fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
     # Graded on the DIALOGUE TRACE's own record of what the position resolved to, not on
@@ -1284,7 +1305,7 @@ def test_a_refinement_narrows_the_report_whatever_word_the_model_stamped(
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
     tool_calls = [c for c in calls if not c[0].startswith("probe:")]
@@ -1367,7 +1388,7 @@ def test_a_subject_capable_entity_is_a_new_ask_whatever_word_the_model_stamped(
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     for tool, args in [c for c in calls if not c[0].startswith("probe:")]:
@@ -1702,7 +1723,7 @@ def test_b2_a_decline_closes_the_open_report_and_fetches_nothing(
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     tool_calls = [c for c in calls if not c[0].startswith("probe:")]
@@ -1764,7 +1785,7 @@ def test_s1_a_this_turn_entity_with_a_null_current_message_is_still_this_turns_a
                 }
             }
         ),
-        fetch_response=REPORT_HIT,
+        fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     for tool, args in [c for c in calls if not c[0].startswith("probe:")]:
@@ -1896,4 +1917,689 @@ def test_the_escalation_lane_is_handed_the_offers_own_team(
     assert f"from {_pretty(case.team)} team" in closing, (
         f"{case.id}: the customer is told which team has it, and it has to be the one the "
         f"offer named: {closing!r}"
+    )
+
+
+# =========================================================================== #
+# GROUP 5 - WHEN A TURN BOTH ANSWERS AND ASKS, THE ASK WINS (AC-1062, chain e)
+#
+# Owner chain e on `sorento_ai_automation_focus_full`, 15 Sep 2026:
+#
+#   turn b4863e5d "DO outstanding for chin chun"  -> the customer picker
+#   turn a509fbb0 "1"                             -> printed the six-ledger header AND
+#                                                    "Outstanding for which document?",
+#                                                    but PERSISTED `customer_pick` again
+#   turn add34025 "1"                             -> only now armed `outstanding_scope`
+#
+# Two rules meet on that middle turn. D19 rule 1 says a roster survives its own pick;
+# `_ask_for_turn` says the question THIS turn asked is what persists. The reply printed
+# the scope question, so that is the question the customer is looking at - and the rule
+# the coder is implementing is that the ask wins, always, over the roster that was merely
+# answered.
+#
+# **Reproduction, stated plainly**: driven through this harness on the coder's head, every
+# pick-emission shape measured (v1 `reference_positions`, v3 `answers_open_question.picks`,
+# `entity_op` reuse / replace_combine, with and without `requested_attributes`, message_type
+# casual / business_query) prints AND persists `outstanding_scope` correctly. The live
+# defect did not reproduce from the emission alone, so these are written as the RULE rather
+# than as a repro of that one turn, and the one shape that IS red here is the one the
+# measurement found: a pick that arrives UNSTAMPED (no domain word, no order status - what
+# the model emits when it reads the turn as nothing but an answer) loses the outstanding
+# ask entirely and runs the plain order list.
+#
+# Red (1) is a GUARD on the emission, not on the phrase (the parser gap - v20 emitted a
+# bare `order_status: "outstanding"` for "DO outstanding" - is the prompt's own half, and
+# `test_outstanding_lane::TestScopeWordsBind` / `TestPromptTeachesScopeWordsInsideLongerSentences`
+# hold it): GIVEN `do_outstanding` / `so_outstanding` / `outstanding_both`, the scope
+# question must never be asked and the report runs at that scope.
+# =========================================================================== #
+
+#: `order_status` -> the `scope` the report must run at, from `_SCOPE_BY_ORDER_STATUS`.
+PRE_SCOPED = (("do_outstanding", "do"), ("so_outstanding", "so"), ("outstanding_both", "both"))
+
+#: The four ways a number reaches the engine, all four of which must resolve the same
+#: question. `v1-stamped` is the live v20 shape (the model stamps the domain and the
+#: status back onto a bare "1" - R-B's own note); `v1-unstamped` is the same prompt
+#: reading the turn as a pure answer (`entity_op: reuse`); `v1-replace` is that same
+#: answer emitted with `entity_op: replace_combine`, which is what R-D's own live pick
+#: turn carried (d5851ed2: "the pick emitted `entity_op: replace` with the customer
+#: alone") and what `ParseOutput`'s default is; `v3` is this lane's own parser.
+ANSWER_CHANNELS = ("v1-stamped", "v1-unstamped", "v1-replace", "v3")
+
+
+def _outstanding_ask_qf(status: str, *, customer_raw: str, v3: bool = False) -> dict[str, Any]:
+    qf = _qf(
+        [_entity(customer_raw, "customer")], domain="order", intent_hint="check_order",
+        order_status=status, entity_op="replace_combine",
+    )
+    if v3:
+        qf["answers_open_question"] = {
+            "resolved": False, "picks": [], "yes_no": None, "free_text": None,
+        }
+        qf["anaphora"] = False
+        qf["topic_reset"] = False
+    return qf
+
+
+def _numbered_answer_qf(position: int, *, channel: str, status: str) -> dict[str, Any]:
+    """A bare number, in each of the three shapes the engine has to read it in."""
+    if channel == "v3":
+        return _parser_output(
+            message_type="business_query", intent_hint="check_order", domain_hint="order",
+            order_status=status, entity_op="reuse", entities=[], asks=[],
+            reference_positions=[],
+            answers_open_question={
+                "resolved": True, "picks": [position], "yes_no": None, "free_text": None,
+            },
+            anaphora=False, topic_reset=False,
+        )
+    if channel == "v1-stamped":
+        return _parser_output(
+            message_type="business_query", intent_hint="check_order", domain_hint="order",
+            order_status=status, entity_op="reuse", entities=[], asks=[],
+            reference_positions=[position],
+        )
+    return _parser_output(
+        message_type="casual", intent_hint=None, domain_hint=None, entities=[], asks=[],
+        entity_op="reuse" if channel == "v1-unstamped" else "replace_combine",
+        reference_positions=[position],
+    )
+
+
+def _report_tool_calls(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    return [args for name, args in calls if name == "crm_outstanding_report"]
+
+
+def _other_tool_calls(calls: list[tuple[str, dict[str, Any]]]) -> list[str]:
+    return [
+        name
+        for name, _args in calls
+        if not name.startswith("probe:") and name != "crm_outstanding_report"
+    ]
+
+
+@pytest.mark.parametrize(("status", "scope"), PRE_SCOPED, ids=lambda x: x)
+def test_a_pre_scoped_outstanding_ask_never_asks_the_scope_question(
+    status, scope, session_factory, monkeypatch
+) -> None:
+    """Red (1), the no-picker half: the document type was named, so there is nothing to
+    ask. #862's own pre-scoping, guarded per status rather than per phrase."""
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(
+        single={
+            "hanlim": {
+                "uuid": CARRIED_CUSTOMER_UUID, "entity_type": "customer",
+                "canonical_code": "HANLIM", "match_tier": "exact", "company_name": "Sorento",
+            }
+        }
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_outstanding_ask_qf(status, customer_raw="hanlim"),
+        text_body=f"{status} for hanlim", msg_id=f"ZZT-gr5-prescoped-{status}",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status == "done", (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Outstanding for which document?" not in reply, (
+        f"{status} names the document type, so the scope question is answered before it "
+        f"is asked: {reply!r}"
+    )
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, f"{status}: one report call: {calls!r}"
+    assert reports[0].get("scope") == scope, (
+        f"{status} must run the report at scope {scope!r}: {reports[0]!r}"
+    )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") != "outstanding_scope", (
+        f"{status}: nothing is left to ask about the document type: {question!r}"
+    )
+
+
+@pytest.mark.parametrize("channel", ANSWER_CHANNELS, ids=lambda c: c)
+@pytest.mark.parametrize(("status", "scope"), PRE_SCOPED, ids=lambda x: x)
+def test_a_pre_scoped_ask_keeps_its_scope_across_a_customer_picker(
+    status, scope, channel, session_factory, monkeypatch
+) -> None:
+    """Red (1), the picker half, which is chain e's own first two turns: the document type
+    named in the ORIGINAL message has to survive the pick, so the pick answers with the
+    report at that scope and still never asks which document.
+
+    Measured red on `v1-unstamped`: a pick the model reads as a pure answer loses the
+    outstanding ask altogether and the turn runs the plain order list.
+    """
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(multi={"chin chun": _customer_rows()})
+    _run_turn(
+        session_factory, monkeypatch,
+        qf=_outstanding_ask_qf(status, customer_raw="chin chun", v3=channel == "v3"),
+        text_body=f"{status} for chin chun",
+        msg_id=f"ZZT-gr5-picker-{status}-{channel}-arm",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_numbered_answer_qf(1, channel=channel, status=status), text_body="1",
+        msg_id=f"ZZT-gr5-picker-{status}-{channel}-pick",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status == "done", (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Outstanding for which document?" not in reply, (
+        f"{status} / {channel}: the document type was named before the picker and must "
+        f"survive it: {reply!r}"
+    )
+    assert _other_tool_calls(calls) == [], (
+        f"{status} / {channel}: the pick resumes the OUTSTANDING ask, so nothing else may "
+        f"answer it: {calls!r}"
+    )
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, (
+        f"{status} / {channel}: the pick runs the report once: {calls!r}"
+    )
+    assert reports[0].get("scope") == scope, (
+        f"{status} / {channel}: at the scope the first message named: {reports[0]!r}"
+    )
+    assert reports[0].get("customer_ids") == [CHIN_CHUN[0][0]], (
+        f"{status} / {channel}: for the customer the pick chose: {reports[0]!r}"
+    )
+
+
+@pytest.mark.parametrize("channel", ANSWER_CHANNELS, ids=lambda c: c)
+class TestTheQuestionAPickTurnAsksIsTheOneThatPersists:
+    """Red (2): the general rule, on both kinds a pick turn can newly ask.
+
+    The reply is the contract. A turn that answers the roster AND asks a new question has
+    put the new question on the customer's screen, so that is what the next message
+    answers - and the roster it merely picked from cannot outlive it by surviving into the
+    persisted slot (D19 rule 1 is about a roster nothing newer replaced).
+    """
+
+    def _arm_and_pick(self, session_factory, monkeypatch, *, status: str, channel: str, tag: str):
+        _seed_contact(session_factory, variables={})
+        services = _exact_services(multi={"chin chun": _customer_rows()})
+        _run_turn(
+            session_factory, monkeypatch,
+            qf=_outstanding_ask_qf(status, customer_raw="chin chun", v3=channel == "v3"),
+            text_body=f"{status} for chin chun", msg_id=f"ZZT-gr5-{tag}-{channel}-arm",
+            attributes=["sales_orders.outstanding"], resolve_services=services,
+            emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+        )
+        result, calls = _run_turn(
+            session_factory, monkeypatch,
+            qf=_numbered_answer_qf(1, channel=channel, status=status), text_body="1",
+            msg_id=f"ZZT-gr5-{tag}-{channel}-pick",
+            attributes=["sales_orders.outstanding"], resolve_services=services,
+            emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+        )
+        return result, calls, services
+
+    def test_a_pick_turn_that_asks_the_scope_question_persists_it(
+        self, channel, session_factory, monkeypatch
+    ) -> None:
+        """Chain e's middle turn: a BARE `outstanding` ask, so the pick turn has to ask
+        which document - and what it asked is what has to be waiting for the next number.
+        """
+        result, _calls, _services = self._arm_and_pick(
+            session_factory, monkeypatch, status="outstanding", channel=channel, tag="scope"
+        )
+        assert result.status == "done", (result.status, result.error)
+        reply = (result.reply or {}).get("text") or ""
+        assert "Outstanding for which document?" in reply, (
+            f"{channel}: a bare outstanding ask still needs its document type: {reply!r}"
+        )
+        question = _stored_oq(_final_vars(session_factory, result))
+        assert question.get("kind") == "outstanding_scope", (
+            f"{channel}: the reply asked the scope question, so the roster it picked FROM "
+            f"must not be what is left waiting for the next number: {question!r}"
+        )
+        assert len(question.get("options") or []) == 3, question
+
+    def test_a_pick_turn_that_asks_the_detail_question_persists_it(
+        self, channel, session_factory, monkeypatch
+    ) -> None:
+        """The same rule on the other kind: the scope was already known, so the pick turn
+        ANSWERS with the report and asks the detail question instead."""
+        result, calls, _services = self._arm_and_pick(
+            session_factory, monkeypatch, status="do_outstanding", channel=channel,
+            tag="detail",
+        )
+        assert result.status == "done", (result.status, result.error)
+        assert _report_tool_calls(calls), f"{channel}: the pick runs the report: {calls!r}"
+        question = _stored_oq(_final_vars(session_factory, result))
+        assert question.get("kind") == "outstanding_detail", (
+            f"{channel}: the reply offered the detail list, so that is the question the "
+            f"next number answers: {question!r}"
+        )
+
+
+@pytest.mark.parametrize("channel", ANSWER_CHANNELS, ids=lambda c: c)
+@pytest.mark.parametrize(
+    ("position", "scope"), ((1, "so"), (2, "do"), (3, "both")), ids=lambda x: str(x)
+)
+def test_a_numbered_answer_to_the_scope_question_resolves_after_a_customer_pick(
+    position, scope, channel, session_factory, monkeypatch
+) -> None:
+    """Red (2)'s second half, chain e's third turn: the number the customer types against
+    the question the previous turn asked has to RESOLVE - the report at that scope, and no
+    third printing of the same three options."""
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(multi={"chin chun": _customer_rows()})
+    _run_turn(
+        session_factory, monkeypatch,
+        qf=_outstanding_ask_qf("outstanding", customer_raw="chin chun", v3=channel == "v3"),
+        text_body="outstanding for chin chun",
+        msg_id=f"ZZT-gr5-answer-{position}-{channel}-arm",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    _run_turn(
+        session_factory, monkeypatch,
+        qf=_numbered_answer_qf(1, channel=channel, status="outstanding"), text_body="1",
+        msg_id=f"ZZT-gr5-answer-{position}-{channel}-pick",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_numbered_answer_qf(position, channel=channel, status="outstanding"),
+        text_body=str(position),
+        msg_id=f"ZZT-gr5-answer-{position}-{channel}-scope",
+        attributes=["sales_orders.outstanding"], resolve_services=services,
+        emits_v3=channel == "v3", fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status == "done", (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Outstanding for which document?" not in reply, (
+        f"{position} / {channel}: the customer answered the question - printing it a "
+        f"third time is how chain e's owner could not leave it: {reply!r}"
+    )
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, f"{position} / {channel}: one report call: {calls!r}"
+    assert reports[0].get("scope") == scope, (
+        f"{position} / {channel}: '{position}' is the {scope!r} scope: {reports[0]!r}"
+    )
+    assert reports[0].get("customer_ids") == [CHIN_CHUN[0][0]], (
+        f"{position} / {channel}: the customer the pick chose two turns ago is still the "
+        f"report's subject: {reports[0]!r}"
+    )
+
+
+# =========================================================================== #
+# GROUP 6 - the re-review's two blockers, and guards for the hunks the kill
+# test found unguarded (reviewer, 15 Sep 2026, on the general-rule round)
+# =========================================================================== #
+
+
+def _decline_with_a_new_ask_qf(
+    domain_hint: str | None, *, raw: str, hint: str
+) -> dict[str, Any]:
+    """"no, check stock SRTWT2634": a decline AND a question of its own, in one message.
+
+    `is_affirmative: False` is the parser's own decline signal, and the entity is
+    `current_message: True` - the customer named a new subject in the same breath.
+    """
+    return _parser_output(
+        message_type="business_query",
+        intent_hint="check_stock" if domain_hint == "inventory" else None,
+        domain_hint=domain_hint, entity_op="replace_combine", is_affirmative=False,
+        reference_positions=[], asks=[],
+        entities=[_entity(raw, hint)],
+    )
+
+
+_NEW_SUBJECTS = (
+    ("product", STOCK_CODE, "product", STOCK_UUID),
+    ("customer", "hanlim", "customer", CARRIED_CUSTOMER_UUID),
+)
+
+
+@pytest.mark.parametrize("domain_hint", (None, "inventory"), ids=lambda d: f"domain-{d or 'null'}")
+@pytest.mark.parametrize(
+    ("subject_id", "raw", "hint", "uuid"), _NEW_SUBJECTS, ids=lambda x: str(x)
+)
+def test_b1_a_decline_that_brings_its_own_question_is_answered_not_just_acknowledged(
+    subject_id, raw, hint, uuid, domain_hint, session_factory, monkeypatch
+) -> None:
+    """B1 (reviewer, NEW regression on the general-rule round): "no, check stock
+    SRTWT2634" over an open outstanding question is a decline AND an ask.
+
+    R22(a)'s way out reads `is_affirmative: False` on a turn that "picked nothing, named
+    nothing and refined nothing" and answers with one line from the registry's
+    `offer_declined` key ("Okay, noted.", `lanes/business/__init__._outstanding_offer_closed`).
+    A turn that names its OWN subject is not that turn: closing the question is right, and
+    stopping there leaves the customer's actual question unanswered.
+    """
+    _seed_open_detail(session_factory, filters=_customer_subject_filters())
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_decline_with_a_new_ask_qf(domain_hint, raw=raw, hint=hint),
+        text_body=f"no, check stock {raw}",
+        msg_id=f"ZZT-gr6-b1-{subject_id}-{domain_hint or 'null'}",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(
+            single={
+                raw: {
+                    "uuid": uuid, "entity_type": hint, "canonical_code": raw,
+                    "match_tier": "exact", "company_name": "Sorento",
+                }
+            }
+        ),
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    reply = (result.reply or {}).get("text") or ""
+    assert "Okay, noted." not in reply, (
+        f"{subject_id} / {domain_hint!r}: the customer declined the offer AND asked "
+        f"something - acknowledging the decline is not an answer to the question: {reply!r}"
+    )
+    tool_calls = [c for c in calls if not c[0].startswith("probe:")]
+    assert tool_calls, (
+        f"{subject_id} / {domain_hint!r}: the new subject must reach a tool - nothing ran: "
+        f"{calls!r}"
+    )
+    for name, args in tool_calls:
+        assert not (
+            name == "crm_outstanding_report" and args.get("product_code") == PRODUCT_CODE_IN_OFFER
+        ), (
+            f"{subject_id} / {domain_hint!r}: the declined report must not be what answers "
+            f"the new ask: {name} {args!r}"
+        )
+    if domain_hint == "inventory" and hint == "product":
+        assert [name for name, _a in tool_calls] == ["crm_inventory_stock_balance_list"], (
+            f"a stock ask is answered by the stock tool: {tool_calls!r}"
+        )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") != "outstanding_detail", (
+        f"{subject_id} / {domain_hint!r}: the declined question still closes: {question!r}"
+    )
+
+
+#: The product the seeded offer is about, so B1 can assert the OLD report is not re-run.
+PRODUCT_CODE_IN_OFFER = OUTSTANDING_CODE
+
+
+@pytest.mark.parametrize(
+    "domain_hint", (None, "order", "inventory"), ids=lambda d: f"domain-{d or 'null'}"
+)
+def test_b2_a_bare_no_closes_the_open_outstanding_question(
+    domain_hint, session_factory, monkeypatch
+) -> None:
+    """B2 (reviewer): the fifth matrix cell - a bare "no" whose emission carries NO
+    entities at all.
+
+    The decline case earlier in this file carries the question's own subject on `entities`
+    with `current_message: False` (the live R-H shape), which is a different turn: this one
+    names nothing whatsoever, which is R22(a)'s own premise. Measured: under
+    `domain_hint: "order"` the detail rows are re-printed and the question stays open, so
+    "no" cannot close it - the same "wud i can't reset now?" the owner hit, back through
+    the domain word.
+    """
+    _seed_open_detail(session_factory, filters=_customer_subject_filters())
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="business_query" if domain_hint else "casual", intent_hint=None,
+            domain_hint=domain_hint, entity_op="reuse", is_affirmative=False,
+            reference_positions=[], entities=[], asks=[],
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+        ),
+        text_body="no", msg_id=f"ZZT-gr6-b2-{domain_hint or 'null'}",
+        attributes=["sales_orders.outstanding"],
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    reports = _report_tool_calls(calls)
+    assert reports == [], (
+        f"domain_hint {domain_hint!r}: a decline is answered with one line, never by "
+        f"running the report the customer just declined: {calls!r}"
+    )
+    reply = (result.reply or {}).get("text") or ""
+    assert "Reply 1 for" not in reply and "1. Sales order list" not in reply, (
+        f"domain_hint {domain_hint!r}: the declined question must not be printed back: "
+        f"{reply!r}"
+    )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") not in ("outstanding_detail", "outstanding_scope"), (
+        f"domain_hint {domain_hint!r}: 'no' closes it: {question!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# S1 - an offer exists because the BOT offered, not because the words appear
+# --------------------------------------------------------------------------- #
+
+#: Replies that carry the bot's OWN offer sentence, one per composer shape that writes it
+#: (`open_question.ESCALATE_PREFIX`'s own comment names all four).
+REAL_OFFER_REPLIES = (
+    ("frozen-prefix", "Would you like me to escalate to warehouse team?", "warehouse"),
+    (
+        "lower-case-variant",
+        "Couldn't pin down \"wc286\". Here are the closest matches:\n1. A\n2. B\n"
+        "Reply with a number to continue, or would you like me to escalate to warehouse team?",
+        "warehouse",
+    ),
+    (
+        "yes-to-escalate",
+        "Couldn't find some items:\n\n\"wc286\" - did you mean:\n1. A\n2. B\n\n"
+        "Reply a number to pick, or 'yes' to escalate to purchasing.",
+        "purchasing",
+    ),
+    (
+        "bold-company-insert",
+        "Would you like me to escalate to *Sorento* customer service team?",
+        "customer_service",
+    ),
+)
+
+#: Replies where the phrase is the CUSTOMER's, quoted back at them. Measured live: a
+#: not-found echo of the token "escalate to purchasing." records a `purchasing` offer, so
+#: the next bare "yes" escalates something nobody offered.
+ECHOED_OFFER_REPLIES = (
+    (
+        "not-found-echo",
+        'Couldn\'t find these: "escalate to purchasing." (product): not found.',
+    ),
+    (
+        "scope-header-echo",
+        "Customer: all\nProduct: escalate to warehouse.\nDates: all dates\n\n"
+        "Here are the orders I found.",
+    ),
+)
+
+
+@pytest.mark.parametrize(("case_id", "reply", "team"), REAL_OFFER_REPLIES, ids=lambda x: str(x))
+def test_s1_every_composer_shape_of_the_bots_own_offer_is_recorded(
+    case_id, reply, team
+) -> None:
+    """One rule, four sentences. `record_offer` is the single implementation, so each
+    composer's own wording has to reach it - a shape it cannot read is an offer the
+    customer can act on and the bot cannot answer (that is R-I)."""
+    from app.services.chatbot.dialogue import open_question as oq
+
+    question = oq.record_offer(None, reply_text=reply, turn_no=1)
+    assert isinstance(question, dict), f"{case_id}: no offer recorded: {reply!r}"
+    assert (question.get("payload") or {}).get("team") == team, (
+        f"{case_id}: the offer records the team the sentence named: {question!r}"
+    )
+    assert question.get("expects") == "yes_no", question
+
+
+@pytest.mark.parametrize(("case_id", "reply"), ECHOED_OFFER_REPLIES, ids=lambda x: str(x))
+def test_s1_a_reply_that_merely_echoes_the_customers_words_records_no_offer(
+    case_id, reply
+) -> None:
+    """S1 (reviewer): the phrase appearing in the reply is not the same fact as the bot
+    having offered.
+
+    `team_from_reply` anchors on the two words that never vary ("escalate to"), which is
+    what makes it read every composer - and a customer token quoted back inside a
+    not-found line or a scope header carries those same two words. An offer nobody made
+    must not be answerable: the next bare "yes" would escalate on the strength of the
+    customer's own typing.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    assert oq.record_offer(None, reply_text=reply, turn_no=1) is None, (
+        f"{case_id}: the bot did not offer anything here - the words are the customer's, "
+        f"quoted back: {reply!r}"
+    )
+
+
+def test_s1_an_echoed_phrase_never_outranks_the_bots_own_offer(
+    session_factory, monkeypatch
+) -> None:
+    """The same rule end to end, on the one turn shape that carries BOTH: the customer's
+    unresolvable token quoted back ("escalate to purchasing.") and the bot's own offer
+    sentence in the same reply.
+
+    The live shape is the order-domain not-found line, measured on the console pass:
+    `Couldn't find: "DO12345" (order). Would you like me to escalate to customer service
+    team?`. The echo comes FIRST in the text, so a reader that takes the first "escalate
+    to" it finds records `purchasing` - a team nobody offered - and the customer's next
+    "yes" goes there.
+    """
+    _seed_contact(session_factory, variables={})
+    token = "escalate to purchasing."
+    result, _calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_qf([_entity(token, "order")], domain="order", intent_hint="check_order"),
+        text_body=f'has my order "{token}" arrived', msg_id="ZZT-gr6-s1-echo",
+        resolve_services=_exact_services(unresolved=(token,)),
+    )
+    reply = (result.reply or {}).get("text") or ""
+    assert token in reply, (
+        f"this test is only itself if the reply quotes the customer's token back: {reply!r}"
+    )
+    printed = _printed_team(reply)
+    question = _stored_oq(_final_vars(session_factory, result))
+    recorded = _recorded_team(question)
+    assert recorded != "purchasing", (
+        f"'purchasing' is the customer's own word, quoted back inside a not-found line - "
+        f"the offer is whatever the BOT's own sentence named ({printed!r}): {question!r}"
+    )
+    if printed is not None:
+        assert _pretty(recorded) == printed, (
+            f"the reply promised {printed!r} and the question recorded {recorded!r}: "
+            f"{question!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Guards for the three hunks the reviewer's kill test found unguarded
+# --------------------------------------------------------------------------- #
+
+
+def test_the_family_rides_only_a_customer_row() -> None:
+    """`_entity_of` (security review n2): an account family is a fact about a CUSTOMER.
+
+    `entity_ids_transformer` expands `family_uuids` into `customer_ids`, so copying the
+    key off any row that happened to carry one would hand an unowned uuid list to a type
+    with no notion of a family - a product pick that reached six customers' orders.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    customer = oq.resolve(
+        "customer_pick",
+        {**ox_no_answer(), "resolved": True, "picks": [1]},
+        [
+            {
+                "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (SRT, MCH)", "code": "300-C043",
+                "uuid": CHIN_CHUN[0][0], "entity_type": "customer",
+                "family_uuids": [CHIN_CHUN[0][0], CHIN_CHUN[1][0]],
+            }
+        ],
+        {},
+    )
+    assert customer.focus["customer"].get("family_uuids") == [
+        CHIN_CHUN[0][0], CHIN_CHUN[1][0]
+    ], customer.focus
+
+    product = oq.resolve(
+        "product_pick",
+        {**ox_no_answer(), "resolved": True, "picks": [1]},
+        [
+            {
+                "idx": 1, "label": "SRTWC286-SH", "code": "SRTWC286-SH",
+                "uuid": "33333331-1111-1111-1111-111111111111", "entity_type": "product",
+                # A row that carries the key anyway: nothing downstream may act on it.
+                "family_uuids": [CHIN_CHUN[0][0], CHIN_CHUN[1][0]],
+            }
+        ],
+        {},
+    )
+    picked = product.focus["products"][0]
+    assert "family_uuids" not in picked, (
+        f"a product is not an account family: {picked!r}"
+    )
+
+
+def ox_no_answer() -> dict[str, Any]:
+    from app.services.chatbot.head import output_exchange as ox
+
+    return dict(ox.NO_OPEN_QUESTION_ANSWER)
+
+
+def test_record_offer_leaves_a_non_roster_question_alone() -> None:
+    """`record_offer`'s non-roster guard: a team clarify, a company clarify and a member
+    offer are ALREADY what the customer is being asked, and the escalate yes/no has
+    nothing to add to any of them.
+
+    A roster takes the offer on board (D19 rule 3) and no question at all becomes the
+    plain yes/no; those two are covered by the shapes above. This is the third branch,
+    which the kill test found nothing grading.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    reply = "Would you like me to escalate to warehouse team?"
+    for kind, options in (
+        ("team_pick", [{"idx": 1, "team": "purchasing", "label": "purchasing"}]),
+        ("company_pick", [{"idx": 1, "label": "Sorento", "company_id": "co-1"}]),
+        ("member_offer", [{"idx": 1, "label": "Nurain", "uuid": "u-1"}]),
+    ):
+        question = oq.ask(kind, options=options, turn_no=3)
+        after = oq.record_offer(question, reply_text=reply, turn_no=4)
+        assert after == question, (
+            f"{kind} is already the question on the customer's screen: {after!r}"
+        )
+
+
+def test_the_engines_post_compose_arm_never_replaces_an_open_member_offer(
+    session_factory, monkeypatch
+) -> None:
+    """The engine's own arm, guarded end to end: a re-prompted member roster must survive
+    a turn whose reply carries the escalate sentence.
+
+    Measured cause in the engine's own comment: two owner worlds
+    (`sub-output-live/out-14875019`, `out-15145655`) turned a six-person roster into a
+    one-option team clarify as soon as this arm could read a team off the printed
+    sentence. A member offer is an open offer with its own yes, its own no and its own
+    re-prompt.
+    """
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.dialogue import open_question as oq
+
+    member = oq.ask(
+        "member_offer",
+        options=[
+            {"idx": 1, "label": "Nurain", "uuid": "aaaaaaaa-0000-0000-0000-000000000001"},
+            {"idx": 2, "label": "Aina", "uuid": "aaaaaaaa-0000-0000-0000-000000000002"},
+        ],
+        turn_no=5,
+        payload={"team": "warehouse"},
+    )
+    sealed = {
+        "text": "No stock for SRTWT2634. Would you like me to escalate to warehouse team?",
+        "session_patch": {"variables": {"open_question": member}},
+    }
+    ctx = {"parse": {"_turn_no": 6, "_open_question_before": member}}
+
+    engine_mod._arm_cross_domain_offer(sealed, {"team": "warehouse"}, ctx=ctx, domain="inventory")
+
+    after = sealed["session_patch"]["variables"]["open_question"]
+    assert after == member, (
+        f"the named people the customer is reading must still be the question: {after!r}"
     )
