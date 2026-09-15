@@ -376,10 +376,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--group", required=True, choices=["contract", "console", "prod_sample"])
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--turn-id")
+    mode.add_argument("--turn-ids", help="Comma-separated turn ids, IN ORDER, as one chain")
     mode.add_argument("--contact")
     mode.add_argument("--test-run-id")
     mode.add_argument("--branch-kind")
-    parser.add_argument("--slug", help="Required with --turn-id: the output file's slug")
+    parser.add_argument("--slug", help="Required with --turn-id/--turn-ids: the output file's slug")
     parser.add_argument("--slug-prefix", help="Prefix for --contact/--test-run-id/--branch-kind output files")
     parser.add_argument("--since", help="ISO date/timestamp, inclusive, with --contact")
     parser.add_argument("--until", help="ISO date/timestamp, exclusive, with --contact")
@@ -397,6 +398,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.turn_id and not args.slug:
         parser.error("--turn-id requires --slug")
+    if args.turn_ids and not args.slug:
+        parser.error("--turn-ids requires --slug")
 
     engine = create_engine(args.db_url)
     db_label = engine.url.database or "unknown"
@@ -413,6 +416,21 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             turn = _record_row(_row_to_dict(row), db_label=db_label)
             written.append(_write(args.group, args.slug, [turn]))
+        elif args.turn_ids:
+            ids = [i.strip() for i in args.turn_ids.split(",") if i.strip()]
+            by_id: dict[str, Any] = {}
+            rows = conn.execute(
+                text(f"SELECT {_ROW_COLUMNS} FROM chatbot.turns WHERE id = ANY(:ids)"),
+                {"ids": ids},
+            ).fetchall()
+            for r in rows:
+                by_id[str(r.id)] = r
+            missing = [i for i in ids if i not in by_id]
+            if missing:
+                print(f"turn id(s) not found: {missing}", file=sys.stderr)
+                return 1
+            turns = [_record_row(_row_to_dict(by_id[i]), db_label=db_label) for i in ids]
+            written.append(_write(args.group, args.slug, turns))
         elif args.test_run_id:
             rows = conn.execute(
                 text(
