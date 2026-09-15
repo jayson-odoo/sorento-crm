@@ -1,0 +1,268 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": null,
+          "countryCode": "MY",
+          "created_at": 1776147591,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": null
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/48d08d6f-c139-4313-a87f-18df1b871ddf"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": "zzt-428126355@example.invalid",
+          "firstName": "ZZT-428126355",
+          "id": 428126355,
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60428126355",
+          "profilePic": null,
+          "status": "open",
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ]
+        },
+        "ingress": "webhook",
+        "is_test": false,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27223158487307777\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "assignee": {
+              "email": null,
+              "firstName": "ZZT-agent",
+              "id": null,
+              "lastName": ""
+            },
+            "countryCode": "MY",
+            "created_at": 1776147591,
+            "email": "zzt-428126355@example.invalid",
+            "firstName": "ZZT-428126355",
+            "id": 428126355,
+            "language": null,
+            "lastName": "",
+            "phone": "+60428126355",
+            "profilePic": null,
+            "status": "open"
+          },
+          "event_id": "37103bf0-b7d1-4764-bdd5-1ed37914ab2f",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxMzMyNjYwOTIVAgASGBYzRUIwNTNEQjA3RUY4NzU3RTMzNTZEAA==",
+            "contactId": 428126355,
+            "message": {
+              "text": "promo srtwc6020",
+              "type": "text"
+            },
+            "messageId": 1789380189000000,
+            "timestamp": 1789380189000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": null
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "check_promotion",
+        "canned": [],
+        "entity_ids": [
+          "5f9c5f39-379a-4cd6-996e-5599cc34c1a7",
+          "66df7aa1-875a-4d4e-8484-e0e5eebdaaff",
+          "957ef4d2-20c4-4fba-b0db-c0b9171080bd",
+          "d346a6c9-6371-4170-afc5-127698c253b2"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": "escalation_offer",
+          "option_labels": []
+        },
+        "text": "Here's what you want:\n\u2022 product: SRTWC6020-SH-MG (+3 more)\n\nBut no promotion matched these. Would you like me to escalate to marketing promotion team?",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_marketing_promotions_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "canonical_code": "SRTWC6020",
+            "entity_type": "product",
+            "token": "SRTWC6020",
+            "uuid": "5f9c5f39-379a-4cd6-996e-5599cc34c1a7"
+          }
+        ],
+        "tokens": [
+          "SRTWC6020"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 17,
+        "recorded_at": "2026-09-14T19:03:15.235438+09:00",
+        "turn_id": "5b6c83a7-e8d3-498b-bf4b-e63a76ff7939"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 4,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 4,
+              "unmapped_types": []
+            },
+            "access_levels": [
+              "End User"
+            ],
+            "contact_id": "428126355",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "5f9c5f39-379a-4cd6-996e-5599cc34c1a7",
+              "66df7aa1-875a-4d4e-8484-e0e5eebdaaff",
+              "d346a6c9-6371-4170-afc5-127698c253b2",
+              "957ef4d2-20c4-4fba-b0db-c0b9171080bd"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": false,
+            "intro": "No matching results found.",
+            "items": [],
+            "last_updated_at": null,
+            "result_type": "promotions"
+          },
+          "tool": "crm_marketing_promotions_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "promotion",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWC6020"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_promotion",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the promotion for SRTWC6020"
+      }
+    }
+  ]
+}

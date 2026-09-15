@@ -1,0 +1,670 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 1061691,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777880659,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/aefb2cb0-abec-490e-b74b-bf2f2d4a5b37"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-440987225",
+          "id": 440987225,
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": "New Lead",
+          "locale": null,
+          "phone": "+60440987225",
+          "profilePic": null,
+          "status": "open",
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ]
+        },
+        "ingress": "webhook",
+        "is_test": false,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27127869030170057\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "assignee": {
+              "email": "zzt-agent@example.invalid",
+              "firstName": "ZZT-agent",
+              "id": 1061691,
+              "lastName": "",
+              "role": "user"
+            },
+            "countryCode": "MY",
+            "created_at": 1777880659,
+            "email": null,
+            "firstName": "ZZT-440987225",
+            "id": 440987225,
+            "language": null,
+            "lastName": "",
+            "phone": "+60440987225",
+            "profilePic": null,
+            "status": "open"
+          },
+          "event_id": "95681e95-dda8-443d-b533-d203e5508bdb",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxMjI0NjUyMTMVAgASGBYzRUIwMzE1RjM2NjBDNTJGRUY4NDVDAA==",
+            "contactId": 440987225,
+            "message": {
+              "text": "CHECK STOCK v",
+              "type": "text"
+            },
+            "messageId": 1789408775000000,
+            "timestamp": 1789408775000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": null
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "000fb00f-b0c7-4c6c-afe9-bd92cea01da8",
+          "19d25b80-e5a8-4ec4-a022-0d2288c3104c",
+          "1b40347d-e847-49ec-8ce1-22b828d0a356",
+          "2c3d0937-b343-47be-b38e-e8b878a35555",
+          "3064baee-5849-48d5-8286-449715abf969",
+          "51757f9d-bde4-4d7b-a0bf-79c740e7a85d",
+          "581f56c6-fed7-43b9-b2c2-fb14a4407fd9",
+          "62e0d194-6ebe-46fa-a43e-81e8ee503a0e",
+          "77a4d8e5-b544-414d-9c46-46a6212ebb57",
+          "9b13be0b-e130-42ae-9f39-4b529c0e3bfa",
+          "cb452f74-e9fe-4d5c-ab16-40f3ca8e1758",
+          "cf7e3102-7124-46c4-bbb1-f2984d11b24d",
+          "e698cb7a-e1d5-463c-8b40-5e141555146b",
+          "e8a37058-6b4b-464f-93f4-5bf72722e98a",
+          "fff3de05-6913-4544-a749-2550e0c301f3"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* ADX-V170021-2\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 2\n*Outstanding:* 0\n\n2. *Company:* Mocha\n*Product Code:* M228-PVD-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 60\n\n3. *Company:* Sorento\n*Product Code:* SRT-FH12PVC-GM-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 116\n\n4. *Company:* Sorento\n*Product Code:* SRTFH15PVC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 38\n*Outstanding:* 0\n\n5. *Company:* Sorento\n*Product Code:* SRTFH15PVC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 9\n*Outstanding:* 978\n\n6. *Company:* Sorento\n*Product Code:* SRTFH15PVC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Company:* Sorento\n*Product Code:* SRTFVP23\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 90\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "include_sellable",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_inventory_stock_balance_list"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "canonical_code": "v",
+            "entity_type": "product",
+            "token": "v",
+            "uuid": "000fb00f-b0c7-4c6c-afe9-bd92cea01da8"
+          }
+        ],
+        "tokens": [
+          "v"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 17,
+        "recorded_at": "2026-09-15T02:59:41.230205+09:00",
+        "turn_id": "f8c519a1-9d31-4547-8022-5e5bbb6dc85f"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 15,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 15,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "440987225",
+            "date_mode": null,
+            "include_sellable": true,
+            "is_active": null,
+            "product_ids": [
+              "000fb00f-b0c7-4c6c-afe9-bd92cea01da8",
+              "cb452f74-e9fe-4d5c-ab16-40f3ca8e1758",
+              "19d25b80-e5a8-4ec4-a022-0d2288c3104c",
+              "fff3de05-6913-4544-a749-2550e0c301f3",
+              "581f56c6-fed7-43b9-b2c2-fb14a4407fd9",
+              "cf7e3102-7124-46c4-bbb1-f2984d11b24d",
+              "1b40347d-e847-49ec-8ce1-22b828d0a356",
+              "e698cb7a-e1d5-463c-8b40-5e141555146b",
+              "e8a37058-6b4b-464f-93f4-5bf72722e98a",
+              "62e0d194-6ebe-46fa-a43e-81e8ee503a0e",
+              "77a4d8e5-b544-414d-9c46-46a6212ebb57",
+              "9b13be0b-e130-42ae-9f39-4b529c0e3bfa",
+              "51757f9d-bde4-4d7b-a0bf-79c740e7a85d",
+              "2c3d0937-b343-47be-b38e-e8b878a35555",
+              "3064baee-5849-48d5-8286-449715abf969"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "fallback_used": false,
+            "has_result": true,
+            "intro": "Stock details found for the requested products.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "ADX-V170021-2"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-BB"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 2
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 0
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "ADX-V170021-2"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Mocha"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "M228-PVD-GM"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "MERU"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "MOCHA-WH"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 60
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "M228-PVD-GM"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRT-FH12PVC-GM-DIY"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 0
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 116
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRT-FH12PVC-GM-DIY"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTFH15PVC"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 38
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 0
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTFH15PVC"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTFH15PVC"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-BB"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 9
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 978
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTFH15PVC"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTFH15PVC"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW-IB"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 0
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 0
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTFH15PVC"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "company_name",
+                    "label": "Company",
+                    "value": "Sorento"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTFVP23"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BUKIT RAJA"
+                  },
+                  {
+                    "key": "system_location",
+                    "label": "System Location",
+                    "value": "BRW"
+                  },
+                  {
+                    "key": "quantity_on_hand",
+                    "label": "Quantity On Hand",
+                    "value": 90
+                  },
+                  {
+                    "key": "open_so_qty",
+                    "label": "Outstanding",
+                    "value": 0
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "SRTFVP23"
+              }
+            ],
+            "last_updated_at": "2026-09-14T17:25:40.036011",
+            "lookup_companies": [
+              {
+                "id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "name": "Mocha"
+              },
+              {
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Sorento"
+              }
+            ],
+            "restricted_fields": {
+              "open_so_qty": "inventory.sellable"
+            },
+            "result_type": "stock",
+            "stock_visibility": {
+              "hide_zero_locations": false,
+              "mode": "detailed",
+              "source": "contact",
+              "warehouse_codes": [
+                "BRW",
+                "BRW-ACTS",
+                "BRW-AM",
+                "BRW-BB",
+                "BRW-BILL",
+                "BRW-CLR",
+                "BRW-HP",
+                "BRW-IB",
+                "BRW-IR",
+                "BRW-NTC",
+                "BRW-PSM",
+                "BRW-S/L",
+                "BRW-SMC",
+                "BRW-SYNT",
+                "DC1-ACT",
+                "DC1-AM",
+                "DC1-BB",
+                "DC1-HP",
+                "DC1-IB",
+                "DC1-IR",
+                "DC1-NTC",
+                "DC1-S/L",
+                "DC1-SMC",
+                "DEFECT",
+                "DISPLAY",
+                "HOLD",
+                "HQ",
+                "MKTG",
+                "MKTG-HQ",
+                "MOCHA-KC",
+                "MOCHA-WH",
+                "MWH",
+                "MWH-ACT",
+                "MWH-AM",
+                "MWH-BB",
+                "MWH-DFT",
+                "MWH-HP",
+                "MWH-IB",
+                "MWH-IR",
+                "MWH-MOC",
+                "MWH-NTC",
+                "MWH-S/L",
+                "MWH-SMC",
+                "REJECT",
+                "REPAIR",
+                "REWORK",
+                "RSW",
+                "RSW-ACT",
+                "RSW-BB",
+                "RSW-HP",
+                "RSW-IB",
+                "RSW-IR",
+                "RSW-NTC",
+                "RSW-SMC",
+                "SHRT ACC",
+                "SPARPART",
+                "VAR",
+                "WH3",
+                "WH3-ACT",
+                "WH3-AM",
+                "WH3-BB",
+                "WH3-HP",
+                "WH3-IB",
+                "WH3-IR",
+                "WH3-NTC",
+                "WH3-PSM",
+                "WH3-R/S",
+                "WH3-S/L",
+                "WH3-SMC"
+              ]
+            }
+          },
+          "tool": "crm_inventory_stock_balance_list"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "v"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for v"
+      }
+    }
+  ]
+}

@@ -1,0 +1,209 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 1031466,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1778415977,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/678da08e-afac-469f-baed-7f8892ad151b"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-445239409",
+          "id": 445239409,
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60445239409",
+          "profilePic": null,
+          "status": "open",
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ]
+        },
+        "ingress": "webhook",
+        "is_test": false,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27219898270967132\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "assignee": {
+              "email": "zzt-agent@example.invalid",
+              "firstName": "ZZT-agent",
+              "id": 1031466,
+              "lastName": "",
+              "role": "user"
+            },
+            "countryCode": "MY",
+            "created_at": 1778415977,
+            "email": null,
+            "firstName": "ZZT-445239409",
+            "id": 445239409,
+            "language": null,
+            "lastName": "",
+            "phone": "+60445239409",
+            "profilePic": null,
+            "status": "open"
+          },
+          "event_id": "34e55fef-3683-496b-b49a-c408b4e181a7",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjU2MjI0ODcVAgASGBYzRUIwNTY0NzBBQzA1RkQxNThGQjkzAA==",
+            "contactId": 445239409,
+            "message": {
+              "text": "YES",
+              "type": "text"
+            },
+            "messageId": 1789378935000000,
+            "replyTo": {
+              "id": 1789378486173960,
+              "mId": "wamid.HBgLNjAxNjU2MjI0ODcVAgARGBI3OThEMTI2MDFBRURGNEI2MzIA",
+              "message": {
+                "text": "Here's what you want:\n\u2022 product: MHS1028 (Mocha), MHS1028 (Sorento)\n\u2022 attachment_type: Certification\n\nBut no certificate matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing certification team?",
+                "type": "text"
+              },
+              "sender": {
+                "source": "n8n",
+                "type": "message"
+              }
+            },
+            "timestamp": 1789378935000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": null
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "add_comment",
+          "send_message"
+        ],
+        "branch_kind": "out_of_scope",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": null,
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 17,
+        "recorded_at": "2026-09-14T18:42:20.267726+09:00",
+        "turn_id": "b189757f-b603-467a-82b9-1004e4a836ff"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": true
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": true,
+        "match_mode": "and",
+        "message_type": "request_for_help",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to confirm escalation to the purchasing certification team"
+      }
+    }
+  ]
+}

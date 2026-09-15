@@ -74,7 +74,12 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # woven into the `domain_hint = ONE of:` literal and one "- check_po_cost - ..." bullet
 # woven into the intent_hint list, both inside the OUTPUT/INTENT & DOMAIN section, ahead
 # of where `LAST_COST_ADDENDUM` stacks. Intentional content, not drift.
-CONSTANT_CHARS = 49095
+# +206 chars (16 Sep 2026, S4 ruling, PLAN-chatbot-turn-rearch.md): the fallback
+# prompt declares the four v3 schema keys the coder's S4 slice adds
+# (`document`/`status`/`anaphora`/`continuation` - the parser verdict fields the
+# turn re-architecture's APPLY stage reads). RED until that declaration lands;
+# written ahead of the coder's change (test-first) rather than after.
+CONSTANT_CHARS = 49301
 
 
 def _without_growth_r1_addendum(text: str) -> str:

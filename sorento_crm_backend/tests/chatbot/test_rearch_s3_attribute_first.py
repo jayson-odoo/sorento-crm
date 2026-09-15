@@ -338,7 +338,7 @@ class TestPagingByFive:
         first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
         assert "Showing 5" in (first.reply or {}).get("text", ""), first.reply
 
-        v2 = verdict(message_type="clarification", user_goal="more")
+        v2 = verdict(message_type="clarification", user_goal="more", continuation=True)
         stub_parser(v2, on_call=on_call)
         second_envelope = _envelope()
         second_envelope.message["message"]["messageId"] = "ZZT-attr-first-page-2"
