@@ -70,6 +70,16 @@ ALLOWED: dict[str, list[str]] = {
     # above, and the same "no ALLOWS_EMPTY row" ruling - a bare "last purchase cost"
     # with no product fails the gate and asks, same as `spo_allocation`.
     "purchase_cost": ["product", "warehouse", "category", "brand"],
+    # AC-1592 test triage (review S1, live exec 11818957): NO row here used to mean
+    # "domain not in matrix, pass every entity through unscoped" - which let an
+    # ordinary-looking warehouse code (HOLD, DISPLAY, REPAIR) reach a document-list
+    # fetch as a filter, even though none of this domain's three tools
+    # (`crm_resource_attachments_list`/`_catalogue`/`_current_stock_list`) takes a
+    # `warehouse_ids` parameter at all (confirmed: `fetch.TYPE_TO_PARAM`'s own
+    # `"warehouse"` comment names the four tools that DO, and none of these three is
+    # among them). `attachment_type` is the one entity kind these tools actually
+    # filter on (`fetch.NARROWING_PARAMS`/`ENTITY_FILTER_REQUIRED_TOOLS`).
+    "resource_attachment": ["attachment_type"],
 }
 
 #: PLAN-low-stock-report S6 (owner ruling, console round 2, 14 Sep 2026): INTENTS that

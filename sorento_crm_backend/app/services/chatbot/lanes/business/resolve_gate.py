@@ -51,6 +51,19 @@ logger = logging.getLogger(__name__)
 # `v.replace(/[-\s]+/g, '')` from the resolve-entity body's product-token fold.
 _PRODUCT_FOLD = re.compile(r"[-\s]+")
 
+# exec 12053189: a product code typed with a MINUS SIGN (U+2212, what Excel/Sheets emit
+# on paste) or an EN DASH (U+2013, what Word autocorrect emits) missed the resolver's
+# exact match, because `_PRODUCT_FOLD` is an ASCII-only, byte-graded port of n8n's own
+# `[-\s]+` and must stay that way (it is checked against real captures). The fold that
+# used to catch this ran in `head/output_exchange.py` before the resolver ever saw the
+# token; deleted in the S3 rewrite with no equivalent (AC-1592 test triage). Folded to
+# ASCII hyphen HERE, one step ahead of `_PRODUCT_FOLD`, so the graded regex still only
+# ever runs against what it was captured against.
+_UNICODE_DASH_FOLD: dict[str, str] = {
+    "\u2212": "-",  # MINUS SIGN
+    "\u2013": "-",  # EN DASH
+}
+
 # The two `sub-get-results` tools the pickers probe with, from the probe nodes' own
 # `tool` parameters. Not a registry: two literals, named where they are used.
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
@@ -576,6 +589,8 @@ def _token_of(entity: Any) -> Any:
         raw = jsc.get(entity, "raw")
         value = raw if raw is not None else ""
     if jsc.lower_or_empty(jsc.get(entity, "hint")) == "product":
+        for bad, good in _UNICODE_DASH_FOLD.items():
+            value = value.replace(bad, good)
         return _PRODUCT_FOLD.sub("", value)
     return value
 
