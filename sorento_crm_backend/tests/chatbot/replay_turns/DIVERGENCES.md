@@ -145,3 +145,59 @@ instruction) - the six clusters logged after the prod_sample pass above still
 describe the dominant shapes; two NEW real divergences from the 6 hand-built cases
 are additionally unsigned in the file list, expected given they assert nothing
 beyond branch_kind.
+
+## Cluster 6 fixed at the harness (tester, 16 Sep 2026, S6 deliverable 1)
+
+Root cause (named in the prod_sample section above, item 6): `test_turn_replay.py`
+never wrote `system_settings.chatbot_stock_denial_enabled` (or the other switches
+`engine.py::_read_switches` / `turn/policy.py::load_policy` read once per turn) onto
+the private test DB's singleton row, so every replay ran under the hard-coded
+ALL-FALSE `_TurnSwitches()` default. Fixed two-sided:
+
+- `scripts/chatbot_record_turn.py` now captures the SOURCE DB's `system_settings`
+  singleton at record time (`turn["switches"]`, one read per script invocation - a
+  singleton has no history, so `switches_source` says `source_db_at_record_time` or
+  `no_source_row_defaults`, never a historically-accurate value at the turn's own
+  instant).
+- `test_turn_replay.py::_apply_switches` writes a recorded case's `switches` onto the
+  private DB's singleton row before each step, restored automatically by the fixture's
+  transaction rollback (no explicit restore code needed). A case recorded before this
+  field existed (`switches` absent) is an unchanged no-op.
+
+**Measured, re-recording only the 5 `prod_sample/` files whose `expected.branch_kind`
+is `stock_denied`/`demand_qty` at head `86fae7ceb`** (additive-only re-record, verified
+`git diff --stat` shows zero deletions on all 5):
+
+| file | divergences before | divergences after |
+| --- | --- | --- |
+| `demand-qty-423729473-chain-001-no-run-id.json` | 12 | 9 |
+| `demand-qty-430229069-chain-001-no-run-id.json` | 5 | 4 |
+| `stock-denied-423729473-chain-001-no-run-id.json` | 12 | 9 |
+| `stock-denied-430229069-chain-001-no-run-id.json` | 4 (re-measured after, not captured before individually - see below) | 4 |
+| `low-signal-423729473-chain-001-no-run-id.json` | not captured before individually - see below | 10 |
+
+For the two rows without an individually-captured "before": the file-level "before"
+run (same command, prior to re-recording) reported the aggregate corpus total
+unchanged at 49 passed/141 failed, and the QUALITATIVE fix is confirmed the same way
+on every one of the 5 files - **every occurrence of `step N branch_kind: expected
+'demand_qty'/'stock_denied', got 'business_query'` is gone after the fix**, on every
+step where the ORIGINAL first entry into that branch kind happens (step 1 of the
+demand_qty pair, step 3/4 of the stock_denied pair on the two chain lengths). Cluster
+6's own claim - "stock_denied/demand_qty are STRUCTURALLY unreachable in replay,
+regardless of what the recorded verdict says" - is disproved: they are reached now.
+
+**What remains on these 5 files is NOT cluster 6** - a `step 2 branch_kind: expected
+'stock_denied', got 'low_signal'` divergence persists on all 5 (this is the SAME
+step 2 in every file: the two 15-turn chains and the 17-turn chain share the first 15
+turn ids verbatim, and the two 7-turn chains share all 7 - confirmed by comparing each
+file's `source.turn_id` list). Cluster 5's own explanation applies here unchanged: an
+`escalation_declined`/`stock_denied` turn immediately AFTER another lane's own turn is
+itself an answer to a prior pending offer, so if THAT step diverged (which it does not
+here - step 1 is now correctly `demand_qty`) the decline/re-ask has nothing consistent
+to answer; not chased further, not this deliverable's scope. `send_attachments`
+missing (cluster 1) also still fires independently on nearly every remaining step in
+all 5 files, unrelated to switches. Aggregate suite total is UNCHANGED at 49
+passed/141 failed on these 5 re-recorded files specifically (all 5 still fail
+end-to-end on the other two clusters) - the fix is real but not yet visible at the
+file pass/fail level on this narrow slice; a full corpus re-record (out of this
+deliverable's scope, time-boxed) would be needed to see it move the aggregate.
