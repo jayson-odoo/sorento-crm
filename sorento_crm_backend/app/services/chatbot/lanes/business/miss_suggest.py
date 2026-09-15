@@ -1013,7 +1013,7 @@ def _annotate(
     # (`inventory`, `promotion`) declare no `requires` and so never reach this.
     #
     # BOTH keys are `full`-only. The partial lane's annotator is a separate deployed copy
-    # whose reader (`tail/compile_state.py::_partial_dym_block`) keys by code and takes its
+    # whose reader keys by code and takes its
     # noun from the parser, so a key it never reads would move that node's contract for
     # nothing. On the FULL lane the type name IS emitted for a code-keyed turn too (it says
     # what the probe was scoped to, which has nothing to do with the key mode), and that is

@@ -47,7 +47,22 @@ class NarrowOutcome:
     filter_value: Any
 
 
-def decide(*, kind: str, policy_value: str, focus: Focus, profile: Profile) -> NarrowOutcome:
+def decide(
+    *,
+    kind: str,
+    policy_value: str,
+    focus: Focus,
+    profile: Profile,
+    attributes: tuple[str, ...] | list[str] = (),
+) -> NarrowOutcome:
+    """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
+
+    A question that names its own attribute has already answered the narrower's question
+    (contract 114 to 120): "which taps have a certificate" needs no "which kind of file?",
+    and a count of what this contact may see needs no tier pick before it can be counted.
+    So a named attribute satisfies `narrow_by_type` and silences `narrow_by_tier`, and
+    changes nothing for any other policy value.
+    """
     if policy_value == "not_applicable":
         return NarrowOutcome(None, [], [], None)
 
@@ -58,6 +73,8 @@ def decide(*, kind: str, policy_value: str, focus: Focus, profile: Profile) -> N
 
     if policy_value in _ROSTER_POLICIES:
         if policy_value == "narrow_by_tier" and kind == "tier":
+            if attributes and not candidates:
+                return NarrowOutcome(None, [], [], profile.tier)
             if candidates:
                 one = candidates[-1]
                 value = one.get("canonical_code") or one.get("raw")
@@ -66,15 +83,19 @@ def decide(*, kind: str, policy_value: str, focus: Focus, profile: Profile) -> N
                 return NarrowOutcome(None, [], [], profile.tier)
             return NarrowOutcome("tier_pick", [], [], None)
         # AC-1526's own wording: "product under incoming and purchase cost asks for
-        # a code", "customer under order asks for one family" - unconditional, not
-        # "asks only when there is more than one candidate". Any candidate at all
-        # asks for the confirming pick; none named proceeds with nothing to filter.
-        if candidates:
+        # a code", "customer under order asks for one family" - a NAMED candidate is
+        # asked about, not assumed. What settles it is IDENTITY: a candidate carrying a
+        # `uuid` is one the resolver matched or the customer picked off this very
+        # roster, and asking again for a code you already hold re-prints the same
+        # question forever (contract 36's own sticky roster is what feeds it back).
+        if candidates and not all(c.get("uuid") for c in candidates):
             return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
         return NarrowOutcome(None, [], [], None)
 
     if policy_value in _TYPE_POLICIES:
         if not candidates:
+            if attributes:
+                return NarrowOutcome(None, [], [], attributes[0])
             return NarrowOutcome(f"{kind}_ask", [], [], None)
         return NarrowOutcome(None, [], candidates, None)
 
