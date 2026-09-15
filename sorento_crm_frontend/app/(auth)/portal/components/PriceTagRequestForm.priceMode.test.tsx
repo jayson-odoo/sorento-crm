@@ -29,6 +29,7 @@ vi.mock('../lib/price-tag-request-service', () => ({
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   updateRequest: vi.fn(),
@@ -36,6 +37,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
 }));
 
 vi.mock('../lib/portal-client', () => ({
@@ -151,6 +154,21 @@ async function fillMinimalRequiredFields() {
   await selectOption('Customer', 'ZZTD01');
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
   await selectOption('Search a set or product...', 'product:prod-uuid-1');
+  await pickPrinting();
+}
+
+/**
+ * r9 D7: `Printing` has no default and Submit refuses without it, so every
+ * test that expects a POST has to answer it first. The control lives in
+ * "Additional Information", which is collapsed until a price mode is chosen.
+ */
+async function pickPrinting() {
+  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
+    fireEvent.click(
+      screen.getByRole('button', { name: /Additional Information/ }),
+    );
+  }
+  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
 }
 
 function submit() {

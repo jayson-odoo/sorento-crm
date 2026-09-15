@@ -7,16 +7,9 @@ import {
   FileQuestion,
   LoaderCircle,
   Trash2,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { PreviewModalChrome } from '@/components/common/PreviewModalChrome';
 import {
   Carousel,
   CarouselContent,
@@ -161,21 +154,6 @@ export default function AttachmentPreviewModal({
     setZoom((z) => Math.min(5, Math.max(0.25, +(z * factor).toFixed(2))));
   }, []);
 
-  // Editable zoom percentage. Keep a text draft so the user can type freely,
-  // committing (clamped 25 - 500%) on Enter/blur.
-  const [zoomText, setZoomText] = useState('100');
-  useEffect(() => {
-    setZoomText(String(Math.round(zoom * 100)));
-  }, [zoom]);
-  const commitZoomText = useCallback(() => {
-    const pct = parseInt(zoomText, 10);
-    if (!Number.isNaN(pct)) {
-      setZoom(Math.min(5, Math.max(0.25, pct / 100)));
-    } else {
-      setZoomText(String(Math.round(zoom * 100)));
-    }
-  }, [zoomText, zoom]);
-
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       // Arrow-key navigation jumps straight to the slide (M2-02, no
@@ -213,100 +191,55 @@ export default function AttachmentPreviewModal({
         className="max-w-5xl gap-0 overflow-hidden p-0"
         onKeyDown={onKeyDown}
       >
-        {/* Stacks at phone width: title + zoom + Open + Download cannot fit on
-            one 375px row, and a plain flex-row overflows the dialog instead of
-            wrapping. */}
-        <DialogHeader className="flex-col items-stretch gap-2 border-b px-4 py-3 pr-12 text-start sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-          <div className="min-w-0">
-            <DialogTitle className="truncate text-base" title={activeItem?.name}>
-              {activeItem?.name}
-            </DialogTitle>
-            {/* DialogDescription, not a bare <p>: Radix warns (and screen readers
-                get nothing) when DialogContent has no aria-describedby, and the
-                position counter is the description this dialog already had. */}
-            <DialogDescription className="text-xs text-muted-foreground">
-              {current + 1} / {items.length}
-            </DialogDescription>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
-            {activeIsImage && (
-              <div className="flex items-center rounded-md border">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="px-2"
-                  onClick={() => zoomBy(0.8)}
-                  disabled={zoom <= 0.25}
-                  aria-label="Zoom out"
-                >
-                  <ZoomOut className="size-4" />
+        {/* The shared preview header (r9 S1/D2) - the same bar the tag sheet
+            lightbox wears, so a Download button never moves between the two. */}
+        <PreviewModalChrome
+          title={activeItem?.name ?? ''}
+          counter={`${current + 1} / ${items.length}`}
+          zoom={
+            activeIsImage
+              ? {
+                  value: zoom,
+                  onZoomBy: zoomBy,
+                  onSetZoom: (next) => setZoom(next),
+                }
+              : null
+          }
+          actions={
+            <>
+              {openUrl && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={openUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink className="size-4 mr-1" />
+                    Open
+                  </a>
                 </Button>
-                <div className="flex items-center">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={zoomText}
-                    onChange={(e) =>
-                      setZoomText(e.target.value.replace(/[^0-9]/g, '').slice(0, 3))
-                    }
-                    onBlur={commitZoomText}
-                    onKeyDown={(e) => {
-                      // Don't let the modal's arrow/+/- shortcuts fire while typing.
-                      e.stopPropagation();
-                      if (e.key === 'Enter') {
-                        commitZoomText();
-                        (e.target as HTMLInputElement).blur();
-                      }
-                    }}
-                    aria-label="Zoom percentage"
-                    className="w-8 bg-transparent text-right text-xs tabular-nums text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm"
-                  />
-                  <span className="pr-1 text-xs text-muted-foreground">%</span>
-                </div>
+              )}
+              {activeItem?.downloadUrl && (
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="px-2"
-                  onClick={() => zoomBy(1.25)}
-                  disabled={zoom >= 5}
-                  aria-label="Zoom in"
+                  onClick={() => downloadItem(activeItem, resolvedFetchBytes)}
                 >
-                  <ZoomIn className="size-4" />
+                  <Download className="size-4 mr-1" />
+                  Download
                 </Button>
-              </div>
-            )}
-            {openUrl && (
-              <Button variant="outline" size="sm" asChild>
-                <a href={openUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="size-4 mr-1" />
-                  Open
-                </a>
-              </Button>
-            )}
-            {activeItem?.downloadUrl && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => downloadItem(activeItem, resolvedFetchBytes)}
-              >
-                <Download className="size-4 mr-1" />
-                Download
-              </Button>
-            )}
-            {onDelete && activeItem && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => onDelete(activeItem)}
-                disabled={deletingItemId === activeItem.id}
-              >
-                <Trash2 className="size-4 mr-1" />
-                Delete
-              </Button>
-            )}
-          </div>
-        </DialogHeader>
+              )}
+              {onDelete && activeItem && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => onDelete(activeItem)}
+                  disabled={deletingItemId === activeItem.id}
+                >
+                  <Trash2 className="size-4 mr-1" />
+                  Delete
+                </Button>
+              )}
+            </>
+          }
+        />
 
         <Carousel
           setApi={setApi}

@@ -46,6 +46,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
   downloadPriceTagPdf: vi.fn(),
 }));
 
@@ -278,6 +280,38 @@ describe('PriceTagRequestForm - Revise mode (AC-R7)', () => {
       expect(screen.queryByRole('button', { name: 'Submit revision' })).toBeNull(),
     );
     expect(screen.getByText('PT-202609-0001')).toBeInTheDocument();
+  });
+
+  it('sends print_by in the revision fields payload (live finding, PT-202609-0013)', async () => {
+    // handleSubmitRevision's `fields` omitted print_by while draft/submit both
+    // include it - a revision silently dropped who prints.
+    asMock(getRequest).mockResolvedValue(
+      baseRequest({
+        status: 'new',
+        portal_draft_at: null,
+        revision: ALLOWED_POLICY,
+        print_by: 'office',
+      }),
+    );
+
+    render(<PriceTagRequestForm requestId="req-1" />);
+    await screen.findByText('PT-202609-0001');
+    // The read view shows Printing before any revision is attempted too.
+    expect(screen.getByText('Office prints')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Revise'));
+    const reasonField = await screen.findByLabelText(/reason/i);
+    fireEvent.change(reasonField, { target: { value: 'Dealer changed their mind' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submit revision' }));
+
+    await waitFor(() =>
+      expect(reviseMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fields: expect.objectContaining({ print_by: 'office' }),
+        }),
+      ),
+    );
   });
 
   it('after Submit revision succeeds, the Revisions tab reloads and the header line reflects the re-fetched policy (review round 3)', async () => {

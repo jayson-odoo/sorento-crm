@@ -5,12 +5,33 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 # ---------------------------------------------------------------------------
 # Price tag request line schemas
 # ---------------------------------------------------------------------------
+
+
+class LinePartIn(BaseModel):
+    """One part on the way in (D2, AC-S2-8).
+
+    RESOLVED: `product_id` set. OPEN: `product_id` null and `candidates` holding
+    the group's product ids, which is the salesperson saying "any of these, you
+    choose". `role` is the choice group's label on both, so a resolved row still
+    says which group it answered.
+    """
+
+    product_id: Optional[str] = None
+    role: Optional[str] = None
+    candidates: list[str] = Field(default_factory=list)
 
 
 class PriceTagRequestLineCreate(BaseModel):
@@ -19,7 +40,11 @@ class PriceTagRequestLineCreate(BaseModel):
     product_set_id: Optional[str] = None
     show_promo_price: bool = True
     quantity: int = Field(default=1, ge=1)
-    alternatives: list[dict] = Field(default_factory=list)
+    # The catalogue package this line is asked for as, and the parts under it, in
+    # display order (D2). `alternatives` is gone - the OR-choices field it carried
+    # is what the open part row replaced.
+    combo_id: Optional[str] = None
+    parts: list[LinePartIn] = Field(default_factory=list)
     included_accessories: Optional[str] = None
     # Free-text note on the line (D6, r7).
     remarks: Optional[str] = None
@@ -30,9 +55,68 @@ class PriceTagRequestLineCreate(BaseModel):
     sort_order: Optional[int] = None
 
 
-class PriceTagRequestLineUpdate(BaseModel):
+class PriceTagRequestTagUpdate(BaseModel):
+    """PATCH one tag (D3). Replaces the retired line-level update.
+
+    `choices` is `{role: product_id}` - what "Pick one" writes.
+    """
+
+    quantity: Optional[int] = Field(default=None, ge=1)
     marketing_price_override: Optional[Decimal] = None
     marketing_override_reason: Optional[str] = None
+    choices: Optional[dict[str, str]] = None
+
+
+class PriceTagRequestTagSplit(BaseModel):
+    role: str
+
+
+class PriceTagRequestTagResponse(BaseModel):
+    """One tag, as every surface reads it.
+
+    `choices_display` is the stored `{role: product_id}` map resolved to codes,
+    which is what the rail and the Lines tab show; the raw map is never
+    rendered. `list_price` / `sell_price` ride along because price is a TAG fact
+    since D4.
+    """
+
+    id: str
+    line_id: str
+    sort_order: int
+    #: "1a", "1b" - the line's position plus a letter. Never an id.
+    label: str = ""
+    quantity: int
+    choices: dict[str, str] = {}
+    choices_display: list[dict] = []
+    open_groups: list[TagOpenGroup] = []
+    marketing_price_override: Optional[float] = None
+    marketing_override_reason: Optional[str] = None
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
+
+
+class LinePartCandidateResponse(BaseModel):
+    product_id: str
+    code: str
+    name: str
+
+
+class PriceTagRequestLinePartResponse(BaseModel):
+    """One part under a line, RESOLVED (D2).
+
+    Codes and names, never bare ids: the portal read view and the CRM Lines tab
+    both render this, and no id reaches a screen (AC-X-2). Filled by
+    `response_with_resolved_lines`, not by `from_attributes` - the model row
+    holds product ids and this holds what a person reads.
+    """
+
+    id: str
+    product_id: Optional[str] = None
+    code: Optional[str] = None
+    name: Optional[str] = None
+    role: Optional[str] = None
+    candidates: list[LinePartCandidateResponse] = []
+    sort_order: int
 
 
 class PriceTagRequestLineResponse(BaseModel):
@@ -45,17 +129,34 @@ class PriceTagRequestLineResponse(BaseModel):
     product_set_id: Optional[str] = None
     show_promo_price: bool
     quantity: int
-    alternatives: list[Any] = []
+    combo_id: Optional[str] = None
+    # What the package guard found at submit, for marketing to read (D2). NULL =
+    # clean; submit is never refused for a package reason.
+    package_warning: Optional[str] = None
     included_accessories: Optional[str] = None
     remarks: Optional[str] = None
     sort_order: int
-    # float, not Decimal, on every money field a CLIENT reads. Pydantic
-    # serialises a Decimal as a JSON string, and the detail page does
-    # `marketing_price_override.toFixed(2)` - which on a string is not a
-    # function, so the page threw the moment a line carried an override.
-    # ``ResolvedLineData`` already answers in float; these now agree with it.
-    marketing_price_override: Optional[float] = None
-    marketing_override_reason: Optional[str] = None
+    # What gets printed for this line: one tag by default, N after a split (D3).
+    # The marketing override moved onto the TAG in S3 and its columns are dropped
+    # by the migration's step 4, so this model no longer carries either.
+    tags: list[PriceTagRequestTagResponse] = Field(
+        default_factory=list, validation_alias="__resolved_tags__"
+    )
+    # The package under this line, in display order. Default empty rather than
+    # omitted: the portal form and the CRM tab both read the key unconditionally.
+    #
+    # `validation_alias` is load-bearing, not decoration. This model validates
+    # FROM the ORM row, which has its own `parts` relationship holding
+    # `PriceTagRequestLinePart` objects whose `candidates` is a list of product
+    # id STRINGS - and this field wants resolved objects, so reading the
+    # attribute by name raised a validation error and every create 500'd
+    # (measured on the lane). Pointing validation at a name the ORM row does not
+    # carry leaves the default in place for `_fill_line_parts` to overwrite with
+    # the resolved rows. Serialisation is unaffected: the wire key is still
+    # `parts`.
+    parts: list[PriceTagRequestLinePartResponse] = Field(
+        default_factory=list, validation_alias="__resolved_parts__"
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -102,6 +203,9 @@ class PriceTagRequestCreate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+    #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
+    #: longer value 500s on the flush instead of being refused with a 422.
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestUpdate(BaseModel):
@@ -127,6 +231,21 @@ class PriceTagRequestUpdate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+    #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
+    #: longer value 500s on the flush instead of being refused with a 422.
+    print_by: Optional[Literal["office", "self"]] = None
+
+
+class PriceTagRequestOfficeUpdate(BaseModel):
+    """What the office may change on a SUBMITTED request (r9 D7).
+
+    One field, deliberately: everything else belongs to the salesperson and
+    goes through the revision engine. A separate model from
+    ``PriceTagRequestUpdate`` so a draft edit and an office fix cannot drift
+    into each other's fields.
+    """
+
+    print_by: Optional[Literal["office", "self"]] = None
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -184,6 +303,19 @@ class PriceTagRequestResponse(BaseModel):
     # as `expected_revision_no`, and the header line reads it too.
     revision_no: int = 0
     last_revised_at: Optional[datetime] = None
+    # Who prints, and the hand-over that follows for an office print (r9 D7/D9).
+    # Declared here or `response_model` drops them without a word (LESSONS).
+    print_by: Optional[str] = None
+    ready_for_collection_at: Optional[datetime] = None
+    collected_at: Optional[datetime] = None
+    collected_auto: bool = False
+    #: WHO collected them: the staffer, the salesperson, or nobody when the
+    #: sweep closed it. A name, never an id.
+    collected_by_name: Optional[str] = None
+    #: Which review round the design is on (D4). The pin overlay greys the
+    #: earlier rounds against it, so it has to travel even when no comment from
+    #: the current round exists yet.
+    review_round: int = 0
     lines: list[PriceTagRequestLineResponse] = []
 
     # Resolved, not stored. Filled by
@@ -263,7 +395,9 @@ class PriceTagRequestListItem(BaseModel):
 
 class TransitionPayload(BaseModel):
     status: str
-    note: Optional[str] = None
+    #: A rejection reason, kept as a general review comment (r9 D14) - which is
+    #: why it is bounded the same way a pin's body is.
+    note: Optional[str] = Field(None, max_length=2000)
 
 
 # ---------------------------------------------------------------------------
@@ -637,6 +771,31 @@ class TagSheetDocPayload(BaseModel):
     commit_message: Optional[str] = None
 
 
+class TagFont(BaseModel):
+    """A brand font the editor and the print page load through ``@font-face``."""
+
+    name: str
+    family: str
+    url: str
+
+
+class DesignMediaMixin(BaseModel):
+    """The three maps a tag sheet needs to DRAW itself (r9 S1/D1).
+
+    Declared once and inherited by both design responses, because
+    ``response_model`` drops an undeclared field without a word (LESSONS) and
+    the whole point of r9 S1 is that the two previews and the PDF read the same
+    three values.
+    """
+
+    #: assetId -> signed URL, for every library asset the document names.
+    assets: dict[str, str] = {}
+    #: attachmentId -> signed URL, for the bound products' own photos.
+    images: dict[str, str] = {}
+    #: Brand fonts, as same-origin paths (a signed CDN URL has no CORS header).
+    fonts: list[TagFont] = []
+
+
 class TagSheetDocResponse(BaseModel):
     """Response for getting/saving a tag sheet design."""
     page_id: str
@@ -650,6 +809,21 @@ class TagSheetDocResponse(BaseModel):
     # ``version`` above stays the number of the latest immutable version either
     # way, so a draft still reports the version it is sitting on top of.
     source: Literal["draft", "version"] = "version"
+
+
+class TagSheetDesignResponse(TagSheetDocResponse, DesignMediaMixin):
+    """What the CRM Design section reads (r9 S1/D1): the document, its resolved
+    lines and the three media maps, in ONE call.
+
+    Separate from ``TagSheetDocResponse`` because the two SAVE routes answer
+    that one and have no business resolving artwork; the read route answers
+    this. Before r9 the CRM section fetched the doc here and the artwork from
+    the asset library route, which is gated on ``dealer_kit.library.manage`` -
+    a permission marketing does not hold, so the section drew grey boxes for
+    the one role that needs it most.
+    """
+
+    lines: list[ResolvedLineData] = []
 
 
 # ---------------------------------------------------------------------------
@@ -833,9 +1007,74 @@ class ResolvePreviewOut(BaseModel):
     product_set: Optional[ProductSetTagData] = None
 
 
-class ResolvedLineData(BaseModel):
-    """Display data for one request line, for the designer and the print page."""
+class LineDataChange(BaseModel):
+    """One field master data has moved under a pinned tag (r9 D17)."""
 
+    field: str
+    label: str
+    old: Optional[str] = None
+    new: Optional[str] = None
+    old_image_url: Optional[str] = None
+    new_image_url: Optional[str] = None
+    #: Why the value moved, when that is not obvious ("Promotion ended").
+    note: Optional[str] = None
+
+
+class TagDataChangeSet(BaseModel):
+    """One TAG's worth of pending decision, named by its code not its id.
+
+    Per tag rather than per line since the combos slice: two tags split off one
+    line resolve different products, so they are drawn from different data and
+    a Keep on one must not silence the other. `line_id` and `tag_label` are
+    what the reader is shown ("1a" under the line's code), never the ids.
+    """
+
+    tag_id: str
+    tag_label: str = ""
+    line_id: str
+    code: str
+    name: str
+    changes: list[LineDataChange] = []
+
+
+class TagOpenGroupCandidate(BaseModel):
+    product_id: str
+    code: str
+
+
+class TagOpenGroup(BaseModel):
+    """A choice group this tag has not resolved (D3).
+
+    The candidate carries its id beside its code because "Pick one" has to name
+    it back to `PATCH .../tags/{tag_id}`, whose `choices` is `{role: product_id}`.
+    Only the code is ever rendered (AC-X-2).
+    """
+
+    role: str
+    candidates: list[TagOpenGroupCandidate] = []
+
+
+class TagPartData(BaseModel):
+    #: Carried so a caller can match a part back to the choice that produced it.
+    #: Never rendered - the code is what a reader sees (AC-X-2).
+    product_id: Optional[str] = None
+    code: str
+    name: str
+    dimensions: str = ""
+
+
+class ResolvedLineData(BaseModel):
+    """Display data for one TAG, for the designer and the print page (D3).
+
+    One row per tag since S3, not per line: `line_id` says which line asked for
+    it and `tag_id` is what the document, the rail and the resolved-data map key
+    on.
+    """
+
+    tag_id: str
+    tag_label: str = ""
+    open_groups: list[TagOpenGroup] = []
+    parts: list[TagPartData] = []
     line_id: str
     code: str
     name: str
@@ -851,27 +1090,36 @@ class ResolvedLineData(BaseModel):
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
+    # What master data has moved under this line since it was pinned (r9 D17).
+    # Declared here or `response_model` drops it without a word, which is how
+    # the CRM designer's own red dot went missing while the detail page's did
+    # not: they read the same resolver through two different response models.
+    #
+    # Optional, and absent rather than empty when the resolver did not compute
+    # it: `[]` means "nothing has moved", and a terminal request runs no live
+    # resolve at all, so answering `[]` there would be a claim nobody checked.
+    data_changes: Optional[list[LineDataChange]] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_absent_data_changes(self, handler):
+        """No key at all when there is no diff to report (S10)."""
+        data = handler(self)
+        if data.get("data_changes") is None:
+            data.pop("data_changes", None)
+        return data
 
 
-class PortalTagSheetDesignResponse(BaseModel):
+class PortalTagSheetDesignResponse(DesignMediaMixin):
     """The portal's design preview (D11): the same doc `TagSheetDocResponse`
     carries, PLUS the resolved line data the CRM designer reads through a
     SEPARATE `/resolve-prices` call - the portal has no such second call, so
-    this route answers both in one response."""
+    this route answers both in one response, media included (r9 S1/D1)."""
 
     page_id: str
     version: int
     doc: Optional[dict] = None
     source: Literal["draft", "version"] = "version"
     lines: list[ResolvedLineData] = []
-
-
-class TagFont(BaseModel):
-    """A brand font the editor and the print page load through ``@font-face``."""
-
-    name: str
-    family: str
-    url: str
 
 
 class AssetResponse(BaseModel):
@@ -887,3 +1135,113 @@ class AssetResponse(BaseModel):
     tags: list[str] = []
     url: Optional[str] = None
     mime_type: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Pinned change requests (r9 S2/D4-D6)
+# ---------------------------------------------------------------------------
+
+#: Long enough for anything a person types about one tag, short enough that a
+#: single request cannot post a novel into the column.
+REVIEW_COMMENT_MAX_LENGTH = 2000
+#: Pins in one round. A round is placed by hand, one click at a time.
+REVIEW_COMMENTS_MAX_PER_ROUND = 50
+
+
+class ReviewCommentPin(BaseModel):
+    """One pin as the portal sends it: an anchor on a TAG, and what to change.
+
+    ``allow_inf_nan=False`` is not a nicety: ``float("nan")`` passes every
+    comparison (``0 <= nan <= 1`` is False, but ``nan < 0`` is False too), so a
+    hand-rolled range check lets it through, ``numeric(6,4)`` stores it, and
+    every later read of that request 500s on serialisation - permanently.
+    """
+
+    model_config = ConfigDict(allow_inf_nan=False)
+
+    #: The tag the pin was placed on. Absent = a general comment about the
+    #: whole design. A line prints one tag per option since the combos slice,
+    #: and each copy of a tag on the sheet is the SAME tag, so the anchor needs
+    #: no placed-copy id: the pin draws on every copy of its own tag.
+    tag_id: Optional[str] = None
+    #: Fractions of the tag box, 0..1. Absent on a general comment.
+    x: Optional[float] = Field(None, ge=0, le=1)
+    y: Optional[float] = Field(None, ge=0, le=1)
+    #: 0 for a point pin, > 0 for a box.
+    w: Optional[float] = Field(None, ge=0, le=1)
+    h: Optional[float] = Field(None, ge=0, le=1)
+    body: str = Field(..., max_length=REVIEW_COMMENT_MAX_LENGTH)
+
+
+class RequestChangesPayload(BaseModel):
+    """A whole round in one call (D5).
+
+    ``note`` alone is the legacy body, accepted for one release and stored as a
+    general comment, so a portal that has not reloaded still works.
+
+    Bounded on both axes: a round is a handful of pins somebody placed by hand,
+    so fifty is far past any real one and small enough that no single call can
+    write an unbounded number of rows.
+    """
+
+    comments: list[ReviewCommentPin] = Field(
+        default_factory=list, max_length=REVIEW_COMMENTS_MAX_PER_ROUND
+    )
+    note: Optional[str] = Field(None, max_length=REVIEW_COMMENT_MAX_LENGTH)
+
+
+class ReviewCommentResponse(BaseModel):
+    """One `price_tag_review_comments` row, as both surfaces read it."""
+
+    id: str
+    request_id: str
+    tag_id: Optional[str] = None
+    round: int
+    x: Optional[float] = None
+    y: Optional[float] = None
+    w: Optional[float] = None
+    h: Optional[float] = None
+    body: str
+    author_name: Optional[str] = None
+    created_at: datetime
+    resolved_at: Optional[datetime] = None
+    resolved_by_name: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class RequestChangesResponse(BaseModel):
+    """What Send answers: where the request went, and what it wrote."""
+
+    status: str
+    round: int
+    comments: list[ReviewCommentResponse] = []
+
+
+class ReviewCommentResolvePayload(BaseModel):
+    resolved: bool
+
+
+# ---------------------------------------------------------------------------
+# The product data gate and the request's history (r9 S5/D18-D19)
+# ---------------------------------------------------------------------------
+
+
+class TagPinPayload(BaseModel):
+    """What to do about the change master data has made under a tag."""
+
+    action: Literal["update", "keep"]
+
+
+class TagPinResponse(BaseModel):
+    tag_id: str
+    pinned_at: Optional[datetime] = None
+
+
+class RequestVersionSummary(BaseModel):
+    """One row of the design's history. Names, never ids."""
+
+    version: int
+    commit_message: Optional[str] = None
+    created_by_name: Optional[str] = None
+    created_at: datetime

@@ -530,7 +530,13 @@ def test_every_company_id_table_is_registered():
     # reaches rows across invoices by supplier and item code - three id-keyed paths that
     # never pass through a scoped parent query. The mixin also stamps the company at
     # insert, which is what keeps a row written under one scope unreadable under another.
-    expected_owned = 132
+    #
+    # PLAN-price-tag-r9-review-loop.md adds 1: `price_tag_review_comments` is owned
+    # because `create_comments` stamps the request's company onto the row at insert,
+    # the CRM `PATCH .../review-comments/{id}` and the Done toggle load a row BY ID off
+    # a route that names only the request and the row, and the portal's list must never
+    # surface another company's pins even when a line id is guessed.
+    expected_owned = 133
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

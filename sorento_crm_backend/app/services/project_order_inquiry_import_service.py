@@ -17,8 +17,10 @@ or shipping order it is waiting on. So this importer:
   * RAISES one order inquiry row against the sales order line the sheet names, whatever that
     line's status - closed and fully delivered lines migrate too (D8);
   * PAIRS that row to the document AutoCount's own ingest already states for the line (D9),
-    following a purchase order through to the shipping order it became (D10), and falls back
-    to the document the sheet's remark cites only for the need AutoCount leaves;
+    following a purchase order through to the shipping order it became (D10). The sheet's
+    remark pairs NOTHING and picks no line (section 8 of the pairing-repair plan, owner
+    15 Sep 2026: "let's ignore the sheet remark at all"); it is kept on the row's note, so a
+    person can still read what the sheet said;
   * opens NO claim of its own: the claim beside a link is written by the one link writer
     (`ProjectOrderInquiryService._write_link`), and nothing else here writes one.
 
@@ -31,11 +33,12 @@ documents AutoCount stated only by NUMBER: a claim is one row per
 `(so_number, po_number, item_code)` and never repoints, so it cannot say "line 3 to purchase
 order A, line 4 to purchase order B" for two same-item lines, and on the 14 Sep prod copy the
 August `po_history` extract already held the claim key for 28,397 pairings the column states
-exactly, which is why `po_history` pairs nothing any more. The same column decides WHICH line
-of the order a row lands on when several fit, through the document the remark cites, and a
-cancelled August-extract ghost line ranks behind any real line that fits.
+exactly, which is why `po_history` pairs nothing any more. The same column also decides WHICH
+line of the order a row lands on when several fit - but only after the line whose required
+date IS the sheet's date, and a cancelled August-extract ghost line ranks behind any real
+line that fits.
 
-Three honest limits, each counted and named rather than smoothed over.
+Two honest limits, each counted and named rather than smoothed over.
 
 **A row can only be raised against a line that exists.** A sales order the CRM does not hold
 is named under `sales_orders_not_found` and nothing is invented for it; a row whose item,
@@ -44,10 +47,6 @@ location or quantity fits no line of that order is reported with the FIRST reaso
 **A line that already carries an order inquiry row is left exactly as it is** (D2). The sheet
 is a migration, not a source of truth about rows somebody has since worked on, so a re-upload
 writes nothing new.
-
-**A cited document with no capacity is not forced.** The row is still raised, its citation
-stays on it, and the number is named under `documents_not_linkable` - which is how the
-operator sees where the sheet and the book disagree.
 
 `SOURCE_SYSTEM` below stays the literal `'scm_order_inquiry'`. The string is baked into raw
 SQL (`scm/demand.py`), into migration 346's backfill and into the `OrderLinkClaim` CHECK
@@ -141,9 +140,18 @@ ALSO_CITED_PREFIX = "Also cited on the form:"
 #: job over one bad cell (security review N3, 14 Sep).
 _MAX_LOCATION = 80
 
-#: The two target families, spelled once. `_purchase_side` answers in the same two words.
+#: The two target families, spelled once: a purchase order line, or a shipping order's own
+#: allocation. Every fact, every take and every link names one of the two.
 _PO = "po_line_id"
 _SPO = "spo_allocation_id"
+
+#: A CANCELLED purchase order line is never a link target and never evidence that a sales
+#: order line was bought for (section 8 of `PLAN-scm-oi-sheet-pairing-repair.md`). Stated
+#: once and applied to both reads that touch purchase order lines, the same way
+#: `po_last_cost_service._LIVE_LINE_CLAUSES` states it for costs. `line_status` is NOT NULL
+#: with a default of `open` and no row on the prod copy carries a NULL, so the plain test is
+#: the whole test. The SPO side already carries `spo_supply.visible_line_clauses()`.
+_LIVE_PO_LINE = PurchaseOrderLine.line_status != "cancelled"
 
 
 def _now() -> datetime:
@@ -177,8 +185,6 @@ class _Match:
     already_raised: bool = False
     #: An earlier row of this same upload says exactly this, on this tab or another (D7).
     duplicate: bool = False
-    #: The documents the sheet's remark names, in the order the operator wrote them.
-    cited: Tuple[str, ...] = ()
 
     @property
     def raisable(self) -> bool:
@@ -319,30 +325,15 @@ def _restates(row) -> tuple:
     )
 
 
-def _cited_from(po_numbers: Sequence[str]) -> Tuple[str, ...]:
-    """The documents the row names, upper-cased, in the order the operator wrote them.
-
-    `SPO-2026/08-0061 & 202606-S0082` cites two and both matter: the first is tried for the
-    whole need and the second answers for whatever the first could not cover (AC-S1-16).
-    """
-    ordered: List[str] = []
-    for number in po_numbers or ():
-        text = str(number).strip().upper()
-        if text and text not in ordered:
-            ordered.append(text)
-    return tuple(ordered)
-
-
 def _unambiguous_refs(db: Session, refs: set) -> set:
     """Of these `sales_order_lines.source_ref` values, the ones that name exactly ONE line.
 
     `source_ref` is not unique. The August extract wrote bare ordinals, so `'1'` sits on
     3,364 lines across 3,364 different sales orders, and 25,771 lines on the prod copy share
     a ref with another line. A ref that names 3,364 lines is not a statement about any of
-    them, whichever direction it is read in: it must neither pair a document to a line
-    (`_ref_targets`) nor tell the ranking that a cited document names one (`_named_lines`,
-    where it marked a cancelled August ghost as "named" and the row landed on the ghost -
-    reviewer finding B2, 15 Sep).
+    them: it must neither pair a document to a line (`_ref_targets`) nor tell the line pick
+    that the book bought for one (`_bought_refs`), where it would mark thousands of unrelated
+    lines, cancelled August ghosts among them, as the line a document names.
 
     One query. Company scope applies, which is the right unit: the pairing it guards is
     company-scoped too.
@@ -359,107 +350,33 @@ def _unambiguous_refs(db: Session, refs: set) -> set:
     }
 
 
-def _named_lines(db: Session, numbers: set) -> Dict[str, set]:
-    """Per cited document number, the `sales_order_lines.source_ref` values its purchase
-    side names (`PLAN-scm-oi-sheet-pairing-repair.md` section 2.2, owner ruling R2).
+def _rank_for(row, bought: set) -> Callable[[tuple], tuple]:
+    """The line this row means, when several fit (D1, AC-S1-8, as section 8 leaves it).
 
-    This is what tells two same-item lines of one sales order apart: the sheet's remark
-    names a document, and that document's own lines say, in AutoCount's own column, WHICH
-    line of the order they were raised for.
-
-    A cited purchase order answers with the `from_so_line_ref` of its lines. A cited
-    shipping order answers with the refs of its visible allocations, plus the refs of the
-    purchase order lines of every distinct `from_po_number` those allocations carry - the
-    SO -> PO -> SPO chain read backwards, which is how the two feeds state it
-    (`SPO-2026/01-0140 <- 202511-S0097 <- AED_SORENTO:41576559:41604391`).
-
-    A ref that names more than one sales order line is dropped before the answer is
-    returned (`_unambiguous_refs`): an ordinal ref on a purchase order line would otherwise
-    mark thousands of unrelated lines, including cancelled August ghosts, as the line this
-    document names, and the ranking's first term would hand the row to one of them.
-
-    Four queries for the whole file, computed once by `_plan`.
-    """
-    if not numbers:
-        return {}
-    wanted = sorted(str(number) for number in numbers if number)
-    named: Dict[str, set] = {}
-
-    def _po_refs(po_numbers: List[str]) -> List[tuple]:
-        return (
-            db.query(PurchaseOrder.po_number, PurchaseOrderLine.from_so_line_ref)
-            .join(PurchaseOrderLine, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
-            .filter(
-                PurchaseOrder.po_number.in_(po_numbers),
-                PurchaseOrderLine.from_so_line_ref.isnot(None),
-            )
-            .all()
-            if po_numbers
-            else []
-        )
-
-    for number, ref in _po_refs(wanted):
-        named.setdefault(str(number).upper(), set()).add(str(ref))
-
-    #: The shipping orders each source purchase order feeds, so one query answers for all.
-    spo_by_po: Dict[str, set] = {}
-    for spo_number, ref, po_number in (
-        db.query(
-            SPOAllocation.spo_number,
-            SPOAllocation.from_so_line_ref,
-            SPOAllocation.from_po_number,
-        )
-        .filter(
-            SPOAllocation.spo_number.in_(wanted),
-            *spo_supply.visible_line_clauses(),
-        )
-        .all()
-    ):
-        key = str(spo_number).upper()
-        if ref:
-            named.setdefault(key, set()).add(str(ref))
-        if po_number:
-            spo_by_po.setdefault(str(po_number), set()).add(key)
-
-    for number, ref in _po_refs(sorted(spo_by_po)):
-        for spo_number in spo_by_po.get(str(number), ()):
-            named.setdefault(spo_number, set()).add(str(ref))
-
-    keep = _unambiguous_refs(db, {ref for refs in named.values() for ref in refs})
-    return {
-        number: refs & keep for number, refs in named.items() if refs & keep
-    }
-
-
-def _rank_for(
-    row, named: Dict[str, set], cited: Sequence[str], bought: set
-) -> Callable[[tuple], tuple]:
-    """The line this row means, when several fit (D1, AC-S1-8, amended by R2 on 14 Sep 2026).
-
-    The line the CITED documents name, first of all: the remark is the operator saying which
-    delivery this is, and the document it names states the exact line on its own purchase
-    side. `cited` is the instruction's WHOLE citation, merged across every tab that restates
-    it (`_plan`'s pre-pass, R3) - which tab carries the purchase order number is an accident
-    of how the book is kept, and a citation that only arrived on the second tab has to reach
-    the line pick of the first, not just its pairing (reviewer finding S1, 15 Sep). Then a real line before a cancelled one - 10,499 cancelled August-extract ghosts
+    A real line before a cancelled one, first of all - 10,499 cancelled August-extract ghosts
     are still in the book, and a ghost is never what a live sheet row means while a real line
-    fits. Then the three terms that were already here: the line whose required date IS the
-    sheet's date, an open line before a closed one, the earliest required date (undated
-    last), and the oldest line, so two runs of the same sheet land the same way.
+    fits. A cancelled line is ranked last, never excluded: when it is the only line that fits
+    it is still where the history is (D1 kept).
 
-    Then a line the book BOUGHT for, whether or not the sheet says so (section 7, 14 Sep
-    evening: R2 finished). R2's principle is "the line the row means is the one AutoCount
-    bought for", and reading it only when the remark cites a document left the rest to the
-    date and the id: SO395635 / SRTWC8317-RL has five open lines of the item and a purchase
-    order naming four of them, so the row with no remark landed on the fifth, the one nothing
-    bought for, and the pairing then found nothing to link it to. On the 3am prod copy 220 of
-    the 2,529 unlinked migrated rows sat on an unbought line while a free bought sibling stood
-    beside them.
+    Then the line whose required date IS the sheet's date. The sheet states a delivery, and a
+    line carrying that very date is the delivery it states - section 7 had put "the book
+    bought for it" above this, and on SO388822 / C-FHSS12 that cascaded a whole sales order:
+    the 31/03 row took the 14/04 line because somebody had bought for it, the 14/04 row found
+    it occupied and slid to 28/04, every later row slid one delivery, and the last pair landed
+    on the 1414 @ 01/01/2030 balance line. Whole sheet, 1,180 rows sat on a line whose date
+    was not the sheet's while a same-item sibling carrying it stood free. An ORDER BACK row
+    states NO date, and a row with no date has nothing to match: without the `wanted is not
+    None` guard `None == None` would read as an exact match and hand the row to an undated
+    line over the one the book bought for. The undated-last term below still applies.
 
-    A cancelled line is ranked last, never excluded: when it is the only line that fits it is
-    still where the history is (D1 kept). Cancelled-last stays ABOVE bought, so an
-    August-extract ghost that some document happens to name never takes a row off a real
-    line.
+    Then a line the book BOUGHT for (section 7, unchanged in meaning and one place lower):
+    where NO line carries the sheet's date the term above ties, and "the line the row means is
+    the one AutoCount bought for" is still the best answer left. SO395635 / SRTWC8317-RL's
+    November row is that case - its date matches no line, and it lands on the bought one.
+
+    Then the terms that were always here: an open line before a closed one, the earliest
+    required date (undated last), and the oldest line, so two runs of the same sheet land the
+    same way.
 
     The line's own id has the last word. Every term above it can tie - a whole AutoCount
     ingest shares one `created_at`, because Postgres freezes `now()` for the transaction that
@@ -467,18 +384,14 @@ def _rank_for(
     preview and on the apply.
     """
     wanted = row.delivery_date
-    named_refs: set = set()
-    for number in cited:
-        named_refs |= named.get(number, set())
 
     def key(candidate: tuple) -> tuple:
         line = candidate[0]
         ref = (line.source_ref or "").strip()
         return (
-            0 if (ref and ref in named_refs) else 1,
             0 if (line.line_status or "open") != "cancelled" else 1,
+            0 if (wanted is not None and line.required_date == wanted) else 1,
             0 if (ref and (ref, str(line.product_id or "")) in bought) else 1,
-            0 if line.required_date == wanted else 1,
             0 if (line.line_status or "open") == "open" else 1,
             line.required_date is None,
             line.required_date or date.min,
@@ -494,8 +407,6 @@ def _match_row(
     candidates: List[tuple],
     taken: Dict[str, Decimal],
     already_raised: set,
-    named: Dict[str, set],
-    cited: Sequence[str],
     bought: set,
 ) -> Tuple[Optional[tuple], Optional[str]]:
     """The line for one sheet row, or the FIRST filter that refused it.
@@ -538,7 +449,7 @@ def _match_row(
     if not fits:
         return None, oc.QTY_EXCEEDS_ORDERED
 
-    found = sorted(fits, key=_rank_for(row, named, cited, bought))[0]
+    found = sorted(fits, key=_rank_for(row, bought))[0]
     if str(found[0].id) not in already_raised:
         taken[str(found[0].id)] = taken.get(str(found[0].id), _ZERO) + qty
     return found, None
@@ -595,14 +506,6 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     raised_already = _already_raised(
         db, [held[0] for group in lines.values() for held in group]
     )
-    #: Which sales order line each document the file cites names, for the whole file at
-    #: once (R2). Three queries, before the per-row loop, because the answer is needed on
-    #: every row that cites anything and re-asking it per row would be one round trip per
-    #: remark in a 15,000-row book.
-    named = _named_lines(
-        db,
-        {number for row in parsed.rows for number in _cited_from(row.po_numbers)},
-    )
     #: Which candidate lines the book BOUGHT for, over every line of every order the sheet
     #: names rather than only the matched ones - the line pick asks the question before a row
     #: has a line, so the answer cannot wait for the match. `_pair` groups the same rows.
@@ -613,30 +516,15 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     #: How much of each line this FILE has already spoken for, in file order.
     taken: Dict[str, Decimal] = {}
 
-    #: Every document ANY tab names for one instruction, in the order the operator wrote
-    #: them, collected BEFORE a single row is matched (AC-R-12, reviewer finding S1). Merging
-    #: as the duplicate was reached came too late: the row that keeps the instruction is
-    #: matched when it is read, so a citation that only arrived on a later tab could pair the
-    #: row afterwards but never move it onto the line that citation names.
-    cited_by_key: Dict[tuple, Tuple[str, ...]] = {}
-    for row in parsed.rows:
-        merged = list(cited_by_key.get(_restates(row), ()))
-        for number in _cited_from(row.po_numbers):
-            if number not in merged:
-                merged.append(number)
-        cited_by_key[_restates(row)] = tuple(merged)
-
     #: Every instruction this file has already stated, whichever tab stated it.
     stated: set = set()
 
     for match in plan.matches:
         row = match.row
         key = _restates(row)
-        match.cited = cited_by_key.get(key, ())
         if key in stated:
             # Counted, never matched: a restatement must not take the line's quantity from
-            # the row it restates, or the second tab would read `qty_exceeds_ordered`. Its
-            # citation is already on the row it restates, from the pre-pass above.
+            # the row it restates, or the second tab would read `qty_exceeds_ordered`.
             match.duplicate = True
             continue
         stated.add(key)
@@ -654,8 +542,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
             match.code = oc.ORDER_NOT_PLANNABLE
             continue
         found, match.reason = _match_row(
-            row, lines.get(str(order.id)) or [], taken, raised_already, named,
-            match.cited, plan.bought_refs,
+            row, lines.get(str(order.id)) or [], taken, raised_already, plan.bought_refs,
         )
         if found is not None:
             match.core_line, match.line_location = found[0], found[2] or None
@@ -708,6 +595,12 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
     (7.2). It is applied here rather than at the query because the shipments are only known
     once `_chain_allocations` has run, and that read needs the document numbers this
     function is what reads.
+
+    A CANCELLED purchase order line answers with no fact at all (section 8, owner: the case
+    is "straightforward"). This is the one place every source's PO-line facts pass through,
+    so a source that names one - the line reference, a claim - finds nothing and moves on to
+    the next thing it knows. On the 14 Sep prod copy 305 rows and 19,373 units were sitting
+    on a line the purchase order had cancelled.
     """
     wanted = sorted(str(i) for i in target_ids if i)
     if not wanted:
@@ -717,7 +610,7 @@ def _target_facts(db: Session, target_ids: set) -> Dict[str, dict]:
         db.query(PurchaseOrderLine, PurchaseOrder.po_number, Supplier.supplier_name)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
-        .filter(PurchaseOrderLine.id.in_(wanted))
+        .filter(PurchaseOrderLine.id.in_(wanted), _LIVE_PO_LINE)
         .all()
     ):
         facts[str(line.id)] = {
@@ -817,6 +710,10 @@ def _bought_rows(
         .filter(
             PurchaseOrderLine.from_so_line_ref.in_(wanted),
             PurchaseOrderLine.product_id.in_(items),
+            # A cancelled line is neither a target nor evidence: it must not link, and it
+            # must not tell the line pick that the book bought for the line it names, or a
+            # row would be pulled onto a line by a purchase somebody withdrew.
+            _LIVE_PO_LINE,
         )
         .order_by(PurchaseOrderLine.created_at.asc(), PurchaseOrderLine.id.asc())
         .all()
@@ -1008,7 +905,7 @@ def _claim_order(facts: Dict[str, dict]) -> Callable[[dict], tuple]:
 
 
 def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
-    """What each raisable row would be linked to, in the order the three sources rank.
+    """What each raisable row would be linked to, in the order the two sources rank.
 
     **Source 1, the line reference AutoCount itself wrote** (D9 as repaired, R1: "we don't
     trust the remark column in the sheet ... the source of truth is the autocount linkage").
@@ -1024,9 +921,12 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     longer counts as the book (`_BOOK_CLAIM_SOURCES`). SPO before PO, a purchase order
     followed through to the allocations it became before the purchase-order line itself.
 
-    **Source 3, what the sheet cites** - for the need the book leaves, in the order the
-    operator wrote the documents. A document the book has already linked is not linked twice;
-    one that resolves to nothing, or to a target with no room, is named on the result.
+    **There is no third source.** What the sheet's remark cites used to answer for the need
+    the book left; it does not any more (section 8, owner 15 Sep 2026: "let's ignore the
+    sheet remark at all"). 223 of the 5,833 links on the 14 Sep prod copy came from it, and
+    the documents it named were read by number alone, which took units off lines the purchase
+    order had cancelled. `documents_not_linkable` therefore comes back empty from every run,
+    and stays on the result only so the contract keeps its keys.
 
     Nothing is written here. `apply` writes exactly what this returns, and `preview` counts
     it, so the two can never answer differently.
@@ -1048,15 +948,9 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
     for claim in claims:
         by_line.setdefault(str(claim["so_line_id"]), []).append(claim)
 
-    cited_numbers = {number for _, m in wanted for number in m.cited}
-    by_key, _by_number = (
-        order_link_service._purchase_side(db, cited_numbers) if cited_numbers else ({}, {})
-    )
-
     ref_allocations, ref_po_lines = _ref_targets(plan.bought_rows or ([], []))
 
     target_ids = {claim["target_id"] for claim in claims}
-    target_ids |= {target for _side, target in by_key.values()}
     target_ids |= {i for ids in ref_allocations.values() for i in ids}
     target_ids |= {i for ids in ref_po_lines.values() for i in ids}
     facts = _target_facts(db, target_ids)
@@ -1168,21 +1062,6 @@ def _pair(db: Session, plan: _Plan) -> Tuple[Dict[int, _RowLinks], List[str]]:
                 continue
             _through_po(claim["target_id"])
 
-        for number in match.cited:
-            if held.need_left <= _ZERO:
-                break
-            side = by_key.get((number, (match.row.item_code or "").strip()))
-            if side is None:
-                not_linkable.append(number)
-                continue
-            target_id = str(side[1])
-            if target_id in seen:
-                # The book already put this row on that document. Not a failure, and not a
-                # second link.
-                continue
-            if not take(target_id, from_book=False):
-                not_linkable.append(number)
-
         if held.takes:
             links[index] = held
     return links, not_linkable
@@ -1255,6 +1134,10 @@ def _result(
         "links_written": len(links),
         "links_partial": sum(1 for held in links.values() if held.need_left > _ZERO),
         "links_from_autocount": sum(1 for held in links.values() if held.from_book),
+        # Always EMPTY since the remark stopped pairing anything (section 8): every link
+        # this importer writes now comes from the book, so `links_from_autocount` equals
+        # `links_written`. The key stays because the result's shape is a contract the job
+        # page and the upload dialog both read (AC-R-45).
         "documents_not_linkable": documents[:_CAP],
         "sheets_read": list(plan.parsed.sheets_read),
         "sheets_skipped": list(plan.parsed.sheets_skipped),
@@ -1300,6 +1183,10 @@ def validate(db: Session, file_data: bytes) -> dict:
          f"will not be raised") if out["rows_line_not_found"] else None,
         (f"{out['rows_already_raised']:,} rows are on a line that already carries an order "
          f"inquiry, and are left alone") if out["rows_already_raised"] else None,
+        # Never fires since the remark stopped pairing anything (section 8):
+        # `documents_not_linkable` comes back empty from every run, and `val.named(0, ...)`
+        # is None. Kept beside the key it reads, which stays on the result because the
+        # result's shape is a contract (AC-R-45).
         val.named(
             len(out["documents_not_linkable"]), out["documents_not_linkable"],
             one="cited document we could not link",
@@ -1532,7 +1419,10 @@ class _Raiser:
             delivery_date=match.core_line.required_date or row.delivery_date,
             stock_location=location or match.line_location,
             verb=IV_ORDER_BACK if row.order_back else IV_ORDER,
-            cited_document=match.cited[0] if match.cited else None,
+            # Never a citation any more (section 8): the remark neither picks the line nor
+            # links, so there is nothing this row could honestly say it cites. The operator's
+            # own words are on the note, which is where a person reads what the sheet said.
+            cited_document=None,
             note=_note_for(row, file_name),
             state=INQUIRY_RAISED,
             # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1): this is a

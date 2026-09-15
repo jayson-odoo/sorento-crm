@@ -1793,8 +1793,15 @@ def test_a_pending_product_changed_row_on_a_closed_and_delivered_line_still_appe
     """R3: a `product_changed` row whose core line ended up fully delivered and closed
     (qty_ordered 1, qty_delivered 1) must still surface on the board while its change is
     PENDING, exactly the way a `cancelled` row does - `_cancelled_pending_change_rows`
-    filters `PlanningChangeRow.kind == "cancelled"` only, so a `product_changed` row is
-    absent from `contributions` today even though nobody has decided it yet.
+    filters `PlanningChangeRow.kind == "cancelled"` only, so a `product_changed` row was
+    absent from `contributions` even though nobody had decided it yet.
+
+    THE R3 POINT IS UNCHANGED and is still what is asserted: the pending row surfaces, named
+    by its batch, on its own mirror line. What changed under AC-S2-4 is the quantity beside
+    it. The line reached the board read-only at 0 because the still-owed figure was 0; the
+    board now plans the PLAN quantity, so this line is an ordinary undecided contribution at
+    1 - the delivered unit nobody sourced, which is exactly the unit the pending change is
+    about. A row at 0 would have shown the planner a change they could not act on.
     """
     client, world = api
     db = world.db
@@ -1854,7 +1861,7 @@ def test_a_pending_product_changed_row_on_a_closed_and_delivered_line_still_appe
     ]
     assert len(matches) == 1, contributions
     assert matches[0]["line_no"] == project_line.line_no, matches[0]
-    assert matches[0]["qty"] == "0", matches[0]
+    assert matches[0]["qty"] == "1", matches[0]
 
 
 

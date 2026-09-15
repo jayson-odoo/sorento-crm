@@ -40,11 +40,13 @@ from app.services.price_tag_request_service import (
     STATUS_NEW,
     STATUS_PROOF_READY,
     STATUS_READY,
+    STATUS_READY_FOR_COLLECTION,
     STATUS_REJECTED,
     STATUS_VOID,
     VALID_TRANSITIONS,
 )
 from app.services.portal_form_visibility_service import resolve_visible_form_types
+from tests import _ptag_r9_seed
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +382,9 @@ class TestStatusTransitions:
                 "lines": [],
             },
         )
+        # r9 D8: terminality is request-aware. An OFFICE print keeps `approved`
+        # in the middle of the graph, which is what every edge below assumes.
+        req.print_by = "office"
         if status != STATUS_NEW:
             req.status = status
             db.flush()
@@ -400,10 +405,15 @@ class TestStatusTransitions:
         result = PriceTagRequestService.transition_status(db, req.id, STATUS_APPROVED)
         assert result.status == STATUS_APPROVED
 
-    def test_approved_to_ready(self, db: Session):
+    def test_approved_to_ready_for_collection(self, db: Session):
+        """r9 D8 retired `ready`. An office print carries on from `approved` to
+        the hand-over instead; a self print ends there (asserted in
+        tests/test_price_tag_print_collection.py)."""
         req = self._create_request(db, STATUS_APPROVED)
-        result = PriceTagRequestService.transition_status(db, req.id, STATUS_READY)
-        assert result.status == STATUS_READY
+        result = PriceTagRequestService.transition_status(
+            db, req.id, STATUS_READY_FOR_COLLECTION
+        )
+        assert result.status == STATUS_READY_FOR_COLLECTION
 
     def test_proof_ready_to_changes_requested(self, db: Session):
         req = self._create_request(db, STATUS_PROOF_READY)
@@ -776,33 +786,39 @@ class TestPortalFormVisibility:
 
 
 # ---------------------------------------------------------------------------
-# 4. Set guard validation
+# 4. The package guard that replaced the set guard (S2, AC-S2-7)
+#
+# The hard refusal is retired: a guarded product with no package now SUBMITS
+# and carries a `package_warning` for marketing to read. The full warning
+# matrix lives in tests/test_price_tag_package_warning.py; what is pinned here
+# is that the two cases this file used to refuse no longer are, and that the
+# product_set path is untouched.
 # ---------------------------------------------------------------------------
 
 
 class TestSetGuard:
-    def test_bathroom_furniture_ala_carte_rejected(self, db: Session):
-        """Product with class 'Bathroom Furniture' submitted as ala carte is rejected."""
+    def test_bathroom_furniture_ala_carte_submits_with_a_warning(self, db: Session):
+        """Was a 422. Submit is never refused for a package reason again (AC-S2-7)."""
         product = _make_product(db, class_label="Bathroom Furniture")
         contact = _make_contact(db)
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.submit_request(
-                db,
-                contact_id=contact.id,
-                company_id=_SORENTO_COMPANY_ID,
-                data={
-                    "debtor_name": "Dealer",
-                    "needed_by_date": date.today() + timedelta(days=7),
-                    "lines": [
-                        {
-                            "line_type": "product",
-                            "product_id": product.id,
-                        },
-                    ],
-                },
-            )
-        assert exc_info.value.status_code == 422
+        req = PriceTagRequestService.submit_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product.id,
+                    },
+                ],
+            },
+        )
+        assert req.status == STATUS_NEW
+        assert req.lines[0].package_warning == "No package defined"
 
     def test_bathroom_furniture_as_set_allowed(self, db: Session):
         """Product with class 'Bathroom Furniture' submitted as product_set line is allowed."""
@@ -1279,6 +1295,9 @@ class TestSubmitCompleteness:
             company_id=_SORENTO_COMPANY_ID,
             data={},
         )
+        # r9 D7: the print guard is refused on its own, BEFORE the list, so a
+        # test about the list has to have answered it.
+        req.print_by = "office"
         db.flush()
 
         with pytest.raises(Exception) as exc_info:
@@ -1309,6 +1328,8 @@ class TestSubmitCompleteness:
                 "lines": [{"line_type": "product", "product_id": product.id}],
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         PriceTagRequestService.validate_submittable(req)
@@ -1324,6 +1345,8 @@ class TestSubmitCompleteness:
                 "needed_by_date": date.today() + timedelta(days=7),
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         with pytest.raises(Exception) as exc_info:
@@ -1344,17 +1367,26 @@ class TestSubmitCompleteness:
                 "lines": [{"line_type": "product", "product_id": product.id}],
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         # No exception is the assertion.
         PriceTagRequestService.validate_submittable(req)
 
-    def test_the_set_guard_names_the_line_it_refused(self, db: Session):
-        """The message goes on the ROW, so the refusal has to say which row."""
+    def test_the_warning_goes_on_the_row_that_earned_it(self, db: Session):
+        """Per-line, not per-request: the clean line beside it stores NULL.
+
+        This replaces `test_the_set_guard_names_the_line_it_refused`, which
+        pinned the retired `detail="line:1"` refusal. The reason it pinned a
+        ROW has not changed - marketing reads the warning on the line the
+        salesperson typed - only the mechanism has.
+        """
         contact = _make_contact(db)
-        ok_product = _make_product(db, class_label="Kitchen Sink")
+        ok_product = _make_product(db, class_label="Accessories")
         bad_product = _make_product(db, class_label="Bathroom Furniture")
-        req = PriceTagRequestService.create_request(
+
+        req = PriceTagRequestService.submit_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -1367,22 +1399,17 @@ class TestSubmitCompleteness:
                 ],
             },
         )
-        db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_set_guard(db, req)
+        by_order = sorted(req.lines, key=lambda l: (l.sort_order or 0, l.id))
+        assert [line.package_warning for line in by_order] == [None, "No package defined"]
 
-        err = exc_info.value
-        assert err.status_code == 422
-        assert err.detail["code"] == "SET_GUARD_VIOLATION"
-        assert err.detail["detail"] == "line:1"
-        assert bad_product.product_code in err.detail["message"]
-
-    def test_the_set_guard_names_every_line_it_refused(self, db: Session):
+    def test_every_guarded_line_gets_its_own_warning(self, db: Session):
+        """Replaces `test_the_set_guard_names_every_line_it_refused`."""
         contact = _make_contact(db)
         first = _make_product(db, class_label="Bathroom Furniture")
         second = _make_product(db, class_label="Bathroom Furniture")
-        req = PriceTagRequestService.create_request(
+
+        req = PriceTagRequestService.submit_request(
             db,
             contact_id=contact.id,
             company_id=_SORENTO_COMPANY_ID,
@@ -1395,9 +1422,20 @@ class TestSubmitCompleteness:
                 ],
             },
         )
-        db.flush()
 
-        with pytest.raises(Exception) as exc_info:
-            PriceTagRequestService.validate_set_guard(db, req)
+        by_order = sorted(req.lines, key=lambda l: (l.sort_order or 0, l.id))
+        assert [line.package_warning for line in by_order] == [
+            "No package defined",
+            "No package defined",
+        ]
 
-        assert exc_info.value.detail["detail"] == "line:0,line:1"
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

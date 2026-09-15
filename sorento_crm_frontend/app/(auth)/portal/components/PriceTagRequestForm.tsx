@@ -6,7 +6,7 @@
  * Wired to real portal API via `price-tag-request-service.ts`.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -33,7 +33,8 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Badge } from '@/components/ui/badge';
+import { Card } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -56,13 +57,17 @@ import { useRevisionHistory, useReviseSubmission } from '../hooks/useRevisions';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
+  PriceTagRequestLineInput,
   DebtorOption,
+  LinePartCandidate,
+  ProductComboOption,
   PromotionOption,
   PriceMode,
   TagItemOption,
 } from '../lib/price-tag-request-service';
 import {
   lookupDebtors,
+  lookupProductCombos,
   lookupPromotions,
   lookupTagItems,
   getRequest,
@@ -72,9 +77,18 @@ import {
   submitRequest,
   approveRequest,
   requestChanges,
+  listReviewComments,
+  collectRequest,
   downloadPriceTagPdf,
 } from '../lib/price-tag-request-service';
-import PriceTagProofViewer from './PriceTagProofViewer';
+import DesignViewer from '@/components/dealer-kit/DesignViewer';
+import type { DesignDownload } from '@/components/dealer-kit/DesignLightbox';
+import {
+  numberedPins,
+  type ChangeRequestPayload,
+  type DraftPin,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import {
@@ -89,8 +103,12 @@ import {
   type PortalAttachment,
   type PortalSubmissionNeighbours,
 } from '../lib/portal-client';
-import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
-import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
+import {
+  printByLabel,
+  type PrintBy,
+} from '@/lib/dealer-kit/print-collection';
 import { cn } from '@/lib/utils';
 
 /** Where an AI-extracted product line stands against the catalogue lookup
@@ -105,6 +123,24 @@ type AIMatchStatus = 'loading' | 'matched_product' | 'matched_set' | 'not_found'
 // read-only view.
 type SectionKey = 'customer' | 'sales_order' | 'price' | 'need_by';
 
+/**
+ * One part row under a draft line (D2).
+ *
+ * Resolved: `product_id` is set - a specific product goes on the tag. Open:
+ * `product_id` is null and `candidates` holds the group's options, which is the
+ * salesperson saying "any of these, you choose". `candidates` is kept on a
+ * resolved row too, so clearing the select reopens the row (AC-S2-3).
+ */
+interface DraftPart {
+  key: string;
+  product_id: string | null;
+  code: string;
+  name: string;
+  /** The choice group this row answers. Null on a fixed or hand-added part. */
+  role: string | null;
+  candidates: LinePartCandidate[];
+}
+
 interface DraftLine {
   key: string; // client-side key for React
   line_type: 'product' | 'product_set';
@@ -113,11 +149,96 @@ interface DraftLine {
   name: string;
   code: string;
   quantity: number;
-  alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string;
   /** Free-text note on the line (D6). */
   remarks: string;
   guard_error: string | null;
+  /** The catalogue package this line is asked for as (D2). Null = none chosen. */
+  combo_id: string | null;
+  /** What the picked product is sold as. Answered by the combos lookup, which
+   *  runs once per product on the line - so an empty list before `combos_loaded`
+   *  means "not asked yet", not "no package". */
+  combos: ProductComboOption[];
+  combos_loaded: boolean;
+  /** The product's class is in the guarded list, so a missing package is worth
+   *  a warning. Answered by the same lookup. */
+  host_guarded: boolean;
+  parts: DraftPart[];
+}
+
+let partKeySeq = 0;
+function newPartKey(): string {
+  partKeySeq += 1;
+  return `part-${Date.now()}-${partKeySeq}`;
+}
+
+/**
+ * The part rows a combo fills in on pick (AC-S2-1): every fixed part as its own
+ * resolved row, and ONE open row per choice group, in the order the group first
+ * appears - so the package reads down the row the way the catalogue page lists it.
+ */
+function partsFromCombo(combo: ProductComboOption): DraftPart[] {
+  const out: DraftPart[] = [];
+  const seen = new Set<string>();
+  for (const part of combo.parts) {
+    if (!part.choice_group) {
+      out.push({
+        key: newPartKey(),
+        product_id: part.product_id,
+        code: part.code,
+        name: part.name,
+        role: null,
+        candidates: [],
+      });
+      continue;
+    }
+    if (seen.has(part.choice_group)) continue;
+    seen.add(part.choice_group);
+    out.push({
+      key: newPartKey(),
+      product_id: null,
+      code: '',
+      name: '',
+      role: part.choice_group,
+      candidates: combo.parts
+        .filter((p) => p.choice_group === part.choice_group)
+        .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name })),
+    });
+  }
+  return out;
+}
+
+/**
+ * The package warning, computed exactly as the server computes it at submit
+ * (D2) so the row says the same thing before and after. Submit is never refused
+ * for a package reason - this only tells the salesperson what marketing will see.
+ */
+function packageWarningFor(line: DraftLine): string | null {
+  if (line.line_type !== 'product' || !line.product_id) return null;
+  if (!line.combos_loaded || !line.host_guarded) return null;
+  if (!line.combo_id) {
+    return line.combos.length === 0 ? 'No package defined' : 'No package chosen';
+  }
+  const combo = line.combos.find((c) => c.combo_id === line.combo_id);
+  if (!combo) return null;
+  const missing: string[] = [];
+  for (const part of combo.parts) {
+    if (part.choice_group) continue;
+    if (!line.parts.some((row) => row.product_id === part.product_id)) {
+      missing.push(part.code);
+    }
+  }
+  const groups: string[] = [];
+  for (const part of combo.parts) {
+    if (part.choice_group && !groups.includes(part.choice_group)) {
+      groups.push(part.choice_group);
+    }
+  }
+  for (const group of groups) {
+    // Neither a resolved nor an open row answers this group.
+    if (!line.parts.some((row) => row.role === group)) missing.push(group);
+  }
+  return missing.length > 0 ? `Missing: ${missing.join(', ')}` : null;
 }
 
 /**
@@ -134,10 +255,14 @@ function emptyDraftLine(): DraftLine {
     name: '',
     code: '',
     quantity: 1,
-    alternatives: [],
     included_accessories: '',
     remarks: '',
     guard_error: null,
+    combo_id: null,
+    combos: [],
+    combos_loaded: false,
+    host_guarded: false,
+    parts: [],
   };
 }
 
@@ -162,10 +287,24 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
     // derived from the header's price_mode on every save (D5), so the draft
     // never carries or resends it (review fix).
     quantity: line.quantity,
-    alternatives: line.alternatives,
     included_accessories: line.included_accessories ?? '',
     remarks: line.remarks ?? '',
     guard_error: null,
+    combo_id: line.combo_id ?? null,
+    // Not on the line payload: the combos lookup answers both, once per product,
+    // from the effect below - which is also what re-arms the Package select and
+    // the warning on a draft reopened from the server (AC-S2-9).
+    combos: [],
+    combos_loaded: false,
+    host_guarded: false,
+    parts: (line.parts ?? []).map((part) => ({
+      key: part.id,
+      product_id: part.product_id,
+      code: part.code ?? '',
+      name: part.name ?? '',
+      role: part.role,
+      candidates: part.candidates ?? [],
+    })),
   };
 }
 
@@ -180,14 +319,17 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
 const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
+const MISSING_PRINT_BY = 'Say who prints these tags.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
 
-/** Statuses the real design (D11) is visible at, once one exists to show. */
+/** Statuses the real design (D11) is visible at, once one exists to show.
+ *  `ready` is retired (r9 D8); the two collection statuses take its place. */
 const DESIGN_PREVIEW_STATUSES = new Set([
   'proof_ready',
   'changes_requested',
   'approved',
-  'ready',
+  'ready_for_collection',
+  'collected',
 ]);
 
 /**
@@ -294,9 +436,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const aiMatchesRef = useRef<Record<string, TagItemOption | null>>({});
   const normalizeAiCode = (raw: string | null | undefined) => (raw ?? '').trim().toLowerCase();
 
-  // ---- Proof review state ----
-  const [changesNote, setChangesNote] = useState('');
-  const [showChangesDialog, setShowChangesDialog] = useState(false);
 
   // ---- Delete draft ----
   const [deleting, setDeleting] = useState(false);
@@ -306,6 +445,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // modal is the read-only AttachmentDropzone's own (D-P5) - no separate
   // state needed here anymore. ----
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [collecting, setCollecting] = useState(false);
   const [gearOpen, setGearOpen] = useState(false);
 
   // ---- What Submit found wrong, where it found it (D48b) ----
@@ -315,6 +455,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     debtor?: string;
     neededBy?: string;
     lines?: string;
+    printBy?: string;
   }>({});
   const [serverMessage, setServerMessage] = useState<string | null>(null);
 
@@ -329,6 +470,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ever turns on via the header gear's own Revise item (same hooks
   // `SubmissionForm` reads for the legacy kinds), never from status/draft
   // state directly, so Cancel puts the read view back with no round trip.
+  /** Who prints (r9 D7). No default: the salesperson has to answer. */
+  const [printBy, setPrintBy] = useState<PrintBy | null>(null);
   const [reviseMode, setReviseMode] = useState(false);
   const [reviseReason, setReviseReason] = useState('');
   const showEditForm = isEditable || reviseMode;
@@ -478,6 +621,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
     setNotes(data.notes ?? '');
+    setPrintBy((data.print_by as PrintBy | null) ?? null);
     setLines(data.lines.map(lineToDraft));
     setAttachments(data.attachments ?? []);
   }, []);
@@ -561,6 +705,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setPriceModeChosen(true);
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
+        setPrintBy((data.print_by as PrintBy | null) ?? null);
         // A duplicate's lines are new, unsaved rows with no identity of
         // their own yet (nit, review round 2) - the source request's own
         // line ids have no business surviving as this draft's React keys.
@@ -706,10 +851,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           name: match.name || match.code,
           code: match.code,
           quantity: qty,
-          alternatives: [],
           included_accessories: '',
           remarks: p.notes ?? '',
           guard_error: null,
+          combo_id: null,
+          combos: [],
+          combos_loaded: false,
+          host_guarded: false,
+          parts: [],
         });
         addedCount += 1;
       });
@@ -758,11 +907,185 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [],
   );
 
+  // ---- Packages and parts (D2) ----
+
+  /** Which `<line key>:<product id>` pairs have already been asked about, so a
+   *  re-render mid-lookup does not fire the same call a second time. Cleared for
+   *  a line whenever its item changes - see `handleItemSelect`. */
+  const combosAskedRef = useRef<Set<string>>(new Set());
+
+  const forgetCombosAsked = useCallback((key: string) => {
+    for (const entry of Array.from(combosAskedRef.current)) {
+      if (entry.startsWith(`${key}:`)) combosAskedRef.current.delete(entry);
+    }
+  }, []);
+
+  /**
+   * What the picked product is sold as, asked once per product on a line.
+   *
+   * An effect rather than a call inside the Item picker, because the same answer
+   * is needed for a line that arrived from a reopened draft (AC-S2-9) or from
+   * the AI extract, neither of which goes through the picker.
+   *
+   * A single combo is applied on the spot (AC-S2-1) - but only on a line that
+   * has neither a package nor any parts yet, so reopening a draft whose parts
+   * were edited by hand does not quietly put the removed ones back.
+   */
+  useEffect(() => {
+    const pending = lines.filter(
+      (l) =>
+        l.line_type === 'product' &&
+        l.product_id &&
+        !l.combos_loaded &&
+        !combosAskedRef.current.has(`${l.key}:${l.product_id}`),
+    );
+    if (pending.length === 0) return;
+    for (const line of pending) {
+      const productId = line.product_id as string;
+      combosAskedRef.current.add(`${line.key}:${productId}`);
+      lookupProductCombos(productId)
+        .then((lookup) => {
+          setLines((prev) =>
+            prev.map((l) => {
+              if (l.key !== line.key || l.product_id !== productId) return l;
+              const autoApply =
+                !l.combo_id && l.parts.length === 0 && lookup.combos.length === 1;
+              return {
+                ...l,
+                combos_loaded: true,
+                combos: lookup.combos,
+                host_guarded: lookup.host_guarded,
+                ...(autoApply
+                  ? {
+                      combo_id: lookup.combos[0].combo_id,
+                      parts: partsFromCombo(lookup.combos[0]),
+                    }
+                  : {}),
+              };
+            }),
+          );
+        })
+        .catch(() => {
+          // A lookup that fails must not hold up the line: it offers no package
+          // and no warning, which is exactly a product that has none.
+          setLines((prev) =>
+            prev.map((l) =>
+              l.key === line.key && l.product_id === productId
+                ? { ...l, combos_loaded: true }
+                : l,
+            ),
+          );
+        });
+    }
+  }, [lines]);
+
+  /** The Package select on a line with two or more combos (AC-S2-2). Clearing it
+   *  takes the parts with it - they belonged to the package. */
+  const choosePackage = useCallback((key: string, comboId: string) => {
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        const combo = l.combos.find((c) => c.combo_id === comboId);
+        return combo
+          ? { ...l, combo_id: combo.combo_id, parts: partsFromCombo(combo) }
+          : { ...l, combo_id: null, parts: [] };
+      }),
+    );
+  }, []);
+
+  /** Staged removal (AC-S2-4): the part row is unsaved form state, not a record,
+   *  so it goes on the click with no countdown and no confirm - the same way a
+   *  line row already does. */
+  const removePart = useCallback((key: string, partKeyToRemove: string) => {
+    setLines((prev) =>
+      prev.map((l) =>
+        l.key === key
+          ? { ...l, parts: l.parts.filter((part) => part.key !== partKeyToRemove) }
+          : l,
+      ),
+    );
+  }, []);
+
+  /** An open row's candidate select (AC-S2-3): picking resolves the row, clearing
+   *  reopens it, which is why `candidates` stays on the row either way. */
+  const resolvePart = useCallback(
+    (key: string, partKeyToResolve: string, productId: string) => {
+      setLines((prev) =>
+        prev.map((l) => {
+          if (l.key !== key) return l;
+          return {
+            ...l,
+            parts: l.parts.map((part) => {
+              if (part.key !== partKeyToResolve) return part;
+              const chosen = part.candidates.find(
+                (candidate) => candidate.product_id === productId,
+              );
+              return chosen
+                ? { ...part, product_id: chosen.product_id, code: chosen.code, name: chosen.name }
+                : { ...part, product_id: null, code: '', name: '' };
+            }),
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  /** A part added by hand, on any line, combo or not (AC-S2-4). */
+  const addPart = useCallback((key: string, option: SearchableSelectOption | null) => {
+    if (!option) return;
+    const [kind, id] = option.value.split(':');
+    if (kind !== 'product') return;
+    const code = (option.description ?? '').split(' - ').slice(1).join(' - ');
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        if (l.parts.some((part) => part.product_id === id)) return l;
+        return {
+          ...l,
+          parts: [
+            ...l.parts,
+            {
+              key: newPartKey(),
+              product_id: id,
+              code,
+              name: option.label,
+              role: null,
+              candidates: [],
+            },
+          ],
+        };
+      }),
+    );
+  }, []);
+
+  /** The same catalogue lookup the Item picker uses, products only: a part is a
+   *  product, never a set. */
+  const fetchPartOptions = useCallback(
+    async (query: string): Promise<SearchableSelectOption[]> => {
+      const items = await lookupTagItems(query);
+      return items
+        .filter((i) => i.kind === 'product')
+        .map((i) => ({
+          value: `product:${i.id}`,
+          label: i.name || i.code,
+          description: `Product - ${i.code}`,
+        }));
+    },
+    [],
+  );
+
   // ---- One picker, both kinds (D47) ----
   // The chosen option decides the line's type; the payload the server reads is
   // unchanged, still line_type plus whichever of the two ids matches it.
   const handleItemSelect = useCallback(
     (key: string, option: SearchableSelectOption | null) => {
+      // The combos lookup remembers what it has already asked about, so the
+      // memory has to be forgotten the moment the row points somewhere else -
+      // otherwise re-picking a product this line held before left it
+      // `combos_loaded: false` forever, with no Package select, no parts and no
+      // warning (review round 2, S1).
+      forgetCombosAsked(key);
       if (!option) {
         updateLine(key, {
           product_id: null,
@@ -770,6 +1093,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           name: '',
           code: '',
           guard_error: null,
+          // The package belonged to the product that just went away.
+          combo_id: null,
+          combos: [],
+          combos_loaded: false,
+          host_guarded: false,
+          parts: [],
         });
         return;
       }
@@ -798,11 +1127,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         // The description reads "Set - CODE" / "Product - CODE"; the code is what
         // the row shows, so it is stored without the word in front of it.
         code,
-        // A set is priced and printed as one thing, so any OR choices typed
-        // against a product line stop applying the moment it becomes a set.
-        // Spread, not a key set to undefined, which would wipe it on a product.
-        ...(isSet ? { alternatives: [] } : {}),
         guard_error: null,
+        // A set is printed as one thing and carries no package (D2: a cabinet
+        // request never mixes set and combo on one line), so both kinds reset
+        // here and only a product goes on to ask what it is sold as - the effect
+        // below picks it up off `combos_loaded`.
+        combo_id: null,
+        combos: [],
+        combos_loaded: isSet,
+        host_guarded: false,
+        parts: [],
       });
     },
     [updateLine, lines],
@@ -822,16 +1156,26 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     lines.length > 0 ||
     pendingFiles.length > 0;
 
-  const payloadLines = () =>
+  /** AC-S2-8. `alternatives` is gone; `combo_id` and the part rows go in its
+   *  place, in display order. A resolved part sends its product, an open one
+   *  sends the candidate ids it is still choosing between. */
+  const payloadLines = (): PriceTagRequestLineInput[] =>
     lines.map((l) => ({
       line_type: l.line_type,
       product_id: l.product_id,
       product_set_id: l.product_set_id,
+      combo_id: l.combo_id,
       quantity: l.quantity,
-      alternatives: l.alternatives,
       included_accessories: l.included_accessories || null,
       remarks: l.remarks || null,
       product_class: null,
+      parts: l.parts.map((part) => ({
+        product_id: part.product_id,
+        role: part.role,
+        candidates: part.product_id
+          ? []
+          : part.candidates.map((candidate) => candidate.product_id),
+      })),
     }));
 
   // AC-P10: a failed Submit opens the first offending section, top to bottom,
@@ -841,14 +1185,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // the reader already closed by hand.
   const openSectionForProblems = useCallback(
     (
-      fields: { debtor?: string; neededBy?: string; lines?: string },
+      fields: {
+        debtor?: string;
+        neededBy?: string;
+        lines?: string;
+        printBy?: string;
+      },
       hasRowProblems: boolean,
     ) => {
       if (fields.debtor) {
         toggleSection('customer', true);
       } else if (fields.lines || hasRowProblems) {
         toggleSection('sales_order', true);
-      } else if (fields.neededBy) {
+      } else if (fields.printBy || fields.neededBy) {
         toggleSection('need_by', true);
       }
     },
@@ -893,14 +1242,22 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  optional (D-P2b) - only a server refusal can still name it, until the
    *  backend rule drops too. */
   const collectProblems = useCallback(() => {
-    const next: { debtor?: string; neededBy?: string; lines?: string } = {};
+    const next: {
+      debtor?: string;
+      neededBy?: string;
+      lines?: string;
+      printBy?: string;
+    } = {};
     if (!debtorCode) next.debtor = MISSING_DEBTOR;
     if (lines.length === 0) next.lines = MISSING_LINES;
+    // Required at submit, never at Save Draft (D7): a draft is whatever has
+    // been filled in so far.
+    if (!printBy) next.printBy = MISSING_PRINT_BY;
     const emptyRows = lines
       .map((l, index) => (l.product_id || l.product_set_id ? -1 : index))
       .filter((index) => index >= 0);
     return { next, emptyRows };
-  }, [debtorCode, lines]);
+  }, [debtorCode, lines, printBy]);
 
   /** How many things the form is currently complaining about, for the one line
    *  above the actions. */
@@ -911,14 +1268,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // is the same failure as not showing one at all.
   useEffect(() => {
     setFieldErrors((prev) => {
-      if (!prev.debtor && !prev.neededBy && !prev.lines) return prev;
+      if (!prev.debtor && !prev.neededBy && !prev.lines && !prev.printBy) return prev;
       const next = { ...prev };
       if (next.debtor && debtorCode) delete next.debtor;
       if (next.neededBy && neededByDate) delete next.neededBy;
       if (next.lines && lines.length > 0) delete next.lines;
+      if (next.printBy && printBy) delete next.printBy;
       return next;
     });
-  }, [debtorCode, neededByDate, lines.length]);
+  }, [debtorCode, neededByDate, lines.length, printBy]);
 
   // D-P2 (owner ruling): Selling with no promotion is a valid end state now -
   // clearing the promotion no longer flips the mode back to List. Switching
@@ -971,6 +1329,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
+        print_by: printBy,
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
@@ -1020,6 +1379,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           needed_by_date: neededByDate || null,
           notes: notes || null,
           price_mode: priceMode,
+          // Live finding, PT-202609-0013: Save Draft and Submit both carry the
+          // print choice and this payload did not, so revising a request
+          // silently dropped who prints it.
+          print_by: printBy,
         },
         products: payloadLines(),
       });
@@ -1114,6 +1477,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
+        print_by: printBy,
         lines: payloadLines(),
       };
       // Same reasoning as Save Draft: a retry after a create succeeded but the
@@ -1161,18 +1525,51 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
   }, [requestId, router, slug]);
 
-  // ---- Request changes ----
-  const handleRequestChanges = useCallback(async () => {
-    if (!requestId || !changesNote.trim()) return;
+  // ---- Mark collected (r9 D8): the salesperson has the tags ----
+  const handleCollect = useCallback(async () => {
+    if (!requestId) return;
+    setCollecting(true);
     try {
-      await requestChanges(requestId, changesNote.trim());
-      toast.success('Changes requested');
-      setShowChangesDialog(false);
-      router.push(`${portalBase(slug)}?type=price_tag_request`);
+      await collectRequest(requestId);
+      toast.success('Marked collected');
+      const data = await getRequest(requestId);
+      if (data) setRequest(data);
     } catch {
-      toast.error('Failed to request changes');
+      toast.error('Failed to mark this collected');
+    } finally {
+      setCollecting(false);
     }
-  }, [requestId, changesNote, router, slug]);
+  }, [requestId]);
+
+  // ---- Request changes (r9 D5) ----
+  //
+  // No dialog and no free-text-only path any more: the pins ARE the change
+  // request, and Send posts the whole round in one call.
+  const handleSendChanges = useCallback(
+    async (payload: ChangeRequestPayload) => {
+      if (!requestId) return;
+      try {
+        await requestChanges(requestId, payload);
+        toast.success(
+          payload.comments.length === 1
+            ? 'Change request sent'
+            : `${payload.comments.length} change requests sent`,
+        );
+        router.push(`${portalBase(slug)}?type=price_tag_request`);
+      } catch (error) {
+        // Re-thrown, not swallowed: the Design section clears its pins on a
+        // resolved promise, so a refused Send used to take the whole round
+        // with it and leave the salesperson to place five pins again.
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : 'Failed to send the change requests',
+        );
+        throw error;
+      }
+    },
+    [requestId, router, slug],
+  );
 
   // ---- Download PDF (D19): the request's latest completed tag sheet export ----
   const handleDownloadPdf = useCallback(async () => {
@@ -1239,6 +1636,49 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
+        {/* Ready to pick up (r9 D8): the one thing the salesperson can do
+            here, said where the status is said. */}
+        {request.status === 'ready_for_collection' && (
+          <div className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm">
+              {request.ready_for_collection_at
+                ? `Ready to collect since ${new Date(request.ready_for_collection_at).toLocaleDateString()}`
+                : 'Ready to collect'}
+            </p>
+            <Button
+              size="sm"
+              disabled={collecting}
+              onClick={() => void handleCollect()}
+              data-testid="portal-mark-collected"
+            >
+              {collecting ? (
+                <Loader2 className="size-4 mr-1 animate-spin" />
+              ) : (
+                <Check className="size-4 mr-1" />
+              )}
+              Mark collected
+            </Button>
+          </div>
+        )}
+
+        {/* The design comes FIRST from `proof_ready` onward (r9 D3): it is what
+            the salesperson opened the request to look at, and their own
+            answers below it are the reference, not the headline. It shows for
+            longer than the review actions do (D11/AC-S4-4). */}
+        {showDesignPreview && (
+          <DesignSection
+            request={request}
+            reviewable={isProofReady}
+            onApprove={handleApprove}
+            onSend={handleSendChanges}
+            download={{
+              available: Boolean(request.has_completed_export),
+              pending: downloadingPdf,
+              onDownload: () => void handleDownloadPdf(),
+            }}
+          />
+        )}
+
         {/* Same four sections as the edit form, same order, all open by
             default (AC-P11) - headers still toggle, there is just no rule
             here to reopen one a reader collapses. */}
@@ -1299,33 +1739,78 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                   </thead>
                   <tbody>
                     {request.lines.map((line, index) => (
-                      <tr
-                        key={line.id}
-                        className="border-t border-border align-top"
-                      >
-                        <td className="px-2 py-2 text-muted-foreground">
-                          {index + 1}
-                        </td>
-                        <td className="px-2 py-2">
-                          <div
-                            className="font-medium truncate"
-                            title={line.name}
+                      <Fragment key={line.id}>
+                        <tr className="border-t border-border align-top">
+                          <td className="px-2 py-2 text-muted-foreground">
+                            {index + 1}
+                          </td>
+                          <td className="px-2 py-2">
+                            <div
+                              className="font-medium truncate"
+                              title={line.name}
+                            >
+                              {line.name}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {line.line_type === 'product' ? 'Product' : 'Set'}
+                              {line.code ? ` - ${line.code}` : ''}
+                            </div>
+                          </td>
+                          <td className="px-2 py-2">{line.quantity}</td>
+                          <td
+                            className="px-2 py-2 text-muted-foreground truncate"
+                            title={line.remarks ?? undefined}
                           >
-                            {line.name}
-                          </div>
-                          <div className="text-xs text-muted-foreground">
-                            {line.line_type === 'product' ? 'Product' : 'Set'}
-                            {line.code ? ` - ${line.code}` : ''}
-                          </div>
-                        </td>
-                        <td className="px-2 py-2">{line.quantity}</td>
-                        <td
-                          className="px-2 py-2 text-muted-foreground truncate"
-                          title={line.remarks ?? undefined}
-                        >
-                          {line.remarks || '-'}
-                        </td>
-                      </tr>
+                            {line.remarks || '-'}
+                          </td>
+                        </tr>
+                        {/* The package under the line, exactly as it was asked
+                            for (AC-S2-8): the parts that go on the tag, and each
+                            group still left open. */}
+                        {(line.parts ?? []).map((part) => (
+                          <tr key={part.id} className="align-top">
+                            <td colSpan={4} className="px-2 pb-2 pl-9">
+                              <div className="border-l-2 border-border pl-3 text-sm">
+                                {part.product_id ? (
+                                  <>
+                                    <span
+                                      className="truncate"
+                                      title={part.name ?? undefined}
+                                    >
+                                      {part.name || part.code}
+                                    </span>
+                                    <span className="text-xs text-muted-foreground">
+                                      {part.code ? ` - ${part.code}` : ''}
+                                      {part.role ? ` (${part.role})` : ''}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">
+                                    {part.role ? `${part.role}: ` : ''}
+                                    {part.candidates
+                                      .map((candidate) => candidate.code)
+                                      .join(' / ')}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                        {line.package_warning ? (
+                          <tr>
+                            <td colSpan={4} className="px-2 pb-2 pl-9">
+                              <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
+                                <Badge variant="warning" appearance="light" size="sm">
+                                  Package warning
+                                </Badge>
+                                <span className="text-xs text-muted-foreground">
+                                  {line.package_warning}
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -1365,6 +1850,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           onOpenChange={(next) => toggleSection('need_by', next)}
         >
           <div className="space-y-1.5">
+            <Label>Printing</Label>
+            <p className="text-sm font-medium py-2">
+              {printByLabel(request.print_by)}
+            </p>
+          </div>
+          <div className="space-y-1.5">
             <Label>Need by</Label>
             <p className="text-sm font-medium py-2">
               {request.needed_by_date ?? '-'}
@@ -1380,84 +1871,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </div>
         </FormSection>
 
-        {/* Design preview appends beneath the same layout (AC-S2-2); nothing
-            below here renders for a plain read-only status. It shows for
-            longer than the review actions do (D11/AC-S4-4). */}
-        {showDesignPreview && <ProofPreviewSection request={request} />}
-
         {isProofReady && (
-          <>
-            {/* Same `attachments` state the Sales Order card above reads
-                (not `request.attachments`, which is only ever the snapshot
-                from the initial fetch) - one source, so the two can never
-                show a different file list for the same request. */}
-            <POCrossCheckViewer
-              attachments={attachments}
-              lines={request.lines.map((l) => ({
-                id: l.id,
-                code: l.code,
-                name: l.name,
-                line_type: l.line_type,
-                quantity: l.quantity,
-                list_price: null,
-                sell_price: null,
-                show_promo_price: l.show_promo_price,
-                marketing_price_override: null,
-              }))}
-            />
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Design Review</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Button onClick={handleApprove} className="flex-1">
-                    <Check className="size-4 mr-1" />
-                    Approve
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowChangesDialog(true)}
-                    className="flex-1"
-                  >
-                    <MessageSquare className="size-4 mr-1" />
-                    Request Changes
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-            <AlertDialog
-              open={showChangesDialog}
-              onOpenChange={setShowChangesDialog}
-            >
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Request Changes</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Describe what needs to be changed. The marketing team will
-                    revise the design.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <Textarea
-                  value={changesNote}
-                  onChange={(e) => setChangesNote(e.target.value)}
-                  placeholder="Describe the changes needed..."
-                  rows={4}
-                />
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={handleRequestChanges}
-                    disabled={!changesNote.trim()}
-                  >
-                    Submit
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </>
+          /* Same `attachments` state the Sales Order card above reads (not
+             `request.attachments`, which is only ever the snapshot from the
+             initial fetch) - one source, so the two can never show a different
+             file list for the same request. */
+          <POCrossCheckViewer
+            attachments={attachments}
+            lines={request.lines.map((l) => ({
+              id: l.id,
+              code: l.code,
+              name: l.name,
+              line_type: l.line_type,
+              quantity: l.quantity,
+              list_price: null,
+              sell_price: null,
+              show_promo_price: l.show_promo_price,
+              marketing_price_override: null,
+            }))}
+          />
         )}
       </>
     );
@@ -1773,9 +2205,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       line={line}
                       index={index}
                       fetchItemOptions={fetchItemOptions}
+                      fetchPartOptions={fetchPartOptions}
                       onItemSelect={handleItemSelect}
                       onUpdate={updateLine}
                       onRemove={removeLine}
+                      onChoosePackage={choosePackage}
+                      onResolvePart={resolvePart}
+                      onRemovePart={removePart}
+                      onAddPart={addPart}
                     />
                   ))}
                 </tbody>
@@ -1884,6 +2321,19 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         open={sectionOpen.need_by}
         onOpenChange={(next) => toggleSection('need_by', next)}
       >
+        <div
+          className="space-y-1.5"
+          {...(fieldErrors.printBy ? { 'data-error-anchor': 'print_by' } : {})}
+        >
+          <Label id="print-by-label">Printing *</Label>
+          <PrintBySelect
+            aria-labelledby="print-by-label"
+            value={printBy}
+            onChange={setPrintBy}
+            error={fieldErrors.printBy ?? null}
+          />
+        </div>
+
         <div
           className="space-y-1.5"
           {...(fieldErrors.neededBy
@@ -2022,9 +2472,96 @@ interface LineRowProps {
   line: DraftLine;
   index: number;
   fetchItemOptions: (query: string) => Promise<SearchableSelectOption[]>;
+  fetchPartOptions: (query: string) => Promise<SearchableSelectOption[]>;
   onItemSelect: (key: string, option: SearchableSelectOption | null) => void;
   onUpdate: (key: string, patch: Partial<DraftLine>) => void;
   onRemove: (key: string) => void;
+  onChoosePackage: (key: string, comboId: string) => void;
+  onResolvePart: (key: string, partKey: string, productId: string) => void;
+  onRemovePart: (key: string, partKey: string) => void;
+  onAddPart: (key: string, option: SearchableSelectOption | null) => void;
+}
+
+/** The copy an open row carries, and the only sentence of explanation on this
+ *  form (AC-S2-3, AC-X-3). */
+const OPEN_ROW_COPY = 'Marketing will prepare one tag per option';
+
+/** One part row under a line: a fixed or hand-added product, or an open group. */
+function PartRow({
+  lineKey,
+  lineIndex,
+  part,
+  showOpenRowCopy,
+  onResolvePart,
+  onRemovePart,
+}: {
+  lineKey: string;
+  lineIndex: number;
+  part: DraftPart;
+  /** The one sentence this form is allowed (AC-X-3), so it is rendered ONCE per
+   *  line - under the LAST open row - not once per open row. Three open groups
+   *  used to print it three times, which reads as three different instructions. */
+  showOpenRowCopy: boolean;
+  onResolvePart: (key: string, partKey: string, productId: string) => void;
+  onRemovePart: (key: string, partKey: string) => void;
+}) {
+  const choosable = part.candidates.length > 0;
+  const label = part.role || part.code || part.name;
+  return (
+    <tr className="align-top">
+      <td colSpan={5} className="px-2 pb-2 pl-9">
+        <div className="flex flex-col gap-1.5 border-l-2 border-border pl-3 sm:flex-row sm:items-start sm:gap-2">
+          <div className="min-w-0 flex-1">
+            {choosable ? (
+              <div className="space-y-1">
+                <SearchableSelect
+                  clearable
+                  truncateTriggerLabel
+                  value={part.product_id ?? ''}
+                  onChange={(value) => onResolvePart(lineKey, part.key, value)}
+                  options={part.candidates.map((candidate) => ({
+                    value: candidate.product_id,
+                    label: candidate.name || candidate.code,
+                    description: candidate.code,
+                  }))}
+                  placeholder={`Not sure, any of ${part.candidates.length}`}
+                  emptyMessage="No options."
+                  size="sm"
+                />
+                {showOpenRowCopy ? (
+                  <p className="text-xs text-muted-foreground">{OPEN_ROW_COPY}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="min-w-0">
+                <div className="truncate text-sm" title={part.name || part.code}>
+                  {part.name || part.code}
+                </div>
+                <div className="text-xs text-muted-foreground">{part.code || '-'}</div>
+              </div>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {part.role ? (
+              <span className="text-xs text-muted-foreground">{part.role}</span>
+            ) : null}
+            {/* No confirm and no countdown: the part row is unsaved form state,
+                not a record (the staged-removals rule). */}
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0 text-destructive"
+              onClick={() => onRemovePart(lineKey, part.key)}
+              title="Remove part"
+              aria-label={`Remove part ${label} from line ${lineIndex + 1}`}
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
 }
 
 /**
@@ -2035,11 +2572,25 @@ function LineRow({
   line,
   index,
   fetchItemOptions,
+  fetchPartOptions,
   onItemSelect,
   onUpdate,
   onRemove,
+  onChoosePackage,
+  onResolvePart,
+  onRemovePart,
+  onAddPart,
 }: LineRowProps) {
   const isSet = line.line_type === 'product_set';
+  const warning = packageWarningFor(line);
+  // Only when there is a choice to make: one combo is applied on pick, and none
+  // leaves nothing to select.
+  const showPackage = !isSet && line.combos.length > 1;
+  const showParts = !isSet && !!line.product_id;
+  // The last row still waiting on a choice: the one the sentence sits under.
+  const lastOpenPartKey =
+    [...line.parts].reverse().find((part) => !part.product_id && part.candidates.length > 0)
+      ?.key ?? null;
   const picked = itemValue(line);
   const selectedItem: SearchableSelectOption | undefined = picked
     ? {
@@ -2115,6 +2666,74 @@ function LineRow({
           </td>
         </tr>
       )}
+      {showPackage && (
+        <tr className="align-top">
+          <td colSpan={5} className="px-2 pb-2 pl-9">
+            <div className="border-l-2 border-border pl-3">
+              <SearchableSelect
+                clearable
+                truncateTriggerLabel
+                value={line.combo_id ?? ''}
+                onChange={(value) => onChoosePackage(line.key, value)}
+                options={line.combos.map((combo) => ({
+                  value: combo.combo_id,
+                  label: combo.name,
+                }))}
+                placeholder="Package"
+                emptyMessage="No packages."
+                size="sm"
+              />
+            </div>
+          </td>
+        </tr>
+      )}
+      {line.parts.map((part) => (
+        <PartRow
+          key={part.key}
+          lineKey={line.key}
+          lineIndex={index}
+          part={part}
+          showOpenRowCopy={part.key === lastOpenPartKey}
+          onResolvePart={onResolvePart}
+          onRemovePart={onRemovePart}
+        />
+      ))}
+      {showParts && (
+        <tr className="align-top">
+          <td colSpan={5} className="px-2 pb-2 pl-9">
+            <div className="border-l-2 border-border pl-3">
+              {/* The shared catalogue search, so a part missing from the package -
+                  or on a product that has none - can be named by hand (AC-S2-4).
+                  It holds no value of its own: picking adds a row and it returns
+                  to its placeholder, so there is nothing to clear. */}
+              <SearchableSelect
+                value=""
+                onChange={() => {
+                  /* the whole option carries the code; see onOptionChange */
+                }}
+                onOptionChange={(option) => onAddPart(line.key, option)}
+                fetchOptions={fetchPartOptions}
+                wrapOptions
+                placeholder="Add part"
+                emptyMessage="No products match."
+                size="sm"
+              />
+            </div>
+          </td>
+        </tr>
+      )}
+      {warning && (
+        <tr>
+          <td colSpan={5} className="px-2 pb-2 pl-9">
+            <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
+              <Badge variant="warning" appearance="light" size="sm">
+                Package warning
+              </Badge>
+              <span className="text-xs text-muted-foreground">{warning}</span>
+            </div>
+          </td>
+        </tr>
+      )}
     </>
   );
 }
@@ -2138,45 +2757,55 @@ function AIMatchStatusLabel({ status }: { status: AIMatchStatus | undefined }) {
 }
 
 // ---------------------------------------------------------------------------
-// Design preview (D11)
+// Design (D11, r9 S1/D2-D3)
 // ---------------------------------------------------------------------------
 
 /**
- * Fetches the request's real tag sheet design and renders it through
- * `PriceTagProofViewer` - the same `TagSheetRenderer` the CRM designer and the
- * PDF export use, so what the salesperson sees here is what gets printed.
+ * Fetches the request's real tag sheet design and renders it through the
+ * shared `DesignViewer` - the same `TagSheetRenderer` the CRM detail page and
+ * the PDF export draw with, now fed the artwork and brand fonts as well, so
+ * what the salesperson reviews here is what gets printed.
+ *
+ * First section on the page from `proof_ready` onward (D3): the design is what
+ * the salesperson opened the request to look at, and everything above it was
+ * scrolling past their own answers to reach it.
  */
-function ProofPreviewSection({
+function DesignSection({
   request,
+  reviewable,
+  onApprove,
+  onSend,
+  download,
 }: {
   request: PriceTagRequestDetail;
+  /** The design is waiting on this reader: pins can be placed and sent. */
+  reviewable: boolean;
+  onApprove: () => void;
+  onSend: (payload: ChangeRequestPayload) => Promise<void>;
+  download: DesignDownload;
 }) {
-  const [doc, setDoc] = useState<TagSheetDoc | null>(null);
-  const [resolvedData, setResolvedData] = useState<Record<string, ResolvedLineData>>({});
+  const [payload, setPayload] = useState<TagSheetDesignPayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [notAvailable, setNotAvailable] = useState(false);
+  const [comments, setComments] = useState<ReviewComment[]>([]);
+  const [drafts, setDrafts] = useState<DraftPin[]>([]);
+  const [generalNote, setGeneralNote] = useState('');
+  const [sending, setSending] = useState(false);
+  /** The footer rail: scrolled into view once, when the FIRST pin lands, so
+   *  the salesperson sees `Send N change requests` appear without hunting
+   *  for it - a later pin lands where they already are and must not yank
+   *  the page again. */
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const railScrolledRef = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    setNotAvailable(false);
     getPriceTagDesign(request.id)
       .then((data) => {
-        if (cancelled) return;
-        if (!data) {
-          setNotAvailable(true);
-          setDoc(null);
-          return;
-        }
-        const nextResolved: Record<string, ResolvedLineData> = {};
-        for (const line of data.lines) {
-          nextResolved[line.line_id] = line;
-        }
-        setResolvedData(nextResolved);
-        setDoc(data.doc);
+        if (!cancelled) setPayload(data);
       })
       .catch(() => {
-        if (!cancelled) setNotAvailable(true);
+        if (!cancelled) setPayload(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -2186,34 +2815,207 @@ function ProofPreviewSection({
     };
   }, [request.id]);
 
-  if (loading) {
-    return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Design Preview</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <Skeleton className="h-64 w-full" />
-        </CardContent>
-      </Card>
-    );
-  }
+  useEffect(() => {
+    let cancelled = false;
+    listReviewComments(request.id)
+      .then((rows) => {
+        if (!cancelled) setComments(rows);
+      })
+      .catch(() => {
+        // A design that will not tell us its history still has to render.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
 
-  if (notAvailable || !doc) {
-    return (
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Design Preview</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <p className="text-sm text-muted-foreground text-center py-6">
-            Design not available yet.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+  useEffect(() => {
+    if (drafts.length > 0 && !railScrolledRef.current) {
+      railScrolledRef.current = true;
+      railRef.current?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [drafts.length]);
 
-  return <PriceTagProofViewer doc={doc} resolvedData={resolvedData} />;
+  const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
+  /**
+   * What a pin's rail entry calls the thing it points at, never an id.
+   *
+   * The line's code, plus the tag's own label when the line prints more than
+   * one ("SRT-1234 1b"): a line split into an option per basin shows two tags,
+   * and a pin on one of them has to say which.
+   */
+  const tagLabel = useCallback(
+    (tagId: string | null) => {
+      if (!tagId) return 'General';
+      for (const line of request.lines) {
+        const tags = line.tags ?? [];
+        const tag = tags.find((row) => row.id === tagId);
+        if (!tag) continue;
+        const code = line.code || line.name || 'Tag';
+        return tags.length > 1 ? `${code} ${tag.label}` : code;
+      }
+      return 'Tag';
+    },
+    [request.lines],
+  );
+
+  const send = useCallback(async () => {
+    if (drafts.length === 0 && !generalNote.trim()) return;
+    setSending(true);
+    try {
+      await onSend({
+        comments: drafts.map((draft) => ({
+          tag_id: draft.tag_id,
+          x: draft.x,
+          y: draft.y,
+          w: draft.w,
+          h: draft.h,
+          body: draft.body,
+        })),
+        note: generalNote.trim() || undefined,
+      });
+      // Only a round the server took is a round to forget.
+      setDrafts([]);
+      setGeneralNote('');
+    } catch {
+      // The caller has already said so; the pins stay exactly where they were.
+    } finally {
+      setSending(false);
+    }
+  }, [drafts, generalNote, onSend]);
+
+  // Earlier rounds stay on the design and render grey (D6/R2), so a second
+  // round is read against what the first one said without being mistaken for
+  // live work on this proof.
+  const review = {
+    comments,
+    drafts,
+    canPlace: reviewable,
+    currentRound: request.review_round,
+    onPlace: (pin: Omit<DraftPin, 'key'>) =>
+      setDrafts((current) => [
+        ...current,
+        { ...pin, key: `draft-${Date.now()}-${current.length}` },
+      ]),
+    onRemoveDraft: (key: string) =>
+      setDrafts((current) => current.filter((draft) => draft.key !== key)),
+  };
+
+  const sentThisDesign = comments.filter((comment) => comment.tag_id !== null);
+
+  const footer = reviewable ? (
+    <div ref={railRef} className="mt-3 space-y-3 border-t pt-3">
+      {drafts.length > 0 && (
+        <ul className="space-y-2">
+          {drafts.map((draft) => (
+            <li
+              key={draft.key}
+              className="flex items-start gap-2 rounded-md border p-2"
+            >
+              <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-primary text-2xs font-semibold text-white">
+                {draftNumbers.get(draft.key)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
+                  {tagLabel(draft.tag_id)}
+                </p>
+                <p className="whitespace-pre-wrap text-xs">{draft.body}</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Delete change request ${draftNumbers.get(draft.key)}`}
+                className="text-destructive hover:text-destructive"
+                onClick={() =>
+                  setDrafts((current) =>
+                    current.filter((row) => row.key !== draft.key),
+                  )
+                }
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="space-y-1.5">
+        <Label htmlFor="ptag-general-note" className="text-xs">
+          Anything else (optional)
+        </Label>
+        <Textarea
+          id="ptag-general-note"
+          rows={2}
+          value={generalNote}
+          onChange={(event) => setGeneralNote(event.target.value)}
+          placeholder="A note about the whole design"
+          className="text-sm"
+        />
+      </div>
+
+      {(drafts.length > 0 || generalNote.trim()) && (
+        <Button
+          className="w-full"
+          disabled={sending}
+          onClick={() => void send()}
+          data-testid="send-change-requests"
+        >
+          {sending ? (
+            <Loader2 className="size-4 mr-1 animate-spin" />
+          ) : (
+            <MessageSquare className="size-4 mr-1" />
+          )}
+          {drafts.length === 0
+            ? 'Send change request'
+            : drafts.length === 1
+              ? 'Send 1 change request'
+              : `Send ${drafts.length} change requests`}
+        </Button>
+      )}
+    </div>
+  ) : sentThisDesign.length > 0 ? (
+    <div className="mt-3 space-y-2 border-t pt-3">
+      {sentThisDesign.map((comment) => (
+        <div key={comment.id} className="flex items-start gap-2">
+          <span
+            className={cn(
+              'mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full text-2xs font-semibold text-white',
+              comment.resolved_at ? 'bg-muted-foreground/60' : 'bg-primary',
+            )}
+          >
+            {commentNumbers.get(comment.id)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
+              {tagLabel(comment.tag_id)}
+              {comment.resolved_at ? ' / Done' : ''}
+            </p>
+            <p className="whitespace-pre-wrap text-xs">{comment.body}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  ) : null;
+
+  return (
+    <DesignViewer
+      docNumber={request.doc_number ?? 'Design'}
+      payload={payload}
+      loading={loading}
+      emptyMessage="Design not available yet"
+      emptyHint="Marketing is still working on it."
+      download={download}
+      review={review}
+      footer={footer}
+      headerActions={
+        reviewable ? (
+          <Button size="sm" onClick={onApprove}>
+            <Check className="size-4 mr-1" />
+            Approve
+          </Button>
+        ) : undefined
+      }
+    />
+  );
 }
 

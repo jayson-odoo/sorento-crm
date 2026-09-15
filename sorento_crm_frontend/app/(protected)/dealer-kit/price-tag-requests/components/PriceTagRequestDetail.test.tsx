@@ -10,7 +10,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -68,6 +68,37 @@ vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   },
 }));
 
+/**
+ * Void is a server-deferred pending action since r9 (D7 / Apple Alignment S6):
+ * no dialog asks first, the button becomes a countdown with a Cancel, and the
+ * server commits when the window lapses even if the tab is closed.
+ *
+ * The engine - parking the action, running the clock, committing - is
+ * `hooks/useDeferredAction.test.tsx`'s job. What belongs HERE is the wiring:
+ * the right action key and entity, that the gear item starts it rather than
+ * opening anything, and that the countdown reaches the record card. Mocking
+ * the hook also means no test in this file owns a real timer, so none can let
+ * a countdown lapse.
+ */
+const voidStart = vi.fn();
+const voidCancel = vi.fn();
+const useDeferredActionInput = vi.fn();
+let voidIsPending = false;
+let voidCountdown: React.ReactNode = null;
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: unknown) => {
+    useDeferredActionInput(input);
+    return {
+      pending: voidIsPending ? { id: 'pending-1' } : null,
+      isPending: voidIsPending,
+      isBlocked: false,
+      start: voidStart,
+      cancel: voidCancel,
+      countdown: voidCountdown,
+    };
+  },
+}));
+
 vi.mock('../../services/priceTagRequestService', () => ({
   getPriceTagRequest: vi.fn(),
   getTagSheetDoc: vi.fn(),
@@ -75,6 +106,10 @@ vi.mock('../../services/priceTagRequestService', () => ({
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
   listPriceTagRequests: vi.fn(),
+  // r9 S1/D3: the Request tab now opens with `RequestDesignSection`, which
+  // asks for the payload on mount. Resolving to null is the "no design yet"
+  // answer, which is what every fixture in this file is.
+  getRequestDesignPayload: vi.fn(async () => null),
 }));
 
 import {
@@ -83,6 +118,8 @@ import {
   listPriceTagRequests,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
   type PriceTagRequestLine,
+  type PriceTagRequestLinePart,
+  type PriceTagRequestTag,
 } from '../../services/priceTagRequestService';
 import PriceTagRequestDetail from './PriceTagRequestDetail';
 import { priceTagActions } from './priceTagRequestActions';
@@ -136,25 +173,64 @@ function requestWith(
   };
 }
 
-function lineWith(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+/**
+ * The rail/table label for a line's default tag.
+ *
+ * The product builds "1a"/"1b" from the line's position plus a letter; a
+ * fixture only needs two lines' tag rows to be separately addressable, so the
+ * label reuses the line id's own suffix ('line-2' -> '2a').
+ */
+function tagLabelFor(lineId: string): string {
+  return `${lineId.split('-').pop() ?? '1'}a`;
+}
+
+/**
+ * The one tag a line carries by default (S3, AC-S3-1). Its id IS the line id:
+ * submit mints exactly one tag per line, and only a Split gives a line a
+ * second one. The override and its reason live HERE now, not on the line.
+ */
+function tagWith(
+  lineId: string,
+  overrides: Partial<PriceTagRequestTag> = {},
+): PriceTagRequestTag {
   return {
-    id: 'line-1',
-    line_type: 'product',
-    product_id: 'prod-1',
-    product_set_id: null,
-    name: 'Kitchen Sink',
-    code: 'SRT-1',
-    show_promo_price: false,
-    quantity: 1,
-    alternatives: [],
-    included_accessories: null,
+    id: lineId,
     sort_order: 0,
+    label: tagLabelFor(lineId),
+    quantity: 1,
+    choices: {},
+    choices_display: [],
+    open_groups: [],
     marketing_price_override: null,
     marketing_override_reason: null,
     list_price: 100,
     sell_price: null,
     ...overrides,
   };
+}
+
+function lineWith(overrides: Partial<PriceTagRequestLine> = {}): PriceTagRequestLine {
+  const merged = {
+    id: 'line-1',
+    line_type: 'product' as const,
+    product_id: 'prod-1' as string | null,
+    product_set_id: null as string | null,
+    name: 'Kitchen Sink',
+    code: 'SRT-1',
+    show_promo_price: false,
+    quantity: 1,
+    included_accessories: null as string | null,
+    sort_order: 0,
+    list_price: 100 as number | null,
+    sell_price: null as number | null,
+    parts: [],
+    package_warning: null,
+    ...overrides,
+  };
+  return {
+    ...merged,
+    tags: overrides.tags ?? [tagWith(merged.id, { quantity: merged.quantity })],
+  } as PriceTagRequestLine;
 }
 
 beforeEach(() => {
@@ -181,7 +257,6 @@ describe('priceTagActions', () => {
     ['changes_requested', 'user-1', 'Design tags'],
     ['proof_ready', 'user-1', 'View design'],
     ['approved', 'user-1', 'Export PDF'],
-    ['ready', 'user-1', 'Export PDF'],
   ])('%s is led by %s', (status, assignee, label) => {
     expect(priceTagActions(status, assignee)[0].label).toBe(label);
   });
@@ -202,8 +277,13 @@ describe('priceTagActions', () => {
     expect(voidAction?.destructive).toBe(true);
   });
 
-  it('never offers Void once the sheet has been exported', () => {
-    expect(priceTagActions('ready', 'user-1').map((a) => a.action)).toEqual(['export']);
+  it('never offers Void once a self print request is approved and therefore finished', () => {
+    // r9 D8 retired `ready`: a self print request ENDS at `approved`, so the
+    // only thing left is the export. The office half of this matrix, and the
+    // `ready`-less status set, live in `priceTagRequestActions.test.ts`.
+    expect(priceTagActions('approved', 'user-1', 0, 'self').map((a) => a.action)).toEqual([
+      'export',
+    ]);
   });
 });
 
@@ -236,6 +316,15 @@ describe('PriceTagRequestDetail', () => {
     const gear = within(screen.getByTestId('gear-menu'));
     expect(gear.getByRole('menuitem', { name: /Mark design ready/ })).toBeTruthy();
     expect(gear.getByRole('menuitem', { name: /Void/ })).toBeTruthy();
+  });
+
+  it('offers "Check product data" from the gear (owner round finding 3)', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+
+    await screen.findByTestId('gear-menu');
+    const gear = within(screen.getByTestId('gear-menu'));
+    expect(gear.getByRole('menuitem', { name: /Check product data/ })).toBeTruthy();
   });
 
   it('has no gear at all when nothing is legal', async () => {
@@ -292,7 +381,7 @@ describe('PriceTagRequestDetail', () => {
     expect(await screen.findByText('No sales order files attached.')).toBeTruthy();
   });
 
-  it('asks before voiding rather than voiding on the click', async () => {
+  it('voids on a countdown rather than asking first', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
     renderDetail();
 
@@ -300,9 +389,47 @@ describe('PriceTagRequestDetail', () => {
     const gear = within(screen.getByTestId('gear-menu'));
     fireEvent.click(gear.getByRole('menuitem', { name: /Void/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Void this request?')).toBeTruthy();
-    });
+    expect(voidStart).toHaveBeenCalledTimes(1);
+    // The retired behaviour, named so it cannot come back: no dialog, and
+    // nothing that asks a question before the action runs.
+    expect(screen.queryByText('Void this request?')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('parks the void against the right action key and entity', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+    await screen.findByTestId('gear-menu');
+
+    expect(useDeferredActionInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionKey: 'price_tag_request.void',
+        entityType: 'price_tag_request',
+        entityId: 'req-1',
+      }),
+    );
+  });
+
+  it('shows the countdown and its Cancel on the record card while it runs', async () => {
+    voidIsPending = true;
+    voidCountdown = (
+      <button type="button" data-testid="void-countdown" onClick={voidCancel}>
+        Voiding in 10s - Cancel
+      </button>
+    );
+    try {
+      mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+      renderDetail();
+
+      const countdown = await screen.findByTestId('void-countdown');
+      expect(countdown).toHaveTextContent('Cancel');
+
+      fireEvent.click(countdown);
+      expect(voidCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      voidIsPending = false;
+      voidCountdown = null;
+    }
   });
 
   // AC-S1-6: the response's attachments carry `entity_attachment_service
@@ -413,9 +540,11 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Design SRT-2' }));
+    fireEvent.click(
+      await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-2')}` }),
+    );
     expect(push).toHaveBeenCalledWith(
-      '/dealer-kit/price-tag-requests/req-1/design?line=line-2',
+      '/dealer-kit/price-tag-requests/req-1/design?tag=line-2',
     );
   });
 
@@ -444,7 +573,7 @@ describe('PriceTagRequestDetail - tabs', () => {
             {
               id: 'tag-1',
               template_id: 'tmpl-1',
-              request_line_id: 'line-1',
+              request_tag_id: 'line-1',
               x_mm: 0,
               y_mm: 0,
               width_mm: 85,
@@ -460,12 +589,14 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    const line1Row = (await screen.findByText('SRT-1')).closest('tr');
-    const line2Row = screen.getByText('SRT-2').closest('tr');
-    expect(line1Row).not.toBeNull();
-    expect(line2Row).not.toBeNull();
-    expect(within(line1Row as HTMLElement).getByText('Designed')).toBeTruthy();
-    expect(within(line2Row as HTMLElement).getByText('No tag')).toBeTruthy();
+    // Designed/No tag is a TAG fact since S3, so it is read off the tag row
+    // nested under each line, not off the line row.
+    const tag1Row = (await screen.findByText(tagLabelFor('line-1'))).closest('tr');
+    const tag2Row = screen.getByText(tagLabelFor('line-2')).closest('tr');
+    expect(tag1Row).not.toBeNull();
+    expect(tag2Row).not.toBeNull();
+    expect(within(tag1Row as HTMLElement).getByText('Designed')).toBeTruthy();
+    expect(within(tag2Row as HTMLElement).getByText('No tag')).toBeTruthy();
   });
 
   // Review: the row Design action was ungated - it rendered on every line
@@ -499,7 +630,308 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    expect(await screen.findByRole('button', { name: 'Design SRT-1' })).toBeTruthy();
+    expect(
+      await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
+    ).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S7 - the collection dates are read in Malaysia, off a naive UTC timestamp
+// ---------------------------------------------------------------------------
+
+describe('the collection subline (AC-S3-8)', () => {
+  /**
+   * FastAPI serialises a naive `datetime` with no zone: `2026-09-14T16:30:00`
+   * means 16:30 UTC, which is 00:30 on the 15th in Malaysia. The card builds
+   * its dates with `new Date(...)` (which reads that string as LOCAL time) and
+   * `formatDate` (which reads LOCAL getters), so the day printed is whatever
+   * the reader's browser happens to be set to - and on the one boundary that
+   * matters it is the wrong day.
+   *
+   * TZ is pinned so the assertion means the same thing on this machine
+   * (Asia/Kuala_Lumpur) and on a CI runner (UTC).
+   */
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'UTC';
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it('reads a naive backend timestamp as UTC and prints the Malaysia date', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'ready_for_collection',
+        print_by: 'office',
+        ready_for_collection_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    // 16:30 UTC on the 14th is 00:30 on the 15th in Malaysia.
+    expect(await screen.findByText(/Ready since 15\/09\/2026/)).toBeInTheDocument();
+  });
+
+  it('dates the auto-collect the same way, seven days on', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'ready_for_collection',
+        print_by: 'office',
+        ready_for_collection_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByText(/auto-collects 22\/09\/2026/),
+    ).toBeInTheDocument();
+  });
+
+  it('dates a collected request in Malaysia too', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'collected',
+        print_by: 'office',
+        collected_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText(/Collected 15\/09\/2026/)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S3-2 - the Lines tab nests parts and tags under the line
+//
+// Marketing opens the request and has to be able to read, in one pass, what the
+// salesperson asked for (the line), what came with it (the parts) and what will
+// actually print (the tags). Three levels in one table, so what each row IS has
+// to be unambiguous - a part row that looked like a tag row would invite
+// somebody to design it.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestDetail - Lines tab, parts and tags under the line (S3)', () => {
+  const MIRROR: PriceTagRequestLinePart = {
+    id: 'part-mirror',
+    product_id: 'p-mirror',
+    code: 'SRTMR502-BL',
+    name: 'ZZT Mirror',
+    role: null,
+    candidates: [],
+    sort_order: 0,
+  };
+
+  const OPEN_BASIN: PriceTagRequestLinePart = {
+    id: 'part-basin',
+    product_id: null,
+    code: null,
+    name: null,
+    role: 'Basin',
+    candidates: [
+      { product_id: 'p-basin-wh', code: 'SRTBS900-WH', name: 'ZZT Basin White' },
+      { product_id: 'p-basin-bk', code: 'SRTBS900-BK', name: 'ZZT Basin Black' },
+    ],
+    sort_order: 1,
+  };
+
+  function cabinetLine(overrides: Partial<PriceTagRequestLine> = {}) {
+    return lineWith({
+      id: 'line-1',
+      code: 'SRTBF11834',
+      name: 'ZZT Cabinet',
+      parts: [MIRROR, OPEN_BASIN],
+      ...overrides,
+    });
+  }
+
+  it('lists each part under its line, a resolved one by code and an open one by group', async () => {
+    mockGet.mockResolvedValue(requestWith({ lines: [cabinetLine()] }));
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    expect(await screen.findByText(/SRTMR502-BL/)).toBeInTheDocument();
+    // The open group reads as the CHOICE it is, not as two more products in the
+    // package.
+    expect(
+      screen.getByText(/Basin: SRTBS900-WH \/ SRTBS900-BK/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows the line\'s package warning on the line row, once', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          cabinetLine({
+            package_warning: 'Missing: SRTMR502-BL',
+            tags: [
+              tagWith('line-1'),
+              tagWith('line-1', { id: 'tag-1b', label: '1b', sort_order: 1 }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    expect(await screen.findByText('Package warning')).toBeInTheDocument();
+    expect(screen.getByText('Missing: SRTMR502-BL')).toBeInTheDocument();
+    // Two tags, one warning: it is a fact about the ask, not about each print.
+    expect(screen.getAllByText('Package warning')).toHaveLength(1);
+  });
+
+  it('lists every tag under the line by ordinal, with its resolved choice and price', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          cabinetLine({
+            show_promo_price: true,
+            tags: [
+              tagWith('line-1', {
+                choices_display: [{ role: 'Basin', code: 'SRTBS900-WH' }],
+                list_price: 1898,
+                sell_price: 1599,
+              }),
+              tagWith('line-1', {
+                id: 'tag-1b',
+                label: '1b',
+                sort_order: 1,
+                choices_display: [{ role: 'Basin', code: 'SRTBS900-BK' }],
+                list_price: 1948,
+                sell_price: 1649,
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    expect(await screen.findByText('1a')).toBeInTheDocument();
+    expect(screen.getByText('1b')).toBeInTheDocument();
+    // The choice is shown as a CODE - never the stored product id (AC-X-2).
+    expect(screen.getByText('SRTBS900-WH')).toBeInTheDocument();
+    expect(screen.getByText('SRTBS900-BK')).toBeInTheDocument();
+    expect(screen.queryByText('tag-1b')).toBeNull();
+    // Price is a tag fact since D4: the two basins cost different money.
+    expect(screen.getByText('RM 1898.00')).toBeInTheDocument();
+    expect(screen.getByText('RM 1948.00')).toBeInTheDocument();
+    expect(screen.getByText('RM 1599.00')).toBeInTheDocument();
+  });
+
+  it('an unresolved tag says which group is open, and how many options it has', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          cabinetLine({
+            tags: [
+              tagWith('line-1', {
+                open_groups: [
+                  {
+                    role: 'Basin',
+                    candidates: [
+                      { product_id: 'p-basin-wh', code: 'SRTBS900-WH' },
+                      { product_id: 'p-basin-bk', code: 'SRTBS900-BK' },
+                    ],
+                  },
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    expect(await screen.findByText('Open: Basin (2)')).toBeInTheDocument();
+  });
+
+  it('the marketing override is shown against the TAG it was set on', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        lines: [
+          cabinetLine({
+            tags: [
+              tagWith('line-1', { list_price: 1898 }),
+              tagWith('line-1', {
+                id: 'tag-1b',
+                label: '1b',
+                sort_order: 1,
+                list_price: 1948,
+                marketing_price_override: 1499,
+                marketing_override_reason: 'ZZT roadshow bundle',
+              }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    const overrides = await screen.findAllByText(/Override: RM\s*1499\.00/);
+    // Exactly one: the override belongs to 1b, and showing it on 1a as well
+    // would state a price nobody set.
+    expect(overrides).toHaveLength(1);
+  });
+
+  it('each tag carries its own Design action, pointing at THAT tag', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'designing',
+        assigned_to_id: 'user-1',
+        lines: [
+          cabinetLine({
+            tags: [
+              tagWith('line-1'),
+              tagWith('line-1', { id: 'tag-1b', label: '1b', sort_order: 1 }),
+            ],
+          }),
+        ],
+      }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Design tag 1b' }));
+    expect(push).toHaveBeenCalledWith(
+      '/dealer-kit/price-tag-requests/req-1/design?tag=tag-1b',
+    );
+  });
+
+  it('a plain product line with no package shows its one tag and no part rows', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    renderDetail();
+
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    expect(await screen.findByText('SRT-1')).toBeInTheDocument();
+    expect(screen.getByText(tagLabelFor('line-1'))).toBeInTheDocument();
+    expect(screen.queryByText('Package warning')).toBeNull();
+    expect(screen.queryByText(/Open:/)).toBeNull();
   });
 });

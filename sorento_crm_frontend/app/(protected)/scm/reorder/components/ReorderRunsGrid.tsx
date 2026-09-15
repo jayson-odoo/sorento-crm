@@ -121,7 +121,12 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         header: ({ column }) => <DataGridColumnHeader title="Plan" visibility column={column} />,
         cell: ({ row }) => (
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium tabular-nums">
+            {/* `truncate` needs its `title`: the badges beside it eat into the column's
+                fixed width, so the timestamp is the part that clips. */}
+            <span
+              className="truncate text-sm font-medium tabular-nums"
+              title={runStartedLabel(row.original.started_at)}
+            >
               {runStartedLabel(row.original.started_at)}
             </span>
             {/* The scheduled run, told apart from one a person started. Absent until the
@@ -129,6 +134,14 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
             {row.original.is_scheduled ? (
               <Badge variant="secondary" appearance="light" size="sm">
                 daily
+              </Badge>
+            ) : null}
+            {/* The run the low stock report tool started over WhatsApp (AC-4). Same
+                identity column, no new one: it is another thing to know about WHICH plan
+                this is, and only the backend says so (`requested_via`). */}
+            {row.original.requested_via === 'chat' ? (
+              <Badge variant="secondary" appearance="light" size="sm">
+                via chat
               </Badge>
             ) : null}
             {/* AC-5.4: the superseded run stays readable and labelled here - a Re-plan

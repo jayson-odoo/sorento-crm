@@ -49,7 +49,8 @@ const STATUS_OPTIONS = [
   { value: 'proof_ready', label: 'Design Ready' },
   { value: 'changes_requested', label: 'Changes Requested' },
   { value: 'approved', label: 'Approved' },
-  { value: 'ready', label: 'Ready' },
+  { value: 'ready_for_collection', label: 'Ready for collection' },
+  { value: 'collected', label: 'Collected' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'void', label: 'Void' },
 ];

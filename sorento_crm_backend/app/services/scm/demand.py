@@ -24,7 +24,7 @@ finds the other.
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal, select
 
 from app.models.order import SalesOrder, SalesOrderLine
 
@@ -175,6 +175,140 @@ def is_open_demand():
     return (SalesOrderLine.line_status == "open") & (
         SalesOrderLine.purchasing_status != COVERED
     ) & (demand_qty() > 0)
+
+
+def plan_qty():
+    """What the BOARD plans for one line: `coalesce(qty_required, qty_ordered)`.
+
+    NOT `demand_qty()`, and the difference is the whole 14 September 2026 ruling. That one
+    nets what has already shipped, because the netting engine, the reorder plan and the
+    worklist all ask "what is still owed". The board asks a different question - "has anybody
+    decided where this line's stock comes from" - and a delivered unit nobody sourced is a
+    unit to put back, so it is planned at its full quantity.
+
+    `qty_required` leads for the same reason it does in `demand_qty()`: the Order Inquiry
+    sheet is CS's own statement of what to cover, and it beats the book's `qty_ordered` when
+    somebody has stated one.
+    """
+    return func.coalesce(SalesOrderLine.qty_required, SalesOrderLine.qty_ordered)
+
+
+def is_undecided_demand():
+    """THE BOARD'S predicate: which lines it admits, and why it is not `is_open_demand()`.
+
+    A line is admitted when nobody has ruled on it and there is something to rule on:
+
+    - not `cancelled` - it is owed to nobody, whatever its delivered column says;
+    - not `purchasing_status = covered` - a person already said no purchase is needed;
+    - `plan_qty() > 0` - a line for nothing is not a question.
+
+    DELIVERY IS DELIBERATELY ABSENT. SO421404 read Completed, three of three delivered, and
+    had never been planned: the stock left the bin with nothing behind it, so no ORDER row
+    ever reached purchasing and nothing was bought back. Under `is_open_demand()` that order
+    is invisible the moment the book says it shipped.
+
+    The two predicates diverge on purpose and BOTH stay (AC-S2-11), the way
+    `_cancelled_pending_change_rows` already diverges for pending changes. Whether an active
+    decision or a live inquiry row covers the line is a separate question this does not ask -
+    that is `is_decided_demand()`, because a decided line stays ON the board, read-only,
+    rather than being filtered out of it.
+    """
+    return (
+        SalesOrderLine.line_status.is_distinct_from("cancelled")
+        & (SalesOrderLine.purchasing_status.is_distinct_from(COVERED))
+        & (plan_qty() > 0)
+    )
+
+
+def live_inquiry_core_line_ids():
+    """The core lines a LIVE order inquiry row already names.
+
+    Live means the row still stands: its state is not `cancelled` and purchasing has not
+    rejected it. A rejected row is back in CS's hands and decides nothing; a cancelled one
+    went away. Reached through the mirror line, because an inquiry row is keyed to
+    `projects.sales_order_lines` and every reader here is keyed to the core line.
+
+    Three narrowings, and each one is load-bearing: the row belongs to no board decision (a
+    confirmation's own row is not somebody else telling purchasing), it still stands, and no
+    PENDING planning-change row names the line - the book moving a line beats purchasing
+    having been told, and apply cancels the placed row anyway.
+
+    Uncorrelated and over the TABLES, for the same two reasons `_decided_core_line_ids()` is:
+    callers arrive with `sales_order_lines` aliased, and the company-scope loader must not
+    rewrite a sub-select whose only job is to answer "which lines were purchasing told about".
+    The pending-change EXISTS correlates to `mirror` alone, which this select owns, so it is
+    safe against the same aliasing.
+    """
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+    from app.models.project_so import (
+        ACK_REJECTED,
+        INQUIRY_CANCELLED,
+        OrderInquiryRow,
+        ProjectSalesOrderLine,
+    )
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+    rows = OrderInquiryRow.__table__
+    mirror = ProjectSalesOrderLine.__table__
+    change_rows = PlanningChangeRow.__table__
+    batches = PlanningChangeBatch.__table__
+    query = (
+        select(mirror.c.core_sales_order_line_id)
+        .select_from(rows.join(mirror, mirror.c.id == rows.c.so_line_id))
+        .where(
+            mirror.c.core_sales_order_line_id.isnot(None),
+            rows.c.state.is_distinct_from(INQUIRY_CANCELLED),
+            rows.c.ack_state.is_distinct_from(ACK_REJECTED),
+            # RAISED BY SOMETHING OTHER THAN A BOARD DECISION, which is the whole point of
+            # the rule. A row a confirmation wrote carries its `supply_decision_id`; the
+            # migrated sheet's rows (#875) carry none, and those are the instructions the
+            # board would otherwise propose for a second time.
+            #
+            # Without this the predicate swallowed its own tail: a line whose decision a
+            # planning change had just SUPERSEDED still had that decision's live row, so
+            # the board read it as decided and stopped re-planning the very line the change
+            # had re-opened (eleven tests in `test_planning_change_apply_on_board.py`).
+            rows.c.supply_decision_id.is_(None),
+            # AND THE BOOK HAS NOT MOVED THE LINE SINCE (owner's ruling, 14 Sep 2026). A
+            # pending planning-change row says the book moved it after the instruction was
+            # written, and apply cancels and unlinks the placed row - so it is stale by
+            # definition and decides nothing. Read here rather than only on the board so
+            # the Sales Orders list's Planned pill and the board it opens cannot disagree
+            # about one line.
+            ~select(literal(1))
+            .select_from(
+                change_rows.join(
+                    batches, batches.c.id == change_rows.c.batch_id
+                )
+            )
+            .where(
+                change_rows.c.core_line_id == mirror.c.core_sales_order_line_id,
+                change_rows.c.applied_state == PLANNING_CHANGE_STATE_PENDING,
+                batches.c.applied_at.is_(None),
+            )
+            .exists(),
+        )
+    )
+    return query
+
+
+def is_decided_demand():
+    """"Somebody has already ruled where this line's stock comes from", in ONE place.
+
+    Two ways a line is decided and they are equal in weight:
+
+    - an ACTIVE supply decision names it (`_decided_core_line_ids()`, what the board has
+      always meant by `covered`);
+    - a LIVE order inquiry row names it. Since #875 the migrated sheet raised rows on real
+      sales-order lines, so purchasing was told about 2,311 open lines the board would
+      otherwise propose for all over again.
+
+    The board's read-only row and the Sales Orders list's Planned count read THIS, so an
+    order cannot read "2 of 3 planned" on the list and open a board that disagrees.
+    """
+    return SalesOrderLine.id.in_(_decided_core_line_ids()) | SalesOrderLine.id.in_(
+        live_inquiry_core_line_ids()
+    )
 
 
 def qty_of(row) -> float:

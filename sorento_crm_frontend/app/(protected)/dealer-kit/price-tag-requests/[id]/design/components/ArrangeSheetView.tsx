@@ -215,7 +215,7 @@ export function ArrangeSheetView({
                           tag={tag}
                           scale={scale}
                           isSelected={selectedTagId === tag.id}
-                          resolvedData={resolved.get(tag.request_line_id) ?? null}
+                          resolvedData={resolved.get(tag.request_tag_id) ?? null}
                           assetUrls={assetUrls}
                           onSelect={onSelectTag}
                           onDragEnd={(xPx, yPx) =>

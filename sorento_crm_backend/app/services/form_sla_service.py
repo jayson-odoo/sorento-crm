@@ -121,6 +121,9 @@ _ENTITY_NUMBER_SOURCE: dict = {
     "purchase_request": ("purchase_requests", "request_number", True),
     "sponsorship_form": ("purchase_requests", "request_number", True),
     "ticket": ("tickets", "ticket_number", False),
+    # r9 D14: without this the price tag SLA notification showed a uuid prefix,
+    # which tells the reader nothing about which request is late.
+    "price_tag_request": ("price_tag_requests", "doc_number", True),
 }
 
 
@@ -246,6 +249,8 @@ def _form_detail_link(source_entity_type: str, source_entity_id: str) -> str:
         return f"/complaint-management/complaints/{source_entity_id}"
     if source_entity_type == "ticket":
         return f"/ticket-management/tickets/{source_entity_id}"
+    if source_entity_type == "price_tag_request":
+        return f"/dealer-kit/price-tag-requests/{source_entity_id}"
     return f"/{source_entity_type.replace('_', '-')}/{source_entity_id}"
 
 

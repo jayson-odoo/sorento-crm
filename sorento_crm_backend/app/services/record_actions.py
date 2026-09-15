@@ -71,6 +71,32 @@ def _delete_product_companion_rule(db: Session, payload: dict):
     return ProductCompanionService(db).delete(_entity_id(payload))
 
 
+def _delete_product_combo(db: Session, payload: dict):
+    from app.services.product_combo_service import ProductComboService
+
+    return ProductComboService(db).delete(_entity_id(payload))
+
+
+def _delete_product_combo_part(db: Session, payload: dict):
+    from app.services.product_combo_service import ProductComboService
+
+    return ProductComboService(db).delete_part(_entity_id(payload))
+
+
+def _delete_price_tag_request_tag(db: Session, payload: dict):
+    from app.models.price_tag import PriceTagRequestTag
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    tag = (
+        db.query(PriceTagRequestTag)
+        .filter(PriceTagRequestTag.id == _entity_id(payload))
+        .first()
+    )
+    if tag is None:
+        return None
+    return PriceTagRequestService.delete_tag(db, tag)
+
+
 def _set_order_status(db: Session, payload: dict):
     from app.schemas.order import OrderUpdate
     from app.services.order_service import OrderService
@@ -135,6 +161,46 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission="master_data.products.edit",
         label="Delete rule",
+    )
+)
+
+# The two halves of AC-S1-5. A combo and a part are both deleted from the product
+# page's own Combos section, so both take the products edit slug and the destructive
+# window - there is nothing to un-delete once it lapses.
+register(
+    FormAction(
+        key="product_combo.delete",
+        entity_types=("product_combo",),
+        execute=_delete_product_combo,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete combo",
+    )
+)
+
+register(
+    FormAction(
+        key="product_combo_part.delete",
+        entity_types=("product_combo_part",),
+        execute=_delete_product_combo_part,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Remove part",
+    )
+)
+
+# AC-S3-6: removing a tag is a destructive action like any other, so it takes
+# the grace window rather than a dialog. The service refuses the line's LAST tag
+# with a 422 at commit time, which is the same answer the button already
+# prevents by disabling itself.
+register(
+    FormAction(
+        key="price_tag_request_tag.delete",
+        entity_types=("price_tag_request_tag",),
+        execute=_delete_price_tag_request_tag,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.price_tag_requests.process",
+        label="Remove tag",
     )
 )
 
@@ -1574,5 +1640,34 @@ register(
         window=WINDOW_DESTRUCTIVE,
         permission=OWN_RECORD,
         label="Delete view",
+    )
+)
+
+
+def _void_price_tag_request(db: Session, payload: dict):
+    from app.services.price_tag_request_service import (
+        PriceTagRequestService,
+        STATUS_VOID,
+    )
+
+    return PriceTagRequestService.transition_status(
+        db,
+        _entity_id(payload),
+        STATUS_VOID,
+        user_id=str(payload.get("requested_by_id") or "") or None,
+    )
+
+
+register(
+    FormAction(
+        key="price_tag_request.void",
+        entity_types=("price_tag_request",),
+        execute=_void_price_tag_request,
+        # Destructive, and not a `.delete`: void is the end of the line for a
+        # request - no transition leaves it - so the grace window IS the way
+        # back, exactly as it is for a delete.
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.price_tag_requests.process",
+        label="Void request",
     )
 )

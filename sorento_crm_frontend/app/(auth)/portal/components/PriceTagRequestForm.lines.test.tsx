@@ -26,11 +26,14 @@ vi.mock('../lib/price-tag-request-service', () => ({
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
 }));
 
 /**
@@ -125,6 +128,20 @@ async function addLine() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
 }
 
+/**
+ * r9 D7: `Printing` has no default and Submit refuses without it, so every
+ * test that expects a POST has to answer it first. The control lives in
+ * "Additional Information", which is collapsed until a price mode is chosen.
+ */
+async function pickPrinting() {
+  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
+    fireEvent.click(
+      screen.getByRole('button', { name: /Additional Information/ }),
+    );
+  }
+  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
+}
+
 describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () => {
   it('adds a row with one button and offers sets and products in one dropdown', async () => {
     render(<PriceTagRequestForm />);
@@ -159,6 +176,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       target: { value: '2' },
     });
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
@@ -180,6 +198,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
     const payload = (createRequest as ReturnType<typeof vi.fn>).mock.calls[0][0];
@@ -188,9 +207,12 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       product_set_id: 'set-uuid-1',
       product_id: null,
     });
-    // The field stays in the payload shape (an existing row still round-trips,
-    // D3) even though there is no longer a control to edit it.
-    expect(payload.lines[0].alternatives).toEqual([]);
+    // `alternatives` is GONE (S2, AC-S2-8) - the column is dropped and the
+    // payload never carries it again. What replaces it is `parts`: a set line
+    // has none (parts are a combo fact on a product line), so it posts empty
+    // rather than absent.
+    expect(payload.lines[0].alternatives).toBeUndefined();
+    expect(payload.lines[0].parts).toEqual([]);
   });
 
   it('a set row has no Alternatives column (D3/AC-S1-3)', async () => {

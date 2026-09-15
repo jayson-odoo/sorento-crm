@@ -409,6 +409,9 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     # is order_date, never actual_delivery_date - a pending DO by definition has
     # none, and the SO arm has no delivery date at all.
     "crm_outstanding_report": ("order_date_from", "order_date_to"),
+    # AC-71: the low stock report's window narrows which sales orders the fresh plan
+    # counts as demand - the run's own "plan until" pair, under the route's names.
+    "crm_low_stock_report": ("date_from", "date_to"),
 }
 
 # S4 point 3 (AC-1131 fetch half): so_outstanding/do_outstanding/outstanding_both ->
@@ -513,6 +516,26 @@ def entity_ids_transformer(
         bucket = params.setdefault(param, [])
         if uuid not in bucket:  # `Set.add` - insertion-ordered and deduped
             bucket.append(uuid)
+        # R-F (owner merge test, 15 Sep 2026): a PICKED customer stands for its whole
+        # ACCOUNT FAMILY. One roster line can name accounts in several ledgers - the
+        # picker prints them all ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") - and the pick
+        # has to reach every one of them or the answer covers one ledger under a line that
+        # promised two. The family rides on the entity as `family_uuids`, put there by the
+        # roster row and copied at the pick (`dialogue/open_question._entity_of`); it used
+        # to be a `picker_families` session map, which the five-key session dropped.
+        #
+        # Held to the SAME uuid test as the entity's own id, and added to the SAME bucket,
+        # so a family member that is not a uuid is skipped exactly as a bad entity id is
+        # and nothing but an id can reach the wire.
+        for member in jsc.array(jsc.get(e, "family_uuids")):
+            if not jsc.truthy(member) or not _UUID_RE.match(jsc.js_string(member)):
+                skipped.append({"code": jsc.js_string(member), "reason": "missing_or_bad_uuid"})
+                continue
+            if member in seen_uuids:
+                continue
+            seen_uuids.add(member)
+            if member not in bucket:
+                bucket.append(member)
 
     out: dict[str, Any] = {}
     truncated: list[dict[str, Any]] = []
@@ -606,6 +629,48 @@ def entity_ids_transformer(
         detail_pick = jsc.get(semantic_input, "outstanding_detail_pick")
         if detail_pick in ("so", "do", "both"):
             out["detail"] = detail_pick
+
+    # PLAN-low-stock-report S6 (AC-66/AC-71): this tool's own contract is CODES too - the
+    # route resolves warehouse and product CODES, and a UUID would silently match nothing.
+    # So the generic UUID params are POPPED rather than left to be dropped by FastMCP,
+    # where a replay diff could not show they had gone. The warehouse codes come off
+    # `semantic_input` (set by `run_fetch` from the SAME token resolution the outstanding
+    # report uses, so a location word like "IB" is already expanded to exact codes); the
+    # product codes come off the entities' own resolved codes.
+    if tool_name == "crm_low_stock_report":
+        out.pop("warehouse_ids", None)
+        out.pop("product_ids", None)
+        # The warehouse scope comes off `semantic_input` (the token resolution `run_fetch`
+        # already did); the product scope is read off the entities handed in. Those
+        # entities have ALREADY been pruned to the ones the CURRENT MESSAGE named, in
+        # `run_fetch`'s low-stock override (console round 3, defect B) - this function
+        # cannot tell a carried entity from a fresh one, and `replace_combine` merges the
+        # previous turn's into the gate's list, which is how a bare "low stock report"
+        # came to be scoped to two products from an earlier question and planned "0 of 0".
+        warehouse_codes = jsc.get(semantic_input, "low_stock_warehouse_codes")
+        if isinstance(warehouse_codes, list) and warehouse_codes:
+            out["warehouse_codes"] = warehouse_codes
+        product_codes: list[str] = []
+        for e in jsc.array(entities):
+            if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
+                continue
+            code = e.get("code") or e.get("canonical_code")
+            if jsc.truthy(code) and jsc.js_string(code) not in product_codes:
+                product_codes.append(jsc.js_string(code))
+        if product_codes:
+            out["product_codes"] = product_codes
+        # #892 (console, 14 Sep): this tool REQUIRES both ids - the route 422s without
+        # them, and they drive the company scope the write needs - so it must NOT depend on
+        # the shared tail below surviving a refactor or a None `semantic_input`. Carry them
+        # explicitly here, from the trigger first (`run_fetch` stamps `contact_id` on it),
+        # then `semantic_input`, exactly the resolution the bottom of this function uses.
+        _lsr_contact = trig.get("contact_id")
+        if _lsr_contact is None:
+            _lsr_contact = jsc.get(semantic_input, "contact_id")
+        out["contact_id"] = jsc.nullish_str(_lsr_contact).strip()
+        out["space_id"] = space_id_or_default(
+            space_id if space_id is not None else jsc.get(semantic_input, "space_id")
+        )
 
     # S2 (review round, 13 Sep 2026): a warehouse entity on a PLAIN order ask.
     # `TYPE_TO_PARAM` maps it to `warehouse_ids`, which NEITHER order-list tool declares
@@ -1675,6 +1740,62 @@ def _outstanding_report_output(result: Any, ctx: dict[str, Any]) -> dict[str, An
     }
 
 
+#: The miss line for an unrendered low stock payload (N6). The presenter carries the same
+#: wording for its own error envelope; this copy covers only the "render never happened"
+#: fallback, where the presenter's text never reached this function.
+_LOW_STOCK_ERROR_TEXT = "Could not run the low stock report right now."
+
+
+def _low_stock_report_output(result: Any) -> dict[str, Any]:
+    """PLAN-low-stock-report S6 (AC-66): `crm_low_stock_report`'s own envelope.
+
+    `_outstanding_report_output`'s shape, with one difference that is the whole point:
+    `attachments` is carried through from the presenter's envelope instead of being an
+    empty list. `engine._attachments_src` turns a non-empty list into a `send_attachments`
+    action, and that action IS the in-turn delivery of the workbook (AC-43).
+
+    The reply text is the presenter's, verbatim - one writer, one wording, for the same
+    reason the outstanding report's is: the backend container cannot import
+    `sorento_crm_mcp`, so a second rendering here could disagree with the text the customer
+    is reading and nothing would catch it.
+
+    `has_result` comes off the wire and is True on every presenter branch - ready, pending,
+    busy and error are all terminal answers the bot gives verbatim. The presenter renders an
+    error as the "could not run" line (reviewer S1/N6, refined by the console: a False here
+    routes into the inventory domain's GENERIC miss, the wrong wording for a failed run), so
+    the lane must NOT force the turn onto the miss path; it carries the presenter's text and
+    `has_result` through unchanged.
+    """
+    envelope = result if isinstance(result, dict) else {}
+    if "response" in envelope:
+        text = jsc.js_string(envelope.get("response") or "")
+        has_result = envelope.get("has_result") is True
+        attachments = envelope.get("attachments")
+    else:
+        # The render never happened (an MCP that returned a RAW route body - `{status:
+        # error|busy|...}` - or a failure fallback). This tool has a side effect and no
+        # safe default text, so state the error line verbatim as a terminal answer rather
+        # than stringing a raw status dict into the reply or dropping into the generic
+        # inventory miss.
+        text = _LOW_STOCK_ERROR_TEXT
+        has_result = True
+        attachments = None
+    return {
+        "response": text,
+        "response_intro": None,
+        "answers": [],
+        "attachments": attachments if isinstance(attachments, list) else [],
+        "action_links": [],
+        "last_updated_at": None,
+        "has_result": has_result,
+        "alternatives": [],
+        "relaxed_axis": None,
+        "field_access": None,
+        "requested_attributes": [],
+        "keys_served": False,
+    }
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -1685,6 +1806,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ctx = ctx if isinstance(ctx, dict) else {}
     if jsc.js_string(ctx.get("tool") or "") == "crm_outstanding_report":
         return _outstanding_report_output(result, ctx)
+    if jsc.js_string(ctx.get("tool") or "") == "crm_low_stock_report":
+        return _low_stock_report_output(result)
     e = _extract_envelope(result)
     # Read once, for both the restricted-field drop below and the spec-visibility
     # drop (PLAN-spec-visibility-policy.md "Chatbot seam") - one contact, one

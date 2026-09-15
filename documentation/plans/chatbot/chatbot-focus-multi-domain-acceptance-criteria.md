@@ -253,6 +253,59 @@ console.
   under Cross-domain, and the Focus panel lists `domains` in order. Evidence: agent-browser
   run over a fan-out console turn.
 
+## Owner merge test, 15 Sep 2026 (AC-1060 to AC-1064)
+
+Added after the owner's console pass on the merged head (`d4ae8203b`), which found six
+defects at the pick seam and one pre-existing arm. The plan's "Found during owner merge
+test" table carries the diagnosis; these are the independently-verifiable criteria.
+
+- AC-1060 [T] KEEP ACROSS A PICK. A message that resolves an ambiguous entity AND another
+  entity of a different axis freezes the second one on the roster it arms, and the pick
+  answers with BOTH. "delivery for chin chun product wc286" then "1" fetches the picked
+  customer scoped to WC286, not `Product: all products`; "photo for srtwc286" then "4"
+  answers with the Product Photos of the picked SKU rather than re-asking for the
+  attachment type. A second reading of the SAME word is not a sibling and does not
+  survive: "7445", which matches products by code and customers by phone, offers the
+  products and keeps no customer. Evidence: `run_gate` unit (both shapes) + capture
+  `rs09-t1` unmoved on content.
+- AC-1061 [T] THE OFFER RIDES A ROSTER BORN BESIDE IT. A reply that carries a numbered
+  roster AND the frozen "Would you like me to escalate to <team> team?" persists ONE
+  question: the roster's kind and rows, `expects: pick_or_yes_no`, and
+  `payload.offer.team` naming the team the sentence named. A number re-picks; a bare "yes"
+  escalates to THAT team and consumes the whole question; "no" declines and leaves the
+  roster with the offer stripped. "check stock srtwt2643" then "yes" reaches the WAREHOUSE
+  team, never customer service. Evidence: `test_sticky_roster_tail` + a console chain.
+- AC-1062 [T] A DETAIL PICK IS NOT A NEW ASK. With an `outstanding_scope` or
+  `outstanding_detail` question open, a turn that picks one of its frozen options re-runs
+  the report with the stored filters whatever `domain_hint` the parser stamped on it, on
+  both numbered channels (`reference_positions` and `answers_open_question.picks`). A turn
+  that picks nothing and names its own entity is still a new ask and still drops the
+  pending. Evidence: `test_outstanding_lane`, both channels.
+- AC-1063 [T] THE HEADER NAMES THE CUSTOMER. After a customer pick the scope header reads
+  `Customer: <company name>` - the label the customer was shown - never the debtor code.
+  The picked entity carries the label as `raw` and the code as `canonical_code`; product
+  picks are unchanged, where the code is the name the customer reads. Evidence:
+  `test_open_question` + capture `b56-pick-turn`.
+- AC-1064 [T] A PICK REACHES EVERY LEDGER ITS LINE PROMISED. A roster line that names two
+  ledgers ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") carries `family_uuids`, the pick copies
+  them onto the entity, and the tool call's `customer_ids` covers every account of that
+  family. The family rides the PIN, not the question, so it survives the roster being
+  replaced by a later question (the 2026-08-24 ruling that the family outlives the
+  roster). A family member that is not a uuid is skipped exactly as a bad entity id is.
+  Evidence: `test_owner_regressions_15sep` (pick-time copy + tool-call expansion).
+
+- AC-1065 [T] A NARROWING IS NOT A NEW ASK, WHATEVER WORD THE MODEL STAMPED. With an
+  outstanding question open, a turn that picks nothing and names only entities on axes this
+  report can never take as its SUBJECT - a location, a date - re-runs the SAME report with
+  the stored filters overlaid and re-arms the same question. "only BRW" narrows even when
+  the parser emits it as `message_type: business_query` with `domain_hint: "order"`, which
+  the live v20 model does. The question's own carried subject riding `entities` with
+  `current_message: false` is what a refinement KEEPS and never counts against it. A turn
+  that names a product or a customer of its own - either can BE this report's subject - is
+  still a new ask and still drops the pending ("delivery status for hanlim" under a
+  product-subject offer). Evidence: `test_outstanding_lane`, both the `domain_hint: null`
+  and the live `domain_hint: "order"` shapes.
+
 ## Supersession map (growth-r1 section D)
 
 | growth-r1 | here |

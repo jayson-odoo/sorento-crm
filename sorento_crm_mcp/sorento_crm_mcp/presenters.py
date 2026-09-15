@@ -55,6 +55,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_procurement_po_last_cost_list",
         "crm_outstanding_report",
+        "crm_low_stock_report",
     }
 )
 
@@ -1556,6 +1557,14 @@ def present_response(tool_name: str, raw: str) -> str:
     if tool_name == "crm_outstanding_report":
         return json.dumps(_outstanding_envelope(data))
 
+    # The same bypass, for the same reason: the low stock report's payload is a STATUS
+    # (ready / pending / busy) plus an attachment list, not a row collection the generic
+    # item/field envelope could build items from. `attachments` rides through untouched -
+    # the route decides what a Respond.io attachment entry looks like, and re-shaping it
+    # here would be a second copy of that contract.
+    if tool_name == "crm_low_stock_report":
+        return json.dumps(_low_stock_envelope(data))
+
     rows = data.get("data")
     if not isinstance(rows, list):
         rows = [] if rows is None else ([rows] if isinstance(rows, dict) else [])
@@ -1999,6 +2008,118 @@ def _outstanding_envelope(report: dict) -> dict:
             or (isinstance(do, dict) and do.get("do_count"))
         ),
     }
+
+
+#: The three lines the low stock report can answer with (AC-61). Written here, once, and
+#: handed to the lane verbatim: one writer, one wording.
+_LOW_STOCK_PENDING = "Preparing the low stock report - it will be sent here when ready."
+#: Both busy lines NAME the report (console round 3, defect C): "a plan is already running"
+#: alone left the reader - and the console assertion - guessing which plan, and the two
+#: busies have different fixes (wait a minute vs wait ten).
+_LOW_STOCK_BUSY_IN_FLIGHT = (
+    "A low stock report plan is already running - try again in a minute."
+)
+_LOW_STOCK_BUSY_RATE_LIMITED = (
+    "Too many low stock reports in the last 10 minutes - try again shortly."
+)
+_LOW_STOCK_ERROR = "Could not run the low stock report right now."
+#: defect D: a scope the plan admitted nothing for. Saying "Low: 0 of 0 planned products"
+#: beside an empty workbook reads as a broken report; this says what actually happened.
+_LOW_STOCK_EMPTY = "Nothing was planned for that scope - no low stock report to send."
+
+
+def _low_stock_as_of(iso: Any) -> str:
+    """dd/mm/yyyy, the only date form this product writes for a reader. An unparseable or
+    absent stamp prints as it arrived rather than as today's date: a run that froze no rows
+    has no as-of, and inventing one would date a book that was never built."""
+    try:
+        return _outstanding_ddmmyyyy(iso)
+    except (TypeError, ValueError):
+        return str(iso) if iso else "-"
+
+
+def _low_stock_envelope(payload: dict) -> dict:
+    """What `present_response` returns for `crm_low_stock_report` (AC-61).
+
+    Four shapes:
+
+    * `ready`   - two lines, the as-of date and how many of the planned products are low.
+                  The "of <m>" half is what stops "Low: 12" reading as the whole
+                  catalogue. The workbook itself rides in `attachments`, which is what
+                  makes the engine emit a `send_attachments` action. `has_result` is False
+                  when a count is missing (a `ready` payload that lost the count-write
+                  race), so the count line is never rendered as "Low: None of None".
+    * `pending` - the plan outran the turn; the worker pushes the file when it is ready
+                  (AC-44), so the bot says so and stops.
+    * `busy`    - one line, chosen by `reason`: a plan already running for the company
+                  (AC-49) or this contact over the rate limit. Both NAME the report.
+    * `ready` with `all_count == 0` (or no `as_of`) - the plan admitted nothing for that
+      scope: one line, no attachment, rather than "Low: 0 of 0" beside an empty workbook.
+    * anything else (an `error` status, an error body carrying `message`/`code`, or a
+      non-dict) - the report could not be produced (no company, an excluded product, a
+      broker down, a run the worker marked failed). The bot says so and STOPS: the fixed
+      "could not run" line, verbatim, `has_result` True.
+
+    `has_result` is True on every branch - each IS a terminal answer the bot gives. It is
+    NOT the miss path (reviewer S1 / AC-44a / N6 wanted "never pending"; the console then
+    found that a `has_result` False here routes into the inventory domain's GENERIC miss,
+    "Could not find inventory - escalate to warehouse team?", which is the wrong wording
+    for a run that failed). Rendering the error line verbatim, like busy / pending, is what
+    keeps the bot on THIS tool's own words. No UUID reaches the text - the payload carries
+    `run_id` and `download_id`, and neither is a thing to say to a customer.
+    """
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if status == "ready":
+        low = payload.get("low_count")
+        total = payload.get("all_count")
+        # defect D: the plan admitted NOTHING for this scope. The workbook is empty and
+        # `as_of` is null, so there is no report to send - say that in one line and send no
+        # attachment, rather than "Low: 0 of 0 planned products" beside an empty file.
+        if total == 0 or payload.get("as_of") in (None, ""):
+            return {
+                "result_type": "low_stock_report",
+                "response": _LOW_STOCK_EMPTY,
+                "attachments": [],
+                "has_result": True,
+            }
+        # A ready row that somehow reached here without its counts (reviewer S3 guards this
+        # server-side, but the presenter must not print "Low: None of None"): send the file,
+        # drop the count line, and let the lane treat the shorter reply as a real answer.
+        if low is None or total is None:
+            return {
+                "result_type": "low_stock_report",
+                "response": f"Low stock report - as of {_low_stock_as_of(payload.get('as_of'))}",
+                "attachments": payload.get("attachments") or [],
+                "has_result": True,
+            }
+        response = "\n".join((
+            f"Low stock report - as of {_low_stock_as_of(payload.get('as_of'))}",
+            f"Low: {low} of {total} planned products",
+        ))
+        return {
+            "result_type": "low_stock_report",
+            "response": response,
+            "attachments": payload.get("attachments") or [],
+            "has_result": True,
+        }
+    if status == "busy":
+        # defect C: WHICH busy. `in_flight` clears in about a minute; `rate_limited` needs
+        # the window to roll. An unknown/absent reason keeps the in-flight wording, which
+        # is the one a caller hits without doing anything wrong.
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        busy_line = (
+            _LOW_STOCK_BUSY_RATE_LIMITED if reason == "rate_limited"
+            else _LOW_STOCK_BUSY_IN_FLIGHT
+        )
+        return {"result_type": "low_stock_report", "response": busy_line,
+                "attachments": [], "has_result": True}
+    if status == "pending":
+        return {"result_type": "low_stock_report", "response": _LOW_STOCK_PENDING,
+                "attachments": [], "has_result": True}
+    # Unknown / error / a raw error body: the error line verbatim, never pending and never
+    # the generic inventory miss.
+    return {"result_type": "low_stock_report", "response": _LOW_STOCK_ERROR,
+            "attachments": [], "has_result": True}
 
 
 _OUTSTANDING_BOTH_HEADINGS = {"so": "*Sales order list*", "do": "*Delivery order list*"}

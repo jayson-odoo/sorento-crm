@@ -1207,13 +1207,36 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     """The handler's outcome, written into the emission the rest of the turn reads.
 
     ONE place, so the seven handlers stay pure and only this function knows the `qf`
-    vocabulary. Nothing here is reached until prompt v3 is promoted (see the call site).
+    vocabulary.
+
+    Reached under EVERY prompt version: the call site gates on the engine having resolved
+    an open question, and the engine resolves a numbered answer off `reference_positions`
+    just as it does off v3's `answers_open_question.picks`. (This docstring used to say
+    "nothing here is reached until prompt v3 is promoted", which stopped being true when
+    the engine learned the pre-v3 channel; corrected 15 Sep 2026, when the owner's v16
+    console run walked straight through it.)
     """
     if not outcome.resolved:
         return
     products = outcome.focus.get("products")
     customer = outcome.focus.get("customer")
-    entities = [*(products or []), *([customer] if customer else [])]
+    # R-C (owner merge test, 15 Sep 2026): a kept sibling with NO focus axis still has to
+    # reach the emission. `focus` covers products and the customer, so an `attachment_type`
+    # resolved beside the ambiguous product - "photo for srtwc286" - had no way through,
+    # and picking a row re-asked "Please provide the attachment type" for a type the
+    # customer had already named. `keep` is that path: everything issue #708 froze and the
+    # two slots above do not carry, deduped against them so nothing is stated twice.
+    axis_keys = {_ce_key(e) for e in [*(products or []), *([customer] if customer else [])]}
+    kept_off_axis = [
+        e
+        for e in getattr(outcome, "keep", None) or []
+        if isinstance(e, dict) and _ce_key(e) not in axis_keys
+    ]
+    entities = [
+        *(products or []),
+        *([customer] if customer else []),
+        *kept_off_axis,
+    ]
     if entities:
         # "replace", not "replace_combine": the picks ARE the scope (owner ruling B,
         # console pass 3). `outcome.keep` has already folded in the siblings issue #708
@@ -1263,6 +1286,24 @@ _SCOPE_BY_ORDER_STATUS: dict[str, str] = {
 _ORDER_STATUS_BY_SCOPE: dict[str, str] = {v: k for k, v in _SCOPE_BY_ORDER_STATUS.items()}
 
 
+def _outstanding_subject_capable_axes() -> frozenset[str]:
+    """The axes an outstanding report can take as its SUBJECT - a product's and a
+    customer's (R13: it takes either one), and nothing else.
+
+    Derived through `_axis_for_hint` with no domain, for the reason
+    `_outstanding_subject_axes` below states: under `order` the domain table collapses
+    product and customer onto one "which order" axis, which is right for the order LIST
+    and wrong here. Read by the refinement test, which asks whether a named entity COULD
+    be a subject rather than whether it happens to be the current one (R-H).
+    """
+    return frozenset(
+        axis for axis in (_axis_for_hint("product", None), _axis_for_hint("customer", None)) if axis
+    )
+
+
+_OUTSTANDING_SUBJECT_CAPABLE_AXES = _outstanding_subject_capable_axes()
+
+
 def _outstanding_subject_axes(filters: Any) -> set[str]:
     """The AXES the stored outstanding subject occupies - a product subject on a
     product's axis, a customer subject on a customer's (R13: this report takes either
@@ -1299,32 +1340,45 @@ def _outstanding_keeps_subject(o: dict, filters: Any) -> bool:
       subject, so an entity on the subject's own axis REPLACES it, and that is a new
       ask (`test_a_replacing_product_under_a_product_offer_is_still_a_new_ask`).
 
-    R24 (owner round 9b, 13 Sep 2026) narrows this to the shape a refinement actually
-    has: a turn the parser classifies as a BUSINESS QUESTION OF ITS OWN - `message_type:
-    "business_query"` with a NON-NULL `domain_hint` - is a new ask under an open
-    outstanding pending, whatever axes its entities sit on. The axis test alone called
-    "delivery status for hanlim" (a customer entity under a PRODUCT-subject offer, so a
-    different axis) a refinement of the old product's report, re-ran SRTWT7443 with
-    `Customer: all`, and re-offered: "I kind of can't escape this loop." A refinement is
-    the casual-shaped turn that narrows what is already on screen ("i want to see this
-    month only" is `casual` + no domain; "only BRW" is `business_query` with NO domain,
-    which is the parser saying it read a filter, not a question), and this test lives
-    HERE rather than beside the call so there is one definition of what a refinement is.
+    R24 (owner round 9b, 13 Sep 2026) was reaching for a third: "delivery status for
+    hanlim" is a customer entity under a PRODUCT-subject offer, so the axis test alone
+    called it a refinement of the old product's report, re-ran SRTWT7443 with `Customer:
+    all`, and re-offered - "I kind of can't escape this loop." It reached for it through
+    the parser's CLASSIFICATION (`message_type: "business_query"` with a non-null
+    `domain_hint` is a new ask), and that is what R-H removes (owner merge test, 15 Sep
+    2026): the model stamps a domain word on a filter as readily as on a question, so
+    "only BRW" came back `business_query` + `domain_hint: "order"` and the narrowing the
+    customer asked for re-armed the scope question instead. Turn
+    94639ef2-cdf7-4540-a78e-93b411ba2e84, and the same defect shape as R-B.
+
+    What R24 actually wanted is the axis a SUBJECT can occupy at all. This report takes a
+    product or a customer as its subject (R13, either one), and nothing else: a location
+    or a date can only ever narrow one. So an entity on a subject-CAPABLE axis names a new
+    question - which keeps "delivery status for hanlim" a new ask for the reason that was
+    always true of it, and keeps a replacing product under a product offer a new ask too -
+    while an entity that can only filter is the refinement it looks like, whatever word the
+    model attached to the turn.
+
+    And only what THIS MESSAGE named is graded. The live turn carries the question's own
+    subject along in `entities` (`CNK HARDWARE`, `current_message: False`, beside the new
+    `BRW`), which is the conversation keeping its subject - the very thing a refinement
+    does - so grading it would refuse every refinement that has a subject to narrow. The
+    old axis test read it as "an entity on the subject's axis" and returned False; the R24
+    veto fired first and hid that, which is why removing the veto alone was not enough.
+
+    One definition of "refinement", and it lives HERE rather than beside the call.
     """
     if jsc.js_string(o.get("entity_op") or "") not in ("reuse", "replace_combine"):
         return False
-    if jsc.js_string(o.get("message_type") or "") == "business_query" and jsc.truthy(
-        o.get("domain_hint")
-    ):
-        return False
-    subject_axes = _outstanding_subject_axes(filters)
-    if not subject_axes:
+    if not _outstanding_subject_axes(filters):
         # Nothing stored to keep. An entity here would be NAMING the subject, not
         # narrowing it, so the turn stays the new ask today's code already calls it.
         return False
     for e in jsc.array(o.get("entities")):
+        if jsc.get(e, "current_message") is not True:
+            continue  # the question's own subject, carried - not this turn's ask
         axis = _axis_for_hint(jsc.get(e, "hint"), None)
-        if axis is None or axis in subject_axes:
+        if axis is None or axis in _OUTSTANDING_SUBJECT_CAPABLE_AXES:
             return False
     return True
 
@@ -1579,7 +1633,28 @@ def _apply_outstanding_pending(o: dict, *, prev_state: Any, prev_pending: Any) -
             o["outstanding_refinement_entities"] = [
                 dict(e) for e in named_entities if isinstance(e, dict)
             ]
-        elif names_entity or (own_question and (kind == "outstanding_detail" or picked is None)):
+        elif names_entity or (own_question and picked is None):
+            # A PICK OF ITS OWN IS NEVER A NEW ASK (R-B, owner merge test 15 Sep 2026).
+            # The second disjunct used to read `own_question and (kind ==
+            # "outstanding_detail" or picked is None)`, whose `or picked is None` is
+            # vacuous whenever the open question IS the detail ask - so the disjunct
+            # collapsed to `own_question`, which is `names_entity or
+            # truthy(domain_hint)`. The `names_entity` half is UNTOUCHED, so D17 point 3's
+            # guard stands: a stray position riding along with an entity ("2" + "delivery
+            # to hanlim") is still a new ask. The live
+            # v16 parser stamps `domain_hint: "order"` on a bare "1" often enough
+            # (`{domain_hint: order, intent_hint: check_order, message_type:
+            # business_query, entities: [], reference_positions: [1]}`), and that turn -
+            # a clean pick off the question's own frozen options - was read as the
+            # customer walking away from it. The filters died with the pending, the row
+            # label "Delivery order list" was then resolved as a fresh token, "list"
+            # matched six SPECIALIST customers, and the report re-ran over companies
+            # nobody had named.
+            #
+            # A turn that picked a row answered the question, whatever domain word the
+            # model attached to it. A turn that picked NOTHING and brought its own
+            # subject is still the new ask this arm is for, and still drops the pending.
+            #
             # RECORDED, not just returned from (console run 3, 13 Sep 2026): the stale ask
             # is DROPPED here, and every later reader of `prev_pending` this turn has to
             # see that - the scope-ask signal below and the `outstanding_filters` carry in

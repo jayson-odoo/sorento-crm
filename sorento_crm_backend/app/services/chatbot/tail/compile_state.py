@@ -378,6 +378,56 @@ def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
     return jsc.truthy(payload.get("team")) and len(jsc.array(asked.get("options"))) > 0
 
 
+def _offer_born_beside_roster(
+    roster: Any,
+    *,
+    qf: Mapping[str, Any],
+    gate: Any,
+    offer_open: bool,
+    reply_text: Any,
+    turn_no: int,
+) -> dict[str, Any] | None:
+    """The roster and the escalate offer were born on the SAME turn - merge them (R-A).
+
+    `_offer_rides_on_roster` above covers the offer that arrives a turn LATER, over a
+    roster the tail carried. This covers the other half, which D19 rule 3 says the same
+    thing about and which had no seat at all: the did-you-mean lane and the "multiple
+    matches" picker both compose a numbered list AND append "Would you like me to escalate
+    to X team?" into ONE reply, and whoever armed the roster won outright - so the offer the
+    customer could plainly read was never recorded, `expects` stayed `pick`, and their
+    "yes" resolved nothing. Owner, 15 Sep 2026: "check stock srtwt2643" then "yes" was
+    routed to customer service, because with no `payload.offer` the routing chain fell
+    through to `DEFAULT_SUGGESTED_TEAM` while the reply had promised the warehouse team.
+
+    The SAME two conditions the plain offer arm in `_ask_for_turn` uses, for the same
+    reasons: `offer_open`, and the reply actually carrying the frozen phrase (the flag
+    alone asserts an offer on picker turns whose reply ends at the last row - S7a's second
+    defect). And a team, because an offer with nobody to escalate to is not an offer.
+
+    Returns the merged question, or None when there is nothing to merge - the caller then
+    arms the roster exactly as before.
+    """
+    if not offer_open or not isinstance(roster, dict):
+        return None
+    if roster.get("kind") not in pending_open_question.ROSTER_KINDS:
+        return None
+    if _FROZEN_ESCALATE_PREFIX not in jsc.js_string(reply_text or ""):
+        return None
+    team = _escalation_team(qf, gate)
+    if not jsc.truthy(team):
+        return None
+    domain = jsc.get(qf, "domain_hint")
+    offer = pending_open_question.ask(
+        "team_pick",
+        options=[{"idx": 1, "team": team, "label": team}],
+        turn_no=turn_no,
+        expects="yes_no",
+        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+        payload={"team": team, "domain": domain},
+    )
+    return pending_open_question.with_offer(roster, offer)
+
+
 def _rows_are_customers(rows: Any) -> bool:
     """Is every row a CUSTOMER? The kind test `miss_suggest._attach_question` uses.
 
@@ -976,17 +1026,26 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
                     or (jsc.get(first_field, "value") if first_field is not None else None)
                     or f"item {i + 1}"
                 )
-                indexed.append(
-                    {
-                        "idx": i + 1,
-                        "uuid": jsc.get(it, "uuid") or jsc.get(it, "id") or None,
-                        "label": jsc.js_string(label).replace("*", "").strip(),
-                        "entity_type": jsc.get(it, "entity_type") or None,
-                        "product": _field_value(it, "Product") or jsc.get(it, "product") or jsc.get(it, "code") or None,
-                        "attachment_type": jsc.get(it, "attachmentType") or jsc.get(it, "attachment_type") or None,
-                        "filename": jsc.get(it, "filename") or None,
-                    }
-                )
+                row = {
+                    "idx": i + 1,
+                    "uuid": jsc.get(it, "uuid") or jsc.get(it, "id") or None,
+                    "label": jsc.js_string(label).replace("*", "").strip(),
+                    "entity_type": jsc.get(it, "entity_type") or None,
+                    "product": _field_value(it, "Product") or jsc.get(it, "product") or jsc.get(it, "code") or None,
+                    "attachment_type": jsc.get(it, "attachmentType") or jsc.get(it, "attachment_type") or None,
+                    "filename": jsc.get(it, "filename") or None,
+                }
+                # R-F: the ACCOUNT FAMILY the row stands for, carried through the indexing
+                # so the pick can copy it onto the entity (`open_question._entity_of`).
+                # This builder is a whitelist, so a key the gate composes and this loop
+                # does not name is dropped here - which is where the family died once the
+                # `picker_families` session key went. Set only when the row HAS one, so
+                # every row shape without a family stays byte-identical for the graded
+                # `compile-current-state` captures.
+                family = jsc.get(it, "family_uuids")
+                if isinstance(family, list) and len(family) > 0:
+                    row["family_uuids"] = list(family)
+                indexed.append(row)
             what = indexed[0]["attachment_type"] or "records"
             response = (
                 f"Previous turn ({jsc.js_string(domain)}): returned {len(items_list)} {jsc.js_string(what)}"
@@ -1535,7 +1594,20 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
             # the offer keeps its yes and its no.
             variables["open_question"] = pending_open_question.with_offer(previous, asked)
         else:
-            variables["open_question"] = {**asked, "asked_at_turn": turn_no}
+            armed = {**asked, "asked_at_turn": turn_no}
+            # ... and the SAME-TURN half of that ruling (R-A): a roster whose own reply
+            # carries the escalate sentence takes the offer on board instead of dropping
+            # it. `_offer_rides_on_roster` above only sees an offer asked over a roster the
+            # tail CARRIED, so a list and an offer born together left the offer nowhere.
+            born_with_offer = _offer_born_beside_roster(
+                armed,
+                qf=qf,
+                gate=gate,
+                offer_open=offer_open,
+                reply_text=output.get("user_response"),
+                turn_no=turn_no,
+            )
+            variables["open_question"] = born_with_offer or armed
     elif jsc.truthy(jsc.get(qf, "open_question_answered")):
         # ANSWERED, WHICH IS NOT THE SAME AS GONE (owner ruling D19). A ROSTER is still on
         # the customer's screen after they pick from it, so it survives its own pick with
@@ -2474,11 +2546,13 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
     picker_set = born["set"] if born is not None else carried
     if jsc.truthy(picker_set):
         variables["picker_last_result_set"] = picker_set
-        # The candidate-to-account-family map the gate built for this picker, so the PICK
-        # turn covers exactly the accounts the picker's probe counted.
-        fam = born["fam"] if born is not None else (jsc.get(prev, "picker_families") or None)
-        if jsc.truthy(fam) and len(fam) > 0:
-            variables["picker_families"] = fam
+        # R-F (15 Sep 2026): the `picker_families` MAP is gone from here. It was written
+        # into `variables` and then discarded by the five-key projection at the end of this
+        # function, every turn, so the gate that read it back (`lanes/business/gate.py`)
+        # never found one and a two-ledger pick reached a single ledger. The family now
+        # rides on the roster ROW and on the picked ENTITY as `family_uuids`, which honours
+        # the same 2026-08-24 ruling this map existed for - the family outlives the roster,
+        # because the PIN does - without a session key to be dropped.
         variables["picker_domain"] = (
             (jsc.get(qf, "domain_hint") if jsc.get(qf, "domain_hint") is not None else None)
             if born is not None
@@ -2492,20 +2566,15 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         variables["last_result_set"] = picker_set
         variables["selection_context"] = kind
 
-    # THE FAMILY OUTLIVES THE ROSTER (captain, 2026-08-24). `picker_families` maps a
-    # picked candidate to the ACCOUNTS it stands for, and the PIN is not bound to the
-    # roster's lifetime: an entity keeps its uuid for as long as the customer keeps
-    # talking about it. The roster expired, the family went with it, and the pick covered
-    # 1 account instead of the 12 the picker had measured.
-    if not jsc.truthy(variables.get("picker_families")):
-        fam_pinned = any(
-            jsc.truthy(e) and jsc.lower_or_empty(jsc.get(e, "hint")) == "customer" and jsc.truthy(jsc.get(e, "uuid"))
-            for e in jsc.array(jsc.get(qf, "entities"))
-        )
-        fam_keep = jsc.get(prev, "picker_families") if jsc.truthy(prev) else None
-        if fam_pinned and jsc.truthy(fam_keep) and len(fam_keep) > 0:
-            variables["picker_families"] = fam_keep
-            variables["picker_families_carried"] = True  # diagnostic
+    # THE FAMILY OUTLIVES THE ROSTER (captain, 2026-08-24) - still true, and now true BY
+    # CONSTRUCTION rather than by a carry. That ruling said the family must not be bound to
+    # the roster's lifetime, because the PIN is not: an entity keeps its uuid for as long as
+    # the customer keeps talking about it. This block re-copied the `picker_families` map
+    # forward every turn to achieve that, and the five-key projection at the end of this
+    # function threw the copy away each time. The family rides on the entity itself now
+    # (`family_uuids`, put on the roster row by the gate and copied at the pick by
+    # `dialogue/open_question._entity_of`), so it lives exactly as long as the pin does and
+    # there is nothing left to carry (R-F, 15 Sep 2026).
 
 
 def _offer_carry(

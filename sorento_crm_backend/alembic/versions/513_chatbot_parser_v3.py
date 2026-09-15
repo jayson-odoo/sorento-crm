@@ -24,7 +24,7 @@ alembic (e.g. to publish against the shared dev database without an ``alembic up
 the same shape 487 uses.
 
 Revision ID: 513_chatbot_parser_v3
-Revises: 511_committed_v_line_owed
+Revises: ptag_0008_pins_versions
 """
 import logging
 
@@ -36,7 +36,7 @@ from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
 revision = "513_chatbot_parser_v3"
-down_revision = "511_committed_v_line_owed"
+down_revision = "ptag_0008_pins_versions"
 branch_labels = None
 depends_on = None
 

@@ -141,6 +141,27 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # the same way StockInquiry / PurchaseRequestHeader carry their own pair.
     revision_no = Column(Integer, nullable=False, server_default="0", default=0)
     last_revised_at = Column(DateTime(timezone=False), nullable=True)
+    # Who prints (r9 D7): 'office' | 'self'. NULL on every row created before
+    # the choice existed, and required at submit from r9 onward - the answer
+    # decides whether the request ends at `approved` or waits for a collection.
+    print_by = Column(String(8), nullable=True)
+    # The office hand-over (r9 D9). `collected_by_user_id` is the staffer who
+    # ticked it off, `collected_by_contact_id` the salesperson who confirmed on
+    # the portal; `collected_auto` is the sweep, which is neither.
+    ready_for_collection_at = Column(DateTime(timezone=False), nullable=True)
+    collected_at = Column(DateTime(timezone=False), nullable=True)
+    collected_by_user_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    collected_by_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    collected_auto = Column(Boolean, nullable=False, server_default="false")
+    # How many proofs this design has been sent for review (r9 D4). COUNTED,
+    # not derived: the "Marked proof ready" snapshot it used to be read from is
+    # skipped whenever the designer saved first, so every round came back as 1.
+    # 0 means it has never been sent - the first proof_ready makes it 1.
+    review_round = Column(Integer, nullable=False, server_default="0", default=0)
 
     lines = relationship(
         "PriceTagRequestLine",
@@ -187,13 +208,22 @@ class PriceTagRequestLine(Base):
     )
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
     quantity = Column(Integer, nullable=False, server_default="1")
-    alternatives = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    # The catalogue package this line was asked for as (D2). SET NULL, not
+    # RESTRICT: deleting a combo is a change to how the product is packaged TODAY
+    # and must not be blocked by a request somebody sent last season - the line
+    # keeps its own part rows, which are what the salesperson actually asked for.
+    combo_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("product_combos.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # What the package guard found at submit, for marketing to read (D2). NULL =
+    # clean. Submit is never refused for a package reason.
+    package_warning = Column(Text, nullable=True)
     included_accessories = Column(Text, nullable=True)
     # Free-text note on the line (D6, r7).
     remarks = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
-    marketing_price_override = Column(Numeric(15, 2), nullable=True)
-    marketing_override_reason = Column(Text, nullable=True)
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
@@ -215,4 +245,195 @@ class PriceTagRequestLine(Base):
         UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
         Index("ix_price_tag_request_lines_request_id", "request_id"),
+    )
+
+    parts = relationship(
+        "PriceTagRequestLinePart",
+        back_populates="line",
+        cascade="all, delete-orphan",
+        order_by="PriceTagRequestLinePart.sort_order",
+    )
+    tags = relationship(
+        "PriceTagRequestTag",
+        back_populates="line",
+        cascade="all, delete-orphan",
+        order_by="PriceTagRequestTag.sort_order",
+    )
+
+
+class PriceTagRequestLinePart(Base):
+    """One part under a request line - what the salesperson asked to come with it (D2).
+
+    Two shapes, and the CHECK is what keeps them apart:
+
+    * RESOLVED - `product_id` set, `candidates` empty. A specific product goes on
+      the tag.
+    * OPEN - `product_id` NULL, `candidates` holding the group's product ids. The
+      salesperson left the choice to marketing, who split it into one tag per
+      option (S3) or picked one.
+
+    `role` is the choice group's label on both, so a resolved row still says which
+    group it answered. RESTRICT on the product for the same reason a line's own
+    product is: a request naming a product is a record, not a soft reference.
+    """
+
+    __tablename__ = "price_tag_request_line_parts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_request_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    product_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    role = Column(String(100), nullable=True)
+    candidates = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    line = relationship("PriceTagRequestLine", back_populates="parts")
+
+    __table_args__ = (
+        CheckConstraint(
+            "(product_id IS NOT NULL AND candidates = '[]'::jsonb) "
+            "OR (product_id IS NULL AND jsonb_array_length(candidates) > 0)",
+            name="ck_ptag_line_parts_resolved_or_open",
+        ),
+        Index("ix_price_tag_request_line_parts_line_id", "line_id"),
+    )
+
+
+class PriceTagRequestTag(Base):
+    """One printed tag under a request line (D3, S3).
+
+    A LINE is what the salesperson asked for; a TAG is what gets printed. They
+    were the same object until S3. A line whose package leaves a choice group
+    open is split by marketing into one tag per candidate, each with its own
+    quantity, `choices`, geometry (in the tag sheet document, keyed on this id)
+    and marketing override.
+
+    `quantity` is seeded from the line's at submit and is marketing's to change
+    afterwards - the line keeps the salesperson's own number, so the request
+    still shows what was asked for.
+
+    `choices` is `{role: product_id}`: which candidate this tag resolved for
+    each choice group. `{}` means nothing has been decided yet, which is what a
+    tag looks like the moment it is created.
+
+    The override moved here from the line (migration step 2): two tags split off
+    one line print two different basins at two different prices, and a
+    line-level figure would put the same hand-set number on both.
+    """
+
+    __tablename__ = "price_tag_request_tags"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_request_lines.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    sort_order = Column(Integer, nullable=False, server_default="0")
+    quantity = Column(Integer, nullable=False, server_default="1")
+    choices = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    marketing_price_override = Column(Numeric(15, 2), nullable=True)
+    marketing_override_reason = Column(Text, nullable=True)
+    # The product data gate (r9 D16). `pinned_tag_data` is the `LineTagData`
+    # the resolver answered when designing started - what the tag is DRAWN
+    # from, so a price edited in master data afterwards cannot rewrite a proof
+    # that has already been approved. `data_change_ack_hash` is the live hash
+    # somebody looked at and chose to keep, so the same change stops asking.
+    # Per TAG, not per line: two tags split off one line resolve to different
+    # products, so they are drawn from different data and change apart.
+    pinned_tag_data = Column(JSONB, nullable=True)
+    pinned_at = Column(DateTime(timezone=False), nullable=True)
+    data_change_ack_hash = Column(String(64), nullable=True)
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        DateTime(timezone=False),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    line = relationship("PriceTagRequestLine", back_populates="tags")
+
+    __table_args__ = (
+        Index("ix_price_tag_request_tags_line_id", "line_id"),
+    )
+
+
+
+class PriceTagReviewComment(Base, CompanyScopedMixin):
+    """One pinned change request on a design (r9 D4).
+
+    A salesperson does not describe a change, they point at it: the anchor is
+    stored as FRACTIONS of the TAG's own box (0..1), never page millimetres, so
+    re-arranging the sheet, paging or zooming cannot move a comment off the
+    thing it was pointing at. A general comment carries no anchor at all and
+    reads as being about the whole design.
+
+    The anchor is a ``PriceTagRequestTag``, not a line: since the combos slice a
+    line may print several tags, and two tags split off one line show two
+    different basins. A pin placed on one of them is about THAT tag.
+
+    ``round`` is the number of proofs the design had been sent for when the
+    comment was SENT, and it is stored rather than derived: a later proof must
+    not renumber a round somebody has already worked off.
+    """
+
+    __tablename__ = "price_tag_review_comments"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    request_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_requests.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # NULL = a general comment about the whole design, not about one tag.
+    tag_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("price_tag_request_tags.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    round = Column(Integer, nullable=False, server_default="1")
+    # Fractions of the tag box. w/h are 0 for a point pin, > 0 for a box.
+    x = Column(Numeric(6, 4), nullable=True)
+    y = Column(Numeric(6, 4), nullable=True)
+    w = Column(Numeric(6, 4), nullable=True)
+    h = Column(Numeric(6, 4), nullable=True)
+    body = Column(Text, nullable=False)
+    # Exactly one of the two is set: the salesperson who sent it, or the
+    # staffer whose rejection note was persisted as a general comment (D14).
+    author_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="SET NULL"), nullable=True
+    )
+    author_user_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at = Column(
+        DateTime(timezone=False), server_default=func.now(), nullable=False
+    )
+    resolved_at = Column(DateTime(timezone=False), nullable=True)
+    resolved_by_id = Column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    __table_args__ = (
+        Index("ix_ptag_review_comments_request_id", "request_id"),
+        Index("ix_ptag_review_comments_tag_id", "tag_id"),
     )

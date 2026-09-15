@@ -378,12 +378,31 @@ def _customer_pick(answer: dict, options: list, payload: dict) -> Outcome:
     picked = _rows_for(answer.get("picks"), options)
     if not picked:
         return Outcome(handler="customer_pick", outcome="No offered row was named.")
+    entity = _entity_of(picked[0], "customer")
+    # ISSUE #708, ON THIS SIDE TOO (R-C, owner merge test 15 Sep 2026). This handler read
+    # no `payload` at all, so "delivery for chin chun product wc286" answered the picked
+    # customer with `Product: all products`: the product the SAME message resolved was
+    # dropped at the pick while `_product_pick` had kept its own siblings all along. Same
+    # rule, same words: what already resolved survives, minus whatever the pick replaces.
+    keep = [
+        e
+        for e in payload.get("keep") or []
+        if isinstance(e, dict) and not _same_code(e, [entity])
+    ]
+    products = [e for e in keep if _is_product(e)]
+    focus: dict[str, Any] = {"customer": entity}
+    if products:
+        # The kept product reaches its OWN axis, so the re-run is scoped to it. A non-
+        # product sibling (an `attachment_type`, say) has no axis and travels on `keep`,
+        # which `output_exchange.apply_open_question_outcome` puts back on the emission.
+        focus["products"] = products
     return Outcome(
         handler="customer_pick",
         outcome=f"Picked customer {_label_of(picked[0])}.",
         resolved=True,
         picked=picked[:1],
-        focus={"customer": _entity_of(picked[0], "customer")},
+        keep=keep,
+        focus=focus,
     )
 
 
@@ -576,17 +595,41 @@ def _entity_of(row: dict[str, Any], hint: str) -> dict[str, Any]:
     `current_message: True` because the customer chose it on this turn, and `confident:
     True` because they chose it from rows we showed them - there is nothing left to be
     unsure about.
+
+    **A CUSTOMER's `raw` is the LABEL, not the code** (R-E, owner merge test 15 Sep 2026).
+    `raw` is what every renderer prints - the "Customer:" scope header reads it - and a
+    customer row's code is a synthetic debtor id, so a picked row printed `Customer:
+    300-C043` while the miss copy two lines below named the company correctly. The rule is
+    already written down one layer in, at `gate.py`'s pin re-seat: "A picked customer's
+    canonical_code is often a synthetic debtor id, which the miss/answer renderers print
+    verbatim. The entity's raw IS the roster label we showed; products keep their canonical
+    code." Main's own spine agreed - capture
+    `nodes/clone-spine-RS/compile-current-state/b56-pick-turn.json` carries `{"raw": "CHIN
+    CHUN HARDWARE SDN BHD", "canonical_code": "300-C043"}` for this exact pick. Products
+    are untouched: there the code IS the name the customer reads.
+
+    `family_uuids` rides along when the row has one (R-F): the ACCOUNT FAMILY a roster line
+    stands for, so the report reaches every ledger the line promised. It lives on the pin
+    rather than on the question because the captain's 2026-08-24 ruling is that the family
+    outlives the roster - the pin does, and `focus.customer` carries it for as long as the
+    customer keeps talking about that company.
     """
     code = row.get("code") or row.get("value") or row.get("product") or row.get("label")
-    return {
-        "raw": code,
-        "hint": row.get("entity_type") or hint,
+    kind = row.get("entity_type") or hint
+    label = row.get("label") or row.get("title")
+    entity = {
+        "raw": (label or code) if jsc.lower_or_empty(kind) == "customer" else code,
+        "hint": kind,
         "canonical_code": code,
         "uuid": row.get("uuid") or None,
         "ordinal": row.get("idx"),
         "current_message": True,
         "confident": True,
     }
+    family = row.get("family_uuids")
+    if isinstance(family, list) and len(family) > 0:
+        entity["family_uuids"] = list(family)
+    return entity
 
 
 def _label_of(row: dict[str, Any]) -> str:

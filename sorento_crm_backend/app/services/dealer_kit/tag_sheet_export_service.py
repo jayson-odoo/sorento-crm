@@ -21,7 +21,11 @@ from app.models.dealer_kit import ExportRequest, Page, PageVersion
 from app.models.download import DownloadStatus, UserDownload
 from app.models.price_tag import PriceTagRequest
 from app.services.error_handler import AppException
-from app.services.price_tag_request_service import STATUS_APPROVED, STATUS_READY
+from app.services.price_tag_request_service import (
+    STATUS_APPROVED,
+    STATUS_COLLECTED,
+    STATUS_READY_FOR_COLLECTION,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +124,14 @@ def request_tag_sheet_export(
             code="NOT_FOUND",
         )
 
-    if request.status not in (STATUS_APPROVED, STATUS_READY):
+    # Every finished status can be exported (D8): the office reprints a lost
+    # sheet after collection, and asking for a PDF is not a step in the
+    # hand-over.
+    if request.status not in (
+        STATUS_APPROVED,
+        STATUS_READY_FOR_COLLECTION,
+        STATUS_COLLECTED,
+    ):
         raise AppException(
             status_code=409,
             message=(
@@ -188,14 +199,9 @@ def request_tag_sheet_export(
         )
     )
 
-    # Transition approved -> ready on first export (AC-H.3).
-    if request.status == STATUS_APPROVED:
-        from app.services.price_tag_request_service import PriceTagRequestService
-
-        PriceTagRequestService.transition_status(
-            db, request_id, STATUS_READY, user_id=user_id,
-        )
-
+    # No transition (r9 D8). `approved -> ready` used to fire here, which said
+    # a PDF existed and nothing about who had the tags; the hand-over is its
+    # own two steps now and a PDF request is not one of them.
     db.commit()
     db.refresh(download)
 
@@ -328,57 +334,98 @@ def resolve_tag_sheet_print_payload(db: Session, download_id: str) -> dict:
         return _resolved_payload(db, inputs)
 
 
-def _resolved_payload(db: Session, inputs: dict) -> dict:
-    """The payload itself, resolved under whatever scope the caller pinned."""
+def design_media(
+    db: Session,
+    request,
+    doc: Optional[dict],
+    rows: Optional[list[dict]] = None,
+) -> tuple[list[dict], dict]:
+    """Everything a tag sheet needs to DRAW itself, resolved once (r9 S1/D1).
+
+    Returns ``(rows, media)``: the resolver's own line rows, and the three maps
+    every surface that draws a sheet needs - ``assets`` (library artwork by
+    asset id), ``images`` (product photos by attachment id) and ``fonts``.
+
+    One function, three readers: the PDF payload below, the portal design
+    preview and the CRM design preview. Before r9 only the PDF had the maps, so
+    the two previews painted a grey box for every image layer and fell back to
+    a system sans for every brand face - the same document, drawn three
+    different ways. A second resolver anywhere here is how that comes back.
+
+    ``rows`` is for the one caller whose lines do not come from the request as
+    it stands now: a VERSION draws the pins it was written with (D19/S2), and
+    the media maps then have to be built from those rows rather than today's.
+    """
     from app.services.dealer_kit import asset_service, tag_data_service
 
-    request = inputs["request"]
-    doc = inputs["doc"] or {}
-
-    resolved_data: dict[str, dict] = {}
+    if rows is None:
+        rows = (
+            list(tag_data_service.resolve_request_line_data(db, request))
+            if request is not None
+            else []
+        )
     images: dict[str, str] = {}
+    for row in rows:
+        for image in row["images"]:
+            images[image["attachment_id"]] = image["url"]
 
-    if request is not None:
-        for row in tag_data_service.resolve_request_line_data(db, request):
-            for image in row["images"]:
-                images[image["attachment_id"]] = image["url"]
-            resolved_data[row["line_id"]] = {
-                "line_id": row["line_id"],
-                "code": row["code"],
-                "name": row["name"],
-                "dimensions": row["dimensions"],
-                "spec_lines": row["spec_lines"],
-                # Key by key, so a `{{spec.<key>}}` in a saved tag resolves in
-                # the PDF exactly as it did on the canvas (D58).
-                "specs": row["specs"],
-                "set_members": row["set_members"],
-                # Money leaves as a number the browser can format. The Decimal
-                # arithmetic already happened, in the pricing engine.
-                "list_price": _as_float(row["list_price"]),
-                "sell_price": _as_float(row["sell_price"]),
-                "show_promo_price": row["show_promo_price"],
-                "included_accessories": row["included_accessories"],
-                "quantity": row["quantity"],
-                # The barcode layer's binding (S7); null for a set line.
-                "barcode": row["barcode"],
-                # The photos themselves, not just their ids: a product-photo
-                # slot follows the product's PRIMARY photo when the template
-                # pinned none (D42), and only this list says which that is.
-                "images": row["images"],
-            }
-
-    return {
-        "doc": doc,
-        "resolvedData": resolved_data,
+    return rows, {
         # assetId -> signed URL, for every library asset the document names.
         "assets": asset_service.urls_for(
-            db, asset_service.tag_sheet_asset_ids(doc)
+            db, asset_service.tag_sheet_asset_ids(doc or {})
         ),
         # attachmentId -> signed URL, for every product photo a bound layer may
         # be showing. Gated by `product_images` before it ever gets here.
         "images": images,
-        # Brand fonts, loaded through @font-face before the page reports ready.
+        # Brand fonts, loaded through @font-face before anything draws with them.
         "fonts": asset_service.font_assets(db),
+    }
+
+
+def _resolved_payload(db: Session, inputs: dict) -> dict:
+    """The payload itself, resolved under whatever scope the caller pinned."""
+    request = inputs["request"]
+    doc = inputs["doc"] or {}
+
+    rows, media = design_media(db, request, doc)
+    resolved_data: dict[str, dict] = {}
+
+    for row in rows:
+        # Keyed by REQUEST TAG since the combos slice (D3) - a line may print
+        # several tags, so a line id could no longer name one tile's data.
+        resolved_data[row["tag_id"]] = {
+            "tag_id": row["tag_id"],
+            "line_id": row["line_id"],
+            "tag_label": row["tag_label"],
+            "open_groups": row["open_groups"],
+            "parts": row["parts"],
+            "code": row["code"],
+            "name": row["name"],
+            "dimensions": row["dimensions"],
+            "spec_lines": row["spec_lines"],
+            # Key by key, so a `{{spec.<key>}}` in a saved tag resolves in
+            # the PDF exactly as it did on the canvas (D58).
+            "specs": row["specs"],
+            "set_members": row["set_members"],
+            # Money leaves as a number the browser can format. The Decimal
+            # arithmetic already happened, in the pricing engine.
+            "list_price": _as_float(row["list_price"]),
+            "sell_price": _as_float(row["sell_price"]),
+            "show_promo_price": row["show_promo_price"],
+            "included_accessories": row["included_accessories"],
+            "quantity": row["quantity"],
+            # The barcode layer's binding (S7); null for a set line.
+            "barcode": row["barcode"],
+            # The photos themselves, not just their ids: a product-photo
+            # slot follows the product's PRIMARY photo when the template
+            # pinned none (D42), and only this list says which that is.
+            "images": row["images"],
+        }
+
+    return {
+        "doc": doc,
+        "resolvedData": resolved_data,
+        **media,
         "requestDocNumber": request.doc_number if request is not None else "",
         "version": inputs["version"],
     }

@@ -219,3 +219,25 @@ removed copy, for whoever restores a UI for them:
   spend surface for any valid portal token. **Trigger:** a contact over N extracts per hour in
   `integration_logs`, or an LLM bill spike. Fix: reuse the `portal_otp` limiter shape keyed on
   contact id. | `plans/portal/PLAN-portal-price-tag-journey-r8.md` | Low | Open |
+- **BL-065** (2026-09-14, low stock report plan): the deferred items from
+  `PLAN-low-stock-report.md`, all Open, all triggered when the named condition arrives:
+  - **Category as a run scope** ("water tap low stock"): a run has no category filter, so
+    the chat ask silently plans everything. **Trigger:** the owner asks to scope a plan (or
+    the report) by product category. Fix: add a category narrower to `create_run` / the
+    admission query, and to the low stock route's params.
+  - **Per-warehouse quantity columns on the "All" sheet:** the workbook prints the pool
+    total only (owner ruling). **Trigger:** a buyer asks to see the split by bin on the
+    sheet. Fix: widen `low_stock_report_service` with per-location columns from
+    `location_allocations`.
+  - **A PDF flavour of the low stock report.** **Trigger:** a request to print it, not
+    filter it. Fix: a `low_stock_pdf` kind through the same `export_low_stock` rows.
+  - **sku / product_class-scoped dead-stock days in the admission leg.** The leg reads the
+    GLOBAL `reorder_policy.dead_stock_days` only, unlike `dashboard_service._dead_days_for`.
+    **Trigger:** the first `scm.reorder_policy` row with `scope_type <> 'global'` carrying a
+    `dead_stock_days` on the prod copy (there are none today). Fix: reuse `_dead_days_for`'s
+    scoped resolution in the leg.
+  - **MCP compiler support for optional query params on body tools.** `crm_low_stock_report`
+    is a GET only because the compiler injects `view=render` on body-less tools and the lane
+    sends it on every call. **Trigger:** the compiler learns to inject `view` on a body
+    tool. Fix: revisit whether this route should be a POST.
+  | `plans/scm/PLAN-low-stock-report.md` | Low | Open |

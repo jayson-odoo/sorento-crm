@@ -119,7 +119,15 @@ def test_report_row_carries_the_sheet_fields(db, chain):
     sup = _supplier(db, f"{MARKER} supplier")
     _po(db, f["product"], f["bin"], 25, supplier=sup)
     _moq_link(db, f["product"], sup, moq=1000)
-    _goods_received(db, f["product"], f["bin"], qty_accepted=300, days_ago=5)
+    # AC-48 (owner ruling, 15 Sep): last in is the newest VISIBLE `spo_allocations`
+    # line - never a picking line. The 13 Sep prod copy has `qty_accepted` NULL on
+    # 10,567 of 10,567 GR lines, which is why a picking-line seed here never caught it.
+    db.add(SPOAllocation(
+        id=_u(), spo_number="202608-S0084", container_number="TLLU8306312",
+        product_id=f["product"].id, warehouse_id=f["bin"].id,
+        allocated_quantity=300, quantity_received=300,
+        expected_date=date.today() - timedelta(days=5),
+    ))
     db.flush()
 
     assert svc.write_rows(db, f["run"].id) == 1
@@ -140,10 +148,41 @@ def test_report_row_carries_the_sheet_fields(db, chain):
 
     assert row["supplier_name"] == f"{MARKER} supplier"
     assert row["moq"] == 1000
-    assert row["last_receipt"]["qty"] == 300
-    assert row["last_receipt"]["date"] == (date.today() - timedelta(days=5)).isoformat()
+    assert row["last_receipt"] == {
+        "qty": 300,
+        "date": (date.today() - timedelta(days=5)).isoformat(),
+        "spo_number": "202608-S0084",
+        "container": "TLLU8306312",
+    }, row["last_receipt"]
     assert isinstance(row["po_open_qty"], (int, float))
     assert isinstance(row["incoming_spo_qty"], (int, float))
+
+    # AC-49 (owner ruling, second round, 15 Sep - "even haven't GR we also show as
+    # last in"): a NEWER line, still OPEN (`quantity_received=0`), WINS over the
+    # received one above - exactly `spo_last_receipt_service.last_receipt_rows`'s own
+    # pick for the same product.
+    newer_open = SPOAllocation(
+        id=_u(), spo_number=f"{MARKER}-SPO-OPEN-NEWER", product_id=f["product"].id,
+        warehouse_id=f["bin"].id, allocated_quantity=45, quantity_received=0,
+        expected_date=date.today() - timedelta(days=1),
+    )
+    db.add(newer_open)
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1, "write_rows re-freezes idempotently"
+    row2 = svc.report(db, run_id=f["run"].id)["rows"][0]
+
+    from app.services.spo_last_receipt_service import last_receipt_rows
+
+    reference = last_receipt_rows(db, product_ids=[str(f["product"].id)], top_n=1)
+    assert reference[0]["spo_number"] == newer_open.spo_number, (
+        "the fixture must be shaped so last_receipt_rows itself picks the newer open "
+        f"line, or this assertion proves nothing: {reference}"
+    )
+    assert row2["last_receipt"]["spo_number"] == reference[0]["spo_number"], (
+        row2["last_receipt"]
+    )
+    assert row2["last_receipt"]["qty"] == 45
 
 
 def test_retail_so_line_contributes_nothing_to_delivery(db, chain):
@@ -651,7 +690,13 @@ _FULL_ROW = {
     "supplier_name": "Acme Supplier",
     "po_open_qty": 40,
     "incoming_spo_qty": 15,
-    "last_receipt": {"date": "2026-07-21", "qty": 300},
+    # AC-48/AC-55 (owner ruling, 15 Sep): last in carries the SPO/container beside the
+    # date/qty - the "Last in qty" cell prints all three as ONE document-shaped TEXT
+    # cell, like the PO/incoming cells' own shape.
+    "last_receipt": {
+        "date": "2026-07-21", "qty": 300,
+        "spo_number": "202608-S0084", "container": "TLLU8306312",
+    },
     "moq": 1000,
 }
 
@@ -681,7 +726,8 @@ def test_s14_export_rows_project_qty_is_the_customers_sum_not_project_demand():
     assert row == (
         "ZZTS14-SKU", "100", "250", "8", "12", "12", "below level: net 5 <= ROP 10", "20",
         "Jul - 5\nAug - 3", "Acme Co / Tower A - 5\nBeta Co - 3",
-        "Acme Supplier", "40", "15", "300", "21/07/2026", "MOQ 1000",
+        "Acme Supplier", "40", "15", "202608-S0084 - TLLU8306312 - 300", "21/07/2026",
+        "MOQ 1000",
     )
 
 
@@ -698,12 +744,63 @@ def test_s14_export_xlsx_rows_keep_quantities_as_numbers_and_blanks_as_empty_str
     # Item code / Suggestion / Delivery / Project-customer / Supplier / Remarks are text;
     # every other column is a NUMBER (H1) so summing a column in Excel keeps working.
     # issue #795: Suggested qty (5) joins the numeric set; Order qty moves to 7.
-    for idx in (1, 2, 3, 4, 5, 7, 11, 12, 13):
+    # AC-55 (owner ruling, 15 Sep): "Last in qty" (13) is the ONE exception among the
+    # quantity columns - it is now a document-shaped TEXT cell, like the PO/incoming
+    # cells beside it, never a bare number.
+    for idx in (1, 2, 3, 4, 5, 7, 11, 12):
         assert isinstance(full[idx], float), f"column {idx} must be numeric, got {full[idx]!r}"
+    assert full[13] == "202608-S0084 - TLLU8306312 - 300", full[13]
     assert blank[2] == "", "a NULL reorder level must be a blank cell, not 0"
     assert blank[5] == 0.0, "Suggested qty prints 0, not blank, even on an empty row"
     assert blank[7] == "", "no chosen qty must be a blank cell, not 0"
+    assert blank[13] == "", "no last-in receipt must be a blank Last in qty cell"
     assert blank[14] == "", "no last-in date must be a blank cell"
+
+
+# --- AC-55/AC-57: "Last in qty" is a document-shaped TEXT cell (owner ruling, second
+# round, 15 Sep - "same like our PO qty") -------------------------------------------
+
+def test_last_in_text_full_receipt_with_container():
+    assert svc._last_in_text({
+        "spo_number": "202608-S0084", "container": "TLLU8306312", "qty": 300,
+    }) == "202608-S0084 - TLLU8306312 - 300"
+
+
+def test_last_in_text_no_container():
+    assert svc._last_in_text({
+        "spo_number": "202608-S0084", "container": None, "qty": 300,
+    }) == "202608-S0084 - 300"
+
+
+def test_last_in_text_pre_518_row_prints_the_bare_quantity():
+    """AC-57: a run frozen before migration 518 carries qty/date but NULL spo/container -
+    the cell prints the bare quantity, never an error and never a false SPO."""
+    assert svc._last_in_text({
+        "spo_number": None, "container": None, "qty": 300,
+    }) == "300"
+
+
+def test_low_stock_sheet_last_in_qty_pre_518_row_prints_the_bare_quantity():
+    """Workbook-level AC-57: the low stock sheet's own cell builder gets the same
+    pre-518 fallback, not just the order sheet's."""
+    from app.services.scm.low_stock_report_service import _sheet_row
+
+    row = {"product_code": "X", "last_receipt": {"qty": 300, "date": None,
+                                                   "spo_number": None, "container": None}}
+    assert _sheet_row(row, {}, include_supplier=True)[13] == "300"
+
+
+def test_last_in_text_blank_when_no_receipt():
+    assert svc._last_in_text(None) == ""
+
+
+def test_last_in_qty_pdf_cell_is_list_class_not_num():
+    """AC-56: the PDF's "Last in qty" cell (index 13) takes the list/left-aligned class
+    like the PO/incoming document cells beside it, never the right-aligned num class."""
+    assert 13 not in svc._PDF_NUM_COLUMNS, (
+        "Last in qty is a document-shaped TEXT cell now, not a right-aligned number"
+    )
+    assert 13 in svc._PDF_LIST_COLUMNS
 
 
 def test_s14_null_pool_on_hand_exports_blank_not_zero():

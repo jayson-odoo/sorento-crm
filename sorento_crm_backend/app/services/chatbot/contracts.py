@@ -139,10 +139,24 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         escalation_team="marketing_form",
     ),
     "inventory": DomainSpec(
-        intents=("check_stock",),
+        # `low_stock_report` (PLAN-low-stock-report S6, AC-62) is a SECOND intent on this
+        # domain, not a domain of its own: the ask is about stock, and the escalation team
+        # and entity vocabulary are the warehouse's either way.
+        intents=("check_stock", "low_stock_report"),
         bare_entity_type="product",
-        switch_words=("stock", "stocks", "inventory", "stok", "qty", "quantity"),
-        tools=("crm_inventory_stock_balance_list", "crm_inventory_warehouses_list"),
+        switch_words=(
+            "stock", "stocks", "inventory", "stok", "qty", "quantity",
+            "low stock", "reorder report", "below level",
+        ),
+        # The low stock tool is APPENDED, never `tools[0]`: `select_tool` falls back to the
+        # first-listed tool for a domain, so putting it in front would send every plain
+        # stock ask ("how many CB100 in BRW") into a full reorder run. The intent, not the
+        # domain, is what picks it (`run_fetch`'s override).
+        tools=(
+            "crm_inventory_stock_balance_list",
+            "crm_inventory_warehouses_list",
+            "crm_low_stock_report",
+        ),
         escalation_team="warehouse",
     ),
     "order": DomainSpec(

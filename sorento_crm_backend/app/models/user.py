@@ -375,6 +375,11 @@ class SystemSetting(Base):
     # status change and anything else that can simply be set back.
     deferred_delete_seconds = Column(Integer, nullable=False, server_default="10", default=10)
     deferred_action_seconds = Column(Integer, nullable=False, server_default="5", default=5)
+    # How many days an untouched price tag collection waits before the sweep
+    # closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
+    price_tag_auto_collect_days = Column(
+        Integer, nullable=False, server_default="7", default=7
+    )
 
     # System-health observability (PLAN-system-health-observability):
     # daily digest + immediate watchdog alerts. Recipients = role ids (like notify_*_role_ids).
@@ -535,6 +540,13 @@ class SystemSetting(Base):
     # dispatcher's 120 second lock TTL.
     media_extraction_timeout_seconds = Column(Integer, nullable=False, server_default="45", default=45)
     media_max_entities = Column(Integer, nullable=False, server_default="10", default=10)
+    # How long the low stock report route holds a chat turn open, waiting for the fresh
+    # plan and its workbook, before it answers `pending` and leaves delivery to the worker
+    # push (PLAN-low-stock-report S5, AC-43). The owner's ruling on the lavish page was a
+    # System Setting rather than a constant only a deploy can move. Range 5-90, enforced in
+    # the backend validator the way the media wait is; 40 sits under the chatbot's own 45 s
+    # queue-wait budget.
+    low_stock_sync_wait_seconds = Column(Integer, nullable=False, server_default="40", default=40)
     # R1 (H1): the corrected `check_stock` vocabulary makes two lanes reachable that
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
@@ -584,6 +596,20 @@ class SystemSetting(Base):
     # is ignored with a warning rather than raising, because this is operator data and a
     # typo must not take the turn engine down.
     chatbot_completed_lanes = Column(JSONB, nullable=False, server_default="[]", default=list)
+    # Price tag packages (PLAN-price-tag-combos D2): the product class labels whose
+    # request lines are warned about when they reach marketing without their catalogue
+    # package. NOT NULL with the owner's two classes as the default rather than NULL -
+    # a NULL would make the guard warn about nothing on every existing tenant, which
+    # reads as the feature not working rather than as a missing default.
+    #
+    # A JSON array rather than a table: this is one operator preference, a handful of
+    # strings long, and the second one can pay for the generalisation.
+    price_tag_guarded_classes = Column(
+        JSONB,
+        nullable=False,
+        server_default='["Bathroom Furniture", "Kitchen Sink"]',
+        default=lambda: ["Bathroom Furniture", "Kitchen Sink"],
+    )
     # AC-810: the two switches that used to be `.env` flags. They are here rather than in
     # `app/config.py` because the owner turns them on and off while watching live turns,
     # and an environment variable makes that a deploy. Read per turn by the engine.

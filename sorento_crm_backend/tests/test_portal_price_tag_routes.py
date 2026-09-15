@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 # MUST be first app import - resolves the circular import in app.modules.runtime.guards
 from app.main import app  # noqa: E402
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _BASE = "/api/v1/public/portal/submissions/price_tag_request"
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -140,6 +141,8 @@ class TestTheRouteThatServesTheRequest:
             json={
                 "debtor_code": "ZZT-D1",
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "notes": "ZZT",
                 "lines": [
@@ -279,7 +282,11 @@ class TestTheRouteThatServesTheRequest:
 class TestSubmitRefusals:
     def test_submit_refuses_an_empty_draft_and_names_every_field(self, client):
         c, _db, _ = client
-        created = c.post(_BASE, json={"notes": "ZZT nothing else"}).json()
+        # r9 D7: `print_by` is answered so this still tests the COMPLETENESS
+        # list - the print guard fires first and would otherwise shadow it.
+        created = c.post(
+            _BASE, json={"notes": "ZZT nothing else", "print_by": "office"}
+        ).json()
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
@@ -289,14 +296,22 @@ class TestSubmitRefusals:
         # needed_by_date is optional (D-P2b) - dropped from what "complete" requires.
         assert body["detail"] == "debtor_name,lines"
 
-    def test_submit_refuses_an_ala_carte_bathroom_furniture_line_by_row(self, client):
+    def test_submit_warns_about_an_unpackaged_guarded_line_and_still_submits(self, client):
+        """Was a `SET_GUARD_VIOLATION` 422 naming `line:1` (AC-S2-7).
+
+        Through the route rather than the service, because what this case has
+        always been about is the ROUTE's answer: the salesperson is told on the
+        row, and the row is now a warning they can send anyway.
+        """
         c, db, _ = client
-        ok_product = _seed_product(db)
+        ok_product = _seed_product(db, class_label="Accessories")
         bad_product = _seed_product(db, class_label="Bathroom Furniture")
         created = c.post(
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [
                     {"line_type": "product", "product_id": ok_product},
@@ -307,10 +322,10 @@ class TestSubmitRefusals:
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
-        assert res.status_code == 422, res.text
+        assert res.status_code == 200, res.text
         body = res.json()
-        assert body["code"] == "SET_GUARD_VIOLATION"
-        assert body["detail"] == "line:1"
+        warnings = [line["package_warning"] for line in body["lines"]]
+        assert warnings == [None, "No package defined"]
 
     def test_a_complete_request_submits(self, client):
         c, db, _ = client
@@ -319,6 +334,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -339,6 +356,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -358,6 +377,8 @@ class TestSubmitRefusals:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
@@ -556,6 +577,8 @@ class TestPriceModeAndRemarks:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "price_mode": "selling",
                 "lines": [{"line_type": "product", "product_id": product_id}],
@@ -589,6 +612,8 @@ class TestPriceModeAndRemarks:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
                 "promotion_id": promotion_id,
                 "price_mode": "selling",
@@ -774,6 +799,8 @@ class TestTheListTheSalespersonReads:
             _BASE,
             json={
                 "debtor_name": "ZZT Dealer",
+                # r9 D7: no default, and submit refuses without it.
+                "print_by": "office",
                 "lines": [{"line_type": "product", "product_id": product_id}],
             },
         )
@@ -1568,3 +1595,14 @@ class TestPickerCompanyScope:
         assert len(rows) == 1, rows
         assert rows[0]["id"] == promo_a_id
         assert rows[0]["id"] != promo_b_id
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

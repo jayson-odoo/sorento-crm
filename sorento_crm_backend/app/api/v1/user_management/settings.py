@@ -79,6 +79,9 @@ class SystemSettingUpdate(BaseModel):
     # the new model's clothes. Both must appear here AND in the GET dict below.
     deferred_delete_seconds: Optional[int] = Field(None, ge=1, le=600)
     deferred_action_seconds: Optional[int] = Field(None, ge=1, le=600)
+    # r9 D10. Zero is meaningful here, unlike the countdowns above: it turns the
+    # auto-collect sweep off and leaves the hand-over waiting for a person.
+    price_tag_auto_collect_days: Optional[int] = Field(None, ge=0, le=90)
     n8n_attachment_webhook_url: Optional[str] = None
     n8n_crm_chat_outbound_webhook_url: Optional[str] = None
     n8n_stock_inquiry_revise_webhook_url: Optional[str] = None
@@ -148,6 +151,11 @@ class SystemSettingUpdate(BaseModel):
     media_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
     media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
     media_max_entities: Optional[int] = Field(None, ge=1, le=100)
+    # How long the low stock report route holds a chat turn open before it answers
+    # `pending` and leaves delivery to the worker push (PLAN-low-stock-report S5, AC-43).
+    # The same 5..90 band the media wait carries, and for the same reason: a turn held
+    # longer than the chatbot's own queue-wait budget is a turn nobody is waiting on.
+    low_stock_sync_wait_seconds: Optional[int] = Field(None, ge=5, le=90)
     chatbot_stock_denial_enabled: Optional[bool] = None
     # AC-304 (D5): the unsupported-domain list. `List[str]`, so an owner cannot save a
     # bare string that would then be iterated one CHARACTER at a time by the route's
@@ -170,6 +178,10 @@ class SystemSettingUpdate(BaseModel):
     # AND in the GET dict below, because both builders are hand-written and a column on
     # only one of them never reaches the screen.
     chatbot_parser_shadow_version: Optional[str] = None
+    # Price tag packages (D2): the product classes a request line is WARNED about
+    # when it reaches marketing without its catalogue package. Same rule as every
+    # block above - it must appear HERE and in the GET dict, because both are manual.
+    price_tag_guarded_classes: Optional[list[str]] = None
 
 
 class ChatbotLane(BaseModel):
@@ -193,7 +205,7 @@ class SmtpTestResult(BaseModel):
 class AppConfigResponse(BaseModel):
     """The non-sensitive slice of the system settings singleton.
 
-    Six fields, and the model is what makes "and nothing else" enforceable:
+    A short list, and the model is what makes "and nothing else" enforceable:
     anything not declared here is dropped on serialization rather than leaking
     because a dict builder grew a line. Do NOT extend it - see the route below.
     """
@@ -204,6 +216,8 @@ class AppConfigResponse(BaseModel):
     purchase_request_default_approver_email: Optional[str] = None
     sponsorship_form_default_approver_user_id: Optional[str] = None
     sponsorship_form_default_approver_email: Optional[str] = None
+    #: r9 D10. A number of days, read by the price tag detail card.
+    price_tag_auto_collect_days: Optional[int] = None
 
 
 @router.get("/")
@@ -280,6 +294,13 @@ async def get_settings(
                     getattr(settings, "deferred_action_seconds", 5) or 5
                     if settings
                     else 5
+                ),
+                # A new settings column reaches the FE only if it is in this
+                # manual dict too (LESSONS).
+                "price_tag_auto_collect_days": (
+                    getattr(settings, "price_tag_auto_collect_days", 7)
+                    if settings
+                    else 7
                 ),
                 "takeover_cooldown_seconds": (
                     getattr(settings, "takeover_cooldown_seconds", 60) if settings else None
@@ -380,6 +401,9 @@ async def get_settings(
                 "media_sync_wait_seconds": getattr(settings, "media_sync_wait_seconds", 30) if settings else None,
                 "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
+                # PLAN-low-stock-report S5 (AC-43/AC-48): in BOTH manual builders, or the
+                # System Settings screen never sees the column at all.
+                "low_stock_sync_wait_seconds": getattr(settings, "low_stock_sync_wait_seconds", 40) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,
@@ -387,6 +411,7 @@ async def get_settings(
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
                 "chatbot_parser_shadow_version": getattr(settings, "chatbot_parser_shadow_version", None) if settings else None,
+                "price_tag_guarded_classes": getattr(settings, "price_tag_guarded_classes", None) or [] if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -432,6 +457,12 @@ async def get_app_config(
             purchase_request_default_approver_email=user_pr.email if user_pr else None,
             sponsorship_form_default_approver_user_id=sf_uid,
             sponsorship_form_default_approver_email=user_sf.email if user_sf else None,
+            # r9 D10: the CRM price tag card says when a hand-over auto-collects,
+            # and marketing does not hold `user_management.settings.view`. A
+            # number of days is not sensitive.
+            price_tag_auto_collect_days=(
+                getattr(settings, "price_tag_auto_collect_days", 7) if settings else 7
+            ),
         )
     except Exception as e:
         raise handle_internal_error(str(e))
@@ -657,6 +688,11 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
 
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
+        # Not a chatbot column, but it has the identical shape and the identical
+        # failure: NOT NULL with a default, so an explicit `null` here would send
+        # NULL into it and 500 at commit. An empty LIST is a legitimate answer
+        # (warn about nothing) and is written as sent; only `null` resets.
+        "price_tag_guarded_classes": ["Bathroom Furniture", "Kitchen Sink"],
         # NOT a literal (AC-931): read from the chatbot module's own doorway, which
         # projects it off `contracts.DOMAIN_SPEC`. This copy is why the doorway exists -
         # A6 unblocked `spo_allocation` in route.py and in the migration and this third

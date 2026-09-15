@@ -15,6 +15,7 @@ from app.api.v1.scm import (
     decisions,
     explainer,
     fulfilment,
+    low_stock_report,
     market,
     order_inquiry_conflicts,
     order_summary,
@@ -52,3 +53,6 @@ router.include_router(fulfilment.router)
 router.include_router(container_requests.router)
 router.include_router(proforma_invoices.router)
 router.include_router(simulation.router)
+# The chatbot's own SCM route: an API-key caller, gated a SECOND time in-route on
+# the contact's `scm.low_stock_report` reveal key (PLAN-low-stock-report S5).
+router.include_router(low_stock_report.router)

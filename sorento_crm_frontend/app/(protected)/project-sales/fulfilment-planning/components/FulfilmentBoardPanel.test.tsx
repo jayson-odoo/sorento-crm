@@ -897,7 +897,7 @@ describe('FulfilmentBoardPanel: a background refetch dims the board, never blank
       expect(screen.getByTestId('board-content')).toHaveClass('opacity-60'),
     );
     expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
-    expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No lines (to plan|in these dates)/)).not.toBeInTheDocument();
 
     resolveRefetch(allSaved(boardOf([demand()])));
 
@@ -1242,7 +1242,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
         },
       ),
     );
-    await screen.findByText('Nothing is outstanding in these dates');
+    await screen.findByText('No lines in these dates');
 
     fireEvent.click(screen.getByRole('button', { name: 'Earlier days' }));
     await waitFor(() =>
@@ -1290,16 +1290,27 @@ describe('FulfilmentBoardPanel: states', () => {
     expect(screen.getByText('Backend is down')).toBeInTheDocument();
   });
 
+  /**
+   * AC-S3-1 (14 September 2026 ruling). The board asks who decided where a line's stock comes
+   * from, not whether delivery is still outstanding - a delivered line nobody decided is ON
+   * this board - so the only genuinely empty selection is one whose every line is cancelled or
+   * marked no purchase needed, and the copy has to say that. "Nothing is outstanding on these
+   * sales orders that can be planned" told a planner looking at an unplanned completed order
+   * that there was nothing to do, which was the bug the owner reported off SO421404.
+   */
   it('says so when the selection owes nothing plannable', async () => {
     getPlanningBoard.mockResolvedValue(boardOf([]));
 
     renderPanel();
 
     expect(
-      await screen.findByText(
-        'Nothing is outstanding on these sales orders that can be planned',
-      ),
+      await screen.findByText('No lines to plan on these sales orders'),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText('Every line is cancelled or marked no purchase needed.'),
+    ).toBeInTheDocument();
+    // The retired wording is gone from the component AND from this file.
+    expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
   });
 
   /**
@@ -1319,12 +1330,14 @@ describe('FulfilmentBoardPanel: states', () => {
 
     renderPanel();
 
+    expect(await screen.findByText('No lines in these dates')).toBeInTheDocument();
     expect(
-      await screen.findByText('Nothing is outstanding in these dates'),
+      screen.getByText('The selection holds 161 lines on other dates.'),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText('These sales orders owe nothing that can be planned'),
+      screen.queryByText('No lines to plan on these sales orders'),
     ).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
   });
 
   it('does not flash an empty or error state while loading', () => {

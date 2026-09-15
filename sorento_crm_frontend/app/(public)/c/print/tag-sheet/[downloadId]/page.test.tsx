@@ -71,7 +71,7 @@ function payload(media: {
                 {
                   id: 't1',
                   template_id: 'tpl-1',
-                  request_line_id: 'line-1',
+                  request_tag_id: 'tag-1',
                   x_mm: 5,
                   y_mm: 5,
                   width_mm: 95,

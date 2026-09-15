@@ -66,6 +66,12 @@ export interface SystemSetting {
   deferredActionSeconds?: number;
 
   /**
+   * How many days an untouched price tag collection waits before the sweep
+   * closes it (r9 D10). 0 turns the sweep off; 7 is the shipped default.
+   */
+  priceTagAutoCollectDays?: number;
+
+  /**
    * SCM front planning: which grain new plans are DECIDED at (AC-F01).
    *
    * Admin policy, not a per-run selector. It is stamped onto each run when the run
@@ -125,6 +131,11 @@ export interface SystemSetting {
   // Form handling-lock ("I'm handling this"): the source_entity_types the per-form lock
   // is enabled for (e.g. ["complaint", "stock_inquiry"]). Empty = lock off everywhere.
   handlingLockEnabledTypes: string[];
+
+  // Price tag packages (PLAN-price-tag-combos D2): the product class labels whose
+  // lines are warned about when they reach marketing without their catalogue
+  // package. Defaults to Bathroom Furniture + Kitchen Sink. Empty = warn nobody.
+  priceTagGuardedClasses: string[];
 
   // Portal submission revisions (UAC A1). `portalRevisionsEnabled` is the kill
   // switch and applies to every form type regardless of its own config row;
