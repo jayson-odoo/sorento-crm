@@ -97,6 +97,20 @@ export interface PriceTagRequestLinePart {
   sort_order: number;
 }
 
+/**
+ * One printed tag under a line (D3), as the portal read view needs it.
+ *
+ * The portal neither splits nor prices a tag - marketing does both - so this
+ * carries only what a salesperson is shown: the label a pin's rail entry names
+ * ("1a"), and the id a pin anchors to.
+ */
+export interface PriceTagRequestTag {
+  id: string;
+  /** "1a", "1b" - the line's position plus a letter. Never an id. */
+  label: string;
+  quantity: number;
+}
+
 export interface PriceTagRequestLine {
   id: string;
   line_type: PriceTagLineType;
@@ -121,6 +135,8 @@ export interface PriceTagRequestLine {
   package_warning?: string | null;
   /** The parts under this line, in display order. */
   parts?: PriceTagRequestLinePart[];
+  /** What actually prints for this line: one tag by default, N after a split. */
+  tags?: PriceTagRequestTag[];
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.

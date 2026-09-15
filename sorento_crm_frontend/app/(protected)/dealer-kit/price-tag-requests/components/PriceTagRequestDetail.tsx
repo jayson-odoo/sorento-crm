@@ -415,11 +415,21 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     ],
   );
 
-  /** Line id -> its code, so a pin's rail entry never shows an id. */
-  const lineLabels = useMemo(() => {
+  /**
+   * Tag id -> what to call it, so a pin's rail entry never shows an id.
+   *
+   * The line's code, plus the tag's own label when the line prints more than
+   * one ("SRT-1234 1b"): with a single tag the label would only repeat the
+   * line's position back at a reader who can already see it.
+   */
+  const tagLabels = useMemo(() => {
     const labels = new Map<string, string>();
     for (const line of request?.lines ?? []) {
-      labels.set(line.id, line.code || line.name || 'Tag');
+      const code = line.code || line.name || 'Tag';
+      const tags = line.tags ?? [];
+      for (const tag of tags) {
+        labels.set(tag.id, tags.length > 1 ? `${code} ${tag.label}` : code);
+      }
     }
     return labels;
   }, [request?.lines]);
@@ -740,7 +750,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           <RequestDesignSection
             requestId={requestId}
             docNumber={request.doc_number}
-            lineLabels={lineLabels}
+            tagLabels={tagLabels}
             onCommentsChange={setReviewComments}
             currentRound={request.review_round}
           />

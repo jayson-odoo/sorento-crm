@@ -37,8 +37,8 @@ import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 interface Props {
   requestId: string;
   docNumber: string;
-  /** Line id -> what to call it, so no id reaches the screen. */
-  lineLabels: Map<string, string>;
+  /** Tag id -> what to call it, so no id reaches the screen. */
+  tagLabels: Map<string, string>;
   /** The page keeps the open count for the primary CTA's label (D6). */
   onCommentsChange?: (comments: ReviewComment[]) => void;
   /**
@@ -53,7 +53,7 @@ interface Props {
 export default function RequestDesignSection({
   requestId,
   docNumber,
-  lineLabels,
+  tagLabels,
   onCommentsChange,
   currentRound,
 }: Props) {
@@ -151,12 +151,12 @@ export default function RequestDesignSection({
                   done ? 'bg-muted-foreground/60' : 'bg-primary',
                 )}
               >
-                {comment.line_id ? (commentNumbers.get(comment.id) ?? '-') : '-'}
+                {comment.tag_id ? (commentNumbers.get(comment.id) ?? '-') : '-'}
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
-                  {comment.line_id
-                    ? (lineLabels.get(comment.line_id) ?? 'Tag')
+                  {comment.tag_id
+                    ? (tagLabels.get(comment.tag_id) ?? 'Tag')
                     : 'General'}
                   {' / round '}
                   {comment.round}

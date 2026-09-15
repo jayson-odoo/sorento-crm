@@ -24,13 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { LineDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 
 interface ProductDataReviewDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The line under review. Null closes the dialog. */
-  changeSet: LineDataChangeSet | null;
+  /** The tag under review. Null closes the dialog. */
+  changeSet: TagDataChangeSet | null;
   onDecide: (action: 'update' | 'keep') => Promise<void>;
 }
 
@@ -64,7 +64,11 @@ export default function ProductDataReviewDialog({
         <DialogHeader>
           <DialogTitle>Product data changed</DialogTitle>
           <DialogDescription>
+            {/* The tag's label rides with the code because a line can print
+                several tags and only one of them is under review here. Both
+                are what a reader is shown everywhere else; neither is an id. */}
             {changeSet.code}
+            {changeSet.tag_label ? ` ${changeSet.tag_label}` : ''}
             {changeSet.name ? ` / ${changeSet.name}` : ''}
           </DialogDescription>
         </DialogHeader>

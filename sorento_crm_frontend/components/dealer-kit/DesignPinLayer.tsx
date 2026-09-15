@@ -57,8 +57,9 @@ interface DesignPinLayerProps extends DesignReview {
 const DRAG_THRESHOLD_PX = 4;
 
 interface Placing {
-  lineId: string;
-  /** The ONE placed copy this pin is anchored to (owner round finding 1). */
+  /** The REQUEST TAG the clicked copy draws - the anchor the pin is stored on. */
+  requestTagId: string;
+  /** The placed copy that was clicked, so the editor opens over THAT box. */
   tagId: string;
   /** Fractions of the tag box. */
   x: number;
@@ -112,8 +113,7 @@ export default function DesignPinLayer({
       return;
     }
     onPlace?.({
-      line_id: placing.lineId,
-      placed_tag_id: placing.tagId,
+      tag_id: placing.requestTagId,
       x: placing.x,
       y: placing.y,
       w: placing.w,
@@ -137,7 +137,7 @@ export default function DesignPinLayer({
       setOpenMarker(null);
       setBody('');
       setPlacing({
-        lineId: rect.lineId,
+        requestTagId: rect.requestTagId,
         tagId: rect.tagId,
         x,
         y,
@@ -208,7 +208,7 @@ export default function DesignPinLayer({
           <div
             key={`hit-${rect.tagId}`}
             role="presentation"
-            data-testid={`pin-hit-${rect.lineId}`}
+            data-testid={`pin-hit-${rect.requestTagId}`}
             className="pointer-events-auto absolute cursor-crosshair hover:ring-1 hover:ring-primary/40"
             style={{
               left: rect.left,
@@ -220,19 +220,17 @@ export default function DesignPinLayer({
           />
         ))}
 
-      {/* Sent pins. A pin anchors to the ONE copy that was clicked
-          (`placed_tag_id`, owner round finding 1); a line printed more than
-          once (a quantity > 1, or "Apply to all lines") draws it there alone.
-          Null - or a copy the sheet no longer carries, re-arranged away -
-          falls back to every copy of the line, the pre-r9 behaviour. */}
+      {/* Sent pins. The anchor is the request TAG, and every copy of one tag on
+          the sheet (a quantity > 1) draws the same artwork - so the marker goes
+          on all of them rather than on one copy chosen arbitrarily. A line that
+          prints two different options prints them as two TAGS, and a pin on one
+          of those never appears on the other. */}
       {comments.map((comment) => {
-        if (!comment.line_id || comment.x === null || comment.y === null) return null;
+        if (!comment.tag_id || comment.x === null || comment.y === null) return null;
         const number = commentNumbers.get(comment.id);
-        const lineRects = rects.filter((rect) => rect.lineId === comment.line_id);
-        const anchoredRects = comment.placed_tag_id
-          ? lineRects.filter((rect) => rect.tagId === comment.placed_tag_id)
-          : [];
-        const targetRects = anchoredRects.length > 0 ? anchoredRects : lineRects;
+        const targetRects = rects.filter(
+          (rect) => rect.requestTagId === comment.tag_id,
+        );
         return targetRects.map((rect) => (
             <PinMarker
               key={`${comment.id}-${rect.tagId}`}
@@ -270,7 +268,7 @@ export default function DesignPinLayer({
       {/* Pins placed in this session, not sent yet. */}
       {drafts.map((draft) =>
         rects
-          .filter((rect) => rect.lineId === draft.line_id)
+          .filter((rect) => rect.requestTagId === draft.tag_id)
           .map((rect) => (
             <PinMarker
               key={`${draft.key}-${rect.tagId}`}

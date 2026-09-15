@@ -115,22 +115,22 @@ import {
 } from '../../../../services/priceTagRequestService';
 import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
-  listLineDataChanges,
+  listTagDataChanges,
   listRequestVersions,
   getRequestVersion,
-  recheckLineDataChanges,
-  resolveLinePin,
+  recheckTagDataChanges,
+  resolveTagPin,
   restoreRequestVersion,
 } from '../../../../services/priceTagDataService';
-import type { LineDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
 import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
 import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
 import {
-  canvasPinsForLine,
+  canvasPinsForTag,
   openComments,
-  openCountByLine,
+  openCountByTag,
   type ReviewComment,
 } from '@/lib/dealer-kit/review-comments';
 import {
@@ -369,10 +369,10 @@ export function RequestTagDesigner({
     loadDataChanges();
   }, [loadDataChanges]);
 
-  const changesByLine = useMemo(() => {
-    const map = new Map<string, LineDataChangeSet>();
+  const changesByTag = useMemo(() => {
+    const map = new Map<string, TagDataChangeSet>();
     for (const set of dataChanges) {
-      if (set.changes.length > 0) map.set(set.line_id, set);
+      if (set.changes.length > 0) map.set(set.tag_id, set);
     }
     return map;
   }, [dataChanges]);
@@ -381,16 +381,16 @@ export function RequestTagDesigner({
    * "Check product data" (owner round finding 3): a Keep silences ONE drift
    * by recording its hash, and there was no way to ask again, so a red dot
    * silenced once stayed silent forever - even for a later, unrelated edit
-   * that would have tripped the gate on its own. This re-arms every line.
+   * that would have tripped the gate on its own. This re-arms every tag.
    */
   const recheckDataChanges = useCallback(async () => {
     try {
-      const rows = await recheckLineDataChanges(request.id);
+      const rows = await recheckTagDataChanges(request.id);
       setDataChanges(rows);
       const changed = rows.filter((set) => set.changes.length > 0).length;
       toast.success(
         changed > 0
-          ? `${changed} line${changed === 1 ? '' : 's'} changed`
+          ? `${changed} tag${changed === 1 ? '' : 's'} changed`
           : 'Product data is up to date',
       );
     } catch {
@@ -398,14 +398,14 @@ export function RequestTagDesigner({
     }
   }, [request.id]);
 
-  const decideLinePin = useCallback(
-    async (lineId: string, action: 'update' | 'keep') => {
+  const decideTagPin = useCallback(
+    async (tagId: string, action: 'update' | 'keep') => {
       try {
-        await resolveLinePin(request.id, lineId, action);
+        await resolveTagPin(request.id, tagId, action);
         loadDataChanges();
         if (action === 'update') {
           // The pin moved, so the canvas has to redraw against the new values.
-          const rows = await resolveRequestLines(request.id);
+          const rows = await resolveRequestTags(request.id);
           setResolvedRows(rows);
         }
         toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
@@ -1168,20 +1168,22 @@ export function RequestTagDesigner({
 
   // -- Change requests (r9 S2/D6) ---------------------------------------------
 
-  /** Open pins per line: the LINES rail badge, and the CTA's own count. */
-  const openPinsByLine = useMemo(
-    () => openCountByLine(reviewComments),
+  /** Open pins per TAG: the LINES rail badge, and the CTA's own count. */
+  const openPinsByTag = useMemo(
+    () => openCountByTag(reviewComments),
     [reviewComments],
   );
   const openPinCount = useMemo(
-    () => [...openPinsByLine.values()].reduce((sum, count) => sum + count, 0),
-    [openPinsByLine],
+    () => [...openPinsByTag.values()].reduce((sum, count) => sum + count, 0),
+    [openPinsByTag],
   );
-  /** What the canvas draws: this line's pins, or nothing while toggled off. */
+  /** What the canvas draws: this tag's pins, or nothing while toggled off. */
   const canvasPins = useMemo(
     () =>
-      commentsVisible ? canvasPinsForLine(reviewComments, selectedLineId) : [],
-    [commentsVisible, reviewComments, selectedLineId],
+      commentsVisible
+        ? canvasPinsForTag(reviewComments, selectedRequestTagId)
+        : [],
+    [commentsVisible, reviewComments, selectedRequestTagId],
   );
 
   // -- Render ----------------------------------------------------------------
@@ -1466,13 +1468,13 @@ export function RequestTagDesigner({
       </div>
 
       <ProductDataReviewDialog
-        open={reviewLineId !== null && changesByLine.has(reviewLineId)}
+        open={reviewTagId !== null && changesByTag.has(reviewTagId)}
         onOpenChange={(next) => {
-          if (!next) setReviewLineId(null);
+          if (!next) setReviewTagId(null);
         }}
-        changeSet={reviewLineId ? (changesByLine.get(reviewLineId) ?? null) : null}
+        changeSet={reviewTagId ? (changesByTag.get(reviewTagId) ?? null) : null}
         onDecide={(action) =>
-          reviewLineId ? decideLinePin(reviewLineId, action) : Promise.resolve()
+          reviewTagId ? decideTagPin(reviewTagId, action) : Promise.resolve()
         }
       />
 
@@ -1490,7 +1492,7 @@ export function RequestTagDesigner({
         }}
         onRestore={async (version) => {
           await restoreRequestVersion(request.id, version);
-          const rows = await resolveRequestLines(request.id);
+          const rows = await resolveRequestTags(request.id);
           setResolvedRows(rows);
           toast.success(`Restored v${version}`);
         }}

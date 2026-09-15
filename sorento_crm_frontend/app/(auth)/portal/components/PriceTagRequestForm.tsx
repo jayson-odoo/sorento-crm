@@ -2833,11 +2833,24 @@ function DesignSection({
   }, [drafts.length]);
 
   const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
-  const lineLabel = useCallback(
-    (lineId: string | null) => {
-      if (!lineId) return 'General';
-      const line = request.lines.find((row) => row.id === lineId);
-      return line?.code || line?.name || 'Tag';
+  /**
+   * What a pin's rail entry calls the thing it points at, never an id.
+   *
+   * The line's code, plus the tag's own label when the line prints more than
+   * one ("SRT-1234 1b"): a line split into an option per basin shows two tags,
+   * and a pin on one of them has to say which.
+   */
+  const tagLabel = useCallback(
+    (tagId: string | null) => {
+      if (!tagId) return 'General';
+      for (const line of request.lines) {
+        const tags = line.tags ?? [];
+        const tag = tags.find((row) => row.id === tagId);
+        if (!tag) continue;
+        const code = line.code || line.name || 'Tag';
+        return tags.length > 1 ? `${code} ${tag.label}` : code;
+      }
+      return 'Tag';
     },
     [request.lines],
   );
@@ -2848,7 +2861,7 @@ function DesignSection({
     try {
       await onSend({
         comments: drafts.map((draft) => ({
-          line_id: draft.line_id,
+          tag_id: draft.tag_id,
           x: draft.x,
           y: draft.y,
           w: draft.w,
@@ -2884,7 +2897,7 @@ function DesignSection({
       setDrafts((current) => current.filter((draft) => draft.key !== key)),
   };
 
-  const sentThisDesign = comments.filter((comment) => comment.line_id !== null);
+  const sentThisDesign = comments.filter((comment) => comment.tag_id !== null);
 
   const footer = reviewable ? (
     <div ref={railRef} className="mt-3 space-y-3 border-t pt-3">
@@ -2900,7 +2913,7 @@ function DesignSection({
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
-                  {lineLabel(draft.line_id)}
+                  {tagLabel(draft.tag_id)}
                 </p>
                 <p className="whitespace-pre-wrap text-xs">{draft.body}</p>
               </div>
@@ -2970,7 +2983,7 @@ function DesignSection({
           </span>
           <div className="min-w-0 flex-1">
             <p className="truncate text-2xs uppercase tracking-wide text-muted-foreground">
-              {lineLabel(comment.line_id)}
+              {tagLabel(comment.tag_id)}
               {comment.resolved_at ? ' / Done' : ''}
             </p>
             <p className="whitespace-pre-wrap text-xs">{comment.body}</p>
