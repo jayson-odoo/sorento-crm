@@ -108,6 +108,11 @@ class TestJourneyChain:
                     "options": [
                         {"position": i, "label": f"WC286-{i}", "uuid": f"uuid-{i}"} for i in range(1, 11)
                     ],
+                    # `payload.domain` is what a bare "8" answer returns to - step 1's
+                    # engine-armed roster always carries it (measured: run step 1's
+                    # own turn and read the stored `open_question` back). A hand-built
+                    # roster that omits it has no domain for the pick to render into.
+                    "payload": {"domain": "incoming"},
                 }
             },
         )

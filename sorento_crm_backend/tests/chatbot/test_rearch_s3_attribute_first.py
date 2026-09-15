@@ -75,18 +75,48 @@ def _db(session_factory, *, scope: frozenset[str] = frozenset({SORENTO})):
     return db
 
 
+# `stub_access()` (test_engine.py) points `engine_mod.default_space_id` at this exact
+# literal - D5's own hardcoded n8n default. `_contact_company_scope` (engine.py) calls
+# `resolve_contact_id(db, respond_io_id, space_id)`, which JOINs `respond_contacts.
+# workspace_id` against a `RespondWorkspace.space_id` row when `space_id` is given
+# (`app/services/field_access.py`); a contact with no workspace resolves to NO
+# company, which reads as "found nothing" everywhere a company-scoped read sits
+# downstream (class-label resolution, certificates, promotions) - not as a missing
+# fixture (measured: `tests/chatbot/test_engine_company_scope.py` names the same
+# literal for the same reason).
+SPACE_ID = "364817"
+
+
+def _seed_workspace(session_factory) -> str:
+    from app.models.respond_workspace import RespondWorkspace
+
+    db = _db(session_factory)
+    existing = db.query(RespondWorkspace).filter(RespondWorkspace.space_id == SPACE_ID).first()
+    if existing is not None:
+        return existing.id
+    workspace = RespondWorkspace(
+        space_id=SPACE_ID,
+        name="ZZT attribute-first workspace",
+        api_key_ciphertext="ZZT-cipher",
+    )
+    db.add(workspace)
+    db.commit()
+    return workspace.id
+
+
 def _seed_contact(session_factory, *, phone: str) -> None:
     import json
 
     from sqlalchemy import text
 
+    workspace_id = _seed_workspace(session_factory)
     db = _db(session_factory)
     db.execute(
         text(
-            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
-            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), :wid)"
         ),
-        {"cid": str(CONTACT_ID), "phone": phone, "sv": json.dumps({})},
+        {"cid": str(CONTACT_ID), "phone": phone, "sv": json.dumps({}), "wid": workspace_id},
     )
     db.commit()
 
@@ -194,6 +224,9 @@ class TestCountedSetAnswer:
         self, session_factory, stub_parser, stub_access
     ) -> None:
         _seed_contact(session_factory, phone="+60000000020")
+        # A company-scoped read (certificates, below) sees nothing for a contact with
+        # no company link - the same reason `TestOwnCompanyCertificatesOnly` links one.
+        _link_contact_company(session_factory, company_id=SORENTO)
         codes = _seed_products(session_factory, class_label="tap", synonyms=["taps"], count=11)
         _seed_certificates(session_factory, codes, company_id=SORENTO)
 
@@ -217,6 +250,9 @@ class TestCountedSetAnswer:
 class TestPagingByFive:
     def test_more_pages_the_same_set_by_five(self, session_factory, stub_parser, stub_access) -> None:
         _seed_contact(session_factory, phone="+60000000021")
+        # Same company-link requirement as `TestCountedSetAnswer` - the certificate
+        # read is company-scoped.
+        _link_contact_company(session_factory, company_id=SORENTO)
         codes = _seed_products(session_factory, class_label="tap", synonyms=["taps"], count=11)
         _seed_certificates(session_factory, codes, company_id=SORENTO)
 

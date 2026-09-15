@@ -1,7 +1,10 @@
 """S4 - prompt-blocks staleness status endpoint (AC-1552, PLAN-chatbot-turn-rearch.md
 "The policy": "the Prompts page shows 'domain block out of date'"; coordinator ruling:
 staleness is HASH based, `stale = blocks_hash(current rows) != labelled_version.
-metadata["blocks_hash"]`).
+config_json["blocks_hash"]` - `AIPromptVersion` already carries a JSONB `config_json`
+column, `app/models/ai_prompt.py`; there is no second JSONB column, and a `metadata`
+attribute would collide with SQLAlchemy's own reserved `Base.metadata`, coordinator
+ruling 16 Sep 2026, superseding this file's first cut).
 
 `GET /api/v1/system/chatbot/prompt-blocks/status` does not exist yet (no route named
 `prompt-blocks` anywhere under `app/api/v1/system/chatbot.py` today - measured), so
@@ -105,10 +108,11 @@ def _republish(db) -> None:
         type="text",
         template=rendered,
         variables=[],
+        # `config_json` is the REAL existing JSONB column (coordinator ruling, 16
+        # Sep 2026) - no `metadata` attribute (it would shadow SQLAlchemy's own
+        # reserved `Base.metadata` on every declarative model).
+        config_json={"blocks_hash": blocks_hash},
     )
-    # `metadata` is the coordinator-ruled column name; if the model lacks it the
-    # attribute set below raises, which is a legitimate red for the missing column.
-    new_version.metadata = {"blocks_hash": blocks_hash}
     db.add(new_version)
     db.flush()
 

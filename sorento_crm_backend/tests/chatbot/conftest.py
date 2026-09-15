@@ -38,7 +38,7 @@ def session_factory() -> Iterator[Any]:
     name = _pg_fixture._BLANK["name"]
     connection.exec_driver_sql(
         f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
-        f'"{name}_chatbot", "{name}_projects"'
+        f'"{name}_chatbot", "{name}_projects", "public"'
     )
     opened: list[Session] = []
 
