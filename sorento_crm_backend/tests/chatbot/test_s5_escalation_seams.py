@@ -517,14 +517,25 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # `response` / `pending` mirrors, and `member_offer`'s TTL of 3 is gone with the rest
     # (D9, no counter survives an open question - it is cleared only by an answer, a
     # newer question, or a new ask). The re-offer is one `open_question` slot, `kind
-    # member_offer`, `yes_no` - a plain accept/decline, never a numbered pick, so (same
-    # as `test_s3_canned_and_ideate.py::TestOfferHold`) `options` stays empty; the two
-    # company names the customer reads ride the COMPOSED TEXT (`clarify_text` above),
-    # never a persisted roster. Team still rides the payload.
+    # member_offer`, `yes_no`, and the team rides the payload.
+    #
+    # **THE PRIOR ROWS SURVIVE** (R-L, 15 Sep 2026, and it is what this test's own
+    # docstring asks for): "the next turn resolves the customer's '2' or 'Sorento
+    # Trading' against exactly that pool". This assertion used to pin `options == []`,
+    # which contradicted the paragraph above it - a re-prompt that drops the rows leaves
+    # a numbered list on the customer's screen and nothing behind it to count, which is
+    # the defect the general re-arm rule (`_is_a_re_arm_of` over the same kind and the
+    # same expectation) exists to close. The rows are the ones the offer was asked with,
+    # frozen by `open_question.ask` at the top of this test.
     open_question = variables.get("open_question") or {}
     assert open_question.get("kind") == "member_offer"
     assert open_question.get("expects") == "yes_no"
-    assert open_question.get("options") == []
+    assert open_question.get("options") == open_question_ask(
+        "member_offer", options=PRIOR_RESULT_SET, turn_no=1
+    )["options"], (
+        f"the re-prompt must keep the pool the customer is answering against: "
+        f"{open_question.get('options')!r}"
+    )
     assert open_question.get("payload", {}).get("team") == "customer_service"
     for legacy_key in (
         "selection_context",

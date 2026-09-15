@@ -141,8 +141,15 @@ INCOMING_ROWS = {
     "has_result": True,
 }
 
+#: The team span is `[^.?!\n]+?`, the same class the code's own `_ESCALATE_TEAM_RE` uses,
+#: and NOT `.+?`: a token that echoes the offering clause ("would you like me to escalate
+#: to purchasing team.") ends in a full stop, and a dot-matching span runs straight
+#: through it into the REAL sentence's " team?" - which made this reader return
+#: `'purchasing team." (order). Would you like me to escalate to customer service'` as
+#: the printed promise. Stopping at the sentence end keeps each match to one sentence, and
+#: `_printed_team` then takes the LAST of them.
 _ESCALATE_SENTENCE_RE = re.compile(
-    r"[Ww]ould you like me to escalate to (?:\*[^*]+\* )?(.+?) team\?"
+    r"[Ww]ould you like me to escalate to (?:\*[^*]+\* )?([^.?!\n]+?) team\?"
 )
 
 
@@ -2457,7 +2464,9 @@ def test_b1_a_decline_that_brings_its_own_question_is_answered_not_just_acknowle
             f"domain-inheritance rule nobody asked for: {name}"
         )
         if hint == "product":
-            assert raw in json.dumps(args), (
+            # UUIDS, not the raw code: the order tools take resolved ids, exactly as the
+            # customer branch below asserts for `customer_ids`.
+            assert args.get("product_ids") == [uuid], (
                 f"{case_id}: the re-run is for the entity THIS turn named: {args!r}"
             )
         else:
