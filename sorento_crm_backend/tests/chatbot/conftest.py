@@ -145,3 +145,34 @@ def validating_resolve_entity(fake: Any) -> Any:
         return fake(body) if callable(fake) else fake
 
     return _resolve_entity
+
+
+@pytest.fixture(autouse=True)
+def _no_real_mcp_calls(monkeypatch):
+    """No test under `tests/chatbot/` may reach the machine-wide MCP server on :8765.
+
+    Measured (coordinator ruling, 16 Sep 2026): `test_rearch_s3_attribute_first.py`'s
+    two `product_attachment` tests never stubbed `MCPRuntimeClient.call_tool`, so
+    `_probe`/`services.py`'s `call_tool` seam reached the REAL local MCP server, which
+    reads whatever database that process happens to be pointed at - NOT this worktree's
+    private test DB. The qualifying COUNT in the reply was always right (it comes from
+    `resolve_product_set`'s own direct SQL, never MCP), but the rendered page was
+    silently empty ("Showing 0") because the real server's answer for a `ZZT-*` test
+    code is genuinely nothing - a defect that reads as an engine bug and is actually a
+    missing test stub.
+
+    Autouse, so a NEW test in this tree gets the guard for free rather than having to
+    remember it: `call_tool` raises unless the test itself monkeypatches it back (test
+    bodies patch it AFTER this fixture runs, so their own `monkeypatch.setattr` wins -
+    pytest fixtures execute before the test function).
+    """
+    from app.services.ai_assistant_service import MCPRuntimeClient
+
+    def _forbidden(self, name: str, arguments: dict[str, Any]) -> str:
+        raise AssertionError(
+            f"tests/chatbot/ may never call the real MCP server (:8765) - tool={name!r} "
+            f"arguments={arguments!r} was not stubbed. Monkeypatch "
+            "app.services.ai_assistant_service.MCPRuntimeClient.call_tool in the test."
+        )
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", _forbidden)
