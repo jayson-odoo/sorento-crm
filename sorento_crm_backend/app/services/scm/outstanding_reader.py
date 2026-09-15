@@ -242,6 +242,37 @@ def sheet_rows(file_data: bytes):
     return sheet.iter_rows(values_only=True)
 
 
+def sheet_merges(file_data: bytes) -> dict[tuple[int, int], tuple[int, int]]:
+    """Every merged range's covered cells, mapped to their anchor cell - 1-based `(row, col)`
+    the way openpyxl numbers them, matching what `sheet_rows`/`all_sheet_rows` callers already
+    carry (a 1-based sheet row plus a 0-based column position they can add 1 to).
+
+    Only xlsx/xlsm carry this: an OLE2 `.xls` has no merge info this reader can use, so it is
+    `{}`. Opened NOT read-only - `ReadOnlyWorksheet` has no `merged_cells` (openpyxl 3.1.5), so
+    this is the one reader here that cannot reuse `sheet_rows`'s read-only path.
+    """
+    if file_data[:8] == _OLE2_MAGIC:
+        return {}
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(BytesIO(file_data), data_only=True)
+    try:
+        sheet = wb.active
+        if sheet is None:
+            return {}
+        merges: dict[tuple[int, int], tuple[int, int]] = {}
+        for rng in sheet.merged_cells.ranges:
+            anchor = (rng.min_row, rng.min_col)
+            for r in range(rng.min_row, rng.max_row + 1):
+                for c in range(rng.min_col, rng.max_col + 1):
+                    if (r, c) != anchor:
+                        merges[(r, c)] = anchor
+        return merges
+    finally:
+        wb.close()
+
+
 def all_sheet_rows(file_data: bytes) -> list[tuple]:
     """Every row of the first sheet, materialised, with the workbook CLOSED.
 

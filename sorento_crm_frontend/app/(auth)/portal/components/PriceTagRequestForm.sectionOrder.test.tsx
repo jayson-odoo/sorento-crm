@@ -37,6 +37,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   submitRequest: vi.fn(),
   approveRequest: vi.fn(),
   requestChanges: vi.fn(),
+  listReviewComments: vi.fn(async () => []),
+  collectRequest: vi.fn(),
   downloadPriceTagPdf: vi.fn(),
 }));
 
@@ -131,6 +133,9 @@ describe('read-only view section order (AC-P11)', () => {
       'Sales Order',
       'Lines',
       'Price',
+      // r9 D7: who prints comes first in Additional Information, because it is
+      // the only field in the section that Submit refuses to go without.
+      'Printing',
       'Need by',
       'Notes',
     ]);

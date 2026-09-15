@@ -34,6 +34,7 @@ from app.models.user import SystemSetting
 from app.services.portal_revision_service import PortalRevisionService
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 _PORTAL_BASE = "/api/v1/public/portal"
@@ -163,6 +164,9 @@ def _seed_request(
     )
     req.status = status
     req.portal_draft_at = portal_draft_at
+    # r9 D7: a submitted request has answered who prints, and a revise
+    # re-submits through the same completeness bar.
+    req.print_by = "office"
     # AC-R2: the model needs `revision_no` / `last_revised_at` (migration
     # ptag_0006_revisions) - this raises AttributeError today, which is the
     # right red reason: the column does not exist yet.
@@ -1178,3 +1182,14 @@ class TestNeighboursRouteForPriceTagRequest:
             headers=headers,
         )
         assert res.status_code == 404, res.text
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

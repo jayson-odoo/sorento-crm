@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from app.models.inventory import Stock, Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.scm import ReorderRecommendation, ReorderRun
 from app.models.user import (
@@ -328,6 +328,37 @@ def test_the_report_serialises_every_field_the_screen_reads(chain):
     assert row["on_hand"] == 40
     assert row["qty_on_order"] == 25
     assert row["shortfall"] == 60
+
+
+def test_report_route_carries_last_receipt_spo_and_container(chain):
+    """AC-59: `response_model` silently drops an undeclared field - `LastReceiptOut`
+    does not name `spo_number`/`container` yet, so this pins them surviving the wire,
+    not just `report()`'s own Python dict."""
+    f = chain
+    _principal(f["app"], f["db"], f["gcu"], f["gcuk"], perms=[_VIEW_PERM])
+
+    f["db"].add(SPOAllocation(
+        id=_u(), spo_number="202608-S0084", container_number="TLLU8306312",
+        product_id=f["product"].id, warehouse_id=f["pool"].id,
+        allocated_quantity=180, quantity_received=180,
+        expected_date=_today() - timedelta(days=5),
+    ))
+    f["db"].flush()
+    assert svc.write_rows(f["db"], f["run"].id) == 1, "write_rows re-freezes idempotently"
+
+    client = TestClient(f["app"])
+    res = client.get(f"/api/v1/scm/order-summary?run_id={f['run'].id}")
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    row = next(r for r in body["rows"] if r["product_code"] == f["product"].product_code)
+    assert row["last_receipt"] is not None, row
+    assert row["last_receipt"]["spo_number"] == "202608-S0084", (
+        f"response_model dropped spo_number: {row['last_receipt']}"
+    )
+    assert row["last_receipt"]["container"] == "TLLU8306312", (
+        f"response_model dropped container: {row['last_receipt']}"
+    )
 
 
 def test_a_missing_input_arrives_as_null_and_not_zero(chain):

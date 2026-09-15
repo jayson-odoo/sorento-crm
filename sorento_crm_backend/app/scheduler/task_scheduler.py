@@ -229,6 +229,17 @@ def _handler_promotion_active_window(db, task):
     return PromotionService(db).sync_promotion_active_by_calendar_window()
 
 
+def _handler_price_tag_auto_collect(db, task):
+    """Close a price tag hand-over nobody came back for (r9 D11).
+
+    Reads the configured days off the settings row; 0 turns it off entirely.
+    """
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    collected = PriceTagRequestService.run_auto_collect(db)
+    return {"collected": collected}
+
+
 def _handler_coverage_subscription_expiry(db, task):
     """Deactivate coverage subscriptions whose expires_at has passed."""
     from app.services.coverage_subscription_service import CoverageSubscriptionService
@@ -531,6 +542,7 @@ def register_task_handlers():
     register_handler("embedding_job_processor", _handler_embedding_job_processor)
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("promotion_active_window", _handler_promotion_active_window)
+    register_handler("price_tag_auto_collect", _handler_price_tag_auto_collect)
     register_handler("respond_contacts_sync", run_respond_contacts_sync)
     register_handler("respond_templates_sync", _handler_respond_templates_sync)
     register_handler("automation_runner", _handler_automation_runner)

@@ -10,7 +10,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -68,6 +68,37 @@ vi.mock('@/components/common/AttachmentPreviewModal', () => ({
   },
 }));
 
+/**
+ * Void is a server-deferred pending action since r9 (D7 / Apple Alignment S6):
+ * no dialog asks first, the button becomes a countdown with a Cancel, and the
+ * server commits when the window lapses even if the tab is closed.
+ *
+ * The engine - parking the action, running the clock, committing - is
+ * `hooks/useDeferredAction.test.tsx`'s job. What belongs HERE is the wiring:
+ * the right action key and entity, that the gear item starts it rather than
+ * opening anything, and that the countdown reaches the record card. Mocking
+ * the hook also means no test in this file owns a real timer, so none can let
+ * a countdown lapse.
+ */
+const voidStart = vi.fn();
+const voidCancel = vi.fn();
+const useDeferredActionInput = vi.fn();
+let voidIsPending = false;
+let voidCountdown: React.ReactNode = null;
+vi.mock('@/hooks/useDeferredAction', () => ({
+  useDeferredAction: (input: unknown) => {
+    useDeferredActionInput(input);
+    return {
+      pending: voidIsPending ? { id: 'pending-1' } : null,
+      isPending: voidIsPending,
+      isBlocked: false,
+      start: voidStart,
+      cancel: voidCancel,
+      countdown: voidCountdown,
+    };
+  },
+}));
+
 vi.mock('../../services/priceTagRequestService', () => ({
   getPriceTagRequest: vi.fn(),
   getTagSheetDoc: vi.fn(),
@@ -75,6 +106,10 @@ vi.mock('../../services/priceTagRequestService', () => ({
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
   listPriceTagRequests: vi.fn(),
+  // r9 S1/D3: the Request tab now opens with `RequestDesignSection`, which
+  // asks for the payload on mount. Resolving to null is the "no design yet"
+  // answer, which is what every fixture in this file is.
+  getRequestDesignPayload: vi.fn(async () => null),
 }));
 
 import {
@@ -222,7 +257,6 @@ describe('priceTagActions', () => {
     ['changes_requested', 'user-1', 'Design tags'],
     ['proof_ready', 'user-1', 'View design'],
     ['approved', 'user-1', 'Export PDF'],
-    ['ready', 'user-1', 'Export PDF'],
   ])('%s is led by %s', (status, assignee, label) => {
     expect(priceTagActions(status, assignee)[0].label).toBe(label);
   });
@@ -243,8 +277,13 @@ describe('priceTagActions', () => {
     expect(voidAction?.destructive).toBe(true);
   });
 
-  it('never offers Void once the sheet has been exported', () => {
-    expect(priceTagActions('ready', 'user-1').map((a) => a.action)).toEqual(['export']);
+  it('never offers Void once a self print request is approved and therefore finished', () => {
+    // r9 D8 retired `ready`: a self print request ENDS at `approved`, so the
+    // only thing left is the export. The office half of this matrix, and the
+    // `ready`-less status set, live in `priceTagRequestActions.test.ts`.
+    expect(priceTagActions('approved', 'user-1', 0, 'self').map((a) => a.action)).toEqual([
+      'export',
+    ]);
   });
 });
 
@@ -277,6 +316,15 @@ describe('PriceTagRequestDetail', () => {
     const gear = within(screen.getByTestId('gear-menu'));
     expect(gear.getByRole('menuitem', { name: /Mark design ready/ })).toBeTruthy();
     expect(gear.getByRole('menuitem', { name: /Void/ })).toBeTruthy();
+  });
+
+  it('offers "Check product data" from the gear (owner round finding 3)', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+
+    await screen.findByTestId('gear-menu');
+    const gear = within(screen.getByTestId('gear-menu'));
+    expect(gear.getByRole('menuitem', { name: /Check product data/ })).toBeTruthy();
   });
 
   it('has no gear at all when nothing is legal', async () => {
@@ -333,7 +381,7 @@ describe('PriceTagRequestDetail', () => {
     expect(await screen.findByText('No sales order files attached.')).toBeTruthy();
   });
 
-  it('asks before voiding rather than voiding on the click', async () => {
+  it('voids on a countdown rather than asking first', async () => {
     mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
     renderDetail();
 
@@ -341,9 +389,47 @@ describe('PriceTagRequestDetail', () => {
     const gear = within(screen.getByTestId('gear-menu'));
     fireEvent.click(gear.getByRole('menuitem', { name: /Void/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Void this request?')).toBeTruthy();
-    });
+    expect(voidStart).toHaveBeenCalledTimes(1);
+    // The retired behaviour, named so it cannot come back: no dialog, and
+    // nothing that asks a question before the action runs.
+    expect(screen.queryByText('Void this request?')).toBeNull();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('parks the void against the right action key and entity', async () => {
+    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+    renderDetail();
+    await screen.findByTestId('gear-menu');
+
+    expect(useDeferredActionInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionKey: 'price_tag_request.void',
+        entityType: 'price_tag_request',
+        entityId: 'req-1',
+      }),
+    );
+  });
+
+  it('shows the countdown and its Cancel on the record card while it runs', async () => {
+    voidIsPending = true;
+    voidCountdown = (
+      <button type="button" data-testid="void-countdown" onClick={voidCancel}>
+        Voiding in 10s - Cancel
+      </button>
+    );
+    try {
+      mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
+      renderDetail();
+
+      const countdown = await screen.findByTestId('void-countdown');
+      expect(countdown).toHaveTextContent('Cancel');
+
+      fireEvent.click(countdown);
+      expect(voidCancel).toHaveBeenCalledTimes(1);
+    } finally {
+      voidIsPending = false;
+      voidCountdown = null;
+    }
   });
 
   // AC-S1-6: the response's attachments carry `entity_attachment_service
@@ -548,6 +634,76 @@ describe('PriceTagRequestDetail - tabs', () => {
       await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
     ).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Actions' })).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// S7 - the collection dates are read in Malaysia, off a naive UTC timestamp
+// ---------------------------------------------------------------------------
+
+describe('the collection subline (AC-S3-8)', () => {
+  /**
+   * FastAPI serialises a naive `datetime` with no zone: `2026-09-14T16:30:00`
+   * means 16:30 UTC, which is 00:30 on the 15th in Malaysia. The card builds
+   * its dates with `new Date(...)` (which reads that string as LOCAL time) and
+   * `formatDate` (which reads LOCAL getters), so the day printed is whatever
+   * the reader's browser happens to be set to - and on the one boundary that
+   * matters it is the wrong day.
+   *
+   * TZ is pinned so the assertion means the same thing on this machine
+   * (Asia/Kuala_Lumpur) and on a CI runner (UTC).
+   */
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = 'UTC';
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  it('reads a naive backend timestamp as UTC and prints the Malaysia date', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'ready_for_collection',
+        print_by: 'office',
+        ready_for_collection_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    // 16:30 UTC on the 14th is 00:30 on the 15th in Malaysia.
+    expect(await screen.findByText(/Ready since 15\/09\/2026/)).toBeInTheDocument();
+  });
+
+  it('dates the auto-collect the same way, seven days on', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'ready_for_collection',
+        print_by: 'office',
+        ready_for_collection_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    expect(
+      await screen.findByText(/auto-collects 22\/09\/2026/),
+    ).toBeInTheDocument();
+  });
+
+  it('dates a collected request in Malaysia too', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({
+        status: 'collected',
+        print_by: 'office',
+        collected_at: '2026-09-14T16:30:00',
+      } as never),
+    );
+
+    renderDetail();
+
+    expect(await screen.findByText(/Collected 15\/09\/2026/)).toBeInTheDocument();
   });
 });
 

@@ -40,11 +40,13 @@ from app.services.price_tag_request_service import (
     STATUS_NEW,
     STATUS_PROOF_READY,
     STATUS_READY,
+    STATUS_READY_FOR_COLLECTION,
     STATUS_REJECTED,
     STATUS_VOID,
     VALID_TRANSITIONS,
 )
 from app.services.portal_form_visibility_service import resolve_visible_form_types
+from tests import _ptag_r9_seed
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +382,9 @@ class TestStatusTransitions:
                 "lines": [],
             },
         )
+        # r9 D8: terminality is request-aware. An OFFICE print keeps `approved`
+        # in the middle of the graph, which is what every edge below assumes.
+        req.print_by = "office"
         if status != STATUS_NEW:
             req.status = status
             db.flush()
@@ -400,10 +405,15 @@ class TestStatusTransitions:
         result = PriceTagRequestService.transition_status(db, req.id, STATUS_APPROVED)
         assert result.status == STATUS_APPROVED
 
-    def test_approved_to_ready(self, db: Session):
+    def test_approved_to_ready_for_collection(self, db: Session):
+        """r9 D8 retired `ready`. An office print carries on from `approved` to
+        the hand-over instead; a self print ends there (asserted in
+        tests/test_price_tag_print_collection.py)."""
         req = self._create_request(db, STATUS_APPROVED)
-        result = PriceTagRequestService.transition_status(db, req.id, STATUS_READY)
-        assert result.status == STATUS_READY
+        result = PriceTagRequestService.transition_status(
+            db, req.id, STATUS_READY_FOR_COLLECTION
+        )
+        assert result.status == STATUS_READY_FOR_COLLECTION
 
     def test_proof_ready_to_changes_requested(self, db: Session):
         req = self._create_request(db, STATUS_PROOF_READY)
@@ -1285,6 +1295,9 @@ class TestSubmitCompleteness:
             company_id=_SORENTO_COMPANY_ID,
             data={},
         )
+        # r9 D7: the print guard is refused on its own, BEFORE the list, so a
+        # test about the list has to have answered it.
+        req.print_by = "office"
         db.flush()
 
         with pytest.raises(Exception) as exc_info:
@@ -1315,6 +1328,8 @@ class TestSubmitCompleteness:
                 "lines": [{"line_type": "product", "product_id": product.id}],
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         PriceTagRequestService.validate_submittable(req)
@@ -1330,6 +1345,8 @@ class TestSubmitCompleteness:
                 "needed_by_date": date.today() + timedelta(days=7),
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         with pytest.raises(Exception) as exc_info:
@@ -1350,6 +1367,8 @@ class TestSubmitCompleteness:
                 "lines": [{"line_type": "product", "product_id": product.id}],
             },
         )
+        # r9 D7: submit refuses without a print choice.
+        req.print_by = "office"
         db.flush()
 
         # No exception is the assertion.
@@ -1409,3 +1428,14 @@ class TestSubmitCompleteness:
             "No package defined",
             "No package defined",
         ]
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)

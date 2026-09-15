@@ -26,6 +26,12 @@ fresh list). The dialog is titled **Plan a container**:
 With a document chosen, click **Test** to read the file without writing anything, then
 **Confirm and start plan**. With **No file**, click **Start plan** directly.
 
+If the supplier's stock list merges a cell such as 品名 (product name), 商标 (brand), 规格
+(spec), a remark, or 体积 (cbm per unit) across several model rows, every row in that block now
+reads the merged value, so **Supplier says** on the **Supplier codes** tab shows the full
+description instead of only what the top row held. A merged quantity, such as packed or
+unfinished stock, still counts once, on the first row of the block, not once per row it covers.
+
 ## The four tabs
 
 Once a plan is open, it has four tabs: **General** (metadata), **Lines** (the default), **Supplier codes**, and
@@ -53,6 +59,8 @@ The **General** tab (the first) holds the plan metadata as a card with five fiel
   **Product-Suppliers**.
 * **A file whose codes have not been matched yet lists no rows at all**, until those codes are
   matched on the **Supplier codes** tab.
+* **A product or set with no open sales-order need still appears in the same table**, at the
+  bottom, muted and with no rank number, rather than in a separate collapsed line.
 
 ### Stat cards
 
@@ -65,7 +73,7 @@ These summarise every row on the plan and are not affected by the **Search produ
 The card heading reads "What to ask *\<supplier\>* to cover *\<window\>*" (or "... for" when the
 window is every open order). Beside it, a **Table** / **Schedule** toggle switches between the
 row list and a schedule view of the same rows. A **Search product** box sits next to the
-toggle: typing filters the ranked rows, the folded rows, and the Schedule view by product code,
+toggle: typing filters the whole table and the Schedule view by product code,
 product name, or set code (case-insensitive, matching anywhere in the text). The stat cards and
 **Save (N)** are not affected by what is typed here. Clearing the box restores every row; no
 match shows "No product matches" in the table body instead of rows.
@@ -73,8 +81,12 @@ match shows "No product matches" in the table body instead of rows.
 ### Columns
 
 Every column header sorts by clicking it, except **Remarks** (a free-text field with no natural
-order). **Suggested qty** sorts by the quantity currently shown for the row, so "what am I
-asking most of" is one click away even when you have typed over the engine's own figure.
+order). **Suggested qty** is read-only: it always shows the system's own figure (the open need
+minus on hand minus incoming SPO minus incoming packing list, never below zero), and hovering
+the cell shows the working. **Requested qty**, right beside it, is where you type what to
+actually ask the supplier for; sorting either column orders by what that column shows. Changing
+Requested qty never changes Suggested qty, so the original suggestion stays visible. A cancelled
+plan shows both columns as plain text.
 
 * **Product** shows the item code once. The product name only appears underneath when it
   differs from the code - a row whose name and code are the same no longer repeats itself. A

@@ -55,6 +55,11 @@
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { PrintBy } from '@/lib/dealer-kit/print-collection';
+import {
+  designPayloadFromResponse,
+  type TagSheetDesignPayload,
+} from '@/lib/dealer-kit/design-payload';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -170,6 +175,17 @@ export interface PriceTagRequestSummary {
   assigned_to_id: string | null;
   assigned_to_name: string | null;
   contact_name: string | null;
+  /** Who prints (r9 D7). Null on every row created before the choice existed. */
+  print_by?: PrintBy | null;
+  /** Which review round the design is on (D4). Pins from an earlier round
+   *  render grey: they were about a proof that has since been redrawn. */
+  review_round?: number;
+  /** When the office said the tags were ready to pick up (D9). */
+  ready_for_collection_at?: string | null;
+  collected_at?: string | null;
+  collected_by_name?: string | null;
+  /** True when the auto-collect sweep closed it rather than a person (D11). */
+  collected_auto?: boolean;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {
@@ -255,6 +271,59 @@ export async function getPriceTagRequest(
     throw new Error(await extractApiError(response, 'Failed to load price tag request'));
   }
   return response.json();
+}
+
+/**
+ * Change the print choice from the office side (r9 D7).
+ *
+ * ```
+ * PATCH /api/v1/dealer-kit/price-tag-requests/{id}   { print_by }
+ *   200 the updated request. 409 once the request is terminal.
+ * ```
+ *
+ */
+export async function updatePriceTagPrintBy(
+  id: string,
+  printBy: PrintBy | null,
+): Promise<void> {
+  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ print_by: printBy }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to update the request'));
+  }
+}
+
+/**
+ * The office has printed: the tags are on the counter (r9 D8/D9).
+ *
+ * ```
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/transition
+ *   { status: "ready_for_collection" }
+ *   200 { status, ready_for_collection_at }
+ *   409 unless the request is `approved` AND print_by = "office".
+ * ```
+ *
+ */
+export async function markReadyForCollection(id: string): Promise<void> {
+  await transitionPriceTagRequest(id, 'ready_for_collection');
+}
+
+/**
+ * Somebody took them (r9 D8/D9).
+ *
+ * ```
+ * POST /api/v1/dealer-kit/price-tag-requests/{id}/transition
+ *   { status: "collected" }
+ *   200 { status, collected_at, collected_by_name }
+ *   409 unless the request is `ready_for_collection`.
+ * ```
+ *
+ */
+export async function markCollected(id: string): Promise<void> {
+  await transitionPriceTagRequest(id, 'collected');
 }
 
 export async function claimPriceTagRequest(
@@ -461,6 +530,41 @@ export async function resolveRequestTags(
     throw new Error(await extractApiError(response, 'Failed to resolve tag prices'));
   }
   return response.json();
+}
+
+/**
+ * The design AND everything it needs to draw itself (r9 S1/D1-D3).
+ *
+ * ## Expected API contract. Full shape: `lib/dealer-kit/design-payload.ts`.
+ *
+ * ```
+ * GET /api/v1/dealer-kit/price-tag-requests/{id}/design
+ *   200 { page_id, version, source: "draft" | "version", doc, lines[],
+ *         assets:  { [assetId]: signedUrl },
+ *         images:  { [attachmentId]: signedUrl },
+ *         fonts:   [{ name, family, url }] }
+ *   404 while the request has no page yet.
+ * ```
+ *
+ * Draft-first (B1), so the detail page shows what the designer has actually
+ * drawn rather than the last deliberate save - the office reads its own
+ * work-in-progress, the salesperson reads the version that was sent to them.
+ *
+ * ONE call: the route resolves the lines and the three media maps itself, from
+ * the same resolver the PDF reads, so the section never reaches for the asset
+ * library route marketing has no permission for.
+ */
+export async function getRequestDesignPayload(
+  requestId: string,
+): Promise<TagSheetDesignPayload | null> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(requestId)}/design`,
+  );
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the design'));
+  }
+  return designPayloadFromResponse(await response.json());
 }
 
 // ---------------------------------------------------------------------------

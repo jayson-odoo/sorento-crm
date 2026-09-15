@@ -42,8 +42,10 @@ import {
   ChevronLeft,
   Check,
   Copy,
+  History,
   LayoutTemplate,
   Loader2,
+  MessageSquare,
   Eye,
   Maximize2,
   Minimize2,
@@ -111,6 +113,26 @@ import {
   type PriceTagRequestLine,
   type PriceTagRequestTag,
 } from '../../../../services/priceTagRequestService';
+import { listReviewComments } from '../../../../services/priceTagReviewService';
+import {
+  listTagDataChanges,
+  listRequestVersions,
+  getRequestVersion,
+  recheckTagDataChanges,
+  resolveTagPin,
+  restoreRequestVersion,
+} from '../../../../services/priceTagDataService';
+import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
+import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
+import DesignLightbox from '@/components/dealer-kit/DesignLightbox';
+import type { TagSheetDesignPayload } from '@/lib/dealer-kit/design-payload';
+import {
+  canvasPinsForTag,
+  openComments,
+  openCountByTag,
+  type ReviewComment,
+} from '@/lib/dealer-kit/review-comments';
 import {
   listPublishedTemplates,
   publishTemplate,
@@ -233,6 +255,24 @@ export function RequestTagDesigner({
    */
   const bulkUndoRef = useRef<Record<string, PlacedTag> | null>(null);
 
+  // The salesperson's pinned change requests (r9 S2/D6). Fetched once: they
+  // only change when a round is sent, which happens on the portal.
+  const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  /** The `Comments` toolbar toggle. Armed by the first open pin (D6). */
+  // Armed BY an open pin (D6), not on by default: a round that has been worked
+  // off leaves markers sitting over the artwork marketing is now editing, with
+  // a count of zero beside them, and that has to be turned off by hand every
+  // time the designer opens. Set when the comments arrive, since at mount there
+  // are none to count.
+  const [commentsVisible, setCommentsVisible] = useState(false);
+  /** The request's design history (r9 S5/D19). */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  /** The version being read, and ITS own document - never the live one
+   *  (matches `RequestDesignSection`'s own History View). */
+  const [viewing, setViewing] = useState<{
+    version: number;
+    payload: TagSheetDesignPayload;
+  } | null>(null);
   const [saving, setSaving] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [printing, setPrinting] = useState(false);
@@ -288,42 +328,93 @@ export function RequestTagDesigner({
     loadPrices();
   }, [loadPrices]);
 
-  // Re-resolve line data when the designer regains focus (S2, AC-S2-1/2/3): a
-  // barcode (or any other field) edited on the product in another tab must
-  // reach an open Barcode layer without a reload. Silent on purpose - this
-  // swaps `resolvedRows` on success and does nothing else, so a working canvas
-  // never flashes the loading state and a failed background call never
-  // replaces it with an error; `loadPrices` above already owns both of those
-  // for the real, user-visible load.
+  // The change requests the salesperson pinned on the last proof (r9 S2/D6).
+  // A failure leaves the canvas without markers rather than without a canvas.
+  useEffect(() => {
+    let cancelled = false;
+    listReviewComments(request.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setReviewComments(rows);
+        setCommentsVisible(openComments(rows).length > 0);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [request.id]);
+
+  // The r4 refresh-on-focus is GONE (r9 S5/D18).
   //
-  // `focus` and `visibilitychange` -> `visible` fire together on most browsers
-  // (switching back to this tab), so a 1s guard collapses the pair into one
-  // resolve call rather than two.
-  const lastRefreshRef = useRef(0);
-  const refreshPricesSilently = useCallback(() => {
-    const now = Date.now();
-    if (now - lastRefreshRef.current < 1000) return;
-    lastRefreshRef.current = now;
-    resolveRequestTags(request.id)
-      .then((rows) => setResolvedRows(rows))
+  // It re-resolved every tag whenever this tab regained focus, which is the
+  // exact behaviour the product-data pin exists to stop: a price edited in
+  // master data would walk onto an open canvas with nobody deciding. What
+  // replaces it is the red dot on the LINES rail and the Review dialog below -
+  // the same change, shown, with Keep current and Update tag as the two ways
+  // out of it.
+
+  // What master data has moved under the pinned tags (r9 S5/D18).
+  const [dataChanges, setDataChanges] = useState<TagDataChangeSet[]>([]);
+  const [reviewTagId, setReviewTagId] = useState<string | null>(null);
+
+  const loadDataChanges = useCallback(() => {
+    listTagDataChanges(request.id)
+      .then(setDataChanges)
       .catch(() => {
-        // A background refresh that fails leaves the canvas showing whatever
-        // it already had - the next focus/visibility change tries again.
+        // No diff is the same as no changes as far as this canvas is concerned.
       });
   }, [request.id]);
 
   useEffect(() => {
-    const onFocus = () => refreshPricesSilently();
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') refreshPricesSilently();
-    };
-    window.addEventListener('focus', onFocus);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-    return () => {
-      window.removeEventListener('focus', onFocus);
-      document.removeEventListener('visibilitychange', onVisibilityChange);
-    };
-  }, [refreshPricesSilently]);
+    loadDataChanges();
+  }, [loadDataChanges]);
+
+  const changesByTag = useMemo(() => {
+    const map = new Map<string, TagDataChangeSet>();
+    for (const set of dataChanges) {
+      if (set.changes.length > 0) map.set(set.tag_id, set);
+    }
+    return map;
+  }, [dataChanges]);
+
+  /**
+   * "Check product data" (owner round finding 3): a Keep silences ONE drift
+   * by recording its hash, and there was no way to ask again, so a red dot
+   * silenced once stayed silent forever - even for a later, unrelated edit
+   * that would have tripped the gate on its own. This re-arms every tag.
+   */
+  const recheckDataChanges = useCallback(async () => {
+    try {
+      const rows = await recheckTagDataChanges(request.id);
+      setDataChanges(rows);
+      const changed = rows.filter((set) => set.changes.length > 0).length;
+      toast.success(
+        changed > 0
+          ? `${changed} tag${changed === 1 ? '' : 's'} changed`
+          : 'Product data is up to date',
+      );
+    } catch {
+      toast.error('Could not check product data');
+    }
+  }, [request.id]);
+
+  const decideTagPin = useCallback(
+    async (tagId: string, action: 'update' | 'keep') => {
+      try {
+        await resolveTagPin(request.id, tagId, action);
+        loadDataChanges();
+        if (action === 'update') {
+          // The pin moved, so the canvas has to redraw against the new values.
+          const rows = await resolveRequestTags(request.id);
+          setResolvedRows(rows);
+        }
+        toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
+      } catch {
+        toast.error('Could not apply that decision');
+      }
+    },
+    [request.id, loadDataChanges],
+  );
 
   /** One resolved row per TAG, keyed by tag id (D3). */
   const resolved = useMemo(() => {
@@ -1075,6 +1166,26 @@ export function RequestTagDesigner({
     ],
   );
 
+  // -- Change requests (r9 S2/D6) ---------------------------------------------
+
+  /** Open pins per TAG: the LINES rail badge, and the CTA's own count. */
+  const openPinsByTag = useMemo(
+    () => openCountByTag(reviewComments),
+    [reviewComments],
+  );
+  const openPinCount = useMemo(
+    () => [...openPinsByTag.values()].reduce((sum, count) => sum + count, 0),
+    [openPinsByTag],
+  );
+  /** What the canvas draws: this tag's pins, or nothing while toggled off. */
+  const canvasPins = useMemo(
+    () =>
+      commentsVisible
+        ? canvasPinsForTag(reviewComments, selectedRequestTagId)
+        : [],
+    [commentsVisible, reviewComments, selectedRequestTagId],
+  );
+
   // -- Render ----------------------------------------------------------------
 
   // The canvas toolbar's own right-end group (S7): Full screen, the
@@ -1084,6 +1195,33 @@ export function RequestTagDesigner({
   // below, since ArrangeSheetView has no canvas toolbar of its own to
   // move them into (AC-S7-5 holds for free the same way).
   const toolbarTrailing: ToolbarTrailingAction[] = [
+    // Only when there is something to show: an empty toggle is a control that
+    // does nothing on most requests.
+    ...(reviewComments.length > 0
+      ? [
+          {
+            id: 'comments',
+            icon: MessageSquare,
+            label: commentsVisible
+              ? `Hide change requests (${openPinCount} open)`
+              : `Show change requests (${openPinCount} open)`,
+            onClick: () => setCommentsVisible((visible) => !visible),
+            active: commentsVisible,
+          } satisfies ToolbarTrailingAction,
+        ]
+      : []),
+    {
+      id: 'check-product-data',
+      icon: RefreshCw,
+      label: 'Check product data',
+      onClick: () => void recheckDataChanges(),
+    },
+    {
+      id: 'history',
+      icon: History,
+      label: 'History',
+      onClick: () => setHistoryOpen(true),
+    },
     {
       id: 'full-screen',
       icon: focus ? Minimize2 : Maximize2,
@@ -1127,6 +1265,9 @@ export function RequestTagDesigner({
         resolved={resolved}
         pricesStatus={pricesStatus}
         tags={tags}
+        openPinsByTag={openPinsByTag}
+        changedTagIds={new Set(changesByTag.keys())}
+        onReviewTag={setReviewTagId}
         selectedRequestTagId={selectedRequestTagId}
         onSelect={handleSelectTag}
         onUseTemplate={setPickerLineId}
@@ -1257,7 +1398,9 @@ export function RequestTagDesigner({
             ) : (
               <Eye className="mr-1 size-3.5" />
             )}
-            Mark design ready
+            {openPinCount > 0
+              ? `Mark design ready (${openPinCount} open)`
+              : 'Mark design ready'}
           </Button>
         )}
       </div>
@@ -1299,6 +1442,7 @@ export function RequestTagDesigner({
               hideSaveBar
               docId={selectedTag.id}
               toolbarTrailing={toolbarTrailing}
+              reviewPins={canvasPins}
             />
           ) : (
             <CanvasMessage text="Preparing this line..." />
@@ -1322,6 +1466,54 @@ export function RequestTagDesigner({
           />
         )}
       </div>
+
+      <ProductDataReviewDialog
+        open={reviewTagId !== null && changesByTag.has(reviewTagId)}
+        onOpenChange={(next) => {
+          if (!next) setReviewTagId(null);
+        }}
+        changeSet={reviewTagId ? (changesByTag.get(reviewTagId) ?? null) : null}
+        onDecide={(action) =>
+          reviewTagId ? decideTagPin(reviewTagId, action) : Promise.resolve()
+        }
+      />
+
+      <RequestVersionsSheet
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        docNumber={request.doc_number}
+        load={() => listRequestVersions(request.id)}
+        onView={(version) => {
+          void getRequestVersion(request.id, version)
+            .then((versionPayload) =>
+              setViewing({ version, payload: versionPayload }),
+            )
+            .catch(() => toast.error('Could not open that version'));
+        }}
+        onRestore={async (version) => {
+          await restoreRequestVersion(request.id, version);
+          const rows = await resolveRequestTags(request.id);
+          setResolvedRows(rows);
+          toast.success(`Restored v${version}`);
+        }}
+      />
+
+      {/* A version, read-only, in the same lightbox the detail page uses (and
+          the CRM detail's own History View draws it: `RequestDesignSection`).
+          A request version IS a whole tag sheet document, so it answers the
+          same payload a live design does - drawing today's draft under a
+          version's name would tell the reader that v1 looked like something
+          it never looked like. */}
+      {viewing && (
+        <DesignLightbox
+          open
+          onOpenChange={(next) => {
+            if (!next) setViewing(null);
+          }}
+          title={`${request.doc_number} / version ${viewing.version}`}
+          payload={viewing.payload}
+        />
+      )}
 
       <TemplatePickDialog
         open={pickerLineId !== null}
@@ -1398,6 +1590,9 @@ function LinesRail({
   resolved,
   pricesStatus,
   tags,
+  openPinsByTag,
+  changedTagIds,
+  onReviewTag,
   selectedRequestTagId,
   onSelect,
   onUseTemplate,
@@ -1414,6 +1609,11 @@ function LinesRail({
   resolved: Map<string, LineTagData>;
   pricesStatus: 'loading' | 'loaded' | 'error';
   tags: Record<string, PlacedTag>;
+  /** Tag id -> open change requests, for the badge (r9 S2/D6). */
+  openPinsByTag: Map<string, number>;
+  /** Tags whose product data has moved under the pin (r9 S5/D18). */
+  changedTagIds: Set<string>;
+  onReviewTag: (tagId: string) => void;
   selectedRequestTagId: string | null;
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
@@ -1521,7 +1721,9 @@ function LinesRail({
                     )}
                   </div>
                   {/* The tags under the line: one by default, N after a split
-                      (D3). Each is what the canvas actually edits. */}
+                      (D3). Each is what the canvas actually edits, so the r9
+                      badges - open change requests, product data moved - hang
+                      off the TAG rather than off the line above them. */}
                   <div className="border-t">
                     {lineTags.map((tag) => (
                       <TagRailRow
@@ -1533,6 +1735,9 @@ function LinesRail({
                         busy={busyTagId === tag.id}
                         canRemove={lineTags.length > 1}
                         removing={removingTagId === tag.id}
+                        openPins={openPinsByTag.get(tag.id) ?? 0}
+                        changed={changedTagIds.has(tag.id)}
+                        onReview={onReviewTag}
                         onSelect={onSelect}
                         onUseTemplate={onUseTemplate}
                         onSplit={onSplit}
@@ -1568,6 +1773,9 @@ function TagRailRow({
   busy,
   canRemove,
   removing,
+  openPins,
+  changed,
+  onReview,
   onSelect,
   onUseTemplate,
   onSplit,
@@ -1583,6 +1791,11 @@ function TagRailRow({
    *  never designed, so the server refuses that one (AC-S3-6). */
   canRemove: boolean;
   removing: boolean;
+  /** Open change requests pinned on THIS tag, for the badge (r9 S2/D6). */
+  openPins: number;
+  /** Master data has moved under this tag's pin (r9 S5/D18). */
+  changed: boolean;
+  onReview: (tagId: string) => void;
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
   onSplit: (tagId: string, role: string) => void;
@@ -1616,6 +1829,14 @@ function TagRailRow({
             </span>
           ) : null}
           {designed && <Check className="size-3 shrink-0 text-emerald-600" />}
+          {openPins > 0 && (
+            <span
+              className="ml-auto flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-500 text-2xs font-semibold text-white"
+              title={`${openPins} open change request${openPins === 1 ? '' : 's'}`}
+            >
+              {openPins}
+            </span>
+          )}
         </div>
         <p className="mt-0.5 truncate text-2xs text-muted-foreground">
           Qty {tag.quantity}
@@ -1664,6 +1885,17 @@ function TagRailRow({
         </div>
       )}
       <div className="absolute right-1 top-1 flex items-center">
+        {/* Outside the row button, like Use template beside it: a button inside
+            a button is invalid HTML, and React says so in the console. */}
+        {changed && (
+          <button
+            type="button"
+            className="mr-1 size-2.5 rounded-full bg-destructive"
+            title="Product data changed - review"
+            aria-label={`Review product data changes on ${data?.code || 'this tag'} ${tag.label}`}
+            onClick={() => onReview(tag.id)}
+          />
+        )}
         <button
           type="button"
           className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"

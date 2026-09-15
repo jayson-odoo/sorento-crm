@@ -166,6 +166,20 @@ function submittedLines() {
   return mockCreate.mock.calls[0][0].lines;
 }
 
+/**
+ * r9 D7/AC-S3-1: `Printing` has no default and Submit refuses without it, so
+ * every test here that expects the POST to happen has to answer it first.
+ * (Merge reconciliation: this spec was written before that control existed.)
+ */
+async function pickPrinting() {
+  if (!screen.queryByRole('radio', { name: 'Office prints' })) {
+    fireEvent.click(
+      screen.getByRole('button', { name: /Additional Information/ }),
+    );
+  }
+  fireEvent.click(await screen.findByRole('radio', { name: 'Office prints' }));
+}
+
 // ---------------------------------------------------------------------------
 // AC-S2-1 - one combo fills in on pick
 // ---------------------------------------------------------------------------
@@ -206,6 +220,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     await pickTheCabinet();
     await screen.findByText(MIRROR.code);
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
 
@@ -295,6 +310,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
       ).toBeNull(),
     );
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(submittedLines()[0].parts[1]).toEqual({
@@ -324,6 +340,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
       await screen.findByText('Marketing will prepare one tag per option'),
     ).toBeInTheDocument();
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(submittedLines()[0].parts[1].product_id).toBeNull();
@@ -354,6 +371,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(screen.queryByText(/Undo/)).toBeNull();
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(
@@ -370,6 +388,7 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     const picker = await screen.findByLabelText('Add part');
     fireEvent.change(picker, { target: { value: `product:${MIRROR.product_id}` } });
 
+    await pickPrinting();
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     const [line] = submittedLines();

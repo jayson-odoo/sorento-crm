@@ -28,6 +28,7 @@ from app.models.resources import Attachment, AttachmentType
 from app.services.portal_service import PORTAL_ATTACHMENT_TYPE_CODE
 from app.services.price_tag_request_service import PriceTagRequestService
 from tests._pg_fixture import blank_session, unique_code
+from tests import _ptag_r9_seed
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 _ATTACHMENTS_BASE = "/api/v1/public/portal/attachments"
@@ -336,3 +337,14 @@ class TestAttachmentGateKeysOffPolicyNotDraftExistence:
             headers={"X-Portal-Token": token.token},
         )
         assert upload_res.status_code == 409, upload_res.text
+
+
+@pytest.fixture(autouse=True)
+def no_respond(monkeypatch):
+    """S8: no test run reaches api.respond.io. See `_ptag_r9_seed.block_respond`.
+
+    Every transition here goes through the real notifier, which sends over the
+    network unless something stops it - the run log used to carry a live
+    ``Window check: Respond.io list_messages failed`` per transition.
+    """
+    return _ptag_r9_seed.block_respond(monkeypatch)
