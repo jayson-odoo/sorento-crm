@@ -111,3 +111,258 @@ replaces `head/route.py`) has a stable shape - porting against a module that
 `engine.run_tail` does not yet call for most paths (measured this session) would be
 guessing at a contract line the coder has not built yet, which is exactly what
 "write to the test list, do not invent scope" warns against.
+
+## Execution log (AC-1592, this session, continuing from `a5419f97e`)
+
+Executing the 15 pending verdicts above. One row updated per action; the analysis
+above is left as-is (historical record) rather than rewritten in place.
+
+- **`test_dry_run_isolation.py` - URGENT, done (`8a64a713b`).** Only one of its nine
+  classes used the doomed import (`TestLiveTailSessionPatchAbsentIsPreserved`,
+  finding 6). Confirmed the rewritten `engine.py::run_tail` has no "sealed reply" /
+  `session_patch` concept at all - it builds the five-key payload directly from
+  `State`/`Pending` every call, so the absent-vs-explicit-empty ambiguity that class
+  existed to guard cannot occur in the new write site. RETIRED that one class (rule
+  named in the file and the commit body); the other 8 classes (findings 1-5,
+  escalation preview, canned words) are unrelated to the doomed import and were not
+  touched. File now collects; 13/13 pass.
+
+- **`test_output_exchange_unit.py` - PORT, done, RED for real reasons.** New file
+  `test_rearch_port_output_exchange_unit.py`. Both properties probed directly
+  against the real current code (no mocking): (1) the Unicode-dash fold - the old
+  normaliser moved conceptually to `resolve_gate._PRODUCT_FOLD`/`_token_of`, but
+  that regex is ASCII-only (`[-\s]+`), so a MINUS SIGN (U+2212) or EN DASH (U+2013)
+  in a product code's raw text now survives into the resolver's match token
+  unchanged - **exec 12053189's original production incident is reproduced in the
+  new architecture**, confirmed by direct call to `_token_of`. (2) The F3
+  domain-hint enum guard - `contracts.coerce_domain_hint` exists but has no call
+  site anywhere in this worktree (`grep -rn coerce_domain_hint app/services/
+  chatbot/` finds only its own definition and one comment); `turn/apply.py` reads
+  `verdict.get("domain_hint")` raw into `Plan.domains` with no coercion - confirmed
+  by direct call to `apply()` with `domain_hint="purchasing"` (F3's own incident
+  value), which survives straight through. Both are genuine engine regressions
+  found by this triage, not fixture bugs - 3 of 5 ported tests RED for that reason,
+  2 control tests (declared domain, ASCII hyphen) green. **Not the tester's fix to
+  make** - flagged for the captain/coder. Original file retired (`git rm`), fully
+  superseded by the port.
+
+- **`test_ascii_digit_semantics.py` - RETIRE, not PORT (verdict revised from the
+  original table's PORT).** Its whole premise (Python regex must match JS `\d`/`\b`
+  semantics so a full-width digit does not get misread as a roster pick) no longer
+  applies: `turn/apply.py` is explicitly forbidden from calling `re.` or reading
+  `.text` at all (`test_rearch_s2_apply_is_pure.py::
+  test_turn_package_never_calls_re_dot_or_reads_dot_text`, a grep guard) - digit/pick
+  detection moved from Python regex-on-raw-text to the PARSER's own structured
+  `answers_open_question`/`reference_positions` fields (any script, any language, no
+  regex needed - D16, "the LLM does language, code does everything else"). Grepped
+  the whole `app/services/chatbot/` tree for the file's own regex names
+  (`_BARE_NUMBER_RE`, `_DIGITS_ONLY_RE`, `_ISO_DATE_RE`, `_SHORT_DATE_RE`,
+  `_OPTION_ANY_RE`): none exist anywhere outside the deleted module. The replacement
+  mechanism already has its own coverage: `test_rearch_s2_number_answers.py` (34
+  tests, confirmed green this session) exercises "a number against a pending roster
+  resolves through apply()" via the parser's structured fields. No equivalent seam
+  to port to, by design, not by omission - retired, rule named here and in the
+  commit body.
+
+- **`test_r3_dual_read.py` - RETIRE, not PORT (verdict revised).** R3's whole
+  purpose was bridging TWO in-flight representations of "an escalation offer is
+  open" during the OLD engine's own migration: a frozen string match
+  (`"would you like me to escalate"`) from before S2, and a `pending.kind ==
+  "escalation_offer"` marker after it - both readable because the CRM and n8n wrote
+  sessions at different moments during that migration. Grepped for `offer_is_open`
+  and `escalation_offer` across `turn/` and `engine.py`: zero hits. The rearch's own
+  `State`/`Pending` contract (`turn/state.py`, `turn/pending.py`,
+  `_turn_helpers.PENDING_KINDS`) is now the SOLE source of truth for what is
+  pending - an open escalation question is one of three real `Pending.kind` values
+  (`team_pick`, `member_offer`, `company_pick`, all routed to `escalate_offer` by
+  `turn/route.py::_ASK_BRANCH`), never a string or a migration-era marker to dual-
+  read. Already covered by `test_rearch_s3_team_pick_and_866.py` (7/7 green per the
+  prior session's handoff) and the S2 pending-state suite. Retired.
+
+- **`test_warehouse_entity.py` (442 lines, was PORT) - MIXED, split done.** Only ONE
+  of its five classes used the doomed import - `TestAWarehouseIsNotADocumentFilter`
+  (review S1, live exec 11818957: a warehouse code must not filter a document-list
+  tool). The other four classes (`TestGateKeepsWarehouse`,
+  `TestZeroEntitySpoAllocationAsksInsteadOfFanningOut`,
+  `TestTransformerEmitsWarehouseIds`, `TestProductAndWarehouseResolveTogether`) test
+  `gate.run_gate`/`lanes/business/fetch` directly (kept) and were untouched - all 11
+  still pass. The doomed class was removed and ported to
+  `test_rearch_port_warehouse_not_a_document_filter.py`, probed against
+  `gate.run_gate` (the same seam its four siblings use): a warehouse-only entity on
+  `resource_attachment` domain still shows up in `compatible_entities`
+  (`gate_reason: "domain 'resource_attachment' not in matrix; passing through
+  unscoped"`) - the drop the old `output_exchange` post-process did has **no
+  equivalent anywhere in the new pipeline** (grepped for `broaden_dropped`: zero
+  hits). RED for that real reason; the guard negative (warehouse kept on
+  `inventory`/`spo_allocation`) stays green. Third genuine regression found by this
+  triage, not the tester's fix to make.
+
+- **`test_s6c_answer_lane.py` (2774 lines) - MIXED, split done.** Exactly the two
+  functions the original triage row named
+  (`TestR1DemandQuantityAnswer::test_with_the_switch_on_...`/
+  `test_with_the_switch_off_...`) used `head.route.decide` (LOCAL imports, so the
+  file collected fine - 565 tests, zero errors - and only these two would have
+  errored when actually run). `turn/route.py`'s own docstring: stock_denied/
+  demand_qty "are decided from the CONTACT's own record before a plan exists at all
+  ... the engine settles those before it routes" - found the real seam,
+  `engine.py::_stock_check_denied`/`_demand_qty_missing` (both still exist,
+  unchanged in shape). Added one small `_decide()` staticmethod to the test class
+  that builds a real `Envelope` and calls those two functions directly (not a
+  hand-rolled reimplementation of the rule); swapped the two call sites. All three
+  tests in the class pass (the untouched third, `test_a_demand_the_stock_
+  covers...`, never used `decide` at all). The other ~2770 lines - every other
+  class in the file - untouched.
+
+- **`test_route_unit.py` (332 lines) - done, split into PORT + RETIRE + two more RED
+  findings.** New file `test_rearch_port_route_unit.py`. Six classes, six separate
+  calls:
+  - `TestStockDenialGate` - PORTED against `engine._stock_check_denied`/
+    `_demand_qty_missing` (same seam as the `test_s6c_answer_lane.py` port above).
+    One assertion FLIPPED not dropped: the old "missing field still throws" test
+    proved live's own un-guarded expression threw; the new function is guarded
+    (`jsc.get` on a `None` row) and returns denied instead of throwing - safer, so
+    the port asserts the safer behaviour.
+  - `TestIdeateNeverShadowedByHelpRequest` - PORTED, confirmed CORRECT:
+    `turn/apply.py::_HELP_EXEMPT_DOMAINS = {"portal_link", "ideate"}` reproduces
+    the fix exactly.
+  - `TestLadderLaziness` - RETIRED. Moot on both counts: the predicate no longer
+    throws (see above), and the new `route()` no longer emits domain-specific
+    branch kinds (`"check_promotion"` etc.) to assert on - `business_query` is now
+    generic across every domain.
+  - `TestItemShape` - RETIRED. Asserted `route_turn`'s n8n list-of-json-envelopes
+    shape; `route()` returns a plain string, no equivalent shape exists.
+  - `TestTierRePick`, `TestOutOfRangeMemberPickReprompsInsteadOfLowSignal` -
+    RETIRED, same rule as `test_ascii_digit_semantics.py` above: raw-text digit
+    matching against a stored `tier_menu`/roster is superseded by the parser's
+    structured `answers_open_question` (`tier_pick` is one of
+    `_turn_helpers.PENDING_KINDS`), already covered by
+    `test_rearch_s2_number_answers.py`.
+  - `TestBroadenAllNeverReadAsLowSignal`, `TestAFilterModificationIsNeverLowSignal`
+    - PORTED as RED findings, NOT retired. `turn/apply.py::_lane()` (grepped this
+    session: no `scope_intent`/`broaden_axis`/`member_offer_filter_modification`
+    reference anywhere) returns `"casual"` unconditionally for
+    `message_type in {casual, unknown, confirmation}` before any of these three
+    fields are consulted - reproducing BOTH owner console defects (item E, pass 4
+    item E) the old ladder had already fixed. Confirmed empirically via direct
+    `apply()` calls; two more RED tests, real regressions, not fixture bugs. 7
+    passed, 2 failed in the new file. Fourth and fifth genuine regressions found by
+    this triage pass, not the tester's fix to make.
+
+- **`test_crossdomain_ladder.py` (1358 lines) - done, one-line-swap PORT as
+  predicted.** Only `TestAC911SPOAllocationDomainNoLongerUnsupported`'s one test
+  used `head.route.DEFAULT_UNSUPPORTED_DOMAINS` (local import). Swapped to
+  `Policy.from_rows(...).domain(name).supported`, fed by
+  `turn/policy_rows.py::DEFAULT_DOMAIN_ROWS` (the same seed a migration and a
+  blank-schema fixture both fall back to). Confirmed: `spo_allocation.supported is
+  True`, `goods_receive.supported is False` - AC-911 holds under the new Policy
+  object. File collects clean (66 tests), the other ~1350 lines (kept `lanes/
+  business` ladder logic) untouched.
+
+- **`test_s8a_hardening.py` (657 lines) - done, split two ways.** Only
+  `TestPostProcessEmissionValidation` (two tests) used the doomed top-level import
+  (`from ... head.output_exchange import ParserOutputError, post_process`, which is
+  why this file WAS one of the 12 hard collection errors). Everything else
+  (`TestOutboundUrlGuardHardening`, `TestWorkspaceRoutePermissionsNotWidened`,
+  `TestChatbotRetryKeyWriteOnly`, `TestPromptOverridesAC807`,
+  `TestATestEnvelopeIsNeverADuplicateOfALiveTurn`) is independent and untouched -
+  confirmed by spot-run (`TestOutboundUrlGuardHardening`, 7/7 pass) and full-file
+  collection (19 tests, zero errors).
+  - `test_a_real_capture_with_no_broaden_axis_key_replays_cleanly` - RETIRED,
+    superseded by `test_turn_replay.py` (replays the same class of real capture end
+    to end through `engine.run_turn` for the whole corpus now, not one fixture
+    node-by-node).
+  - `test_a_right_key_wrong_container_type_fails_naming_key_and_type` - PORTED as
+    RED, low severity. Grepped: neither `_assert_emission` nor `ParserOutputError`
+    exists anywhere in `app/services/chatbot/` today. `head/parser.py::parse` now
+    passes `json_schema=PARSE_OUTPUT_JSON_SCHEMA` to the LLM provider, so a REAL
+    call cannot return a malformed container type (enforced server-side) - this
+    guard is now only reachable via a test-harness-injected malformed mock, not
+    live traffic. Probed `apply()` directly: an EMPTY malformed dict degrades
+    silently to `[]` (falsy-or fallback, no error); a NON-empty one raises an
+    unnamed `AttributeError` - still a loud failure, just not a named one. Sixth
+    finding this triage pass, flagged as LOW severity (not reachable from a real
+    LLM response) rather than escalated at the same level as the other five.
+
+- **`test_load_script_seeding.py` (531 lines) - done, RETIRED the one doomed
+  class.** Only `TestQuestionAgentCoverage` used `head.output_exchange.
+  derive_routing` (a pure Python domain->agent table). Grepped: every remaining
+  reference to `derive_routing` anywhere in `app/services/chatbot/` is a COMMENT
+  citing it as historical rationale, never a live definition - the mechanism moved
+  to the PARSER's own `routing.suggested_agent` emission (prompt-driven, read via
+  `jsc.get(verdict.get("routing"), "suggested_agent")` in `engine.py`/
+  `turn_runtime.py`/`lanes/escalation.py`/`lanes/canned.py`);
+  `contracts.SUGGESTED_AGENTS` is only the allow-list enum, not a domain->agent
+  map. Nothing left in Python to statically compare `ACCESS_AGENT_CODES` against -
+  the question ("does the seed cover every domain a --live-llm run could need") can
+  only be answered by a live-LLM run now, which is this file's own `--live-llm`
+  flag's job. RETIRED, not the low-confidence PORT the original table guessed at.
+  File collects clean (18 tests); every other class (seed grant idempotency, branch
+  kind parity, settle-wait, business-lane preflight) untouched.
+
+- **`test_parser_growth_r1_reachability.py` (560 lines) - AC-1592 part done,
+  BLOCKED by the pre-existing out-of-scope defect on the rest.** Three doomed spots
+  found (one more than the table's original count): `DEFAULT_UNSUPPORTED_DOMAINS`
+  x2 + `decide()` x1 (purchase_order/spo_allocation support + check_po routing) -
+  PORTED to `test_rearch_port_growth_r1_reachability.py` against `Policy.from_rows`
+  + `apply()`/`route()`, all 3 confirmed CORRECT (passed). `_required_emission_
+  keys()` (AC-910 compatibility) - RETIRED, superseded by the replay harness's own
+  design (mocks the parser straight from a recorded verdict, no required-key set
+  enforced). `DOMAIN_BLOCKED_HINTS["spo_allocation"]` (A6, product not blocked) -
+  RETIRED as a DUPLICATE of already-green `test_warehouse_entity.py::
+  TestGateKeepsWarehouse::test_spo_allocation_keeps_product_and_warehouse_and_
+  drops_customer`. **Could not confirm the file's own collection is clean**: it hits
+  the SAME pre-existing, out-of-AC-1592-scope defect the original table flagged only
+  for `test_parser_warehouse_arrival_cue.py` -
+  `ImportError: cannot import name 'SEMANTIC_PARSER_PROMPT_SLIM' from
+  app.services.chatbot_parser_prompt` (confirmed this session:
+  `chatbot_parser_prompt.py` only defines `SEMANTIC_PARSER_PROMPT`, no `_SLIM`
+  variant exists at all today) - a SECOND file hit by the same unrelated defect, not
+  just the one originally named. Flagged for the captain; not fixed here (out of
+  AC-1592 scope, names no head/tail/dialogue import). The port file itself
+  (independent of this file) collects and passes clean (3/3).
+
+- **`test_parser_low_stock_publish.py` - confirmed "resolves itself" was correct,
+  but not fully resolved.** No doomed import of its own; it imports
+  `_alembic_heads_excluding` FROM `test_parser_growth_r1_reachability.py`
+  (transitive). AC-1592's OWN doomed imports in that source file are now fully
+  fixed (previous entry), so this file's remaining collection failure is 100%
+  attributable to the SAME out-of-scope `SEMANTIC_PARSER_PROMPT_SLIM` defect, not
+  to anything AC-1592 names. No separate action - resolves the moment that
+  unrelated defect is fixed, as the original table predicted, just not for the
+  reason it guessed (AC-1592's own imports were never this file's blocker either).
+
+- **`test_parser_warehouse_arrival_cue.py` - confirmed out of AC-1592 scope, no
+  action.** Same `ImportError: cannot import name 'SEMANTIC_PARSER_PROMPT_SLIM'`,
+  names no head/tail/dialogue import. Now THREE files share this one pre-existing
+  defect (this one, `test_parser_growth_r1_reachability.py`, transitively
+  `test_parser_low_stock_publish.py`) - worth the captain routing a coder at
+  `chatbot_parser_prompt.py` directly, since fixing it once would un-block all
+  three, but that fix is not an AC-1592 deliverable.
+
+- **`test_tail_units.py` (1094 lines) - decision resolved, done.** New file
+  `test_rearch_port_tail_units.py`. Confirmed the flagged duplicate concern is real
+  but the shape is different from what the original table guessed: 12 of 14 classes
+  (`TestDymOfferLifecycle`, `TestTierMenuDomainCarry`, `TestBornRosterWins` (AC-205/
+  H29), `TestTierAndPromoOffersCarryUntilOverwritten`,
+  `TestTheMemberOfferCarryStopsAtTheAnswer`, `TestTheMemberOfferHasTheSameTtlAsTheDym
+  Offer`, `TestCannedCopy`, `TestPendingMarker`, `TestAnsweredDomainEquivalence`,
+  `TestThePickResolvedOrderListStatesItsScope`,
+  `TestACarriedOfferKeepsTheSubjectItWasMadeAbout`, and 3 of `TestSessionVarsIsAWall`'s
+  4 tests) are ALL built around `compile_current_state` (a shared `_compile` helper) -
+  the "compile a session_patch through many first-match-wins rules" mechanism
+  `engine.py::run_tail`'s own docstring says is deliberately gone ("no ladder of
+  markers to keep in step"). Confirmed empirically: `turn/pending.py` has no TTL
+  concept at all; `escalation_team`/`MEMBER_OFFER_TTL` exist nowhere (grepped);
+  `_narrow_and_plan` builds a fresh `Pending` from THIS turn's focus every call, so
+  AC-205/H29's "roster born this turn beats a carried picker" holds by construction,
+  not by a compiled-order fix - no separate "carried picker" structure exists to
+  race against. RETIRED, one consolidated rule (not 12 separate ones - the pattern
+  is uniform). The escalation-team default-fallback property (contract 77) is
+  already covered by `test_rearch_s3_team_pick_and_866.py` (green).
+  - `TestOutcomeHub`, `TestCsMemberOffer` (6 tests) - exercise KEPT `tail/outcome.py`
+    / `tail/member_offer.py` directly, no doomed dependency - copied unchanged.
+  - `TestSessionVarsIsAWall`'s core property (AC-203/H15, `extra=forbid`) - PORTED
+    with the model's REAL five field names (`SessionVars` itself is unchanged); the
+    other 3 tests in that class checked the OLD wide `SESSION_VAR_KEYS` allowlist
+    against compile_state's output, which no longer applies.
+  - 10/10 tests pass in the new file.

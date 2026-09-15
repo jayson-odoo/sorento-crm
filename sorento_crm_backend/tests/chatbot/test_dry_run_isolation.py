@@ -96,7 +96,6 @@ from app.services.chatbot import dispatch
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes import business as business_mod
 from app.services.chatbot.lanes.business.services import FetchServices
-from app.services.chatbot.tail import compile_state as compile_state_mod
 
 from tests.chatbot.test_chat_turn_endpoint import (
     api_key,
@@ -112,7 +111,6 @@ from tests.chatbot.test_engine import (
     stub_access,
     stub_parser,
 )
-from tests.chatbot.test_s3_switch_and_complete_by_body import _set_completed_lanes
 from tests.chatbot.test_turns_admin_api import (
     _contact,
     _GRANTS,
@@ -663,129 +661,22 @@ class TestMcpToolPickRefusesWriteTools:
 
 
 # --------------------------------------------------------------------------- #
-# Finding 6 - a live tail must not wipe session_vars on an absent session_patch
+# Finding 6 - RETIRED (AC-1592). `TestLiveTailSessionPatchAbsentIsPreserved` audited an
+# OLD `run_tail` shape: a lane composed a "sealed" reply via `tail/compile_state.py`'s
+# `compile_current_state`/`seal()`, and the write site read `sealed.get("session_patch")
+# or {}` - a blob that could be ABSENT (bug: treated as a reset) or EXPLICITLY `{}` (a
+# real reset). The rewritten `run_tail` (`engine.py::run_tail`, measured this session,
+# `app/services/chatbot/engine.py` ~2990-3017) has no "sealed reply" and no
+# "session_patch" concept at all: it builds `payload` directly and unconditionally from
+# `state.focus` / `turn_pending.to_wire(question)` / the carried `before` dict - every
+# one of the five keys is a real value on every call, never an absent-vs-explicit-empty
+# blob read off someone else's composed reply. The absent/explicit distinction this
+# class existed to prove cannot occur in the new write site, so there is nothing left
+# for it to guard - RETIRE, not port (`tail/compile_state.py` itself no longer exists in
+# this worktree, confirmed via `ls app/services/chatbot/tail/`). D14 itself (a dry run
+# writes nothing) is still covered by this file's OTHER dry-run assertions elsewhere and
+# by `test_turn_replay.py`'s own `is_test=True` runs.
 # --------------------------------------------------------------------------- #
-
-
-class TestLiveTailSessionPatchAbsentIsPreserved:
-    """`run_tail`: `session_patch = sealed.get("session_patch") or {}` (engine.py ~2758)
-    treats an ABSENT key the same as an EXPLICIT `{}`, and the live write beneath it
-    (~2786-2788) is unconditional once `write_session` is true - so a sealed reply that
-    simply carries no memory to save wipes whatever was there before.
-
-    Every test stubs `compile_state.compile_current_state` (the seam `run_tail` imports
-    locally, so patching the module attribute is visible to the next call) rather than
-    driving the real compiler: nothing in production emits a session_patch-less reply
-    today (`compile_current_state`'s own `seal()` always sets the key to the compiled
-    patch verbatim - `tail/compile_state.py:132`), but the engine's own contract at the
-    write site must hold regardless of which lane produced the sealed reply, not only for
-    shapes the current compiler happens to emit.
-    """
-
-    def _seed_contact(self, session_factory, variables: dict[str, Any]) -> None:
-        db_session = session_factory()
-        db_session.execute(
-            text(
-                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
-                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
-            ),
-            {"cid": str(CONTACT_ID), "phone": "+60000000009", "sv": json.dumps({"variables": variables})},
-        )
-        db_session.commit()
-
-    def _session_vars(self, session_factory) -> Any:
-        return session_factory().execute(
-            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
-            {"c": str(CONTACT_ID)},
-        ).scalar()
-
-    @staticmethod
-    def _prepare_clarify_menu(session_factory, stub_parser, stub_access) -> None:
-        _set_completed_lanes(session_factory, ["clarify_menu"])
-        stub_parser(
-            _parser_output(
-                message_type="clarification", domain_hint=None, user_goal="checking stock"
-            )
-        )
-        stub_access()
-
-    def test_session_patch_absent_leaves_the_blob_untouched(
-        self, session_factory, stub_parser, stub_access, monkeypatch
-    ):
-        self._seed_contact(session_factory, {"x": 1})
-        self._prepare_clarify_menu(session_factory, stub_parser, stub_access)
-
-        def fake_compile(item, ctx, *, resolved=None, gate=None, execution_id=""):
-            return compile_state_mod.CompiledState(
-                item={"reply": {"text": "Sure - let me get that.", "quick_replies": None}}
-            )
-
-        monkeypatch.setattr(compile_state_mod, "compile_current_state", fake_compile)
-
-        engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        after = self._session_vars(session_factory)
-        assert after == {"variables": {"x": 1}}, (
-            "a sealed reply with NO session_patch key must leave the customer's memory "
-            f"untouched; got {after!r} instead. engine.py's `session_patch = sealed.get"
-            "(\"session_patch\") or {}` defaults an ABSENT key to {} exactly like an "
-            "explicit reset, and then unconditionally overwrites respond_contacts."
-            "session_vars for a live, write_session=True turn."
-        )
-
-    def test_session_patch_explicit_empty_still_resets(
-        self, session_factory, stub_parser, stub_access, monkeypatch
-    ):
-        """Guard, green today: an EXPLICIT `{}` is a real reset and must still write."""
-        self._seed_contact(session_factory, {"x": 1})
-        self._prepare_clarify_menu(session_factory, stub_parser, stub_access)
-
-        def fake_compile(item, ctx, *, resolved=None, gate=None, execution_id=""):
-            return compile_state_mod.CompiledState(
-                item={
-                    "reply": {
-                        "text": "ok",
-                        "quick_replies": None,
-                        "session_patch": {},
-                    }
-                }
-            )
-
-        monkeypatch.setattr(compile_state_mod, "compile_current_state", fake_compile)
-
-        engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        after = self._session_vars(session_factory)
-        assert after == {}, (
-            "an EXPLICIT empty session_patch is a real reset and must still write {} - "
-            f"got {after!r}"
-        )
-
-    def test_dry_run_with_no_session_patch_is_untouched(
-        self, session_factory, stub_parser, stub_access, monkeypatch
-    ):
-        """Guard, green today: D14 already suppresses the write for a dry run regardless
-        of session_patch shape - kept here so a fix for the live case cannot regress it."""
-        self._seed_contact(session_factory, {"x": 1})
-        self._prepare_clarify_menu(session_factory, stub_parser, stub_access)
-
-        def fake_compile(item, ctx, *, resolved=None, gate=None, execution_id=""):
-            return compile_state_mod.CompiledState(
-                item={"reply": {"text": "ok", "quick_replies": None}}
-            )
-
-        monkeypatch.setattr(compile_state_mod, "compile_current_state", fake_compile)
-
-        envelope = _envelope(test_run_id="ZZT-run-session-guard")
-        assert envelope.dry_run is True
-
-        engine_mod.run_turn(envelope, session_factory=session_factory)
-
-        after = self._session_vars(session_factory)
-        assert after == {"variables": {"x": 1}}, (
-            f"a dry run must never write session_vars regardless of session_patch shape "
-            f"(D14); got {after!r}"
-        )
 
 
 # --------------------------------------------------------------------------- #

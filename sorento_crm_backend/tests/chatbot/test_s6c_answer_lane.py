@@ -1614,14 +1614,40 @@ class TestR1DemandQuantityAnswer:
         "has_result": True,
     }
 
+    @staticmethod
+    def _decide(ctx: dict, *, stock_denial_enabled: bool) -> str:
+        """AC-1592 port: `head.route.decide` is deleted. Contract 61/62 (stock_denied /
+        demand_qty) are decided from the CONTACT's own record before a plan exists at
+        all (`turn/route.py`'s own docstring), which the rearch settles in
+        `engine.py::run_turn` via `_stock_check_denied`/`_demand_qty_missing` - the
+        real seam this test now targets, not a hand-rolled reimplementation of the
+        rule."""
+        from app.services.chatbot.contracts import Envelope
+        from app.services.chatbot.engine import _demand_qty_missing, _stock_check_denied
+
+        envelope = Envelope(contact=ctx["contact"], message={
+            "event_type": "message.received",
+            "contact": {"id": ctx["contact"]["id"]},
+            "message": {
+                "messageId": "ZZT-r1-msg",
+                "contactId": ctx["contact"]["id"],
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": ctx["text"]["message"]["message"],
+            },
+        })
+        verdict = ctx["parse"]["output"]
+        if stock_denial_enabled and _stock_check_denied(envelope, verdict):
+            return "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
+        return "business_query"
+
     def test_with_the_switch_on_the_arm_stamps_and_the_answer_is_the_quantity_verdict(
         self,
     ) -> None:
-        from app.services.chatbot.head.route import decide
         from app.services.chatbot.lanes.business.answer import validator
 
         ctx = self._ctx(5)
-        branch_kind, _ = decide(ctx, stock_denial_enabled=True)
+        branch_kind = self._decide(ctx, stock_denial_enabled=True)
         assert branch_kind == "stock_denied"
 
         payload = self._lane(ctx, branch_kind)["payload"]
@@ -1651,11 +1677,10 @@ class TestR1DemandQuantityAnswer:
         """Default R1 position: the route cannot decide `stock_denied` at all, the
         `business_query` arm carries no stamp, and `validator` leaves the fetched
         response untouched."""
-        from app.services.chatbot.head.route import decide
         from app.services.chatbot.lanes.business.answer import validator
 
         ctx = self._ctx(5)
-        branch_kind, _ = decide(ctx, stock_denial_enabled=False)
+        branch_kind = self._decide(ctx, stock_denial_enabled=False)
         assert branch_kind == "business_query"
 
         payload = self._lane(ctx, branch_kind)["payload"]

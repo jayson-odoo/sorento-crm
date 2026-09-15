@@ -27,13 +27,11 @@ from app.models.access import AccessAgent
 from app.models.chatbot_turn import ChatbotTurn
 from app.models.respond_workspace import RespondWorkspace
 from app.services.chatbot import contracts
-from app.services.chatbot.head.output_exchange import derive_routing
 from app.services.mcp_access_service import evaluate_agent
 from scripts import chatbot_load
 from scripts.chatbot_load import (
     ACCESS_AGENT_CODES,
     BUSINESS_BRANCH_KINDS,
-    QUESTIONS,
     TARGET_BRANCH_KIND,
     _resolve_agent_id,
     _resolve_default_workspace_id,
@@ -370,42 +368,22 @@ class TestGradeBusinessPath:
         assert "stage=delegated" in report.business_incomplete[0]
 
 
-class TestQuestionAgentCoverage:
-    """S2: a `--live-llm` run reads the REAL question text, not `MOCK_PARSER_OUTPUT`, so
-    a QUESTION whose live-parsed domain routes to an agent the seed does not grant fails
-    `access_denied` even though the contact IS seeded - `QUESTIONS[5]` ("when can it be
-    delivered") did exactly this before `ACCESS_AGENT_CODES` grew a second entry.
-
-    Derived from `derive_routing` ITSELF, not hardcoded a second time next to
-    `ACCESS_AGENT_CODES`: the two are compared here, not asserted equal to a literal, so
-    a future QUESTION that needs a new agent fails this test instead of silently shipping
-    an access_denied under `--live-llm --messages 6`.
-    """
-
-    # Index-aligned with `chatbot_load.QUESTIONS`: the domain a live parse of each
-    # question is expected to land in, per each QUESTION's own inline comment. Not
-    # itself derived from a live LLM call (no test in this suite reaches one) - this is
-    # the domain vocabulary `derive_routing` branches on, and is the modelling
-    # assumption a real parser has to be checked against, not a duplicate of the code.
-    QUESTION_DOMAINS = [
-        "master_products",
-        "master_products",
-        "master_products",
-        "promotion",
-        "product_attachment",
-        "order",
-    ]
-
-    def test_seeded_agents_cover_every_question_domain(self):
-        assert len(self.QUESTION_DOMAINS) == len(QUESTIONS)
-        required_agents = {
-            derive_routing({"domain_hint": domain})["suggested_agent"]
-            for domain in self.QUESTION_DOMAINS
-        }
-        assert required_agents <= set(ACCESS_AGENT_CODES), (
-            f"derive_routing needs {required_agents} but ACCESS_AGENT_CODES only grants "
-            f"{set(ACCESS_AGENT_CODES)} - a --live-llm run would access_denied on the gap"
-        )
+# AC-1592: `TestQuestionAgentCoverage` REMOVED here, RETIRED not ported.
+#
+# It statically derived "which MCP access agent does a --live-llm run of each seed
+# QUESTION need" from `head.output_exchange.derive_routing({"domain_hint": domain})`
+# - a pure Python domain->agent table. That table no longer exists as Python at all:
+# grepped `app/services/chatbot/` this session for `derive_routing` - every hit left
+# is a COMMENT citing it as historical rationale, never a live definition. The real
+# mechanism moved: `engine.py`/`turn_runtime.py`/`lanes/escalation.py`/`lanes/
+# canned.py` all read `routing.suggested_agent` straight off the PARSER's own
+# emission (`jsc.get(verdict.get("routing"), "suggested_agent")`), which is prompt-
+# driven, not a Python function - `contracts.SUGGESTED_AGENTS` is only the allow-
+# list enum the value must land in, not a domain->agent map. There is nothing left
+# in Python for this test to statically compare `ACCESS_AGENT_CODES` against; the
+# question it asked ("does the seed cover every domain a --live-llm run could need")
+# can now only be answered by a live-LLM run itself, which is this file's own
+# `--live-llm` flag's job, not a static unit test's.
 
 
 def test_business_branch_kinds_matches_contracts():
