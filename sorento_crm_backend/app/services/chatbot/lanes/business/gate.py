@@ -1663,12 +1663,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     out["compatible_entities"] = compatible_entities
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities
-    # `out["picker_families"]` is RETIRED (R-F, 15 Sep 2026). The map was published for one
-    # reader - `compile_state`'s `picker_families` session write - and that write was dropped
-    # by the five-key projection on every turn, so nothing has consumed this key since D8.
-    # The family it described now travels on the roster ROW that stands for it
-    # (`family_uuids`, stamped where `cust_families` is built above), which is the shape the
-    # pick can actually carry forward.
+    # A DIAGNOSTIC on this node's own output, and nothing more (R-F, 15 Sep 2026): no
+    # session writer and no session reader remain - the `compile_state` write this once fed
+    # was dropped by the five-key projection on every turn, which is the defect R-F fixes -
+    # so the family the PICK acts on rides the roster row as `family_uuids` instead, and
+    # this stays only because 9 graded gate captures carry it and it costs one line.
+    if cust_families and len(cust_families) > 0:
+        out["picker_families"] = cust_families
     # `{domain, allowed_lookup: ALLOWED[domain], entities_count}`. An unmapped domain
     # makes `allowed_lookup` UNDEFINED, and `JSON.stringify` DROPS an undefined value
     # rather than writing null - so the key is ABSENT on those turns, which 3 of the 213
