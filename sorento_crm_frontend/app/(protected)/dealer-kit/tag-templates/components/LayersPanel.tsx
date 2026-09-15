@@ -50,8 +50,17 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@/lib/utils';
-import type { TagLayer, TagLayerType } from '@/lib/dealer-kit/tag-template-types';
-import { isDynamic, isUnlinked, layerDisplayName } from '@/lib/dealer-kit/product-block';
+import type {
+  TagLayer,
+  TagLayerType,
+  TagPartData,
+} from '@/lib/dealer-kit/tag-template-types';
+import {
+  isDynamic,
+  isUnlinked,
+  layerDisplayName,
+  layerSubjectSuffix,
+} from '@/lib/dealer-kit/product-block';
 import {
   panelDropTarget,
   panelRows,
@@ -106,6 +115,10 @@ interface LayersPanelProps {
   onMoveLayer: (id: string, target: ReparentTarget) => void;
   /** Layers a resize left partly or wholly past the artboard edge (S4). */
   overflowingIds?: Set<string>;
+  /** D7/AC-S4-7: the tag's own parts, so a layer pointed at one can suffix
+   *  its row with that part's code. Every layer here is on the SAME tag, so
+   *  one list serves the whole panel. */
+  subjectParts?: TagPartData[];
 }
 
 export function LayersPanel({
@@ -116,6 +129,7 @@ export function LayersPanel({
   onToggleLock,
   onMoveLayer,
   overflowingIds,
+  subjectParts,
 }: LayersPanelProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [hint, setHint] = useState<DropHint | null>(null);
@@ -230,6 +244,7 @@ export function LayersPanel({
                     onToggleCollapse={toggleGroupCollapse}
                     onToggleVisibility={onToggleVisibility}
                     onToggleLock={onToggleLock}
+                    subjectParts={subjectParts}
                   />
                 );
               })}
@@ -257,6 +272,7 @@ function LayerRow({
   onToggleCollapse,
   onToggleVisibility,
   onToggleLock,
+  subjectParts,
 }: {
   layer: TagLayer;
   depth: number;
@@ -268,6 +284,7 @@ function LayerRow({
   onToggleCollapse: (id: string) => void;
   onToggleVisibility: (id: string) => void;
   onToggleLock: (id: string) => void;
+  subjectParts?: TagPartData[];
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: layer.id });
@@ -322,8 +339,12 @@ function LayerRow({
         <span className="shrink-0 text-muted-foreground">{layerIcon(layer.type)}</span>
 
         {/* Name */}
-        <span className="min-w-0 flex-1 truncate" title={layerDisplayName(layer)}>
+        <span
+          className="min-w-0 flex-1 truncate"
+          title={layerDisplayName(layer) + layerSubjectSuffix(layer, subjectParts)}
+        >
           {layerDisplayName(layer)}
+          {layerSubjectSuffix(layer, subjectParts)}
         </span>
 
         {/* Unlinked marker: bound to a slot but showing typed text instead.

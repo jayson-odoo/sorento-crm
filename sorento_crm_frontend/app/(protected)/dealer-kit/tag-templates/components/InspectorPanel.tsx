@@ -39,12 +39,14 @@ import type {
   SlotBinding,
   TagLayer,
   TagLayerProps,
+  TagPartData,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
+import { hasSubjectAwareToken } from '@/lib/dealer-kit/merge-fields';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
 
@@ -214,6 +216,14 @@ interface InspectorPanelProps {
   /** Toggle edit-points mode for this layer (S5); a polygon or a boxed
    * list-only price badge only. */
   onToggleEditPoints?: (layerId: string) => void;
+  /**
+   * D7 (AC-S4-1/S4-2): the combo tag's own parts, in package order - the
+   * Product picker's option list. Absent or empty means a single-product
+   * tag, so no picker shows on ANY layer.
+   */
+  subjectParts?: TagPartData[];
+  /** The parent's own code, for the picker's first entry. */
+  subjectParentCode?: string | null;
 }
 
 export function InspectorPanel({
@@ -237,6 +247,8 @@ export function InspectorPanel({
   onClearBlockPreview,
   editingPoints,
   onToggleEditPoints,
+  subjectParts,
+  subjectParentCode,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -268,6 +280,17 @@ export function InspectorPanel({
       </div>
     );
   }
+
+  // D7/AC-S4-1/S4-2: the Product picker shows on any layer that reads
+  // product data - a combo tag only (single-product tags have no parts to
+  // point at, so `subjectParts` arrives empty and the section never renders).
+  const isSubjectAwareKind =
+    layer.props.kind === 'product_slot' ||
+    layer.props.kind === 'price_badge' ||
+    layer.props.kind === 'barcode' ||
+    (layer.props.kind === 'text' &&
+      hasSubjectAwareToken(layer.text_override ?? layer.props.text));
+  const showSubjectPicker = isSubjectAwareKind && (subjectParts?.length ?? 0) > 0;
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
   // canvas side (S5): a polygon shape, or a price badge whose box IS its
@@ -392,6 +415,19 @@ export function InspectorPanel({
               options={SLOT_BINDING_OPTIONS}
             />
           </section>
+
+          {/* -- Subject (D7/AC-S4-1): which of a combo tag's products this
+              layer reads. Parent first and default, so an existing design
+              renders unchanged (AC-S4-4); a price badge's list also offers
+              Tag total, the roll-up it always printed. */}
+          {showSubjectPicker && (
+            <SubjectInspector
+              props={layer.props}
+              parts={subjectParts ?? []}
+              parentCode={subjectParentCode ?? ''}
+              onChange={updateProps}
+            />
+          )}
 
           {/* -- Binding (a bound block, re-bound or relinked in one action) -- */}
           {layer.props.kind === 'group' && (
@@ -1313,6 +1349,60 @@ function GroupBindingInspector({
           Use template...
         </Button>
       )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Subject picker (D7/AC-S4-1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Which of a combo tag's products a layer reads. `-1` is the parent alone;
+ * `0..n` is that part, in package order (`subjectParts`' own order). A price
+ * badge alone also offers `Tag total` - absent `subjectPart` - since that is
+ * what it always printed before this field existed (AC-S4-4).
+ */
+function SubjectInspector({
+  props,
+  parts,
+  parentCode,
+  onChange,
+}: {
+  props: TagLayerProps;
+  parts: TagPartData[];
+  parentCode: string;
+  onChange: (changes: Partial<TagLayerProps>) => void;
+}) {
+  const isPriceBadge = props.kind === 'price_badge';
+  const subjectPart =
+    'subjectPart' in props && typeof props.subjectPart === 'number'
+      ? props.subjectPart
+      : undefined;
+  const options: SearchableSelectOption[] = [
+    ...(isPriceBadge ? [{ value: 'default', label: 'Tag total' }] : []),
+    { value: '-1', label: parentCode || 'Parent' },
+    ...parts.map((part, index) => ({
+      value: String(index),
+      label: part.code || part.name,
+    })),
+  ];
+  const value =
+    subjectPart === undefined ? (isPriceBadge ? 'default' : '-1') : String(subjectPart);
+  return (
+    <section>
+      <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Product
+      </h4>
+      <SearchableSelect
+        value={value}
+        onChange={(v: string) =>
+          onChange({
+            subjectPart: v === 'default' ? undefined : Number(v),
+          } as Partial<TagLayerProps>)
+        }
+        options={options}
+      />
     </section>
   );
 }

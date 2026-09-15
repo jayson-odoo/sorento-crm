@@ -142,6 +142,11 @@ export interface TextLayerProps {
   strikethrough?: boolean;
   /** Internal margin (S3). Absent = 0 on every side. */
   padding?: LayerPadding;
+  /** D7: which of a combo tag's products this layer reads, when it reads
+   *  product data at all (a `{{product.*}}` / `{{spec.*}}` token). Absent =
+   *  the parent, matching every document saved before this field existed
+   *  (AC-S4-4). See `subjectOf` in `product-block.ts`. */
+  subjectPart?: number;
 }
 
 export interface ShapeLayerProps {
@@ -162,6 +167,8 @@ export interface ShapeLayerProps {
 export interface ProductSlotLayerProps {
   kind: 'product_slot';
   fieldKey: string;
+  /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
 }
 
 export interface BadgeLayerProps {
@@ -241,6 +248,16 @@ export interface PriceBadgeLayerProps {
    * padding: 0` so the badge draws exactly as it always did.
    */
   margin?: LayerPadding;
+  /**
+   * D7: which product's price this badge draws, on a combo tag. Unlike the
+   * other subject-aware layers, absent here is NOT "the parent" - it is
+   * **Tag total**, the parent + parts roll-up this badge always printed
+   * before this field existed (AC-S4-4), and stays the default so an
+   * existing design still prints the same figure. `-1` is the parent's own
+   * price alone; `0..n` is that part's own price. See `subjectOf` in
+   * `product-block.ts`.
+   */
+  subjectPart?: number;
 }
 
 /**
@@ -253,6 +270,8 @@ export interface PriceBadgeLayerProps {
 export interface BarcodeLayerProps {
   kind: 'barcode';
   show_code: boolean;
+  /** D7 - see `TextLayerProps.subjectPart`. */
+  subjectPart?: number;
 }
 
 export interface GroupLayerProps {
@@ -561,7 +580,16 @@ export interface TagOpenGroup {
   candidates: { product_id: string; code: string }[];
 }
 
-/** One part printed under the host on a tag (D3/D4). */
+/**
+ * One part printed under the host on a tag (D3/D4).
+ *
+ * D7 (Phase 2, not wired yet): grows the full product surface a subject
+ * picker can point a layer at - `spec_lines`/`specs`/`images`/`barcode`/
+ * `list_price`/`sell_price` all optional until the backend resolves them per
+ * part, so a Phase 1 part (code/name/dimensions only) still fails soft:
+ * `subjectOf` reads an absent field as "this part has none" - an empty
+ * placeholder, not the parent's (AC-S4-5) - rather than throwing.
+ */
 export interface TagPartData {
   /** Carried so a caller can match a part back to the choice that produced it.
    *  Never rendered - the code is what a reader sees (AC-X-2). */
@@ -569,6 +597,14 @@ export interface TagPartData {
   code: string;
   name: string;
   dimensions: string;
+  spec_lines?: string[];
+  specs?: TagSpecValue[];
+  images?: TagImage[];
+  barcode?: string | null;
+  list_price?: number | null;
+  /** Offer under the LINE's promotion (D3: parts share the line's promotion),
+   *  else null. */
+  sell_price?: number | null;
 }
 
 /**
