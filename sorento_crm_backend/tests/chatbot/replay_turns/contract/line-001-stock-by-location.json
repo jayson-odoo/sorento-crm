@@ -163,10 +163,15 @@
       "resolutions": {
         "resolutions": [
           {
-            "canonical_code": "srtks7061",
-            "entity_type": "product",
-            "token": "srtks7061",
-            "uuid": "4b91453f-11c2-4bc7-b2b8-991d58b6cd9a"
+            "matches": [
+              {
+                "canonical_code": "srtks7061",
+                "entity_type": "product",
+                "uuid": "4b91453f-11c2-4bc7-b2b8-991d58b6cd9a"
+              }
+            ],
+            "resolved": true,
+            "token": "srtks7061"
           }
         ],
         "tokens": [
