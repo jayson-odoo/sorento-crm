@@ -274,8 +274,23 @@ def _pending_kind(body: dict[str, Any], turn_id: str | None) -> str | None:
 
 
 def _pending_of(variables: Any) -> str | None:
-    """`variables.pending.kind` as a string, or None - the one shape both sources use."""
-    pending = variables.get("pending") if isinstance(variables, dict) else None
+    """`variables.open_question.kind` as a string, or None - the one shape both sources use.
+
+    Ported 15 Sep 2026 (coordinator correction): D8 (AC-1001, the five-key wall) deleted
+    `variables.pending` entirely, so every `pending_kind:` assertion in every case file
+    graded `None` on this lane even for a turn the trace proves correctly armed a
+    question - `open_question` is the five-key replacement `pending` was mapped onto
+    (`tail/compile_state.py`'s own `carry_after_answer` / `_ask_for_turn`). `pending`
+    is tried second, not dropped outright, so this script keeps working unmodified
+    against a `main` backend that has not carried the five-key session yet.
+    """
+    if not isinstance(variables, dict):
+        return None
+    open_question = variables.get("open_question")
+    kind = open_question.get("kind") if isinstance(open_question, dict) else None
+    if kind:
+        return str(kind)
+    pending = variables.get("pending")
     kind = pending.get("kind") if isinstance(pending, dict) else None
     return str(kind) if kind else None
 

@@ -210,18 +210,33 @@ class TestConsoleTurnCarriesSessionAcrossTurns:
     2's request body, and that has to reach the parser as `previous_conversation_state`
     (the harness key `engine._inject_harness_session` honours), not the contact's stored
     (empty) session.
+
+    D8/AC-1023 retired the OLD mechanism this class used to pin - turn 1's REPLY TEXT
+    riding into turn 2's parser prompt (`variables["response"]`, one of the 34 legacy
+    keys, never persisted at all now; the prompt instead receives `focus_hints` /
+    `open_question_hint`, L1-S2, out of scope here). What survives, and is what this
+    class is actually named for, is the round trip into `engine._inject_harness_session`
+    itself: turn 2's `session_vars` in the request body must land on the envelope as
+    `previous_conversation_state` and become `session_vars["variables"]` for THAT turn,
+    verbatim, not the contact's stored (empty) session. A `not_supported` canned reply is
+    deliberately used (see the module comment on `NOT_SUPPORTED_OUTPUT`) so this stays
+    independent of `resolve_gate` / focus population, which a canned, no-MCP branch never
+    reaches.
     """
 
-    def test_turn_two_carries_turn_ones_reply_into_the_parser_input(
+    def test_turn_two_carries_turn_ones_session_vars_into_the_harness_injection(
         self, client, session_factory, seeded_contact_with_a_prior_turn, system_settings_row, stub_console_seams, monkeypatch,
     ):
-        seen_user_blocks: list[str] = []
+        injected: list[dict] = []
+        real_inject = engine_mod._inject_harness_session
 
-        def fake_parse(config, user_block):
-            seen_user_blocks.append(user_block)
-            return NOT_SUPPORTED_OUTPUT
+        def spy_inject(session_block, envelope):
+            result = real_inject(session_block, envelope)
+            injected.append(result)
+            return result
 
-        monkeypatch.setattr(parser_mod, "parse", fake_parse)
+        monkeypatch.setattr(engine_mod, "_inject_harness_session", spy_inject)
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: NOT_SUPPORTED_OUTPUT)
 
         run_id = _run_id()
         first = client.post(
@@ -243,13 +258,12 @@ class TestConsoleTurnCarriesSessionAcrossTurns:
         )
         assert second.status_code == 200, second.text
 
-        assert len(seen_user_blocks) == 2
-        # `parser.build_user_block` embeds `variables["response"]` - turn 1's reply text -
-        # so turn 2's prompt input carries a trace of turn 1's own answer ONLY if the
-        # session_vars round-trip actually reached the harness.
-        assert NOT_SUPPORTED_REPLY[:30] in seen_user_blocks[1], (
-            "turn 2's parser input does not carry turn 1's reply - session_vars did not "
-            f"round-trip. user_block was: {seen_user_blocks[1]!r}"
+        assert len(injected) == 2
+        # Turn 2's injected session block carries turn 1's OWN five-key output verbatim -
+        # the harness carried it forward, never the contact's stored (empty) session.
+        assert injected[1]["session_vars"]["variables"] == turn_one_session_vars, (
+            "turn 2's harness-injected session_vars is not turn 1's own response - the "
+            f"round trip did not reach the engine. injected was: {injected[1]!r}"
         )
 
 

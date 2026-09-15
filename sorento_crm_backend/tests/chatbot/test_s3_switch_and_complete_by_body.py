@@ -30,6 +30,7 @@ from app.models.user import SystemSetting
 from app.services.chatbot import engine as engine_mod
 from app.api.v1.external.chat import TAIL_ERROR_REPLY
 from app.services.chatbot.lanes import canned as canned_lanes
+from app.services.chatbot import trace as trace_mod
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures reused by name
     CONTACT_ID,
@@ -206,7 +207,7 @@ class TestAccessDeniedNeverWritesTheSession:
         )
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).one()
         assert row.status == "done"
-        assert [r["stage"] for r in row.trace][-1] == "sent"
+        assert [r["stage"] for r in trace_mod.stage_records(row.trace)][-1] == "sent"
 
 
 class TestCompleteByBody:

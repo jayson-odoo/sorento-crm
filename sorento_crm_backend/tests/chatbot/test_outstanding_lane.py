@@ -247,6 +247,64 @@ def _session_of(session_factory) -> dict:
     return json.loads(raw) if isinstance(raw, str) else (raw or {})
 
 
+# --------------------------------------------------------------------------- #
+# Five-key shape helpers (D8). Main recorded an outstanding ask's open state on
+# four legacy top-level keys - `selection_context`, `last_result_set`,
+# `outstanding_filters`, `pending`. This lane's `SessionVars` is FIVE keys and
+# `extra = "forbid"`, so all four collapse into ONE `open_question`
+# (`app/services/chatbot/contracts.OpenQuestion`): `pending.kind` -> `kind`,
+# `last_result_set` -> `options` (frozen rows), `outstanding_filters` ->
+# `payload.filters`, and `selection_context` is simply gone (the kind IS the
+# context). The ask's delivery-status axis, which main kept as a top-level
+# `order_status`, is the tenth `focus.order_status` slot this lane's
+# `dialogue/focus.py::reuse_alive` carries.
+# --------------------------------------------------------------------------- #
+
+
+def _open_question(
+    kind: str,
+    *,
+    options: list[dict[str, Any]],
+    filters: dict[str, Any] | None = None,
+    turn_no: int = 1,
+    reprinted: bool = False,
+    expects: str = "pick",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    if filters is not None:
+        payload["filters"] = filters
+    if reprinted:
+        payload["reprinted"] = True
+    return {
+        "kind": kind,
+        "options": options,
+        "expects": expects,
+        "asked_at_turn": turn_no,
+        "asked_at": None,
+        "payload": payload,
+    }
+
+
+def _focus_slot(value: Any, *, turn_no: int = 1) -> dict[str, Any]:
+    return {"value": value, "set_at_turn": turn_no, "set_at": None, "source": "current_message"}
+
+
+def _stored_oq(stored: dict[str, Any]) -> dict[str, Any]:
+    return stored.get("open_question") or {}
+
+
+def _stored_oq_kind(stored: dict[str, Any]) -> Any:
+    return _stored_oq(stored).get("kind")
+
+
+def _stored_oq_filters(stored: dict[str, Any]) -> dict[str, Any]:
+    return (_stored_oq(stored).get("payload") or {}).get("filters") or {}
+
+
+def _stored_oq_options(stored: dict[str, Any]) -> list[dict[str, Any]]:
+    return _stored_oq(stored).get("options") or []
+
+
 #: `_run_turn` monkeypatches `engine_mod.default_space_id` to this literal, and
 #: `_contact_company_scope` resolves the company scope from `(contact_respond_id,
 #: default_space_id(db))` - `resolve_contact_id`'s Respond.io-id branch JOINS
@@ -264,6 +322,16 @@ def _seed_contact(session_factory, *, variables: dict[str, Any]) -> None:
             "ON CONFLICT DO NOTHING"
         ),
         {"sid": _SPACE_ID},
+    )
+    # Idempotent (R-B follow-up, 15 Sep 2026): a test that re-seeds this SAME contact
+    # more than once within one test function (e.g. looping two channels of the same
+    # scenario) hit `respond_contacts_phone_number_key` on the second insert - nothing
+    # here deleted the first row, unlike every other test's isolation, which comes from
+    # `session_factory`'s own rollback BETWEEN tests, not within one. Delete-then-insert
+    # is a no-op for every existing single-seed caller.
+    db.execute(
+        text("DELETE FROM respond_contacts WHERE respond_io_id = :cid"),
+        {"cid": str(CONTACT_ID)},
     )
     db.execute(
         text(
@@ -722,9 +790,9 @@ class TestExactProductCodeWinsOverSiblings:
             f"the question must name the code the customer typed: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert stored.get("outstanding_filters", {}).get("product_code") == "ZZT7445", (
+        assert _stored_oq_filters(stored).get("product_code") == "ZZT7445", (
             f"the carried filter set must hold the typed code, or the ANSWER turn reports "
-            f"the wrong product: {stored.get('outstanding_filters')}"
+            f"the wrong product: {_stored_oq_filters(stored)}"
         )
 
     def test_the_answer_turn_reports_the_typed_code(self, session_factory, monkeypatch) -> None:
@@ -1081,11 +1149,11 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
         assert "3. Both" in reply, reply
 
         stored = _session_of(session_factory)["variables"]
-        assert stored.get("selection_context") == "outstanding_scope", stored.get("selection_context")
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", stored.get("pending")
-        assert len(stored.get("last_result_set") or []) == 3, stored.get("last_result_set")
-        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
-            stored.get("outstanding_filters")
+        assert _stored_oq_kind(stored) == "outstanding_scope", _stored_oq_kind(stored)
+        assert _stored_oq_kind(stored) == "outstanding_scope", _stored_oq(stored)
+        assert len(_stored_oq_options(stored) or []) == 3, _stored_oq_options(stored)
+        assert _stored_oq_filters(stored).get("product_code") == PRODUCT_CODE, (
+            _stored_oq_filters(stored)
         )
 
     def test_a_new_bare_outstanding_ask_after_a_hit_asks_the_scope_question(
@@ -1109,9 +1177,7 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
             mcp_response=REPORT_HIT,
         )
         assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
-        assert (_session_of(session_factory)["variables"].get("pending") or {}).get(
-            "kind"
-        ) == "outstanding_detail"
+        assert _stored_oq_kind(_session_of(session_factory)["variables"]) == "outstanding_detail"
 
         result, captured2 = _run_turn(
             session_factory,
@@ -1129,7 +1195,7 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" in reply, reply
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", stored.get("pending")
+        assert _stored_oq_kind(stored) == "outstanding_scope", _stored_oq(stored)
 
 
 # --------------------------------------------------------------------------- #
@@ -1141,25 +1207,23 @@ def _seed_open_outstanding_scope(session_factory, *, filters: dict[str, Any] | N
     _seed_contact(
         session_factory,
         variables={
-            "message_type": "business_query",
-            "domain_hint": "order",
-            "entities": [],
-            "selection_context": "outstanding_scope",
-            "last_result_set": [
-                {"idx": 1, "label": "Sales orders", "value": "so"},
-                {"idx": 2, "label": "Delivery orders", "value": "do"},
-                {"idx": 3, "label": "Both", "value": "both"},
-            ],
-            "outstanding_filters": filters
-            or {
-                "product_code": PRODUCT_CODE,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [CUSTOMER_UUID],
-                "warehouse_codes": ["ZZT-BRW-IB", "ZZT-MWH-IB"],
-                "location_token": "IB",
-            },
-            "pending": {"kind": "outstanding_scope"},
+            "open_question": _open_question(
+                "outstanding_scope",
+                options=[
+                    {"idx": 1, "label": "Sales orders", "value": "so"},
+                    {"idx": 2, "label": "Delivery orders", "value": "do"},
+                    {"idx": 3, "label": "Both", "value": "both"},
+                ],
+                filters=filters
+                or {
+                    "product_code": PRODUCT_CODE,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [CUSTOMER_UUID],
+                    "warehouse_codes": ["ZZT-BRW-IB", "ZZT-MWH-IB"],
+                    "location_token": "IB",
+                },
+            ),
         },
     )
 
@@ -1484,9 +1548,9 @@ class TestHitArmsOutstandingDetailAndNoEscalateOffer:
             f"a hit must never also offer to escalate: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", stored.get("pending")
-        assert stored.get("selection_context") == "outstanding_detail", stored.get("selection_context")
-        labels = {row.get("label") for row in (stored.get("last_result_set") or [])}
+        assert _stored_oq_kind(stored) == "outstanding_detail", _stored_oq(stored)
+        assert _stored_oq_kind(stored) == "outstanding_detail", _stored_oq_kind(stored)
+        labels = {row.get("label") for row in (_stored_oq_options(stored) or [])}
         assert "Sales order list" in labels, (
             f"only the SO scope was requested/present, so only its option is offered: {labels}"
         )
@@ -1568,8 +1632,8 @@ class TestTotalMissEscalates:
             f"a total miss must reach the existing escalate offer: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"a miss offers no detail list: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) != "outstanding_detail", (
+            f"a miss offers no detail list: {_stored_oq(stored)!r}"
         )
 
     def test_total_miss_keeps_the_report_block_lines_then_offers_escalation(
@@ -1619,24 +1683,22 @@ def _seed_open_outstanding_detail(
     _seed_contact(
         session_factory,
         variables={
-            "message_type": "business_query",
-            "domain_hint": "order",
-            "entities": [],
-            "selection_context": "outstanding_detail",
-            "last_result_set": rows
-            or [
-                {"idx": 1, "label": "Sales order list", "value": "so"},
-                {"idx": 2, "label": "Delivery order list", "value": "do"},
-            ],
-            "outstanding_filters": filters
-            or {
-                "product_code": PRODUCT_CODE,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [],
-                "warehouse_codes": [],
-            },
-            "pending": {"kind": "outstanding_detail"},
+            "open_question": _open_question(
+                "outstanding_detail",
+                options=rows
+                or [
+                    {"idx": 1, "label": "Sales order list", "value": "so"},
+                    {"idx": 2, "label": "Delivery order list", "value": "do"},
+                ],
+                filters=filters
+                or {
+                    "product_code": PRODUCT_CODE,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                },
+            ),
         },
     )
 
@@ -1662,6 +1724,51 @@ class TestDetailPickRerunsToolWithDetail:
         assert name == "crm_outstanding_report", name
         assert args.get("detail") == "so", f"'1' must ask for the SO detail: {args}"
         assert args.get("product_code") == PRODUCT_CODE, args
+
+    def test_reply_1_via_answers_open_question_renders_the_do_rows(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """MERGE REGRESSION (owner console, contact 437264483, turns
+        45c3780d.../a9c0a260...): in production a numbered answer to an outstanding
+        question arrives on the parser v3 `answers_open_question.picks` channel, NOT on
+        `reference_positions` - the five-key/v3 move changed the channel, and the trace
+        for `1` under "Reply 1 for the delivery order list." showed
+        `answers_open_question.picks: [1]` with `reference_positions: []`. The head's
+        `_outstanding_scope_pick` read only `reference_positions`, so `picked` came back
+        None, the detail branch fell to its re-ask arm, and the reply was the offer line
+        again with no per-DO rows (attachments []). The other detail-pick tests miss it
+        because they hand-set `reference_positions=[1]`, the pre-v3 channel.
+
+        A single-DO offer, answered `1` the way the live parser reports it: the detail
+        report must re-run and its DO rows must render."""
+        _seed_open_outstanding_detail(
+            session_factory,
+            rows=[{"idx": 1, "label": "Delivery order list", "value": "do"}],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[],
+                answers_open_question={
+                    "resolved": True, "picks": [1], "yes_no": None, "free_text": None,
+                },
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-detail-pick-aoq-1",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the detail pick must re-run the tool, not fall to the re-ask arm"
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", name
+        assert args.get("detail") == "do", f"'1' on a DO-only offer must ask for the DO detail: {args}"
+        reply = (result.reply or {}).get("text") or ""
+        assert "*DO Number:*" in reply, (
+            f"the detail report's per-DO rows must render, not the offer line again: {reply!r}"
+        )
 
     def test_reply_2_reruns_with_detail_do(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)
@@ -1702,11 +1809,11 @@ class TestDetailPickRerunsToolWithDetail:
         )
         assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            f"a real hit must arm the detail pending the next turn reads: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            f"a real hit must arm the detail pending the next turn reads: {_stored_oq(stored)!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
-            f"the hit must carry its own filters forward: {stored.get('outstanding_filters')!r}"
+        assert _stored_oq_filters(stored).get("product_code") == PRODUCT_CODE, (
+            f"the hit must carry its own filters forward: {_stored_oq_filters(stored)!r}"
         )
 
         _result2, captured2 = _run_turn(
@@ -1757,23 +1864,21 @@ class TestDetailPickRerunsToolWithDetail:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                    {"idx": 2, "label": "Delivery order list", "value": "do"},
-                ],
-                "outstanding_filters": {
-                    "product_code": "ZZT7445",
-                    "date_filter_start": "2026-01-01",
-                    "date_filter_end": "2026-12-31",
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_detail"},
+                "open_question": _open_question(
+                    "outstanding_detail",
+                    options=[
+                        {"idx": 1, "label": "Sales order list", "value": "so"},
+                        {"idx": 2, "label": "Delivery order list", "value": "do"},
+                    ],
+                    filters={
+                        "product_code": "ZZT7445",
+                        "date_filter_start": "2026-01-01",
+                        "date_filter_end": "2026-12-31",
+                        "customer_ids": [],
+                        "warehouse_codes": [],
+                        "location_token": None,
+                    },
+                ),
             },
         )
         result, captured = _run_turn(
@@ -1805,6 +1910,69 @@ class TestDetailPickRerunsToolWithDetail:
             f"the picked ROW LABEL is not an entity to look up: {reply!r}"
         )
 
+    def test_a_pick_with_domain_hint_set_still_reruns_the_report_not_a_new_ask(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """R-B (owner-found on the merged head, coder a1f1112d diagnosis, 15 Sep 2026,
+        pre-existing on main - fixed here anyway per the diagnosis). The live v16 parser
+        sometimes emits a numbered pick as `{domain_hint: "order", intent_hint:
+        "check_order", message_type: "business_query", entities: [], reference_positions:
+        [1]}` - no row-label rewrite is in play here (`entities` stays empty from the
+        start), `domain_hint` is simply set on the emission. `_apply_outstanding_pending`'s
+        `own_question = names_entity or truthy(domain_hint)` (output_exchange.py:1567) is
+        then True regardless of what the customer actually picked, and the
+        `outstanding_detail` disjunct (`own_question and (kind == "outstanding_detail" or
+        picked is None)`) drops the pending as a NEW ASK without ever checking `picked` -
+        the disjunct's own `or picked is None` is vacuous whenever `kind ==
+        "outstanding_detail"`, which it always is here. Grades the SAME gap on both
+        numbered channels: `reference_positions` (v1/v16) and `answers_open_question.picks`
+        (v3)."""
+        for label, extra in (
+            ("reference_positions", {"reference_positions": [1]}),
+            (
+                "answers_open_question",
+                {
+                    "reference_positions": [],
+                    "answers_open_question": {
+                        "resolved": True, "picks": [1], "yes_no": None, "free_text": None,
+                    },
+                },
+            ),
+        ):
+            _seed_open_outstanding_detail(session_factory)
+            result, captured = _run_turn(
+                session_factory,
+                monkeypatch,
+                qf=_parser_output(
+                    message_type="business_query",
+                    intent_hint="check_order",
+                    domain_hint="order",
+                    entities=[],
+                    **extra,
+                ),
+                text_body="1",
+                msg_id=f"ZZT-outstanding-rb-domain-hint-{label}",
+                attributes=["sales_orders.outstanding"],
+                matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+                mcp_response=REPORT_HIT,
+            )
+            assert captured, (
+                f"a pick with domain_hint set ({label}) must still re-run the detail "
+                f"report, not drop the pending as a new ask"
+            )
+            name, args = captured[0]
+            assert name == "crm_outstanding_report", (name, label)
+            assert args.get("detail") == "so", f"'1' must ask for the SO detail ({label}): {args}"
+            assert args.get("product_code") == PRODUCT_CODE, (
+                f"the carried product must survive the pick, not be dropped with the "
+                f"pending ({label}): {args}"
+            )
+            reply = (result.reply or {}).get("text") or ""
+            assert "*SO Number:*" in reply, (
+                f"the reply must be the numbered SO detail list, not the offer line "
+                f"re-printed ({label}): {reply!r}"
+            )
+
     def test_a_new_product_code_drops_the_pending(self, session_factory, monkeypatch) -> None:
         _seed_open_outstanding_detail(session_factory)
         other_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
@@ -1820,8 +1988,8 @@ class TestDetailPickRerunsToolWithDetail:
             matches={"SRTWC999": {"uuid": other_uuid, "entity_type": "product", "canonical_code": "SRTWC999"}},
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"a new product code must drop the outstanding_detail pending, not answer it: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) != "outstanding_detail", (
+            f"a new product code must drop the outstanding_detail pending, not answer it: {_stored_oq(stored)!r}"
         )
 
 
@@ -1904,11 +2072,11 @@ class TestDetailOfferIsSticky:
         )
         assert not captured1, "a bare 'thanks' must not itself trigger a report re-run"
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            f"the offer must survive a casual turn in between: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            f"the offer must survive a casual turn in between: {_stored_oq(stored)!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
-            f"the filters must survive too: {stored.get('outstanding_filters')!r}"
+        assert _stored_oq_filters(stored).get("product_code") == PRODUCT_CODE, (
+            f"the filters must survive too: {_stored_oq_filters(stored)!r}"
         )
 
         result2, captured2 = _run_turn(
@@ -1958,7 +2126,7 @@ class TestDetailOfferIsSticky:
             f"a greeting mid-conversation, over an offer still on screen: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", stored.get("pending")
+        assert _stored_oq_kind(stored) == "outstanding_detail", _stored_oq(stored)
 
     def test_the_reprint_uses_the_same_offer_form_the_report_used(
         self, session_factory, monkeypatch
@@ -2067,8 +2235,8 @@ class TestDetailOfferIsSticky:
         )
         assert not captured1, "an out-of-range pick must not run any report"
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            f"an out-of-range pick must not close the offer: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            f"an out-of-range pick must not close the offer: {_stored_oq(stored)!r}"
         )
 
         result2, captured2 = _run_turn(
@@ -2114,21 +2282,19 @@ class TestDetailAnswerByPositionOnly:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                ],
-                "outstanding_filters": {
-                    "product_code": PRODUCT_CODE,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                },
-                "pending": {"kind": "outstanding_detail"},
+                "open_question": _open_question(
+                    "outstanding_detail",
+                    options=[
+                        {"idx": 1, "label": "Sales order list", "value": "so"},
+                    ],
+                    filters={
+                        "product_code": PRODUCT_CODE,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [],
+                        "warehouse_codes": [],
+                    },
+                ),
             },
         )
         _result, captured = _run_turn(
@@ -2162,21 +2328,19 @@ class TestDetailAnswerByPositionOnly:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                ],
-                "outstanding_filters": {
-                    "product_code": PRODUCT_CODE,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                },
-                "pending": {"kind": "outstanding_detail"},
+                "open_question": _open_question(
+                    "outstanding_detail",
+                    options=[
+                        {"idx": 1, "label": "Sales order list", "value": "so"},
+                    ],
+                    filters={
+                        "product_code": PRODUCT_CODE,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [],
+                        "warehouse_codes": [],
+                    },
+                ),
             },
         )
         result, captured = _run_turn(
@@ -2311,14 +2475,21 @@ class TestOutstandingFiltersDoNotOutliveTheAnsweringTurn:
         _seed_contact(
             session_factory,
             variables={
-                "outstanding_filters": {
-                    "product_code": PRODUCT_CODE, "date_filter_start": None, "date_filter_end": None,
-                    "customer_ids": [], "warehouse_codes": [],
-                },
-                # The answering turn already ran and moved on - no open outstanding
-                # ask survives it, same as after any other one-turn pending.
-                "pending": None,
-                "selection_context": None,
+                # In the five-key shape a carried filter set only ever lives INSIDE the
+                # open question's `payload.filters` - there is no bare top-level key that
+                # could linger, so N4's lifetime guard becomes: this outstanding_detail
+                # offer, left open with its filters, must not survive an unrelated turn.
+                "open_question": _open_question(
+                    "outstanding_detail",
+                    options=[
+                        {"idx": 1, "label": "Sales order list", "value": "so"},
+                        {"idx": 2, "label": "Delivery order list", "value": "do"},
+                    ],
+                    filters={
+                        "product_code": PRODUCT_CODE, "date_filter_start": None, "date_filter_end": None,
+                        "customer_ids": [], "warehouse_codes": [],
+                    },
+                ),
             },
         )
         other_uuid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
@@ -2344,9 +2515,9 @@ class TestOutstandingFiltersDoNotOutliveTheAnsweringTurn:
             },
         )
         stored = _session_of(session_factory)["variables"]
-        assert "outstanding_filters" not in stored, (
-            f"outstanding_filters must not survive past the one turn that answers "
-            f"an open scope/detail ask: {stored}"
+        assert _stored_oq_filters(stored).get("product_code") != PRODUCT_CODE, (
+            f"the carried filter set must not survive past the one turn that answers "
+            f"an open scope/detail ask: {_stored_oq(stored)!r}"
         )
 
 
@@ -2523,24 +2694,22 @@ class TestAnswerTurnTakesItsSubjectFromTheStoredFilters:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_scope",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales orders", "value": "so"},
-                    {"idx": 2, "label": "Delivery orders", "value": "do"},
-                    {"idx": 3, "label": "Both", "value": "both"},
-                ],
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [CUSTOMER_ONLY_UUID],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_scope"},
+                "open_question": _open_question(
+                    "outstanding_scope",
+                    options=[
+                        {"idx": 1, "label": "Sales orders", "value": "so"},
+                        {"idx": 2, "label": "Delivery orders", "value": "do"},
+                        {"idx": 3, "label": "Both", "value": "both"},
+                    ],
+                    filters={
+                        "product_code": None,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [CUSTOMER_ONLY_UUID],
+                        "warehouse_codes": [],
+                        "location_token": None,
+                    },
+                ),
             },
         )
 
@@ -2583,24 +2752,22 @@ class TestAnswerTurnTakesItsSubjectFromTheStoredFilters:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "outstanding_detail",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales order list", "value": "so"},
-                    {"idx": 2, "label": "Delivery order list", "value": "do"},
-                    {"idx": 3, "label": "Both lists", "value": "both"},
-                ],
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [CUSTOMER_ONLY_UUID],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_detail"},
+                "open_question": _open_question(
+                    "outstanding_detail",
+                    options=[
+                        {"idx": 1, "label": "Sales order list", "value": "so"},
+                        {"idx": 2, "label": "Delivery order list", "value": "do"},
+                        {"idx": 3, "label": "Both lists", "value": "both"},
+                    ],
+                    filters={
+                        "product_code": None,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [CUSTOMER_ONLY_UUID],
+                        "warehouse_codes": [],
+                        "location_token": None,
+                    },
+                ),
             },
         )
         _result, captured = _run_turn(
@@ -2656,13 +2823,13 @@ class TestCustomerOnlyOutstandingAskReachesTheReport:
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" in reply, reply
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+        assert _stored_oq_kind(stored) == "outstanding_scope", (
             f"a customer-only outstanding ask must arm the scope question exactly like "
-            f"a product ask does: {stored.get('pending')!r}"
+            f"a product ask does: {_stored_oq(stored)!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("customer_ids") == [CUSTOMER_ONLY_UUID], (
+        assert _stored_oq_filters(stored).get("customer_ids") == [CUSTOMER_ONLY_UUID], (
             f"the resolved customer must be stored in the carried filter set even with "
-            f"no product: {stored.get('outstanding_filters')}"
+            f"no product: {_stored_oq_filters(stored)}"
         )
 
     def test_explicit_scope_word_customer_only_picks_the_report_with_customer_ids(
@@ -2839,10 +3006,10 @@ class TestDateNarrowingUnderAnOpenOffer:
             f"the re-run must re-arm the detail offer: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            stored.get("pending")
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            _stored_oq(stored)
         )
-        filters_out = stored.get("outstanding_filters") or {}
+        filters_out = _stored_oq_filters(stored)
         assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
         assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
         assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
@@ -2986,10 +3153,10 @@ class TestDateNarrowingUnderAnOpenOffer:
             f"presenter format: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
-            stored.get("pending")
+        assert _stored_oq_kind(stored) == "outstanding_scope", (
+            _stored_oq(stored)
         )
-        filters_out = stored.get("outstanding_filters") or {}
+        filters_out = _stored_oq_filters(stored)
         assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
         assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
         assert filters_out.get("customer_ids") == [CUSTOMER_UUID], (
@@ -3093,10 +3260,109 @@ class TestDateNarrowingUnderAnOpenOffer:
         )
         _result_unused = result
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            stored.get("pending")
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            _stored_oq(stored)
         )
-        filters_out = stored.get("outstanding_filters") or {}
+        filters_out = _stored_oq_filters(stored)
+        assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
+        assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
+
+    def test_a_location_only_turn_WITH_a_non_null_domain_hint_still_narrows(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """R-H (owner-found on the merged head, coder a1f1112d diagnosis, 15 Sep
+        2026): the sibling test above hand-constructs "only BRW" with `domain_hint:
+        None`, which is what R24's own docstring (`TestABusinessQueryUnderAnOpenOfferIsANewAsk`)
+        assumed every location-only refinement looks like. The LIVE v20 parser does
+        not agree - a real captured turn for the SAME phrase, under the SAME R15
+        refinement chain (`sorento_ai_automation_focus_full`, turn
+        94639ef2-cdf7-4540-a78e-93b411ba2e84), emits `message_type: "business_query"`
+        WITH `domain_hint: "order"` and the carried customer (CNK HARDWARE,
+        `current_message: False`) still riding `entities` beside the new BRW
+        warehouse entity. `_outstanding_keeps_subject`'s R24 guard
+        (`output_exchange.py`, "a NON-NULL domain_hint is a new ask, whatever its
+        entities' axes") fires on THIS shape and refuses the refinement - the real
+        turn's own recorded output shows `outstanding_pending_dropped: True`. A
+        location word alone must still narrow the same open offer, exactly as the
+        `domain_hint: None` sibling already does."""
+        from app.models.inventory import Warehouse
+
+        db = session_factory()
+        db.add(Warehouse(id=str(uuid.uuid4()), warehouse_code="BRW", warehouse_name="BRW", is_active=True))
+        db.commit()
+        _seed_open_outstanding_detail(
+            session_factory,
+            filters={
+                "product_code": None,
+                "date_filter_start": None,
+                "date_filter_end": None,
+                "customer_ids": [CUSTOMER_UUID],
+                "warehouse_codes": [],
+                "location_token": None,
+                "scope": "both",
+            },
+            rows=[
+                {"idx": 1, "label": "Sales order list", "value": "so"},
+                {"idx": 2, "label": "Delivery order list", "value": "do"},
+                {"idx": 3, "label": "Both lists", "value": "both"},
+            ],
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            # The LIVE trace's own parser output, verbatim on the fields that matter:
+            # message_type/domain_hint/intent_hint ALL set (unlike the domain_hint:
+            # None sibling above), entity_op replace_combine, the carried customer
+            # entity still present with current_message False.
+            qf=_parser_output(
+                message_type="business_query", intent_hint="check_order", domain_hint="order",
+                entity_op="replace_combine", order_status="outstanding",
+                entities=[
+                    {
+                        "raw": "BRW", "hint": "warehouse", "canonical_code": None,
+                        "current_message": True, "confident": True,
+                    },
+                    {
+                        "raw": "CNK HARDWARE", "hint": "customer", "canonical_code": None,
+                        "current_message": False, "confident": True,
+                    },
+                ],
+                reference_positions=[],
+            ),
+            text_body="only BRW",
+            msg_id="ZZT-outstanding-rh-domain-hint-narrow-1",
+            attributes=["sales_orders.outstanding"],
+            matches={
+                "CNK HARDWARE": {
+                    "uuid": CUSTOMER_UUID, "entity_type": "customer",
+                    "canonical_code": "CNK HARDWARE",
+                },
+            },
+            mcp_response=REPORT_HIT,
+        )
+        assert len(captured) == 1, (
+            f"exactly one report call, the location refines the SAME offer - a "
+            f"non-null domain_hint must not make this a new ask: {captured}"
+        )
+        name, args = captured[0]
+        assert name == "crm_outstanding_report", (name, args)
+        assert args.get("warehouse_codes") == ["BRW"], (
+            f"the location word must reach the tool as warehouse_codes: {args}"
+        )
+        assert args.get("customer_ids") == [CUSTOMER_UUID], (
+            f"the carried customer subject must survive the refinement: {args}"
+        )
+        assert args.get("scope") == "both", args
+        assert "detail" not in args, (
+            f"a location-only refinement re-runs the REPORT, not a detail pick: {args}"
+        )
+        _result_unused = result
+        stored = _session_of(session_factory)["variables"]
+        assert _stored_oq_kind(stored) == "outstanding_detail", (
+            f"the offer must survive the refinement, not be dropped as a new ask: "
+            f"{_stored_oq(stored)!r}"
+        )
+        filters_out = _stored_oq_filters(stored)
         assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
         assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
 
@@ -3136,11 +3402,11 @@ class TestDateNarrowingUnderAnOpenOffer:
             mcp_response=other_hit,
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail" or (
-            stored.get("outstanding_filters") or {}
+        assert _stored_oq_kind(stored) != "outstanding_detail" or (
+            _stored_oq_filters(stored)
         ).get("product_code") != PRODUCT_CODE, (
             f"a different product replaces the offer, it does not extend it: "
-            f"{stored.get('pending')!r} {stored.get('outstanding_filters')!r}"
+            f"{_stored_oq(stored)!r} {_stored_oq_filters(stored)!r}"
         )
         if captured:
             _name, args = captured[0]
@@ -3204,26 +3470,29 @@ def _seed_open_outstanding_customer_pick(session_factory) -> None:
     _seed_contact(
         session_factory,
         variables={
-            "message_type": "business_query",
-            "domain_hint": "order",
-            "entities": [],
-            "selection_context": "disambiguation",
-            "last_result_set": roster,
-            "picker_last_result_set": roster,
-            "picker_selection_context": "disambiguation",
-            "picker_domain": "order",
-            "outstanding_filters": {
-                "product_code": None,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [],
-                "warehouse_codes": [],
-                "location_token": None,
+            # The ambiguous-customer picker is a `customer_pick` open question in the
+            # five-key shape (main called this `selection_context: "disambiguation"` with
+            # the roster on `last_result_set`). The interrupted outstanding ask's own
+            # filters ride on `payload.filters`, and its delivery-status axis is the tenth
+            # `focus.order_status` slot the head's `reuse` carry reads on the pick turn
+            # (R16 - production persists no marker for the gate's picker, only the ask's
+            # axes).
+            "open_question": _open_question(
+                "customer_pick",
+                options=roster,
+                filters={
+                    "product_code": None,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                },
+            ),
+            "focus": {
+                "domains": _focus_slot(["order"]),
+                "order_status": _focus_slot("outstanding"),
             },
-            # The interrupted ask's own delivery-status axis, persisted by
-            # `tail/compile_state.py` on the turn that asked it (R16).
-            "order_status": "outstanding",
-            "pending": None,
         },
     )
 
@@ -3260,13 +3529,13 @@ class TestOwnerRoundFivePickerAndOfferScope:
         assert "3. Both" in reply, reply
 
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+        assert _stored_oq_kind(stored) == "outstanding_scope", (
             f"the picker's own outstanding ask must be resumed as the scope question, "
-            f"not left in whatever pending kind the picker itself used: {stored.get('pending')!r}"
+            f"not left in whatever pending kind the picker itself used: {_stored_oq(stored)!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("customer_ids") == [HANLIM_UUID_1], (
+        assert _stored_oq_filters(stored).get("customer_ids") == [HANLIM_UUID_1], (
             f"the CUSTOMER JUST PICKED (position 1) must be the stored subject: "
-            f"{stored.get('outstanding_filters')}"
+            f"{_stored_oq_filters(stored)}"
         )
 
     def test_a_pick_then_a_scope_answer_runs_the_report_for_the_picked_customer(
@@ -3410,7 +3679,7 @@ class TestOwnerRoundFivePickerAndOfferScope:
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" in reply, reply
         stored = _session_of(session_factory)["variables"]
-        filters_out = stored.get("outstanding_filters") or {}
+        filters_out = _stored_oq_filters(stored)
         assert filters_out.get("warehouse_codes") == [], (
             f"a new ask's filter set must not inherit the earlier refinement's "
             f"location: {filters_out}"
@@ -3663,29 +3932,28 @@ class TestScopeQuestionCarriesTheFullHeader:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [
-                    {
-                        "raw": product_code, "hint": "product", "uuid": product_uuid,
-                        "canonical_code": product_code, "current_message": False,
+                "open_question": _open_question(
+                    "customer_pick",
+                    options=roster,
+                    filters={
+                        "product_code": product_code,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [],
+                        "warehouse_codes": [],
+                        "location_token": None,
                     },
+                ),
+                # The interrupted ask's carried product and its delivery-status axis. Left
+                # as the projectable session keys `dialogue/focus.py::project_focus`
+                # migrates - a carried product entity re-attaches to this turn's scope from
+                # the session `entities`, which an explicit `focus` slot alone does not do.
+                "entities": [
+                    {"raw": product_code, "hint": "product", "uuid": product_uuid,
+                     "canonical_code": product_code, "current_message": False},
                 ],
-                "selection_context": "disambiguation",
-                "last_result_set": roster,
-                "picker_last_result_set": roster,
-                "picker_selection_context": "disambiguation",
-                "picker_domain": "order",
-                "outstanding_filters": {
-                    "product_code": product_code,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
+                "domain_hint": "order",
                 "order_status": "outstanding",
-                "pending": None,
             },
         )
         result, captured = _run_turn(
@@ -3738,29 +4006,30 @@ class TestScopeQuestionCarriesTheFullHeader:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [
-                    {
-                        "raw": CUSTOMER_NAME, "hint": "customer", "uuid": cust.id,
-                        "canonical_code": CUSTOMER_NAME, "current_message": False,
+                "open_question": _open_question(
+                    "outstanding_scope",
+                    options=[
+                        {"idx": 1, "label": "Sales orders", "value": "so"},
+                        {"idx": 2, "label": "Delivery orders", "value": "do"},
+                        {"idx": 3, "label": "Both", "value": "both"},
+                    ],
+                    filters={
+                        "product_code": None,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [cust.id],
+                        "warehouse_codes": [],
+                        "location_token": None,
                     },
+                ),
+                # The carried customer subject, left as the projectable session `entities`
+                # the tail re-attaches on this reuse turn (an explicit `focus` slot alone
+                # does not re-attach a carried entity onto the turn's scope).
+                "entities": [
+                    {"raw": CUSTOMER_NAME, "hint": "customer", "uuid": cust.id,
+                     "canonical_code": CUSTOMER_NAME, "current_message": False},
                 ],
-                "selection_context": "outstanding_scope",
-                "last_result_set": [
-                    {"idx": 1, "label": "Sales orders", "value": "so"},
-                    {"idx": 2, "label": "Delivery orders", "value": "do"},
-                    {"idx": 3, "label": "Both", "value": "both"},
-                ],
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [cust.id],
-                    "warehouse_codes": [],
-                    "location_token": None,
-                },
-                "pending": {"kind": "outstanding_scope"},
+                "domain_hint": "order",
             },
         )
         result, captured = _run_turn(
@@ -3969,37 +4238,38 @@ class TestScopeQuestionCustomerLineMatchesReportHeader:
         c2 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD [A/C I]")
         c3 = mc_customer(db, company_id=DEFAULT_COMPANY_ID, name="CHIN CHUN HARDWARE SDN BHD - [CERAMIC]")
         db.commit()
-        base_key = gate_mod._cust_base(
-            {"display": {"customer_name": "CHIN CHUN HARDWARE SDN BHD"}, "canonical_code": None}
-        )
         roster = [
             {
                 "idx": 1, "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)", "uuid": c1.id,
                 "product": None, "entity_type": "customer",
+                # R-F (coder a1f1112d, 15 Sep 2026, design revised same day): the family
+                # rides ON THE ROSTER ROW itself, not a session-level
+                # `variables["picker_families"]` map - the legacy map read is deleted
+                # (five-key sessions never carry it, 2026-08-24 "family outlives the
+                # roster" ruling). The pick turn needs nothing from the prior session
+                # beyond the roster it already carries.
+                "family_uuids": [c1.id, c2.id, c3.id],
             },
         ]
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [],
-                "selection_context": "disambiguation",
-                "last_result_set": roster,
-                "picker_last_result_set": roster,
-                "picker_selection_context": "disambiguation",
-                "picker_domain": "order",
-                "picker_families": {base_key: [c1.id, c2.id, c3.id]},
-                "outstanding_filters": {
-                    "product_code": None,
-                    "date_filter_start": None,
-                    "date_filter_end": None,
-                    "customer_ids": [],
-                    "warehouse_codes": [],
-                    "location_token": None,
+                "open_question": _open_question(
+                    "customer_pick",
+                    options=roster,
+                    filters={
+                        "product_code": None,
+                        "date_filter_start": None,
+                        "date_filter_end": None,
+                        "customer_ids": [],
+                        "warehouse_codes": [],
+                        "location_token": None,
+                    },
+                ),
+                "focus": {
+                    "domains": _focus_slot(["order"]),
+                    "order_status": _focus_slot("outstanding"),
                 },
-                "order_status": "outstanding",
-                "pending": None,
             },
         )
         pick_result, pick_captured = _run_turn(
@@ -4123,31 +4393,30 @@ def _seed_open_outstanding_three_family_picker(session_factory) -> tuple[str, st
     _seed_contact(
         session_factory,
         variables={
-            "message_type": "business_query",
-            "domain_hint": "order",
-            "entities": [
-                {
-                    "raw": PRODUCT_CODE_R21, "hint": "product", "uuid": PRODUCT_UUID_R21,
-                    "canonical_code": PRODUCT_CODE_R21, "current_message": False,
+            "open_question": _open_question(
+                "customer_pick",
+                options=roster,
+                filters={
+                    "product_code": PRODUCT_CODE_R21,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [],
+                    "warehouse_codes": [],
+                    "location_token": None,
                 },
+            ),
+            # The interrupted ask's carried product, its delivery-status axis and its date
+            # window, left as the projectable session keys the tail migrates and
+            # re-attaches - a genuine "... in 2026" outstanding ask persists exactly these
+            # before the picker interrupts it.
+            "entities": [
+                {"raw": PRODUCT_CODE_R21, "hint": "product", "uuid": PRODUCT_UUID_R21,
+                 "canonical_code": PRODUCT_CODE_R21, "current_message": False},
             ],
-            "selection_context": "disambiguation",
-            "last_result_set": roster,
-            "picker_last_result_set": roster,
-            "picker_selection_context": "disambiguation",
-            "picker_domain": "order",
-            "outstanding_filters": {
-                "product_code": PRODUCT_CODE_R21,
-                "date_filter_start": None,
-                "date_filter_end": None,
-                "customer_ids": [],
-                "warehouse_codes": [],
-                "location_token": None,
-            },
+            "domain_hint": "order",
             "order_status": "outstanding",
             "date_filter_start": "2026-01-01",
             "date_filter_end": "2026-12-31",
-            "pending": None,
         },
     )
     return c1.id, c2.id, c3.id
@@ -4194,10 +4463,10 @@ class TestAllOnTheCustomerPickerKeepsTheQuestion:
         )
         assert reply.startswith(expected_header), reply
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
-            stored.get("pending")
+        assert _stored_oq_kind(stored) == "outstanding_scope", (
+            _stored_oq(stored)
         )
-        filters_out = stored.get("outstanding_filters") or {}
+        filters_out = _stored_oq_filters(stored)
         assert filters_out.get("customer_ids") == [c1_id, c2_id, c3_id], (
             f"every picked family's id must be in the stored subject: {filters_out}"
         )
@@ -4271,20 +4540,17 @@ class TestAllOnTheCustomerPickerKeepsTheQuestion:
         _seed_contact(
             session_factory,
             variables={
-                "message_type": "business_query",
-                "domain_hint": "order",
-                "entities": [
-                    {
-                        "raw": PRODUCT_CODE_R21, "hint": "product", "uuid": PRODUCT_UUID_R21,
-                        "canonical_code": PRODUCT_CODE_R21, "current_message": False,
-                    },
-                ],
-                "selection_context": "disambiguation",
-                "last_result_set": roster,
-                "picker_last_result_set": roster,
-                "picker_selection_context": "disambiguation",
-                "picker_domain": "order",
-                "pending": None,
+                # A PLAIN (non-outstanding) customer picker: no `order_status`, so no
+                # scope question is ever armed - the pick-all just fans the order list
+                # over every family.
+                "open_question": _open_question("customer_pick", options=roster),
+                "focus": {
+                    "domains": _focus_slot(["order"]),
+                    "products": _focus_slot(
+                        [{"raw": PRODUCT_CODE_R21, "hint": "product", "uuid": PRODUCT_UUID_R21,
+                          "canonical_code": PRODUCT_CODE_R21}]
+                    ),
+                },
             },
         )
         _result, captured = _run_turn(
@@ -4361,11 +4627,11 @@ class TestOpenOfferCanBeLeft:
         assert "Reply 1 for" not in reply, reply
         assert reply.strip() != "", "a decline must still get SOME acknowledgement"
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"the offer must be closed, not left open: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) != "outstanding_detail", (
+            f"the offer must be closed, not left open: {_stored_oq(stored)!r}"
         )
         assert "outstanding_filters" not in stored, (
-            f"the carried filter set dies with the closed offer: {stored.get('outstanding_filters')!r}"
+            f"the carried filter set dies with the closed offer: {_stored_oq_filters(stored)!r}"
         )
 
     def test_stop_under_the_scope_question_closes_it(self, session_factory, monkeypatch) -> None:
@@ -4391,11 +4657,11 @@ class TestOpenOfferCanBeLeft:
         assert "Outstanding for which document?" not in reply, reply
         assert reply.strip() != "", "a decline must still get SOME acknowledgement"
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_scope", (
-            f"the question must be closed, not left open: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) != "outstanding_scope", (
+            f"the question must be closed, not left open: {_stored_oq(stored)!r}"
         )
         assert "outstanding_filters" not in stored, (
-            f"the carried filter set dies with the closed question: {stored.get('outstanding_filters')!r}"
+            f"the carried filter set dies with the closed question: {_stored_oq_filters(stored)!r}"
         )
 
     def test_a_second_unreadable_turn_closes_the_offer(self, session_factory, monkeypatch) -> None:
@@ -4463,12 +4729,12 @@ class TestOpenOfferCanBeLeft:
             f"customer sees: {reply2!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"the offer must be closed after the second unreadable turn: {stored.get('pending')!r}"
+        assert _stored_oq_kind(stored) != "outstanding_detail", (
+            f"the offer must be closed after the second unreadable turn: {_stored_oq(stored)!r}"
         )
-        assert stored.get("pending") is None, stored.get("pending")
+        assert stored.get("open_question") is None, _stored_oq(stored)
         assert "outstanding_filters" not in stored, (
-            f"the closed offer's filter set dies with it: {stored.get('outstanding_filters')!r}"
+            f"the closed offer's filter set dies with it: {_stored_oq_filters(stored)!r}"
         )
 
         result3, captured3 = _run_turn(
@@ -4640,12 +4906,12 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
         assert "Sales order outstanding" not in reply, reply
         assert "Reply 1 for" not in reply, reply
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
+        assert _stored_oq_kind(stored) != "outstanding_detail", (
             f"the old offer must be dropped, not answered by an unrelated turn: "
-            f"{stored.get('pending')!r}"
+            f"{_stored_oq(stored)!r}"
         )
         assert "outstanding_filters" not in stored, (
-            f"the old offer's filter set dies with it: {stored.get('outstanding_filters')!r}"
+            f"the old offer's filter set dies with it: {_stored_oq_filters(stored)!r}"
         )
 
     def test_a_business_query_under_the_scope_question_is_a_new_ask(
@@ -4687,9 +4953,242 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
             f"the old scope question must be dropped, not re-asked: {reply!r}"
         )
         stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_scope", (
-            stored.get("pending")
+        assert _stored_oq_kind(stored) != "outstanding_scope", (
+            _stored_oq(stored)
         )
         assert "outstanding_filters" not in stored, (
-            f"the old question's filter set dies with it: {stored.get('outstanding_filters')!r}"
+            f"the old question's filter set dies with it: {_stored_oq_filters(stored)!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# R-D, revised diagnosis (coder a1f1112d, 15 Sep 2026, second pass): the coder's
+# earlier widening appended the co-resolved product candidates onto
+# `compatible_entities`, which `tail/compile_state.py::_picker_rows` falls back to
+# on the ambiguous-customer arm (no `specific_options` there) - so the frozen roster
+# ended up 13 rows (3 customers + 10 hidden products), `kind` flipped away from
+# `customer_pick`, and `_customer_pick` never ran at all. The fix publishes the
+# co-resolved siblings on a SEPARATE `out["keep_entities"]` instead. Driven through
+# the real turn path (`_run_turn`, not `gate.run_gate` alone) with a custom
+# `resolve_entity` seam returning the LIVE shape measured on
+# sorento_ai_automation_focus_full (two newest chatbot.turns rows for contact
+# 437264483, 15 Sep 2026): "chin chun" ambiguous across three real companies, "wc286"
+# a ten-way product multi-match, neither exact.
+# --------------------------------------------------------------------------- #
+
+_CHIN_CHUN_MATCHES = [
+    {
+        "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+        "entity_type": "customer",
+        "canonical_code": "300-C043",
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+        "display": {"customer_name": "CHIN CHUN HARDWARE SDN BHD"},
+    },
+    {
+        "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+        "entity_type": "customer",
+        "canonical_code": "300-C124",
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+        "display": {"customer_name": "CHIN CHUN HOMEMART SDN BHD"},
+    },
+    {
+        "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+        "entity_type": "customer",
+        "canonical_code": "300-C001",
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+        "display": {"customer_name": "CHIN CHUN HARDWARE AND TIMBER TRADING"},
+    },
+]
+
+_WC286_MATCHES = [
+    {
+        "uuid": f"wc286-uuid-{i}",
+        "entity_type": "product",
+        "canonical_code": code,
+        "match_tier": "trgm",
+        "company_name": "Sorento",
+    }
+    for i, code in enumerate(
+        [
+            "SRTWC286-SH", "SRTWC286-SH-P", "SRTWC286-SH-200", "SRTWC286-SH-NEW",
+            "SRTWC286-SH-NEW-P", "SRTWC286-SH-NEW-200", "SRTWC286-S-150-RL",
+            "SRTWC286A-P-RL", "SRTWC286A-RL-320", "SRTWC286-P",
+        ],
+        start=1,
+    )
+]
+
+
+def _chin_chun_wc286_resolve_services() -> ResolveGateServices:
+    """Only resolves the two tokens the ARMING turn's own text carries - a bare
+    positional pick ("1"/"2") asks the resolver nothing (no free-text token to
+    re-search), and this stub must say so rather than re-offering the same
+    ambiguous pair on every call regardless of what the body actually asked for
+    (which would re-arm the picker on the pick turn itself)."""
+
+    def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        asked = " ".join(
+            [str(body.get("query") or "")] + [str(t) for t in (body.get("tokens") or [])]
+        ).lower()
+        resolutions = []
+        if "chin chun" in asked:
+            resolutions.append(
+                {"raw": "chin chun", "token": "chin chun", "matches": list(_CHIN_CHUN_MATCHES)}
+            )
+        if "wc286" in asked:
+            resolutions.append(
+                {"raw": "wc286", "token": "wc286", "matches": list(_WC286_MATCHES)}
+            )
+        return {
+            "tokens": [r["token"] for r in resolutions],
+            "resolutions": resolutions,
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve_entity),
+        probe=lambda **_: None,
+    )
+
+
+def _delivery_chin_chun_wc286_qf() -> dict[str, Any]:
+    return _parser_output(
+        message_type="business_query", intent_hint="check_order", domain_hint="order",
+        entity_op="replace_combine", requested_attributes=["delivery"],
+        entities=[
+            {"raw": "chin chun", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
+            {"raw": "wc286", "hint": "product", "canonical_code": None, "current_message": True, "confident": True},
+        ],
+        reference_positions=[],
+    )
+
+
+class TestRDCustomerAmbiguityArmKeepsTheCoResolvedProductToken:
+    """R-D, live regression on the coder's fixed head (9d5b66dd1 and later). Real
+    cause (coder's own diagnosis, 15 Sep 2026): the customer-ambiguity `require_specific`
+    arm must arm EXACTLY its own three-row customer roster (`kind: "customer_pick"`),
+    with the co-resolved "wc286" multi-match token frozen onto `payload.keep` (or
+    wherever the fix's `out["keep_entities"]` ends up riding on the persisted
+    question) - never appended into the roster's own `options`, which is what
+    flipped `kind` away from `customer_pick` and skipped `_customer_pick` entirely
+    in the coder's first pass."""
+
+    def test_the_customer_roster_arms_with_exactly_three_rows_and_keeps_wc286(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_delivery_chin_chun_wc286_qf(),
+            text_body="delivery for chin chun product wc286",
+            msg_id="ZZT-outstanding-rd-arm-1",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Which customer do you mean?" in reply, reply
+
+        stored = _session_of(session_factory)["variables"]
+        oq = _stored_oq(stored)
+        assert oq.get("kind") == "customer_pick", (
+            f"the ten co-resolved WC286 candidates must not flip the roster's own "
+            f"kind away from customer_pick: {oq!r}"
+        )
+        options = _stored_oq_options(stored)
+        assert len(options) == 3, (
+            f"exactly the three customer rows, none of the ten hidden product "
+            f"candidates: {options!r}"
+        )
+        assert {o.get("entity_type") for o in options} == {"customer"}, options
+
+        keep = (oq.get("payload") or {}).get("keep") or []
+        keep_raws = [k.get("raw") for k in keep if isinstance(k, dict)]
+        assert "wc286" in keep_raws, (
+            f"the co-resolved product token must survive somewhere the pick can read "
+            f"it back - payload.keep, ruling (a) parity with main: {oq.get('payload')!r}"
+        )
+        kept = next(k for k in keep if isinstance(k, dict) and k.get("raw") == "wc286")
+        assert kept.get("hint") == "product", kept
+        assert kept.get("canonical_code") is None, kept
+
+    def test_picking_the_first_row_scopes_the_delivery_answer_to_wc286(
+        self, session_factory, monkeypatch
+    ) -> None:
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_delivery_chin_chun_wc286_qf(),
+            text_body="delivery for chin chun product wc286",
+            msg_id="ZZT-outstanding-rd-pick1-arm",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[1],
+            ),
+            text_body="1",
+            msg_id="ZZT-outstanding-rd-pick1-answer",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+            mcp_response=REPORT_HIT,
+        )
+        reply = (result.reply or {}).get("text") or ""
+        assert "Product: all products" not in reply, (
+            f"the picked customer's delivery answer must stay scoped to wc286, "
+            f"never widen to every product: {reply!r}"
+        )
+        assert "wc286" in reply.lower(), (
+            f"the header must name the product filter the arming turn carried: {reply!r}"
+        )
+        # Deliberately NOT asserting the tool call's product_ids or exact args here
+        # (coordinator's own ruling): the product filter's internal shape is the
+        # coder's to design - the header line is the one fact this test pins on the
+        # customer-scoped fetch. `captured` is not asserted either: this mock's
+        # `mcp_response` is shaped for the outstanding-report tool, not
+        # `crm_order_management_orders_list`, so a real fetch here may legitimately
+        # come back empty without that being this test's own defect.
+        _captured_unused = captured
+
+    def test_a_bare_two_resolves_the_second_customer_row_never_a_hidden_product(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """S7a-class blocker: the roster still has to number 1-3 for the customer
+        rows the reply actually showed - a bare '2' must resolve CHIN CHUN HOMEMART
+        (row 2 of the three), never one of the ten hidden WC286 candidates that
+        would sit at position 2 if they had ever been appended to the roster."""
+        _seed_contact(session_factory, variables={})
+        _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_delivery_chin_chun_wc286_qf(),
+            text_body="delivery for chin chun product wc286",
+            msg_id="ZZT-outstanding-rd-pick2-arm",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+        )
+        result, captured = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
+                reference_positions=[2],
+            ),
+            text_body="2",
+            msg_id="ZZT-outstanding-rd-pick2-answer",
+            resolve_services=_chin_chun_wc286_resolve_services(),
+            mcp_response=REPORT_HIT,
+        )
+        assert captured, "the pick must reach the fetch"
+        name, args = captured[0]
+        assert name == "crm_order_management_orders_list", (name, args)
+        assert args.get("customer_ids") == ["13eb525b-985c-44a5-abc4-4be5c7db6cd6"], (
+            f"'2' must resolve CHIN CHUN HOMEMART, the roster's own second row - "
+            f"never a hidden product candidate: {args}"
+        )
+        _result_unused = result

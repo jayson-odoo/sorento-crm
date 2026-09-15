@@ -33,6 +33,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope
 
+from app.services.chatbot import trace as trace_mod
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures reused by name
     CONTACT_ID,
     _envelope,
@@ -219,7 +220,16 @@ OFFER_HOLD_CLARIFY_TEXT = (
 
 
 def _setup_offer_hold(session_factory, monkeypatch) -> tuple[dict, Any, str]:
-    """Tier-4 (junk/no-signal) re-offer on an open two-company member roster."""
+    """Tier-4 (junk/no-signal) re-offer on an open two-company member roster.
+
+    D8/AC-1019 (S3d step 4): no `selection_context` / `routing_roster_plan` /
+    `routing_companies` mirrors - the five-key shape, `open_question` armed
+    `member_offer` through `dialogue/open_question.ask` the way a real lane would have
+    left it, `payload.companies` carrying the roster `offer_hold_clarify_text` composes
+    the names from.
+    """
+    from app.services.chatbot.dialogue.open_question import ask as open_question_ask
+
     session_factory  # seeded by the caller via _seed_session_variables
     overrides = _parser_output(
         message_type="casual",
@@ -232,9 +242,16 @@ def _setup_offer_hold(session_factory, monkeypatch) -> tuple[dict, Any, str]:
         escalation={"is_escalation_confirmation": False, "company_pick": None},
     )
     session_vars = {
-        "selection_context": "member_offer",
-        "routing_roster_plan": TWO_COMPANY_ROSTER,
-        "routing_companies": TWO_COMPANY_ROSTER,
+        "focus": {},
+        "open_question": open_question_ask(
+            "member_offer",
+            options=[],
+            turn_no=1,
+            payload={"companies": TWO_COMPANY_ROSTER},
+        ),
+        "ideation": None,
+        "access_levels": [],
+        "contains_flyer": False,
     }
     return overrides, session_vars, OFFER_HOLD_CLARIFY_TEXT, "not sure"
 
@@ -370,8 +387,9 @@ class TestCannedBranchesFinishInTurn:
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done", row.error
         assert row.branch_kind == kind
-        stages = [r["stage"] for r in row.trace]
-        assert stages[:4] == ["received", "understood", "access", "routed"]
+        stages = [r["stage"] for r in trace_mod.stage_records(row.trace)]
+        # L1-S3: `answered` sits between `understood` and `access` on every turn.
+        assert stages[:5] == ["received", "understood", "answered", "access", "routed"]
         assert "replied" in stages
         assert "remembered" in stages
         assert "sent" in stages, "the CRM never sends (D9) - the trace still records the hand-off"
@@ -749,13 +767,24 @@ class TestOfferHold:
         assert result.reply["text"] == OFFER_HOLD_CLARIFY_TEXT
 
         # D14: dry run, so the would-be persist is on `session_patch`, not written.
+        # D8/AC-1019: no `response` / `routing_roster_plan` / `routing_companies` /
+        # `selection_context` / `pending` mirrors - the two company names ride the
+        # COMPOSED TEXT (already asserted above via `result.reply["text"]`); the
+        # persisted state is one `open_question` slot, `member_offer` yes/no, no roster.
         patch = result.session_patch or {}
         variables = patch.get("variables", patch)
-        assert variables.get("response") == OFFER_HOLD_CLARIFY_TEXT
-        assert variables.get("routing_roster_plan") == TWO_COMPANY_ROSTER
-        assert variables.get("routing_companies") == TWO_COMPANY_ROSTER
-        assert variables.get("selection_context") == "member_offer"
-        assert (variables.get("pending") or {}).get("kind") == "member_offer"
+        for legacy_key in (
+            "response",
+            "routing_roster_plan",
+            "routing_companies",
+            "selection_context",
+            "pending",
+        ):
+            assert legacy_key not in variables, legacy_key
+        open_question = variables.get("open_question") or {}
+        assert open_question.get("kind") == "member_offer"
+        assert open_question.get("expects") == "yes_no"
+        assert open_question.get("options") == []
 
     def test_offer_hold_reply_one_company_name(self):
         from app.services.chatbot.lanes import canned

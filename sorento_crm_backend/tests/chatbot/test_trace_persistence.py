@@ -266,7 +266,8 @@ class TestTheToolEventIsPersistedAndReadable:
         _, trace = _run_a_stock_turn(session_factory, monkeypatch)
 
         stages = [r["stage"] for r in _stage_records(trace)]
-        assert stages[:4] == ["received", "understood", "access", "routed"]
+        # L1-S3: `answered` sits between `understood` and `access` on every turn.
+        assert stages[:5] == ["received", "understood", "answered", "access", "routed"]
         for record in _stage_records(trace):
             assert record["summary"] and record["why"]
             assert "raw" in record

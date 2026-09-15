@@ -295,8 +295,48 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # differently without it (the 9 `live-spine-sorento-consume-main` and 3 `clone-spine-RS` /
 # `sub-resolve-and-gate-rs` turns that name a customer); the trigger to revisit is n8n
 # emitting a key by this name of its own.
+# `gate_debug.incompatible_only` (PR #735, `9a49921c9`, 8 Sep 2026): `gate.py:1471` now
+# stamps it UNCONDITIONALLY on every gate run, so any capture taken before that commit is
+# missing it the same way the two keys above are missing `specific_options` /
+# `tier_pick_domain`. Same mechanism, same reason: a blanket `Divergence` would stop
+# grading the whole node instead of the one key. Measured against the corpus after the
+# 4-5 Sep capture run: 13 `disallowed-entity-gate` fixtures (`sub-resolve-and-gate-rs` and
+# `live-spine-sorento-consume-main`) and the 2 `resolve-exit-not-found` whole-sub replays
+# that carry the gate's item onward for those same two captures predate it; nothing else
+# in the corpus is masked by this entry today, and the trigger to revisit is a capture
+# that carries the key already disagreeing with the port.
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
-    "disallowed-entity-gate": ("specific_options", "display_name"),
+    # `family_uuids` (R-F, coder a1f1112d, 15 Sep 2026, design revised same day): a
+    # customer-picker row now carries every uuid its account family spans, a per-row
+    # field the gate's ambiguous-customer arm composes (`lanes/business/gate.py`'s
+    # picker-row construction). Three captures (`rg-15114061`, `exec-14091114`,
+    # `exec-14109393`) predate it the same way earlier ones predate `specific_options` -
+    # otherwise byte-identical, missing only the one new field on their customer picker
+    # rows. Same mechanism as those, not a field-scoped divergence: the strip is
+    # unconditional per-node, so a capture that DOES carry `family_uuids` grades it.
+    #
+    # `keep_entities` (the general keep rule, 15 Sep 2026): the gate now publishes the
+    # entities ANOTHER token resolved beside the picker's own candidates on a key of
+    # their own, so `compatible_entities` goes back to being exactly the rows on offer
+    # and `payload.keep` has one source instead of being subtracted back out of the
+    # narrowed list. Additive and unconditional per node, the same class as
+    # `family_uuids` above: a capture recorded before the key existed cannot grade it,
+    # and one that carries it does. Residual on `rg-15125764`, `exec-14095480` and the
+    # `resolve-exit-offer/rg-15125764` whole-sub replay (which `_compare` keys under
+    # `sub-resolve-and-gate`, see that entry below).
+    "disallowed-entity-gate": (
+        "specific_options",
+        "display_name",
+        "incompatible_only",
+        "family_uuids",
+        "keep_entities",
+    ),
+    # `construct-user-prompt`'s `focus_hints` / `open_question` (AC-1024, S2 clarifier
+    # ruling, 12 Sep 2026): the dialogue module's hints replace the raw `session_vars`
+    # echo unconditionally, so every one of the 8 `sub-casual-llm-live` captures (and the
+    # vendored subset) predates both keys the same way a gate capture predates
+    # `incompatible_only`.
+    "construct-user-prompt": ("focus_hints", "open_question"),
     "tier-gate": ("tier_pick_domain",),
     # S8a, AC-808: the ten entries that used to sit in `STALE_FIXTURES` are graded here
     # instead of skipped. Both groups are the same class as the two keys above - a key
@@ -342,9 +382,28 @@ CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     "annotate-customer-picker": ("specific_options", "display_name"),
     "resolve-exit-continue": ("specific_options", "tier_pick_domain", "display_name"),
     "resolve-exit-access-ask": ("specific_options", "tier_pick_domain", "display_name"),
-    "resolve-exit-not-found": ("specific_options", "tier_pick_domain", "display_name"),
+    "resolve-exit-not-found": (
+        "specific_options",
+        "tier_pick_domain",
+        "display_name",
+        "incompatible_only",
+    ),
     "resolve-exit-offer": ("specific_options", "tier_pick_domain", "display_name"),
-    "sub-resolve-and-gate": ("specific_options", "tier_pick_domain", "display_name"),
+    # `test_full_corpus_whole_sub_replay`'s synthetic node: `_compare` keys off
+    # `fixture.node`, which for that parametrization is "sub-resolve-and-gate" even when
+    # the fixture id is prefixed with the exit arm's own name
+    # (`resolve-exit-not-found/sub-resolve-and-gate-rs/rg-...`), so this entry - not
+    # `resolve-exit-not-found`'s - is the one that actually strips `incompatible_only`
+    # for those two whole-sub replays.
+    "sub-resolve-and-gate": (
+        "specific_options",
+        "tier_pick_domain",
+        "display_name",
+        "incompatible_only",
+        # Same reason as the gate's own entry above, one level down: the whole-sub
+        # replays compare the gate's item under THIS node name.
+        "keep_entities",
+    ),
 }
 
 

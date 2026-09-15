@@ -41,6 +41,52 @@ class ChatbotTurnResponse(BaseModel):
     # The answer the turn returned: `{ctx, item, actions}` today, `{reply, actions}` from
     # S3. Null on a turn that failed or is still running.
     response: dict[str, Any] | None = None
+    # AC-1027. On a SHADOW row, the `message_id` of the live turn it parsed again; null on
+    # every live row. It is what pairs the two sides of the comparison.
+    shadow_of: str | None = None
+    # AC-1029. The domains this turn's parse asked about, flattened from `asks[]`, in the
+    # order the dealer said them. Null on a turn parsed before v3 - NOT `[]`, which would
+    # say "this parse named no domain" and make the drift comparison read "we cannot tell"
+    # as a difference.
+    domains: list[str] | None = None
+    # The three below are filled only on a CROSS-CONTACT shadow request (`ingress=shadow`
+    # with no `contact_respond_id`): a grid showing every contact's shadow turns at once
+    # has no conversation open to read them from, so the row carries its own context. Null
+    # on a per-contact request, where the conversation already supplies them.
+    contact_display: str | None = None
+    message: str | None = None
+    live: ShadowTurnLiveSide | None = None
+
+
+class ShadowTurnLiveSide(BaseModel):
+    """The live side of one shadow row, off the join the summary already needs.
+
+    `id` is the LIVE turn, so opening the row opens the turn the customer actually got,
+    with the shadow parse beside it rather than in place of it.
+    """
+
+    id: str
+    branch_kind: str | None = None
+    domains: list[str] | None = None
+
+
+class ShadowTurnSummary(BaseModel):
+    """AC-1030: how the shadow window is going over the WHOLE filtered range.
+
+    Computed by the endpoint rather than in the browser, because the browser holds one page
+    and the owner is asking about the window. Parities are fractions of the shadow rows
+    that could be paired with a live row; either is null when nothing in the range could be
+    compared, which the screen says in words rather than printing "0%".
+    """
+
+    count: int = 0
+    branch_parity: float | None = None
+    asks_parity: float | None = None
+    # Whether `count` is the whole range or the cap. The scan is bounded
+    # (`shadow_list.SUMMARY_SCAN_LIMIT`), and a capped number read as a complete one is the
+    # difference between "the new parser agreed on 96% of the window" and "of the newest
+    # 5,000 turns in it". The screen says which.
+    truncated: bool = False
 
 
 class ChatbotTurnDetailResponse(ChatbotTurnResponse):
@@ -67,6 +113,9 @@ class ChatbotTurnListResponse(BaseModel):
     # single field does not need.
     retry_available: bool = False
     retry_unavailable_reason: str | None = None
+    # AC-1030. Present only when the request filtered on `ingress=shadow`. Declared here
+    # because `response_model` drops an undeclared field, which is this file's whole point.
+    summary: ShadowTurnSummary | None = None
 
 
 class FailedContactRow(BaseModel):

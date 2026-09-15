@@ -6,7 +6,7 @@
  * =============================================================================
  *
  * GET /api/v1/system/chatbot/turns
- *     ?contact_respond_id=&from=&to=&status=&limit=&cursor=
+ *     ?contact_respond_id=&from=&to=&status=&ingress=&limit=&cursor=
  *   Permission: `system.chat_history.view`. Newest first, keyset-paged.
  *   `limit` defaults to 50, max 200. `cursor` is the opaque `next_cursor` of the
  *   previous page; `next_cursor` is null on the last page. An unknown `status` is
@@ -51,6 +51,55 @@
  *     "retry_available": true,
  *     "retry_unavailable_reason": "<sentence>" | null
  *   }
+ *
+ * ---------------------------------------------------------------------------
+ * The shadow window (L1-S4, AC-1027 / AC-1029 / AC-1030) - LIVE
+ * ---------------------------------------------------------------------------
+ *
+ * `ingress` joins the existing filters and takes one of
+ * `webhook | poller | retry | console | shadow`. An unknown value is 422, the same as
+ * `status`.
+ *
+ * EVERY row (live and shadow) gains one field:
+ *
+ *   "domains": ["inventory", "incoming"] | null
+ *      the parse's `asks[]` flattened, in the order the dealer said them. `null` on a
+ *      turn parsed before v3 - which is NOT `[]` ("named no domain"), because the drift
+ *      comparison must not read "we cannot tell" as "these differ".
+ *
+ * A SHADOW row (`ingress: "shadow"`) also carries:
+ *
+ *   "shadow_of": "wamid.xxx"        the LIVE turn's `message_id`, which is what pairs
+ *                                   the two sides. Null on every live row.
+ *
+ * and it carries no reply: `response` is null, nothing was sent, no session was written
+ * and no escalation was raised. Its parse rides `trace` like any other turn's.
+ *
+ * `ingress=shadow` is ALSO valid with NO `contact_respond_id`: the owner watches a
+ * promotion across every contact at once, not one conversation at a time. A row of such a
+ * request carries its own context, because the screen showing it has no conversation open
+ * to read it from:
+ *
+ *   "contact_display": "Ah Seng Hardware" | null    the contact's name, else the phone.
+ *                                                   NEVER an id - the grid shows it.
+ *   "message": "SRTWT2634 stock and eta" | null     what the customer said.
+ *   "live": { "id": "<live turn uuid>",             the live side of the comparison, off
+ *             "branch_kind": "business_query",      the join the summary already needs.
+ *             "domains": ["inventory"] } | null     `id` is the LIVE turn, so opening a
+ *                                                   row opens what the customer got.
+ *
+ * Those three are absent on a per-contact request, where the conversation already
+ * supplies them.
+ *
+ * With `ingress=shadow` the response gains a summary over the WHOLE filtered range, not
+ * over the page:
+ *
+ *   "summary": { "count": 42, "branch_parity": 0.97, "asks_parity": 0.91 } | null
+ *
+ * Parities are fractions of the shadow rows that could be paired with a live row, and
+ * either may be null when nothing in the range could be compared. `null` for the whole
+ * object when the filter was not `shadow`. It is computed server-side because the browser
+ * holds one page and the owner is asking about the window.
  *
  * GET /api/v1/system/chatbot/turns/failed-contacts?from=&to=
  *   Permission: `system.chat_history.view`. Feeds the LIST's "Failed turns only"
@@ -126,6 +175,7 @@ export async function getChatbotTurns(
     from: filters.from,
     to: filters.to,
     status: filters.status,
+    ingress: filters.ingress,
     limit: filters.limit,
     cursor: filters.cursor,
   });

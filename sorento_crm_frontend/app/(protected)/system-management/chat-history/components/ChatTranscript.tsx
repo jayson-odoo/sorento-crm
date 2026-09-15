@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { ChatMessageRow } from '../types/chatHistory.types';
 import type { ChatbotTurn } from '../types/chatbotTurn.types';
+import { parseStateTrace, type DriftAxis } from '../shadowDrift';
 import { StateTracePanel } from './StateTracePanel';
 import { TurnPanel } from './TurnPanel';
 
@@ -24,6 +25,12 @@ interface ChatTranscriptProps {
   failedTurnsOnly?: boolean;
   /** When set, Retry is disabled everywhere in this transcript, with this as the reason. */
   retryUnavailableReason?: string | null;
+  /** AC-1029. The Shadow filter is on, so each turn says how its shadow parse compared. */
+  shadowOn?: boolean;
+  /** Which axes the shadow parse drifted on, per live respond message id. */
+  driftByMessageId?: Map<string, DriftAxis[]>;
+  /** The shadow row itself, per live respond message id, for the side-by-side panel. */
+  shadowTurnsByMessageId?: Map<string, ChatbotTurn>;
 }
 
 function latencyVariant(seconds: number): string {
@@ -62,6 +69,9 @@ export function ChatTranscript({
   turnsByMessageId,
   failedTurnsOnly = false,
   retryUnavailableReason = null,
+  shadowOn = false,
+  driftByMessageId,
+  shadowTurnsByMessageId,
 }: ChatTranscriptProps) {
   const [term, setTerm] = useState('');
   const [activeMatch, setActiveMatch] = useState(0);
@@ -263,9 +273,24 @@ export function ChatTranscript({
                     a turn (Phase 2). */}
                 {!outgoing &&
                   (turn ? (
-                    <TurnPanel turn={turn} retryUnavailableReason={retryUnavailableReason} />
+                    <TurnPanel
+                      turn={turn}
+                      retryUnavailableReason={retryUnavailableReason}
+                      shadowOn={shadowOn}
+                      shadowTurn={m.message_id ? shadowTurnsByMessageId?.get(m.message_id) : undefined}
+                      drift={m.message_id ? driftByMessageId?.get(m.message_id) : undefined}
+                    />
                   ) : (
-                    m.state_trace && <StateTracePanel trace={m.state_trace} />
+                    m.state_trace && (
+                      <StateTracePanel
+                        trace={m.state_trace}
+                        shadow={
+                          shadowOn && m.message_id
+                            ? parseStateTrace(shadowTurnsByMessageId?.get(m.message_id))
+                            : null
+                        }
+                      />
+                    )
                   ))}
               </div>
             );

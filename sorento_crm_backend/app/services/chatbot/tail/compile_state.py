@@ -34,7 +34,9 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc, topic
-from app.services.chatbot.tail import pending as pending_marker
+from app.services.chatbot.contracts import SESSION_VAR_KEYS
+from app.services.chatbot.dialogue import focus as focus_mod
+from app.services.chatbot.dialogue import open_question as pending_open_question
 
 UNDEFINED = jsc.UNDEFINED
 
@@ -43,6 +45,7 @@ UNDEFINED = jsc.UNDEFINED
 # EMITS one on the merge arm and FOLDS every one it finds - the JS does, so the port must,
 # or the two disagree on a customer-visible string.
 EM_DASH = "\u2014"
+EN_DASH = "\u2013"
 
 
 @dataclass
@@ -68,6 +71,12 @@ class CompiledState:
     item: dict[str, Any]
     answered_domain: str | None = None
     offer_open: bool = False
+    # WHO the offer this turn printed was for, from the composer that printed it (S-1).
+    # The engine's post-compose arm records the offer from this rather than from the text.
+    offer_team: Any = None
+    # The rows `sub-sendmsg` renders (AC-207). A per-turn OUTPUT, not memory: the five-key
+    # session does not carry them and the sender must still get them (L1-S3).
+    result_set: Any = None
 
 
 # --------------------------------------------------------------------------- #
@@ -102,20 +111,573 @@ def sanitize_em_dash(value: Any) -> Any:
     Dynamic text (LLM, CRM, RAG sourced) must never carry an em-dash to a customer. The
     walk is over the FINAL payload, so it covers `user_response`, `quick_reply` and every
     persisted `variables.*` string no matter which arm produced it.
+
+    THE EM DASH ONLY, here. `sanitize_dashes` folds the en dash as well and is what the
+    engine applies at the process boundary; this one may not, because six graded captures
+    carry a U+2013 in a field this function walks (`crossdomain-compose` s57-t0,
+    `build-result` exec-14001933 among them) and folding it would move every one of them.
     """
+    return _fold(value, (EM_DASH,))
+
+
+def sanitize_dashes(value: Any) -> Any:
+    """The same walk, folding the EN dash too - the PROCESS BOUNDARY's rule (S7b).
+
+    Applied where a turn leaves the CRM (the row it persists, the actions it hands the
+    caller, `reply.attachments_src`) rather than inside the tail, so no node output and
+    therefore no capture moves. It exists because the tail's fold covered only the SEALED
+    reply: the casual lane builds its `send_message` from the clarifier's raw words before
+    the tail runs (`engine._run_casual_lane`), so one turn carried two texts that differed
+    by one character - the customer would have been sent the em-dash one, and the console
+    printed BOTH bubbles because `console_service._customer_texts` de-duplicates by exact
+    equality. Pre-existing on main; the lane only made the clarifier arm common enough to
+    see it.
+    """
+    return _fold(value, (EM_DASH, EN_DASH))
+
+
+def _fold(value: Any, chars: tuple[str, ...]) -> Any:
+    """One walker, mutating in place, so the persisted copy and the returned one agree."""
     if isinstance(value, dict):
         for key, inner in value.items():
             if isinstance(inner, str):
-                value[key] = inner.replace(EM_DASH, "-")
+                value[key] = _folded(inner, chars)
             elif isinstance(inner, (dict, list)):
-                sanitize_em_dash(inner)
+                _fold(inner, chars)
     elif isinstance(value, list):
         for index, inner in enumerate(value):
             if isinstance(inner, str):
-                value[index] = inner.replace(EM_DASH, "-")
+                value[index] = _folded(inner, chars)
             elif isinstance(inner, (dict, list)):
-                sanitize_em_dash(inner)
+                _fold(inner, chars)
     return value
+
+
+def _folded(text: str, chars: tuple[str, ...]) -> str:
+    for char in chars:
+        text = text.replace(char, "-")
+    return text
+
+
+def _first(value: Any) -> Any:
+    rows = jsc.array(value)
+    return rows[0] if rows else None
+
+
+def _focus_entities(focus: Any) -> list[Any]:
+    """WHAT THE CONVERSATION IS ABOUT, as the entity list the carries speak in.
+
+    `focus` holds the subject one axis at a time so each can age on its own; the legacy
+    `entities` array held all of them in one bag. The four entity-shaped slots are read
+    back in `FOCUS_SLOTS` order so the list a carry restores is stable, and nothing else
+    in the focus is an entity (a date window, a tier and a brand are constraints on the
+    question, not things the question is about).
+    """
+    out: list[Any] = []
+    for name in ("products", "customer", "transporter", "warehouse"):
+        value = focus_mod.value_of(focus, name)
+        rows = value if isinstance(value, list) else ([value] if jsc.truthy(value) else [])
+        out.extend(e for e in rows if jsc.truthy(e))
+    return out
+
+
+def _escalation_team(qf: Mapping[str, Any], gate: Any) -> Any:
+    """The team an escalation offer names. ONE declaration, two callers.
+
+    Issue #9: the RESOLVED entity's company team beats the parser's access-level guess, so
+    the sentence the customer reads and the question the bot records can never name
+    different teams. Lifted out of `tail/pending.py` when that module went with the marker
+    it wrote (L1-S3d step 4); it was the only thing in there that outlived it.
+    """
+    company_team = jsc.get(gate, "company_team") if gate is not None else None
+    if jsc.truthy(company_team):
+        return company_team
+    return jsc.get(jsc.get(qf, "routing"), "suggested_team")
+
+
+# The INVERSE of `_ask_for_turn`'s dispatch, for the one reader that still needs the
+# legacy label: the carries below re-seat `selection_context` and `last_result_set` for
+# THIS turn's reply, and `_ask_for_turn` reads them back. It is a within-turn round trip -
+# neither key is persisted (AC-1001) - so the two halves cannot drift across a deploy, and
+# `product_pick`'s two old labels (`disambiguation`, `suggest_offer`) collapse to the one
+# `_ask_for_turn` answers to.
+_SELECTION_CONTEXT_BY_KIND: dict[str, str] = {
+    "product_pick": "disambiguation",
+    "customer_pick": "disambiguation",
+    "member_offer": "member_offer",
+    "tier_pick": "tier_offer",
+    "team_pick": "team_clarify",
+    "company_pick": "company_clarify",
+    # Merged from main (#862): the outstanding report's two questions kept their own
+    # names as `pending` kinds and keep them here, so `_offer_carry`'s two arms and
+    # `_ask_for_turn`'s read the same word the head does.
+    "outstanding_scope": "outstanding_scope",
+    "outstanding_detail": "outstanding_detail",
+}
+
+
+def _prev_context(prev_question: Any) -> str | None:
+    """The legacy label for the question the LAST turn left open, or None.
+
+    `None` for the plain escalate offer: it is a `team_pick` with `expects: yes_no` (D5),
+    and the legacy shape gave it no `selection_context` at all - it lived on the `pending`
+    marker - which is what kept a yes/no offer out of every roster carry in this file.
+
+    A roster CARRYING an offer (`expects: pick_or_yes_no`, D19) keeps its own label, and
+    that is the point of merging rather than replacing: the rows are still the rows, so
+    the picker carry below goes on re-seating them and the answer that comes back is still
+    resolved against the list the customer read.
+    """
+    kind = jsc.nullish_str(jsc.get(prev_question, "kind") or "")
+    if kind == "team_pick" and jsc.get(prev_question, "expects") == "yes_no":
+        return None
+    return _SELECTION_CONTEXT_BY_KIND.get(kind)
+
+
+# The two `expects` a ROSTER can be in, and they are the SAME QUESTION (S6 review, B1).
+# Why they are read as one, in `_same_expectation` below.
+_PICK_EXPECTS = ("pick", "pick_or_yes_no")
+
+
+def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
+    """Is this turn's ask the LIVE QUESTION over again, rather than a new one? (D19 r1)
+
+    The same kind as the live one, expecting the same answer, and the live one has rows.
+    Whether the re-arm brought rows of its OWN is deliberately not asked: that was the B1
+    shape of this test and it missed the case the owner hit on 13 Sep, where the rows it
+    brought were THIS TURN'S ANSWER (see `_re_armed`).
+
+    Nor is it asked whether the LABEL was born this turn or carried, and the guarantee
+    that makes that safe is at the CALL SITE rather than in the kinds: this function is
+    consulted only when `not lane_asked` (below), i.e. when no lane composed a question of
+    its own and the label was re-derived from what the last turn left open. A re-derived
+    label can therefore only ever name the live question; the rows handed beside it are
+    whatever THIS turn printed, which is the defect (an empty list when no lane ran, the
+    ANSWER's own rows when one did). A live question whose rows really are stale is cleared
+    rather than overwritten - by a topic reset, by a message naming its own subject, or by
+    the conversation closing (`dialogue/clearing.py`).
+
+    **EVERY KIND, not the roster kinds** (owner ruling, 15 Sep 2026: "our fix needs to be
+    general and not targeted to 1 scenario only"). S6 wrote this test as a `ROSTER_KINDS`
+    membership, which fixed the re-arm-returns-nothing defect for the three lists and left
+    it standing everywhere else: a `member_offer` re-prompted by `offer_hold` after ONE
+    casual turn came back `options: []` with its team re-derived, so the "2" the customer
+    typed over a numbered people roster picked nobody (R-L, tester 2's member-offer arm of
+    `test_general_rules_15sep.py::
+    test_a_bare_number_resolves_the_frozen_row_however_many_casual_turns_intervened`).
+    The rule is about a RE-ARM, which is a fact about the two questions rather than about
+    which kind they are, so the kind test is now only "the same kind as the live one" and
+    `member_offer` is NOT added to `ROSTER_KINDS` - what a pick does to a question
+    (`carry_after_answer`) is a different rule and stays where it is.
+
+    The EXPECTATION test is what the kind test used to carry, and it is the one
+    distinction that was earned by evidence rather than by tidiness: the plain escalate
+    offer (`team_pick`, `yes_no`) must never inherit the roster of a team CLARIFY
+    (`team_pick`, `pick`), and a MERGED roster (`pick_or_yes_no`) must be recognised as
+    the same question its own re-arm names. So the two must EXPECT the same answer -
+    either literally, or both inside `_PICK_EXPECTS`.
+
+    And the live question must have ROWS, which is what a re-prompt can lose and nothing
+    else turns on: an offer armed with no roster (`test_s3_canned_and_ideate.py::
+    TestOfferHold`'s own prior, and the miss-company plain arm it stands for) has no rows
+    to keep and its re-prompt is still `options: []`. Where the live one DOES have rows
+    they are kept, `member_offer` included - `test_s5_escalation_seams.py::
+    test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state` is re-pinned to
+    that, because the clarify arm's re-offer is the same question over the same pool and
+    its own docstring always required the pool to survive ("the next turn resolves the
+    customer's '2' ... against exactly that pool").
+    """
+    if not isinstance(asked, dict) or not isinstance(previous, dict):
+        return False
+    kind = asked.get("kind")
+    if not jsc.truthy(kind) or kind != previous.get("kind"):
+        return False
+    if not _same_expectation(asked, previous):
+        return False
+    return len(jsc.array(previous.get("options"))) > 0
+
+
+def _same_expectation(asked: Mapping[str, Any], previous: Mapping[str, Any]) -> bool:
+    """Do the two asks expect the SAME answer? (S6 review, B1)
+
+    Literally the same `expects`, or both inside `_PICK_EXPECTS` - a roster reads `pick`
+    normally and `pick_or_yes_no` while an escalate offer rides on it (D19 rule 3), and
+    `_ask_for_turn` re-derives the label from this turn's own keys and can only ever
+    produce the plain `pick`, so comparing the two for equality made the re-arm guard
+    permanently false for exactly the questions it exists to protect - the merged ones.
+    """
+    expects = asked.get("expects")
+    return expects == previous.get("expects") or (
+        expects in _PICK_EXPECTS and previous.get("expects") in _PICK_EXPECTS
+    )
+
+
+def _re_armed(asked: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str, Any]:
+    """The live question again, whole, with nothing the re-arm brought (B1 + B3).
+
+    **A SURVIVED ROSTER NEVER TAKES ROWS FROM THE ANSWER.** Owner, console v15 on 13 Sep,
+    contact 437264483: "promo for srtwc286" offered the tier menu, "1" answered it and the
+    reply listed three PROMOTIONS numbered 1 to 3 - and the persisted `tier_pick` came back
+    holding those three promotion filenames as its options. The next "2" therefore resolved
+    to a PDF name as the tier ("access_levels: [...flyer_21072026.pdf]"), the tier gate
+    found no valid tier, and the customer was asked the menu all over again. The seat is
+    `_ask_for_turn`, which is handed the CARRIED label (`variables.selection_context`,
+    re-seated by `_offer_carry` / `_picker_carry`) together with THIS turn's
+    `last_result_set` - the label of the question the customer is looking at, paired with
+    the rows of the answer they just got.
+
+    A re-arm knows the LABEL and nothing else, so everything else comes from the live
+    question: the rows, the expectation, the riding offer and the turn it was first asked
+    on. Restoring only the rows (the first cut) still lost the other three - a merged tier
+    roster came back `pick` with no offer and `asked_at_turn` 0, which is the same
+    complaint one turn later. The re-arm's own payload is kept underneath, so a team or a
+    domain it knows about this turn is not lost.
+    """
+    payload = {**(asked.get("payload") or {})}
+    offer = jsc.get(previous.get("payload"), "offer")
+    if jsc.truthy(offer):
+        payload["offer"] = offer
+    else:
+        payload.pop("offer", None)
+    # AND THE RECORDED TEAM (same ruling). A re-prompt derives its own routing from this
+    # turn, which is how a warehouse member offer came back `payload.team:
+    # customer_service` - the customer was reading a warehouse roster and a "yes" would
+    # have gone somewhere else. The live question's team is what the customer was told, so
+    # it survives its own re-prompt exactly as its rows do.
+    live_team = jsc.get(previous.get("payload"), "team")
+    if jsc.truthy(live_team):
+        payload["team"] = live_team
+    return {
+        **asked,
+        "options": previous.get("options"),
+        "expects": previous.get("expects"),
+        "asked_at_turn": int(jsc.js_number(previous.get("asked_at_turn")) or 0),
+        "payload": payload,
+    }
+
+
+def _offer_answer(qf: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The riding offer's yes or no as the EMISSION records it, or None (D19 rule 3).
+
+    ONE helper, TWO callers, and the second is the one that earns it (S6 review, S2):
+
+    * the v3 path, as a fallback where the engine's `_answered` stamp is absent (a replay
+      fixture, a direct unit call). `apply_open_question_outcome` writes both of these
+      keys from the SAME outcome that stamps `open_question_answered`.
+    * **the PROMOTED v1 prompt, which is what answers customers today.** A v1 emission
+      has no `answers_open_question`, so `_resolve_open_question` produces no outcome and
+      nothing stamps `open_question_answered` - and a bare "yes" over a merged roster then
+      escalated (through `offer_is_open` + `is_affirmative`, the legacy arm) while the
+      question SURVIVED with its offer still on it, so the next "yes" escalated again.
+
+    The two signals are read rather than one because they mean different things and only
+    one of them is unambiguous on its own. `is_escalation_confirmation` is True ONLY when
+    an offer was accepted. Its False is the parser's default on every ordinary turn and
+    says nothing, so the decline is read from `is_affirmative is False` - an explicit no,
+    `None` when the customer said nothing of the kind, and what the v3 declined outcome
+    writes too. A casual message under an open offer therefore answers neither and the
+    question stands, which is AC-1004.
+    """
+    if jsc.get(jsc.get(qf, "escalation"), "is_escalation_confirmation") is True:
+        return {"yes_no": "yes"}
+    if jsc.get(qf, "is_affirmative") is False:
+        return {"yes_no": "no"}
+    return None
+
+
+def _offer_answered_without_a_resolver(
+    previous: Any, qf: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    """The yes or no a v1 turn gave the offer riding on `previous`, or None (S2).
+
+    Guarded on `payload.offer` because that is what makes the question answerable by a
+    yes: without one, `previous` is a plain roster and an `is_affirmative` of False is the
+    customer saying no to something else entirely.
+    """
+    if not jsc.truthy(jsc.get(jsc.get(previous, "payload"), "offer")):
+        return None
+    return _offer_answer(qf)
+
+
+def _offer_rides_on_roster(asked: Any, previous: Any) -> bool:
+    """Is the question this turn asked the ONE-TEAM escalate offer, over a live roster?
+
+    That is the only pair that merges (D19 rule 3). Any other question the turn asked -
+    a new picker, a tier menu, a team clarify - REPLACES what was open, because it is a
+    different thing to be looking at; and an offer with no roster under it is the plain
+    yes/no it has always been.
+    """
+    if not isinstance(asked, dict) or not isinstance(previous, dict):
+        return False
+    if asked.get("kind") != "team_pick" or asked.get("expects") != "yes_no":
+        return False
+    if previous.get("kind") not in pending_open_question.ROSTER_KINDS:
+        return False
+    # AN OFFER WITH NOBODY TO ESCALATE TO IS NOT AN OFFER (S6 review nit). `_ask_for_turn`
+    # builds an empty roster when the turn resolved no team, and merging that would leave
+    # a question whose "yes" assigns nothing while still reading as an open offer
+    # everywhere (`offer_is_open`, `_pending_kind`). The roster is better off plain.
+    payload = asked.get("payload") if isinstance(asked.get("payload"), dict) else {}
+    return jsc.truthy(payload.get("team")) and len(jsc.array(asked.get("options"))) > 0
+
+
+def _rows_are_customers(rows: Any) -> bool:
+    """Is every row a CUSTOMER? The kind test `miss_suggest._attach_question` uses.
+
+    Said the same way in both places on purpose: a roster of customers is a
+    `customer_pick` and anything else is a `product_pick`, and the two composers must not
+    be able to disagree about which question the same rows are.
+    """
+    rows = [row for row in jsc.array(rows) if jsc.truthy(row)]
+    return bool(rows) and all(
+        jsc.lower_or_empty(jsc.get(row, "entity_type")) == "customer" for row in rows
+    )
+
+
+def _from_sources(sources: tuple[Any, ...], key: str) -> list[Any]:
+    """`key` off the FIRST source that carries it. The order of `sources` is the ruling.
+
+    A `require_specific` turn's candidates live on the RESULT OBJECT
+    (`outcome["central-exchange"]`) - the same object `is_disambig` reads `require_specific`
+    and `compatible_entities` off - and the `gate` producer is a different node that may
+    carry nothing on this arm. Read in that order rather than from one hard-coded place,
+    because which producer ran is exactly what differs between the lanes that reach here.
+    """
+    for source in sources:
+        rows = [row for row in jsc.array(jsc.get(source, key)) if isinstance(row, dict)]
+        if rows:
+            return rows
+    return []
+
+
+def _picker_rows(options: Any, sources: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """The rows the "multiple matches" reply NUMBERED, in the order it numbered them.
+
+    Three sources, best first, because which one holds them depends on what else the turn
+    did:
+
+    * `last_result_set` - the indexed rows the tail itself built, and the shape the sealed
+      reply carries. Present on the owner's real turn.
+    * `specific_options` - exposed for exactly this correlation ("so a reader can correlate
+      line N to the Nth candidate's uuid"), flattened candidate by candidate the same way
+      `gate.run` flattens it into the numbered lines. It is the answer whenever the tail
+      skipped its own indexing, which a `manualResponse` turn does.
+    * `compatible_entities` - last, and only when NO numbered lines were flattened at all.
+      The gate's own comment warns this list is "not the picker's own render order", which
+      is why it cannot outrank the two above; where neither of those exists there is no
+      rendered order for it to contradict.
+    """
+    rows = [row for row in jsc.array(options) if isinstance(row, dict)]
+    if rows:
+        return rows
+    flattened = [
+        candidate
+        for option in _from_sources(sources, "specific_options")
+        for candidate in jsc.array(jsc.get(option, "candidates"))
+        if isinstance(candidate, dict)
+    ]
+    return flattened or _from_sources(sources, "compatible_entities")
+
+
+def _keep_beside(sources: tuple[Any, ...], rows: Any) -> list[dict[str, Any]]:
+    """Issue #708's siblings: what already resolved this turn, MINUS the rows on offer.
+
+    THE GATE ANSWERS THIS DIRECTLY NOW (R-C / R-D, 15 Sep 2026). On a picker arm it narrows
+    `compatible_entities` to the rows it OFFERS and publishes the sibling separately, on
+    `keep_entities`, already in entity shape. That key wins when present. It had to become a
+    separate list: while the sibling sat in `compatible_entities` it was both "what resolved"
+    and (through `_picker_rows`) a pickable row, so the owner's live turn froze a 13-row
+    roster over a reply that numbered 3, and this subtraction then removed the very siblings
+    it exists to keep, because they had become "offered".
+
+    The subtraction below is the fallback, and it is still right for every arm that narrows
+    nothing: the did-you-mean roster comes off a MISS, so the gate kept everything it
+    resolved and the sibling is in that list, minus the rows on offer.
+    """
+    published = _from_sources(sources, "keep_entities")
+    if published:
+        return [dict(e) for e in published if isinstance(e, dict)]
+    offered = {
+        jsc.nullish_str(jsc.get(row, "uuid")).strip().lower()
+        for row in jsc.array(rows)
+        if jsc.truthy(row) and jsc.truthy(jsc.get(row, "uuid"))
+    }
+    return [
+        {
+            "raw": jsc.get(entity, "code"),
+            "hint": jsc.get(entity, "entity_type") or "product",
+            "canonical_code": jsc.get(entity, "code"),
+            "uuid": jsc.get(entity, "uuid") or None,
+            "current_message": True,
+            "confident": True,
+        }
+        for entity in _from_sources(sources, "compatible_entities")
+        if jsc.nullish_str(jsc.get(entity, "uuid")).strip().lower() not in offered
+    ]
+
+
+def _ask_for_turn(
+    *,
+    qf: Mapping[str, Any],
+    gate: Any,
+    result_obj: Any,
+    offer_open: bool,
+    selection_context: Any,
+    born_context: Any,
+    reply_text: Any,
+    options: Any,
+    outstanding_options: Any = None,
+    team_clarify_options: Any,
+    roster_plan: Any,
+    companies: Any,
+    outstanding_filters: Any,
+    outstanding_reprinted: bool,
+    turn_no: int,
+) -> dict[str, Any] | None:
+    """The question THIS turn left open, composed by `open_question.ask` (AC-1013).
+
+    The same four decisions `tail/pending.derive` made, in the same order and for the same
+    reasons, said once in the vocabulary that survives: a team clarify outranks an offer
+    because the next turn has to resolve an answer against a NARROWED list and "an offer is
+    open" does not say which; a member roster outranks it for the same reason; a tier menu
+    is a question too; and a plain escalate offer is the yes/no it always was - one team,
+    one option, `expects: yes_no` (D5).
+
+    `options` are frozen HERE, as the customer saw them, and `ask` numbers them from 1.
+
+    **`born_context` is the label THIS TURN earned, and it is a different question from
+    `selection_context`** (which may have been re-seated from the question the last turn
+    left open). Only the `disambiguation` arm consults it, and only because that arm is the
+    one whose rows come straight off `last_result_set`: on an ANSWERED turn those rows are
+    the answer's, so a carried label there would arm a roster the customer never saw. That
+    is B3 (turn 26b15a53-87a8-43be-8e55-5839b3ce3149), and it is the measured caller that
+    earns the distinction back after S6 dropped it as unused machinery. The carried case
+    stays where it belongs, on `_is_a_re_arm_of` / `_re_armed`.
+    """
+    from app.services.chatbot.dialogue import open_question as oq
+
+    context = jsc.nullish_str(selection_context or "")
+    team = _escalation_team(qf, gate)
+    domain = jsc.get(qf, "domain_hint")
+    payload = {"team": team, "domain": domain}
+
+    if context in ("outstanding_scope", "outstanding_detail"):
+        # THE OUTSTANDING REPORT'S TWO QUESTIONS (merged from main, #862, S4 points 4/5).
+        # Main recorded them on the `pending` marker with their rows on `last_result_set`
+        # and their filters on `outstanding_filters`; the three travel together here,
+        # which is the whole of the re-expression. `reprinted` is main's own marker field
+        # (R22): a question already printed back once over a reply that answered nothing
+        # closes on the next such reply instead of printing a third copy.
+        payload_out = dict(payload)
+        if jsc.truthy(outstanding_filters):
+            payload_out["filters"] = outstanding_filters
+        if outstanding_reprinted:
+            payload_out["reprinted"] = True
+        # The local rows when a fresh offer was rendered this turn, else the STICKY offer's
+        # carried rows (see the call site) - never empty on a survived offer, or the next
+        # pick would have no list to count.
+        rows = list(jsc.array(options)) or list(jsc.array(outstanding_options))
+        return oq.ask(
+            context,
+            options=rows,
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload_out,
+        )
+    if context == "team_clarify":
+        return oq.ask(
+            "team_pick",
+            options=list(jsc.array(team_clarify_options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if context == "company_clarify":
+        return oq.ask(
+            "company_pick",
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if context == "member_offer":
+        # THE POOL THE OFFER WAS MADE OVER travels with the offer. `offer_hold` re-prompts
+        # it a turn later and composes the company names from these two lists; they were
+        # `routing_roster_plan` / `routing_companies` session keys, so the re-prompt came
+        # back empty the moment the session became five keys. Frozen here, beside the rows,
+        # because this is the moment the offer and its pool are known to belong together.
+        pool = dict(payload)
+        if jsc.is_array(roster_plan) and len(roster_plan) > 0:
+            pool["roster_plan"] = list(roster_plan)
+        if jsc.is_array(companies) and len(companies) > 0:
+            pool["companies"] = list(companies)
+        return oq.ask(
+            "member_offer",
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=pool,
+        )
+    if context == "tier_offer":
+        return oq.ask(
+            "tier_pick",
+            options=list(jsc.array(options)),
+            turn_no=turn_no,
+            domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+            payload=payload,
+        )
+    if jsc.nullish_str(born_context or "") == "disambiguation":
+        # THE "MULTIPLE MATCHES" PICKER, which had no arm at all until now (S7a). Owner,
+        # console 13 Sep: "incoming wc286" printed ten numbered products and the tail armed
+        # the ESCALATE OFFER instead, so the next "8" resolved against a one-row team
+        # roster and the incoming lookup ran with no product at all (turn
+        # 26b15a53-87a8-43be-8e55-5839b3ce3149). The did-you-mean lane freezes its own
+        # roster (`miss_suggest._attach_question`); this picker is composed in
+        # `lanes/business/gate.py`, which composes no question, so the tail is its only
+        # seat - the same fallback the four labels above are.
+        #
+        # BEFORE the offer arm, because a numbered list is what the customer is looking at
+        # and a question they can answer beats one they were never asked.
+        sources = (result_obj, gate)
+        rows = _picker_rows(options, sources)
+        if rows:
+            return oq.ask(
+                "customer_pick" if _rows_are_customers(rows) else "product_pick",
+                options=rows,
+                turn_no=turn_no,
+                domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+                payload={
+                    "domain": jsc.js_string(domain) if jsc.truthy(domain) else None,
+                    "keep": _keep_beside(sources, rows),
+                },
+            )
+    if offer_open and _FROZEN_ESCALATE_PREFIX in jsc.js_string(reply_text or ""):
+        # ONE team, ONE option, answered yes or no - the escalate offer exactly as the
+        # customer sees it. Two or more teams is the same kind with `expects: pick` (D5),
+        # which is lane 2's fan-out and has no caller yet.
+        #
+        # THE REPLY HAS TO CARRY THE OFFER (S7a, second defect). `is_escalate_offer` is
+        # derived from `is_clarification` being false (`tail/outcome.py`), and
+        # `pickers.annotate_incoming` sets `is_clarification: False` on a numbered PICKER
+        # "for parity with the not-found require_specific branch" - so the flag said an
+        # offer was open on a turn whose reply ended at row 10 with no escalate sentence
+        # in it, and a yes/no the customer was never shown was persisted for their next
+        # message to answer. The frozen phrase is the same contract `offer_is_open` and
+        # `tail/compose` already hold, and by this line the text is final: the
+        # miss-company arm that appends the phrase has already run.
+        # BUILT BY THE ONE IMPLEMENTATION (owner ruling, 15 Sep 2026, general rule 1):
+        # `open_question.record_offer` is the single place that knows what an escalate offer
+        # is, what team it names and how it attaches. The engine calls the same function
+        # after `crossdomain_compose`, because the reply becomes final twice; `with_offer`
+        # is idempotent so the second call is a no-op unless the sentence changed. This arm
+        # keeps only the CONDITION it always had - the flag plus the frozen phrase.
+        return oq.record_offer(
+            None,
+            turn_no=turn_no,
+            domain=domain,
+            team=team,
+        )
+    return None
 
 
 def seal(patch: Mapping[str, Any]) -> dict[str, Any]:
@@ -469,17 +1031,26 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
                     or (jsc.get(first_field, "value") if first_field is not None else None)
                     or f"item {i + 1}"
                 )
-                indexed.append(
-                    {
-                        "idx": i + 1,
-                        "uuid": jsc.get(it, "uuid") or jsc.get(it, "id") or None,
-                        "label": jsc.js_string(label).replace("*", "").strip(),
-                        "entity_type": jsc.get(it, "entity_type") or None,
-                        "product": _field_value(it, "Product") or jsc.get(it, "product") or jsc.get(it, "code") or None,
-                        "attachment_type": jsc.get(it, "attachmentType") or jsc.get(it, "attachment_type") or None,
-                        "filename": jsc.get(it, "filename") or None,
-                    }
-                )
+                row = {
+                    "idx": i + 1,
+                    "uuid": jsc.get(it, "uuid") or jsc.get(it, "id") or None,
+                    "label": jsc.js_string(label).replace("*", "").strip(),
+                    "entity_type": jsc.get(it, "entity_type") or None,
+                    "product": _field_value(it, "Product") or jsc.get(it, "product") or jsc.get(it, "code") or None,
+                    "attachment_type": jsc.get(it, "attachmentType") or jsc.get(it, "attachment_type") or None,
+                    "filename": jsc.get(it, "filename") or None,
+                }
+                # R-F: the ACCOUNT FAMILY the row stands for, carried through the indexing
+                # so the pick can copy it onto the entity (`open_question._entity_of`).
+                # This builder is a whitelist, so a key the gate composes and this loop
+                # does not name is dropped here - which is where the family died once the
+                # `picker_families` session key went. Set only when the row HAS one, so
+                # every row shape without a family stays byte-identical for the graded
+                # `compile-current-state` captures.
+                family = jsc.get(it, "family_uuids")
+                if isinstance(family, list) and len(family) > 0:
+                    row["family_uuids"] = list(family)
+                indexed.append(row)
             what = indexed[0]["attachment_type"] or "records"
             response = (
                 f"Previous turn ({jsc.js_string(domain)}): returned {len(items_list)} {jsc.js_string(what)}"
@@ -664,8 +1235,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
 
     # ---- the partial-miss did-you-mean block ------------------------------ #
     dym_last_result_set: Any = None
-    partial_offer: Any = None
-    user_response, response, dym_last_result_set, partial_offer = _partial_dym_block(
+    user_response, response, dym_last_result_set = _partial_dym_block(
         user_response,
         response,
         qf=qf,
@@ -683,19 +1253,18 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         execution_id=execution_id,
     )
 
-    # ---- the did-you-mean offer lifecycle (AC-204: eight rules, in order) -- #
-    sug_offer = jsc.get(sug, "dym_offer") if jsc.truthy(sug) else None
-    new_offer = (
-        sug_offer
-        if (
-            jsc.truthy(sug_offer)
-            and jsc.is_array(jsc.get(sug_offer, "candidates"))
-            and len(jsc.get(sug_offer, "candidates")) > 0
-        )
-        else (partial_offer or None)
-    )
-    prev_offer_raw = jsc.get(prev, "dym_offer")
-    prev_offer = prev_offer_raw if isinstance(prev_offer_raw, dict) else None
+    # ---- the did-you-mean offer lifecycle is GONE (L1-S3d step 4) ---------- #
+    # AC-204's eight rules were a TTL ladder over `prev.dym_offer`: replace, domain
+    # switch, escalation, pick applied, answered, expired, decrement. Every rule but the
+    # first read the previous session's copy of the offer, and the offer is not a session
+    # key any more - the question the miss lane asked carries its own rows, frozen when
+    # the customer saw them, and it is cleared by the three things that actually happen
+    # (answered, replaced, asked past) rather than by a counter (D9, AC-1019).
+    #
+    # What the ladder DECIDED is untouched: it only ever wrote `dym_offer` /
+    # `dym_candidates` into the persisted bag, both of which the five-key filter drops.
+    # The reply the partial-miss turn composes, and the numbered rows it prints, are
+    # `_partial_dym_block`'s first three return values and they are unchanged.
     pick_applied = jsc.get(qf, "dym_pick_applied") is True
     escalation = jsc.get(qf, "escalation")
     # A human owns the thread once escalation is confirmed OR a specific member resolved.
@@ -707,30 +1276,6 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         )
     )
     answered = jsc.is_array(last_result_set) and len(last_result_set) > 0
-    if new_offer:  # 1. fresh offer -> REPLACE
-        dym_offer: Any = {**new_offer, "ttl": 3, "picked": []}
-    elif not prev_offer:  # nothing to carry
-        dym_offer = None
-    elif (
-        jsc.truthy(jsc.get(qf, "domain_hint"))
-        and jsc.truthy(jsc.get(prev_offer, "domain"))
-        and jsc.get(qf, "domain_hint") != jsc.get(prev_offer, "domain")
-    ):
-        dym_offer = None  # 2. domain switch (null never kills: a bare-code pick emits null)
-    elif escalated:
-        dym_offer = None  # 3. escalation committed -> DIE
-    elif pick_applied:  # 4. pick applied -> RETAIN
-        picked = list(jsc.array(jsc.get(prev_offer, "picked")))
-        pick_code = jsc.get(qf, "dym_offer_pick_code")
-        if jsc.truthy(pick_code) and pick_code not in picked:
-            picked.append(pick_code)
-        dym_offer = {**prev_offer, "ttl": 3, "picked": picked}
-    elif answered:
-        dym_offer = None  # 5. answered, no pick -> DIE
-    elif not (jsc.js_number(jsc.get(prev_offer, "ttl")) > 1):
-        dym_offer = None  # 6. TTL exhausted
-    else:
-        dym_offer = {**prev_offer, "ttl": jsc.js_number(jsc.get(prev_offer, "ttl")) - 1}  # 7. decrement
 
     # ---- the output object, built FROM SCRATCH ---------------------------- #
     requested_attributes = jsc.get(qf, "requested_attributes")
@@ -760,98 +1305,65 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         "date_mode": _u(qf, "date_mode"),
         "match_mode": _u(qf, "match_mode"),
         "contains_flyer": _u(qf, "contains_flyer"),
-        "dym_offer": dym_offer,
-        # A READ-ONLY LEGACY MIRROR of the offer's candidates, kept only for the
-        # spine-to-parser promotion window so an OLD parser can still pick.
-        "dym_candidates": jsc.get(dym_offer, "candidates")
-        if (jsc.truthy(dym_offer) and jsc.is_array(jsc.get(dym_offer, "candidates")))
-        else [],
         # On an ideate turn persist the endpoint's returned pointer; on any other turn
         # carry the prior one forward so a CRM question mid-collection does not wipe an
         # open draft (IU3).
         "ideation": jsc.get(ideate, "ideation") if jsc.truthy(ideate) else (jsc.get(prev, "ideation") or None),
+        # Growth r1 slice B3: WHAT THE CONVERSATION IS ABOUT, per axis, each axis ageing
+        # on its own. `dialogue/focus.py` is the only writer; this only persists what it
+        # decided. It rides on `ctx.parse` (beside `_parser_raw`) rather than on the
+        # emission, because the emission is the graded wire shape.
+        #
+        # The keys beside it - `entities`, `domain_hint`, `date_filter_*`,
+        # `requested_attributes`, `access_levels`, `query_brands` - stay for one release
+        # and stay authoritative (AC-951): every lane reads them, and `focus.from_session`
+        # projects them into a focus for a session written before this existed. Removing
+        # them is the follow-up the plan names, after the corpus is re-derived.
+        "focus": jsc.get(jsc.get(ctx, "parse"), "_focus") or None,
     }
     output: dict[str, Any] = {
         "variables": variables,
         "user_response": user_response,
         "quick_reply": quick_reply,
     }
-    # Emitted ONLY when a dym set exists this turn (absent on every no-dym turn).
-    if dym_last_result_set:
-        variables["dym_last_result_set"] = dym_last_result_set
-
-    # R16 (owner round 5, 13 Sep 2026): the DELIVERY STATUS the question was asked about
-    # ("outstanding", "so_outstanding", ...) is an axis of the query exactly like the date
-    # window and `requested_attributes` in the object above - and the ONE of the three the
-    # session did not keep. A turn that asked an outstanding question and stopped at the
-    # gate's ambiguous-customer picker persisted no trace of it, so the "1" that answered
-    # the picker had no status to carry (`head/output_exchange.py`'s reuse arm reads this
-    # key) and came back as a plain order list. Written only when there IS one - the same
-    # "omit when there is nothing to say" rule `tier_menu` above and `outstanding_filters`
-    # below already use, so a turn that names no status leaves the key absent and the
-    # status dies with the question it belonged to.
-    order_status_value = jsc.get(qf, "order_status")
-    if jsc.truthy(order_status_value):
-        variables["order_status"] = order_status_value
-
-    # ---- TIER MENU PERSISTENCE (RS-9 Fix 6) ------------------------------- #
-    # `route-turn`'s pre-check needs the OFFERED tier list, in order, to resolve a bare
-    # digit on ANY later turn of the promotion thread - not just the one round trip the
-    # `_tier` carry above covers. A SEPARATE key from `picker_last_result_set`, which
-    # dies the moment a fresh entity is typed, because a promo browse routinely types
-    # fresh product codes while the tier menu must stay live underneath it.
-    tm_prev = jsc.get(prev, "tier_menu")
-    tm_prev = tm_prev if jsc.is_array(tm_prev) else None
-    tm_born = (
-        jsc.get(tier, "tier_last_result_set")
-        if (
-            tier is not None
-            and jsc.is_array(jsc.get(tier, "tier_last_result_set"))
-            and len(jsc.get(tier, "tier_last_result_set")) > 0
-        )
-        else None
-    )
-    tm_domain_ok = jsc.get(qf, "domain_hint") is None or jsc.get(qf, "domain_hint") == "promotion"
-    tier_menu = tm_born or (tm_prev if tm_domain_ok else None)
-    if tier_menu:
-        variables["tier_menu"] = tier_menu
-
-    # S4 point 4 (PLAN-chatbot-outstanding-report.md): the parsed product/dates/
-    # customer/location, written when a NEW outstanding ask arms (the scope question
-    # or the detail offer) and carried forward otherwise - same "omit when there is
-    # nothing to say" rule `tier_menu` just used above, so a world captured before
-    # this key existed never sees it appear.
+    # ---- the TIER MENU key is GONE (RS-9 Fix 6, re-said in L1-S3d step 4) -- #
+    # It existed so `route-turn`'s bare-digit pre-check could find the OFFERED tier list,
+    # in order, on ANY later turn of the promotion thread, and it was a key of its own
+    # because `picker_last_result_set` died the moment a fresh entity was typed while a
+    # promo browse routinely types fresh product codes.
     #
-    # N4 (security review, 13 Sep 2026): the PREVIOUS unconditional fallback to
-    # `prev.outstanding_filters` carried it FOREVER once a scope/detail ask armed and
-    # then missed (no `outstanding_ask` re-armed on a miss, so nothing ever
-    # overwrote or cleared it) - a customer's resolved product/customer/location
-    # sat in session state indefinitely, well past the one turn it exists to
-    # answer. `pending.kind` for `outstanding_scope`/`outstanding_detail` is
-    # ALREADY one-turn-life by construction (`_offer_carry`'s own exclusion a few
-    # hundred lines down never carries either kind past the answering turn), so
-    # carrying `outstanding_filters` gated on that SAME marker still being open
-    # from last turn is the identical "one answering turn, then gone" lifetime -
-    # a new ask, a topic reset, or simply the turn after the answer all read
-    # `prev_pending`'s kind as something else (or nothing) and clear it.
-    # A pending this turn DROPPED as a new ask (`head/output_exchange.py::
-    # _apply_outstanding_pending`) is not an open ask any more, so its filters go with
-    # it - otherwise a turn that walked away from the offer kept carrying the previous
-    # question's product/customer/location (console run 3, 13 Sep 2026).
-    prev_pending_kind = (
+    # The tier menu IS a question - `tier_pick`, with its rows frozen - and a question is
+    # not ended by typing a product code, only by being answered, replaced or asked past
+    # (D9). So `route._tier_menu` reads the open question's own options and the separate
+    # key, its domain guard and its carry all go with it.
+
+    # S4 point 4 (PLAN-chatbot-outstanding-report.md, merged from main): the parsed
+    # product/dates/customer/location the outstanding question was asked over - this
+    # turn's, when a NEW ask arms (the scope question or the detail offer), and the live
+    # question's own otherwise.
+    #
+    # NOT A SESSION KEY on this lane. Main kept it beside the `pending` marker and had to
+    # write down a lifetime for it (N4 of its security review: the unconditional fallback
+    # carried a customer's resolved product/customer/location forever once an ask armed
+    # and then missed), gated on "that same marker is still open". Here the filters ride
+    # IN the question's payload, so the lifetime is the question's own and there is no
+    # second key that can outlive it. The DROP test is kept, because it is not about the
+    # lifetime: a turn the head read as a new ask (`head/output_exchange.py::
+    # _apply_outstanding_pending`) closed the question, so its filters must not be handed
+    # to whatever this turn arms next (console run 3, 13 Sep 2026).
+    prev_outstanding_filters = (
         None
         if jsc.truthy(jsc.get(qf, "outstanding_pending_dropped"))
-        else jsc.get(jsc.get(prev, "pending"), "kind")
+        else jsc.get(jsc.get(jsc.get(prev, "open_question"), "payload"), "filters")
+        if _prev_context(jsc.get(prev, "open_question"))
+        in ("outstanding_scope", "outstanding_detail")
+        else None
     )
     outstanding_filters_value = (
         jsc.get(outstanding_ask, "filters")
         if jsc.truthy(outstanding_ask)
-        else jsc.get(prev, "outstanding_filters")
-        if prev_pending_kind in ("outstanding_scope", "outstanding_detail")
-        else None
+        else prev_outstanding_filters
     )
-    if outstanding_filters_value:
-        variables["outstanding_filters"] = outstanding_filters_value
 
     # ---- an open offer survives the answer (the picker carry) ------------- #
     _picker_carry(
@@ -944,6 +1456,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     turn_state: dict[str, Any] = {
         "answered_domain": answered_domain,
         "offer_open": False,
+        # The team the miss arms PRINT, recorded where they print it (S-1's rule).
+        "offer_team": None,
         "team_clarify_options": [],
     }
     _miss_company_routing(
@@ -994,26 +1508,182 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # ---- MI-D: the media confirmation, merged into the answer ------------- #
     _media_confirm_prefix(output, qf=qf, ctx=ctx, resolver_json=resolver_json, resolved_ran=resolved is not None)
 
-    # R3: the persisted marker that replaces the frozen-string read (H13, D11). An
-    # escalation offer is open when the catalog said so - which covers the not_found, the
-    # escalate_offer and the member-offer arms, since the member offer SPREADS the
-    # catalog - or when a miss arm appended the frozen phrase itself.
+    # R3's `pending` MARKER IS GONE (AC-1019). It recorded what the bot was waiting for so
+    # the next turn could ask state instead of re-reading the bot's own words; the typed
+    # `open_question` below does that, with the rows the customer was shown frozen onto it,
+    # and two records of one fact is the drift this lane exists to end.
     offer_open = bool(jsc.get(cat, "is_escalate_offer") is True or turn_state["offer_open"])
-    variables["pending"] = pending_marker.derive(
-        offer_open=offer_open,
+    # ONE TEAM, FROM WHOEVER PRINTED THE SENTENCE (owner ruling, 15 Sep 2026, review S-1 /
+    # S-2). `turn_state["offer_team"]` is the miss arms' own record, written where they
+    # append the phrase a few hundred lines below; `_escalation_team` stays last for a
+    # catalog arm whose copy the CRM composed elsewhere, and it is the same derivation the
+    # composers use (`company_team`, then the parser's suggested team), which is why the
+    # per-arm parity tests hold on it. The LANE's own declaration - the composer that
+    # printed the sentence inside `answer.py` - is applied by the engine's post-compose arm
+    # instead of here: that arm sees the FINAL reply, runs on every turn, and is the gate
+    # that dropped an answered turn's offer in the first place (S-1).
+    offer_team = turn_state.get("offer_team") or _escalation_team(qf, gate)
+
+    # ---- the question THIS turn asked, built where it was asked (L1-S3d) -- #
+    asked_here = _ask_for_turn(
         qf=qf,
         gate=gate,
-        # Read off the FINAL value, not the ladder's: the miss-company block below can
-        # still set it, and the marker must describe what the customer was actually left
-        # looking at.
+        # A `require_specific` picker's candidates ride the RESULT object, which is also
+        # where `is_disambig` read them; the `gate` producer may carry nothing on this arm.
+        result_obj=r_obj,
+        offer_open=offer_open,
         selection_context=variables.get("selection_context"),
-        # `None` when the offer was made THIS turn (the clock starts at 3) and the
-        # decremented value when it was carried.
-        member_offer_ttl=carried_member_ttl,
-        # The teams a team-clarify ask offered THIS turn (AC-822). Empty on every other
-        # turn, which is what `derive` reads as "no list to resolve against".
+        # The label THIS turn earned, beside the one the carries may have re-seated, and
+        # the composed reply, so the offer arm can check the customer was actually shown
+        # one. Both are final by here: every writer of `user_response` above has run.
+        born_context=selection_context,
+        reply_text=output.get("user_response"),
+        options=last_result_set,
+        # THE CARRIED ROSTER for the OUTSTANDING arms only (R2, merged from main #862). A
+        # detail offer answered by a pick re-runs the report into a DETAIL LIST, whose text
+        # carries no offer block, so `outstanding_ask` is None and the local
+        # `last_result_set` is empty - but the offer is STICKY and `_offer_carry` has just
+        # re-seated its rows onto `variables["last_result_set"]`. Passed separately rather
+        # than folded into `options`, because `member_offer` is deliberately re-armed with
+        # NO options (its company names ride the composed text, not a roster) and would
+        # inherit the carried roster if `options` fell back to it
+        # (`test_s5_escalation_seams`).
+        outstanding_options=jsc.array(variables.get("last_result_set")),
         team_clarify_options=turn_state.get("team_clarify_options"),
+        roster_plan=variables.get("routing_roster_plan"),
+        companies=variables.get("routing_companies"),
+        # What the outstanding question is asked OVER, and whether it has already been
+        # printed back once (main's `pending.derive` wrote the same two facts, one onto a
+        # session key and one onto the marker).
+        outstanding_filters=outstanding_filters_value,
+        outstanding_reprinted=bool(
+            jsc.truthy(jsc.get(qf, "outstanding_detail_reask"))
+            or jsc.truthy(jsc.get(qf, "outstanding_reask_filters"))
+        ),
+        turn_no=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
     )
+
+    # THE LANE'S OWN QUESTION WINS (L1-S3d). A lane that asked something froze the rows it
+    # showed at the moment it showed them and handed the question back on its fragment; the
+    # tail persists that, unchanged. The derivation below is the fallback for the lanes that
+    # have not been converted yet and for a replay fixture that feeds this function a node
+    # output composed before the conversion - it goes with the last of them (step 4).
+    asked = jsc.get(sug, "open_question") if jsc.truthy(sug) else None
+    # WHO ASKED, which decides whether this is a NEW list or the live one over again
+    # (B3). A lane that composed the question with `ask` froze the rows it showed at the
+    # moment it showed them; `_ask_for_turn` only re-derives a LABEL, and the rows it is
+    # handed are this turn's `last_result_set` - which on an answered turn are the
+    # ANSWER's rows, not the roster's.
+    lane_asked = isinstance(asked, dict) and bool(asked.get("kind"))
+    if not lane_asked:
+        asked = asked_here
+    # THE CLOCK DOES NOT RESTART ON A CARRY. A question the customer can still see is the
+    # same question: re-stamping it every turn would make its age permanently zero, and the
+    # trace would say the bot asked it again when it did not.
+    # A PRESENT `_open_question_before` WINS, `None` included. The head stamps it on every
+    # turn, and `None` there means "there was one and this message cleared it" (AC-1020) -
+    # falling through to the stored session would resurrect the very question intake just
+    # removed, because `ctx.session` is the state as it was READ. Only an ABSENT key means
+    # the caller never ran the clearing step, and that is the one case the session answers.
+    parse_block = jsc.get(ctx, "parse")
+    previous = (
+        jsc.get(parse_block, "_open_question_before")
+        if jsc.has(parse_block, "_open_question_before")
+        else jsc.get(prev, "open_question")
+    )
+    if isinstance(asked, dict) and asked.get("kind"):
+        turn_no = int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0)
+        if not lane_asked and _is_a_re_arm_of(asked, previous):
+            # A RE-ARM IS NOT A NEW LIST (D19 rule 1, B1 + B3). The label came off the
+            # question the LAST turn left open, so the rows `_ask_for_turn` was handed
+            # beside it are not that question's - they are whatever this turn happened to
+            # print, an empty list when no lane ran and the ANSWER's own rows when one
+            # did. Both wrote a roster the customer had never seen over the roster they
+            # are looking at. The question the previous turn FROZE stands, whole.
+            asked = _re_armed(asked, previous)
+        if pending_open_question.same_question(asked, previous) and isinstance(previous, dict):
+            turn_no = int(previous.get("asked_at_turn", turn_no))
+        if _offer_rides_on_roster(asked, previous):
+            # THE OFFER RIDES, IT DOES NOT REPLACE (owner ruling D19 rule 3). A pick whose
+            # rerun missed ends with "shall I escalate?", and arming that as the open
+            # question threw the roster away for one yes/no - so the customer's next "2"
+            # had no list to count. Merged, the roster keeps its rows and its clock and
+            # the offer keeps its yes and its no.
+            variables["open_question"] = pending_open_question.with_offer(previous, asked)
+        else:
+            armed = {**asked, "asked_at_turn": turn_no}
+            # ... and the SAME-TURN half of that ruling (R-A): a roster whose own reply
+            # carries the escalate sentence takes the offer on board instead of dropping
+            # it. `_offer_rides_on_roster` above only sees an offer asked over a roster the
+            # tail CARRIED, so a list and an offer born together left the offer nowhere.
+            # THE SAME ONE IMPLEMENTATION for a roster and an offer born together: the
+            # condition stays here (the flag, and the reply actually carrying the phrase),
+            # the knowledge of what an offer IS lives in `record_offer`.
+            variables["open_question"] = (
+                pending_open_question.record_offer(
+                    armed,
+                    turn_no=turn_no,
+                    domain=jsc.get(qf, "domain_hint"),
+                    team=offer_team,
+                )
+                if offer_open
+                else armed
+            )
+    elif jsc.truthy(jsc.get(qf, "open_question_answered")):
+        # ANSWERED, WHICH IS NOT THE SAME AS GONE (owner ruling D19). A ROSTER is still on
+        # the customer's screen after they pick from it, so it survives its own pick with
+        # its rows and its `asked_at_turn` untouched and the next number resolves against
+        # the same list. Every other kind is consumed, exactly as before, and so is a
+        # roster whose riding offer the customer accepted. The rule is
+        # `dialogue/open_question.carry_after_answer`; this is its one caller.
+        # THE ANSWER THE HANDLER SAW, off the engine's own stamp, because only its
+        # `yes_no` tells an ACCEPTED riding offer (the whole question goes) from a
+        # declined one (the roster stays). `_offer_answer` reads the same decision back
+        # off the emission for a caller that drove the tail without the engine - a replay
+        # fixture, a unit call - where the stamp is absent.
+        answered_here = jsc.get(jsc.get(ctx, "parse"), "_answered")
+        variables["open_question"] = pending_open_question.carry_after_answer(
+            previous,
+            jsc.get(qf, "open_question_answered"),
+            jsc.get(answered_here, "answer") or _offer_answer(qf),
+        )
+    else:
+        # Nothing asked this turn: the one the customer is still looking at stands -
+        # UNLESS they just answered the offer riding on it under the PROMOTED v1 prompt
+        # (S6 review, S2). There is no `answers_open_question` under v1, so no outcome was
+        # produced and the branch above never fires; meanwhile the legacy arm in
+        # `output_exchange` has already turned that "yes" into an escalation. Without this
+        # the merged question survived the escalation with its offer intact, and the next
+        # "yes" escalated all over again.
+        v1_answer = _offer_answered_without_a_resolver(previous, qf)
+        variables["open_question"] = (
+            pending_open_question.carry_after_answer(previous, "team_pick", v1_answer)
+            if v1_answer is not None
+            else (previous if isinstance(previous, dict) else None)
+        )
+
+    # THE ROWS THE SENDER RENDERS travel with the TURN, not with the memory (L1-S3).
+    # `sub-sendmsg` reaches for `result_set` by name (AC-207) and it used to read it off
+    # the persisted patch - which stopped working the moment the patch became five keys,
+    # and silently: the reply kept its text and lost its rows.
+    #
+    # On `CompiledState`, NOT on the item: `item` is what n8n emits byte for byte and what
+    # the replay corpus grades, so a key added there would diverge every capture of this
+    # node. The same reason `answered_domain` and `offer_open` ride the object.
+    result_set = variables.get("last_result_set")
+
+    # ---- AC-1001: FIVE KEYS LEAVE THIS FUNCTION, and nothing else ---------- #
+    # Everything above still runs, and it still decides the reply text, the quick replies
+    # and the roster the customer is looking at. What changes is what is REMEMBERED: the
+    # 34-key bag described one turn, and a turn that has been answered has nothing left to
+    # say to the next one. What the conversation IS - its focus, its open question, an
+    # open draft, what the contact may see, whether they sent a flyer - is the whole of
+    # what carries (D8).
+    #
+    # The legacy keys are computed and then dropped rather than never computed: the
+    # did-you-mean lifecycle above uses them to decide THIS turn's roster, and its
+    # eight-rule order is graded against captures. They stop being persisted here.
+    output["variables"] = {key: variables.get(key) for key in SESSION_VAR_KEYS}
 
     sanitize_em_dash(output)
     # The node's output IS a serialised n8n item, so `undefined` becomes an absent key
@@ -1023,6 +1693,8 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         item=strip_undefined({"reply": seal(output)}),
         answered_domain=turn_state["answered_domain"],
         offer_open=offer_open,
+        offer_team=offer_team,
+        result_set=result_set,
     )
 
 
@@ -1492,7 +2164,7 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
         and not jsc.truthy(manual_response)
     )
     if not answered:
-        return user_response, response, None, None
+        return user_response, response, None
 
     r = resolver_json if isinstance(resolver_json, dict) else {}
     gate = gate_json if gate_ran else {}
@@ -1501,7 +2173,7 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
     result_obj = get_result_obj()
     is_clar = jsc.get(result_obj, "is_clarification") is True
     if is_clar or jsc.get(gate, "require_specific") is True:
-        return user_response, response, None, None
+        return user_response, response, None
 
     def _is_exact(m: Any) -> bool:
         return jsc.nullish_str(jsc.get(m, "match_tier"), "").lower() == "exact"
@@ -1646,7 +2318,7 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
 
     surfaced = miss_resolutions[:5]  # cap missed tokens shown at 5
     if not surfaced:
-        return user_response, response, None, None  # no genuine miss -> pure no-op
+        return user_response, response, None  # no genuine miss -> pure no-op
 
     # dym-probe-before-offer: the has-it annotation. Not probed means NO suffix, never a
     # misleading "no".
@@ -1694,7 +2366,6 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
     idx = 0
     lines: list[str] = []
     numbered: list[dict[str, Any]] = []
-    dym_cands: list[dict[str, Any]] = []
     for res in surfaced:
         token = (
             jsc.get(res, "token")
@@ -1749,16 +2420,9 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
                         "for_canonical": for_canon,
                     }
                 )
-                dym_cands.append(
-                    {
-                        "code": jsc.get(m, "canonical_code"),
-                        "uuid": jsc.get(m, "uuid") or None,
-                        "entity_type": jsc.get(m, "entity_type") or None,
-                        "for_raw": token,
-                        "for_hint": for_hint,
-                        "for_canonical": for_canon,
-                    }
-                )
+                # `dym_cands` went with the offer record (L1-S3d step 4): the same six
+                # fields are on `numbered` beside `idx`, and `numbered` is what the
+                # customer is looking at, so the second copy could only ever disagree.
         else:
             lines.append(f'"{jsc.js_string(raw_of_tok(token))}"{type_suffix}: not found.')
 
@@ -1767,20 +2431,12 @@ def _partial_dym_block(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
     user_response = user_response + "\n\nCouldn't find these:\n" + "\n".join(lines) + "\n\n" + footer
 
     dym_last_result_set = None
-    partial_offer = None
     if total >= 1:
         dym_last_result_set = numbered
-        partial_offer = {
-            "id": jsc.js_string(execution_id),
-            "domain": (jsc.get(qf, "domain_hint") or None) if jsc.truthy(qf) else None,
-            "ttl": 3,
-            "candidates": dym_cands,
-            "picked": [],
-        }
         # The SINGLE parser-visible marker on the compressed view, so the parser learns a
         # dym offer is active next turn.
         response = _concat(response, f" [{total} did-you-mean suggestions active]")
-    return user_response, response, dym_last_result_set, partial_offer
+    return user_response, response, dym_last_result_set
 
 
 # --------------------------------------------------------------------------- #
@@ -1849,10 +2505,9 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         born: dict[str, Any] | None = {
             "set": last_result_set,
             "kind": "disambiguation",
-            "fam": (jsc.get(gate, "picker_families") if gate is not None else None) or None,
         }
     elif form_born_now:
-        born = {"set": last_result_set, "kind": "disambiguation", "fam": None}
+        born = {"set": last_result_set, "kind": "disambiguation"}
     else:
         born = None
 
@@ -1877,17 +2532,27 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         jsc.truthy(mem)
         or promo is not None
         or tier is not None
-        # R16 (owner round 5, 13 Sep 2026): the outstanding SCOPE QUESTION or DETAIL
-        # OFFER armed this turn is a numbered list on the customer's screen, so H29's
-        # rule above applies to it word for word. Without it, a pick that RESUMED an
-        # outstanding ask ("1" against a customer picker, then "Outstanding for which
-        # document?") had its own question's `selection_context` overwritten by the
-        # carried picker two lines down - the customer read the scope question while
-        # the session was armed against the picker roster, and the "3" that answered it
+        # R16 (owner round 5, 13 Sep 2026, merged from main): the outstanding SCOPE
+        # QUESTION or DETAIL OFFER armed this turn is a numbered list on the customer's
+        # screen, so H29's rule above applies to it word for word. Without it, a pick that
+        # RESUMED an outstanding ask ("1" against a customer picker, then "Outstanding for
+        # which document?") had its own question's `selection_context` overwritten by the
+        # carried picker two lines down - the customer read the scope question while the
+        # session was armed against the picker roster, and the "3" that answered it
         # resolved against the wrong list.
         or selection_context in ("outstanding_scope", "outstanding_detail")
     )
-    prev_picker = jsc.get(prev, "picker_last_result_set")
+    # THE ROSTER STILL ON SCREEN is the open question's own options (L1-S3d step 4).
+    # `picker_last_result_set` was a third copy of rows that were already in
+    # `last_result_set` and already on the question; only a `product_pick` /
+    # `customer_pick` is a picker, which is the same set of kinds the legacy
+    # `disambiguation` label covered.
+    prev_question = jsc.get(prev, "open_question")
+    prev_picker = (
+        jsc.get(prev_question, "options")
+        if jsc.get(prev_question, "kind") in ("product_pick", "customer_pick")
+        else None
+    )
     carried = (
         prev_picker
         if (
@@ -1902,11 +2567,13 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
     picker_set = born["set"] if born is not None else carried
     if jsc.truthy(picker_set):
         variables["picker_last_result_set"] = picker_set
-        # The candidate-to-account-family map the gate built for this picker, so the PICK
-        # turn covers exactly the accounts the picker's probe counted.
-        fam = born["fam"] if born is not None else (jsc.get(prev, "picker_families") or None)
-        if jsc.truthy(fam) and len(fam) > 0:
-            variables["picker_families"] = fam
+        # R-F (15 Sep 2026): the `picker_families` MAP is gone from here. It was written
+        # into `variables` and then discarded by the five-key projection at the end of this
+        # function, every turn, so the gate that read it back (`lanes/business/gate.py`)
+        # never found one and a two-ledger pick reached a single ledger. The family now
+        # rides on the roster ROW and on the picked ENTITY as `family_uuids`, which honours
+        # the same 2026-08-24 ruling this map existed for - the family outlives the roster,
+        # because the PIN does - without a session key to be dropped.
         variables["picker_domain"] = (
             (jsc.get(qf, "domain_hint") if jsc.get(qf, "domain_hint") is not None else None)
             if born is not None
@@ -1920,20 +2587,15 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         variables["last_result_set"] = picker_set
         variables["selection_context"] = kind
 
-    # THE FAMILY OUTLIVES THE ROSTER (captain, 2026-08-24). `picker_families` maps a
-    # picked candidate to the ACCOUNTS it stands for, and the PIN is not bound to the
-    # roster's lifetime: an entity keeps its uuid for as long as the customer keeps
-    # talking about it. The roster expired, the family went with it, and the pick covered
-    # 1 account instead of the 12 the picker had measured.
-    if not jsc.truthy(variables.get("picker_families")):
-        fam_pinned = any(
-            jsc.truthy(e) and jsc.lower_or_empty(jsc.get(e, "hint")) == "customer" and jsc.truthy(jsc.get(e, "uuid"))
-            for e in jsc.array(jsc.get(qf, "entities"))
-        )
-        fam_keep = jsc.get(prev, "picker_families") if jsc.truthy(prev) else None
-        if fam_pinned and jsc.truthy(fam_keep) and len(fam_keep) > 0:
-            variables["picker_families"] = fam_keep
-            variables["picker_families_carried"] = True  # diagnostic
+    # THE FAMILY OUTLIVES THE ROSTER (captain, 2026-08-24) - still true, and now true BY
+    # CONSTRUCTION rather than by a carry. That ruling said the family must not be bound to
+    # the roster's lifetime, because the PIN is not: an entity keeps its uuid for as long as
+    # the customer keeps talking about it. This block re-copied the `picker_families` map
+    # forward every turn to achieve that, and the five-key projection at the end of this
+    # function threw the copy away each time. The family rides on the entity itself now
+    # (`family_uuids`, put on the roster row by the gate and copied at the pick by
+    # `dialogue/open_question._entity_of`), so it lives exactly as long as the pin does and
+    # there is nothing left to carry (R-F, 15 Sep 2026).
 
 
 def _offer_carry(
@@ -1963,7 +2625,7 @@ def _offer_carry(
       the head. A turn that names no domain is a continuation, not a change, which is
       what makes the sequential picks work. A carried tier offer reads its domain as
       `promotion` when the session recorded none, because a tier menu only ever exists
-      inside a promotion thread - the same rule `tier_menu`'s own carry already applies.
+      inside a promotion thread.
     * **Otherwise it survives**, including across the answer this turn just produced.
 
     **The member offer is the one arm with a safety condition, and it is deliberate.**
@@ -1975,13 +2637,13 @@ def _offer_carry(
     (`escalation_declined`) this turn. Either of those closes the offer and the carry
     stops, so the arming pin can only survive a turn that left the question open.
 
-    **And it has the DYM OFFER'S LIFETIME** (owner ruling, 6 Sep 2026). "Unanswered" is
+    **It ends when something HAPPENS, never on a counter** (D9, AC-1019). "Unanswered" is
     not a licence to live forever: an offer the customer never replied to was re-armed on
     every later turn, so a "yes" about something else, twenty turns on, still read as "yes,
-    escalate" and assigned a human. The lifetime copied is the one three arms above
-    (`dym_offer`, arms 5 to 7) and it is copied WITH its justification, not as precedent:
-    an offer is what is on the customer's screen, and it stops being that when they ask
-    something else and get an answer, or when enough turns pass. So
+    escalate" and assigned a human. The TTL of 3 that used to bound it went with every
+    other counter in L1-S3d - an offer is what is on the customer's screen, and it stops
+    being that when they ask something else and get an answer, not when a number reaches
+    zero. So
 
     * an ANSWERED turn with no pick ends it at once - except a filter modification, which
       is a narrowing of the question the offer was made about (AC-816 rule 3, stamped by
@@ -1998,9 +2660,13 @@ def _offer_carry(
     """
     if jsc.truthy(selection_context) or jsc.truthy(variables.get("selection_context")):
         return None  # this turn owns the roster
-    prev_ctx = jsc.get(prev, "selection_context")
-    prev_set = jsc.get(prev, "last_result_set")
-    if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
+    # WHAT THE CUSTOMER WAS LEFT LOOKING AT is the question the last turn left open, and
+    # the rows it froze (L1-S3d step 4). `selection_context` + `last_result_set` said the
+    # same two things in two keys that could disagree; the kind and its options cannot.
+    prev_question = jsc.get(prev, "open_question")
+    prev_ctx = _prev_context(prev_question)
+    prev_set = jsc.get(prev_question, "options")
+    if prev_ctx is None or not jsc.is_array(prev_set) or len(prev_set) == 0:
         return None
     if prev_ctx == "outstanding_scope":
         # S4 point 4 (PLAN-chatbot-outstanding-report.md): ONE-TURN LIFE, same exclusion
@@ -2035,8 +2701,13 @@ def _offer_carry(
         # is falsy, and a clarify turn's domain is null by construction.
         return None
     # A tier menu is a promotion-thread artifact by construction, so it reads its own
-    # domain even when the session recorded none (same rule as `tm_domain_ok` above).
-    prev_domain = jsc.get(prev, "domain_hint") or ("promotion" if prev_ctx == "tier_offer" else None)
+    # domain even when the session recorded none.
+    prev_focus = jsc.get(prev, "focus")
+    prev_domain = (
+        _first(focus_mod.value_of(prev_focus, "domains"))
+        or jsc.get(jsc.get(prev_question, "payload"), "domain")
+        or ("promotion" if prev_ctx == "tier_offer" else None)
+    )
     if topic.changed(prev_domain, jsc.get(qf, "domain_hint")):
         return None
     carried_ttl: int | None = None
@@ -2046,13 +2717,11 @@ def _offer_carry(
             return None  # the offer was answered: never re-arm it
         if answered and jsc.get(qf, "member_offer_filter_modification") is not True:
             return None  # the customer asked something else and got an answer
-        ttl = jsc.js_number(jsc.get(jsc.get(prev, "pending"), "ttl"))
-        # A marker written before this rule existed (or by n8n, which has no ttl at all)
-        # starts its clock now rather than being killed by a key it could not have.
-        ttl = pending_marker.MEMBER_OFFER_TTL if jsc.is_nan(ttl) or ttl <= 0 else ttl
-        if not (ttl > 1):
-            return None  # the clock ran out
-        carried_ttl = int(ttl) - 1
+        # NO CLOCK (D9, AC-1019). The member offer's TTL of 3 went with every other
+        # counter: an offer the customer can still see on their screen is still
+        # answerable, and a number was only ever a guess at when they stopped looking.
+        # The three ways it ends are above this line - answered, declined, or the
+        # customer asked something else - and they are things that HAPPENED.
     variables["selection_context"] = prev_ctx
     variables["last_result_set"] = prev_set
 
@@ -2069,7 +2738,7 @@ def _offer_carry(
     # say, on a turn that was already carrying the offer.
     if not jsc.truthy(variables.get("domain_hint")) and jsc.truthy(prev_domain):
         variables["domain_hint"] = prev_domain
-    prev_entities = [e for e in jsc.array(jsc.get(prev, "entities")) if jsc.truthy(e)]
+    prev_entities = _focus_entities(prev_focus)
     if not jsc.array(variables.get("entities")) and prev_entities:
         # `current_message: False` - these are CARRIED, not typed this turn, and the head's
         # own carried-entity rules (AC-816 rule 2) key on exactly that flag.
@@ -2081,7 +2750,11 @@ def _offer_carry(
 # miss-company-routing: result-aware escalation scoping
 # --------------------------------------------------------------------------- #
 
-_FROZEN_ESCALATE_PREFIX = "Would you like me to escalate to"
+# ONE definition of the frozen sentence, imported rather than re-declared (security review
+# S1, 15 Sep 2026): `dialogue/open_question` owns it because that is where the offer is
+# recognised and recorded, and a second copy here is how the recogniser and the composer
+# come to disagree about what an offer looks like.
+_FROZEN_ESCALATE_PREFIX = pending_open_question.ESCALATE_PREFIX
 
 
 def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept whole
@@ -2116,6 +2789,7 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
     cannot co-occur (the miss lane rides the happy path, the clarify rides the divert).
     """
     variables = output["variables"]
+    prev_question = jsc.get(prev, "open_question")
     clar = None
     for name in ("clarify-company-reply", "offer-hold-reply"):
         j = outcome.get(name)
@@ -2191,8 +2865,10 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
             # stale numbered roster would let a numeric reply resolve an invisible prior
             # member instead of the company pick the ask promised.
             variables["last_result_set"] = []
-        elif jsc.is_array(jsc.get(prev, "last_result_set")):
-            variables["last_result_set"] = jsc.get(prev, "last_result_set")
+        elif jsc.is_array(jsc.get(prev_question, "options")):
+            # The rows the customer is still looking at are the open question's own, so
+            # the clarify cannot hold a roster the question never showed (L1-S3d step 4).
+            variables["last_result_set"] = jsc.get(prev_question, "options")
         if jsc.get(clar, "clarify_team") is True:
             # SINGLE-USE: only a turn where clarify-team-reply itself ran stamps this;
             # every other turn falls through to the ladder above, so clearing is
@@ -2207,8 +2883,8 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
             )
         elif fresh_gate:
             variables["selection_context"] = None
-        elif jsc.truthy(jsc.get(prev, "selection_context")):
-            variables["selection_context"] = jsc.get(prev, "selection_context")
+        elif jsc.truthy(_prev_context(prev_question)):
+            variables["selection_context"] = _prev_context(prev_question)
         if not fresh_gate and jsc.is_array(jsc.get(prev, "routing_roster_plan")):
             variables["routing_roster_plan"] = jsc.get(prev, "routing_roster_plan")
         if not fresh_gate and jsc.has(prev, "routing_company"):
@@ -2246,6 +2922,7 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
         company = f"*{jsc.js_string(plan[0]['company_name'])}* " if (len(plan) == 1 and plan[0]["company_name"]) else ""
         phrase = f"{_FROZEN_ESCALATE_PREFIX} {company}{_pretty_team(team)} team?"
         turn_state["offer_open"] = True  # R3: the frozen phrase is appended right here
+        turn_state["offer_team"] = team  # ... and this arm is the one that knows its team
         output["user_response"] += f"\n\n{phrase}\n\n{jsc.get(mc_mem, 'miss_offer_text')}"
         previous = variables.get("response")
         variables["response"] = f"{previous if isinstance(previous, str) else ''}\n\n{phrase}".strip()
@@ -2285,6 +2962,7 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
         )
         phrase = f"{_FROZEN_ESCALATE_PREFIX} {company}{_pretty_team(team)} team?"
         turn_state["offer_open"] = True  # R3: the frozen phrase is appended right here
+        turn_state["offer_team"] = team  # ... and this arm is the one that knows its team
         output["user_response"] += f"\n\n{phrase}"
         previous = variables.get("response")
         variables["response"] = f"{previous if isinstance(previous, str) else ''}\n\n{phrase}".strip()

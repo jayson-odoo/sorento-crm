@@ -37,7 +37,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -57,8 +57,8 @@ from app.schemas.chatbot_turn import (
     FailedContactListResponse,
     RetryTurnResponse,
 )
-from app.services.chatbot import console_service
-from app.services.chatbot.contracts import TURN_STAGES
+from app.services.chatbot import console_service, shadow_list
+from app.services.chatbot.contracts import INGRESS_KINDS, TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
 from app.services.integration_service import IntegrationLogService
 from app.services.outbound_url_guard import OutboundUrlRejected
@@ -79,6 +79,11 @@ MANAGE = "system.chat_history.manage"
 # because "no turns are `delivered`" and "there is no such status as `delivered`" are
 # different answers and only one of them means the caller has a bug.
 TURN_STATUSES = ("queued", "processing", "delegated", "done", "failed")
+
+# AC-1029. Which arrival kinds `?ingress=` accepts. Imported from the engine's own
+# vocabulary rather than restated: `shadow` joined it in the same change that made the
+# rows, and a second list here would be the one that went stale.
+INGRESS_FILTER_KINDS = INGRESS_KINDS
 
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
@@ -148,6 +153,7 @@ def list_turns(
     from_: datetime | None = Query(None, alias="from"),
     to: datetime | None = Query(None),
     turn_status: str | None = Query(None, alias="status"),
+    ingress: str | None = Query(None),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     cursor: str | None = Query(None),
     include_test: bool = Query(False),
@@ -162,6 +168,11 @@ def list_turns(
     listing it beside their real turns invites an operator to explain a conversation from
     a turn that was never part of it. The rows are not hidden, only defaulted away: the
     param surfaces them for whoever needs to audit a test run.
+
+    `ingress=shadow` (AC-1029) is the promotion watch, and it is the one filter that is
+    valid with NO `contact_respond_id`: the owner is asking whether a new parser is safe
+    yet, which no single conversation can answer. Its rows carry their own context and the
+    response carries a `summary` over the whole filtered range (AC-1030).
     """
     _ = current_user
 
@@ -169,6 +180,14 @@ def list_turns(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown status {turn_status!r}. Expected one of: {', '.join(TURN_STATUSES)}.",
+        )
+    if ingress is not None and ingress not in INGRESS_FILTER_KINDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Unknown ingress {ingress!r}. Expected one of: "
+                f"{', '.join(INGRESS_FILTER_KINDS)}."
+            ),
         )
 
     query = db.query(ChatbotTurn)
@@ -180,8 +199,24 @@ def list_turns(
         query = query.filter(ChatbotTurn.created_at <= to)
     if turn_status is not None:
         query = query.filter(ChatbotTurn.status == turn_status)
+    if ingress is not None:
+        query = query.filter(ChatbotTurn.ingress == ingress)
+    else:
+        # A SHADOW ROW IS NOT A TURN OF THE CONVERSATION (S6). It is a second parse of a
+        # message the live turn already answered, so listing it beside the real turns
+        # invites an operator to explain a conversation from a row that never spoke to
+        # anybody - the same reason `is_test` is defaulted away below. Defaulted, not
+        # hidden: `?ingress=shadow` is the promotion watch and surfaces exactly these.
+        query = query.filter(
+            or_(ChatbotTurn.ingress.is_(None), ChatbotTurn.ingress != "shadow")
+        )
     if not include_test:
         query = query.filter(ChatbotTurn.is_test.is_(False))
+    # THE RANGE, before the cursor narrows it. `summarise` is asked about the whole window
+    # and not about this page, so it must not inherit the page's own "older than the last
+    # row I sent" filter - a parity that shrank every time the reader paged would be a
+    # different answer to the same question on every screen.
+    range_query = query
     if cursor:
         cursor_created_at, cursor_id = _decode_cursor(cursor)
         # Strictly AFTER the last row in newest-first order: older, or same instant with
@@ -201,10 +236,19 @@ def list_turns(
     has_more = len(rows) > limit
     page = rows[:limit]
     available = retry_available(db)
+    items = [ChatbotTurnResponse.model_validate(row) for row in page]
+    summary = None
+    if ingress == "shadow":
+        # The page's rows get their live side and their context; the SUMMARY is computed
+        # over the whole filtered range, not over the page, because that is the question
+        # being asked.
+        shadow_list.decorate(db, items, page)
+        summary = shadow_list.summarise(db, range_query)
     return ChatbotTurnListResponse(
-        items=page,
+        items=items,
         next_cursor=_encode_cursor(page[-1]) if has_more and page else None,
         retry_available=available,
+        summary=summary,
         retry_unavailable_reason=None
         if available
         else (
@@ -239,7 +283,14 @@ def failed_contacts(
     if from_ is None and to is None:
         from_ = datetime.now(timezone.utc) - timedelta(days=FAILED_CONTACTS_DEFAULT_DAYS)
 
-    window = [ChatbotTurn.status == "failed"]
+    window = [
+        ChatbotTurn.status == "failed",
+        # A failed SHADOW row is a failed second parse, never a customer whose message
+        # went unanswered - the live turn beside it replied. This list is the operator's
+        # "who needs attention" filter, so a shadow failure would send them after a
+        # contact who is perfectly fine (S3).
+        or_(ChatbotTurn.ingress.is_(None), ChatbotTurn.ingress != "shadow"),
+    ]
     if not include_test:
         # H57: a contact whose only failed turn is a DRY RUN has nothing wrong with it. The
         # list this feeds is the operator's "who needs attention" filter, and a test turn
@@ -352,6 +403,24 @@ def retry_turn(
                     "This is a test turn. Retry re-posts the original message at the live "
                     "ingress, so it would answer a real contact; run the test again from "
                     "where it was started instead."
+                ),
+            },
+        )
+
+    if row.ingress == "shadow":
+        # The same reasoning the test refusal above carries, for the same action. A shadow
+        # row is a second PARSE of a message the live turn already answered; re-posting its
+        # message at the live ingress would answer the contact a second time, about a
+        # message they sent once. The live row beside it is the one that can be retried.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "shadow_turn_not_retryable",
+                "message": (
+                    "This is a shadow turn - a second parse of a message the live turn "
+                    "already answered. Retry re-posts the original message at the live "
+                    "ingress, so it would answer the contact twice; retry the live turn "
+                    "instead."
                 ),
             },
         )

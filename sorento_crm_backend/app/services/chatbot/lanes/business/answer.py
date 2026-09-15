@@ -591,7 +591,13 @@ def crossdomain_zeroset(
     variables = jsc.get(jsc.get(session_block, "session_vars"), "variables")
     if not jsc.truthy(variables):
         variables = jsc.get(session_block, "variables")
-    dym_offer = jsc.get(variables, "dym_offer") if jsc.truthy(variables) else None
+    # THE OFFER IS THE OPEN QUESTION (L1-S3d step 4). `dym_offer` was a session key of
+    # its own and the picks made against it accumulated on a TTL ladder; both went with
+    # the five-key session. What the miss lane freezes onto the question it asks -
+    # `payload.domain` and `payload.picked` - is the same two facts this block reads, and
+    # it is frozen by the lane that showed the rows rather than rebuilt from a mirror.
+    question = jsc.get(variables, "open_question") if jsc.truthy(variables) else None
+    dym_offer = jsc.get(question, "payload") if jsc.truthy(question) else None
     dym_offer = dym_offer if isinstance(dym_offer, dict) else None
     # DOMAIN GUARD (H22 / H23). The offer records WHOSE picks these are, and a pick made
     # under an ORDER or PROMOTION offer is not a requested PRODUCT: carrying it printed
@@ -1567,12 +1573,59 @@ def _promo_matches_of(resolved: Any) -> list:
     return out
 
 
+def _offering(rec: Any, team: Any) -> Any:
+    """RECORD THE OFFER WHERE IT IS PRINTED, and return the team unchanged.
+
+    One rule (owner ruling, 15 Sep 2026, review S-1 / S-2): *whoever appends the offer
+    sentence records the offer.* The team then travels with the FACT instead of being read
+    back out of the composed reply, and `open_question.team_from_reply` becomes a parity
+    reader for the tests rather than the source. Two measured defects made the text
+    unreadable as a source:
+
+    * an ANSWERED turn prints the sentence with no `offer_open` and no cross-domain offer
+      (this module's partial-promo and entitlement-miss arms), so the engine arm's
+      open-offer gate dropped it and a following "yes" resolved nothing - R-I's class;
+    * the customer's own token is echoed back by `raw_of_tok` / `_partial_dym_block`, and
+      the echo can land either side of the bot's own sentence, so neither "the first
+      match" nor "the last match" in the text is the promise.
+
+    It wraps the TEAM EXPRESSION rather than the sentence deliberately: every wording here
+    is a byte contract (the frozen prefix, the lower-case variant, the "or 'yes' to
+    escalate to X." shape, the bold company insert), and a template helper would put all
+    of them at risk to record one fact. `rec` is supplied by the caller, so nothing is
+    added to this node's own output and no capture moves.
+
+    NO FALLBACK ANYWHERE: a composer that prints the sentence and does not record it
+    un-arms its own offer, which is what the per-composer parity tests exist to catch.
+    """
+    if isinstance(rec, dict) and jsc.truthy(team):
+        rec["team"] = _team_key(team)
+    return team
+
+
+def _team_key(team: Any) -> str:
+    """The catalogue team behind a PRINTED team, canonicalised by the one reducer.
+
+    The sites print `_pretty_team(...)` output ("customer service"), and what a `yes`
+    routes against is the slug (`customer_service`). `open_question._catalogue_team` is
+    that reducer - it drops the bold company insert and any leading words until what is
+    left is a `SUGGESTED_TEAMS` member - so there is no second spelling of the same
+    reduction here. A team it cannot place is kept as the plain slug form, which is what
+    the previous readers did with it.
+    """
+    from app.services.chatbot.dialogue.open_question import _catalogue_team
+
+    placed = _catalogue_team(team)
+    return placed if placed else jsc.js_string(team).strip().lower().replace(" ", "_")
+
+
 def promo_picker(
     item: dict[str, Any] | None,
     *,
     parser: dict[str, Any] | None,
     resolved: dict[str, Any] | None,
     gate: dict[str, Any] | None = None,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`promo-picker`: the promotion answer's ordering, pick, roster and strict miss.
 
@@ -1633,7 +1686,7 @@ def promo_picker(
     if g is not None and jsc.get(g, "brand_gate_empty") is True:
         deny = (
             f"{notice or 'You do not have access to the brand you asked about.'}\n\n"
-            f"Would you like me to escalate to {esc_team} team?"
+            f"Would you like me to escalate to {_offering(offer_rec, esc_team)} team?"
         )
         env["answers"] = []
         env["attachments"] = []
@@ -2106,7 +2159,7 @@ def promo_picker(
 
     if strict_miss and (jsc.truthy(env.get("response")) or jsc.truthy(env.get("response_intro"))):
         ask = " ".join(jsc.js_string(t) for t in strict_miss["tokens"])
-        offer = f"Would you like me to escalate to {esc_team} team?"
+        offer = f"Would you like me to escalate to {_offering(offer_rec, esc_team)} team?"
         # Name the failing WORDS when the coverage field told us, so the customer can
         # self-correct a typo instead of guessing why we missed.
         detail = (
@@ -2138,7 +2191,7 @@ def promo_picker(
     ):
         # per-item decomposition - product tokens, at least one answered with its own promos
         note = f"No promotion found for {', '.join(jsc.js_string(t) for t in unmatched_products)}."
-        offer = f"Would you like me to escalate to {esc_team} team?"
+        offer = f"Would you like me to escalate to {_offering(offer_rec, esc_team)} team?"
         if jsc.truthy(env.get("response")):
             env["response"] = f"{env['response']}\n\n{note} {offer}"
         j["_promo_unmatched"] = unmatched_products
@@ -2386,6 +2439,7 @@ def not_found_error_message(
     resolved: dict[str, Any] | None,
     gate: dict[str, Any] | None,
     entitlement_levels: Any = None,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`not-found-error-message`: the miss reply, its search-scope header and its bullets.
 
@@ -2743,7 +2797,7 @@ def not_found_error_message(
             if not any_active:
                 return (
                     f"{label} has ended, so there is nothing to send. "
-                    f"Would you like me to escalate to {team} team?"
+                    f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                 )
             levels = [
                 jsc.js_string(x if jsc.truthy(x) else "").strip()
@@ -2753,7 +2807,7 @@ def not_found_error_message(
             at = f" at your access level ({', '.join(levels)})" if levels else " to you"
             return (
                 f"{label} is not available{at}. "
-                f"Would you like me to escalate to {team} team?"
+                f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
             )
 
         entitlement_miss = _entitlement_miss()
@@ -2947,9 +3001,9 @@ def not_found_error_message(
             )
             esc_ask = (
                 f"Reply 'all dates' to search without the date filter, or would you like me "
-                f"to escalate to {team} team?"
+                f"to escalate to {_offering(offer_rec, team)} team?"
                 if (is_order_scope and (jsc.truthy(date_start) or jsc.truthy(date_end)))
-                else f"Would you like me to escalate to {team} team?"
+                else f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
             )
             parts.append(
                 entitlement_miss
@@ -3051,7 +3105,7 @@ def not_found_error_message(
                         subject = requested if jsc.truthy(requested) else "the requested item"
                     escalate_message = (
                         f"Could not find{active_inactive} {subject}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
+                        f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                     )
             elif _outstanding_report_text(item):
                 # AC-1107 / S4 point 6, and the owner's approved miss mock: an outstanding
@@ -3067,7 +3121,7 @@ def not_found_error_message(
                 # carries `outstanding_report`.
                 escalate_message = (
                     f"{_outstanding_report_text(item)}\n\n"
-                    f"Would you like me to escalate to {team} team?"
+                    f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                 )
                 found_summary = _outstanding_report_text(item)
             else:
@@ -3096,13 +3150,13 @@ def not_found_error_message(
                         # the chatbot / turn output must not state it.
                         escalate_message = (
                             f"Order {label} hasn't been delivered yet{status_text}. "
-                            f"Would you like me to escalate to {team} team?"
+                            f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                         )
                     else:
                         escalate_message = (
                             f"Order {label} has no outstanding items - it looks already "
                             f"delivered or closed. "
-                            f"Would you like me to escalate to {team} team?"
+                            f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                         )
                 elif use_breakdown:
                     escalate_message = build_breakdown_msg(
@@ -3115,14 +3169,14 @@ def not_found_error_message(
                     # Saying we searched sends the customer off correcting the wrong thing.
                     escalate_message = (
                         f"Couldn't find: {', '.join(label_token(t) for t in not_found_raw)}. "
-                        f"Would you like me to escalate to {team} team?"
+                        f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                     )
                 else:
                     for_requested = f" for {requested}" if jsc.truthy(requested) else ""
                     escalate_message = (
                         f"Could not find{active_inactive} {status_label}"
                         f"{jsc.js_string(domain_hint)}{for_requested}{date_range}{access}. "
-                        f"Would you like me to escalate to {team} team?"
+                        f"Would you like me to escalate to {_offering(offer_rec, team)} team?"
                     )
 
     # Q23: the customer named an access level they do not hold. The gate detects it; say so
@@ -3306,6 +3360,7 @@ def build_suggest_offer(
     sibling_transform: Any = None,
     get_results: Any = None,
     execution_id: Any = None,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`build-suggest-offer` (D1 / D2 / D3): the miss lane's offer composer.
 
@@ -3792,7 +3847,7 @@ def build_suggest_offer(
         out["suggest_response"] = (
             "Couldn't find some items:\n\n"
             + "\n".join(blocks)
-            + f"\n\nReply a number to pick, or 'yes' to escalate to {team}."
+            + f"\n\nReply a number to pick, or 'yes' to escalate to {_offering(offer_rec, team)}."
         )
         out["suggest_quick_reply"] = _quick_reply([_YES, _NO])
         out["dym_offer"] = mk_offer(out["dym_candidates"])
@@ -3822,7 +3877,7 @@ def build_suggest_offer(
                     f'Couldn\'t pin down "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                     f"Here are the closest matches:\n{numbered}\n"
                     f"Reply with a number to continue, or would you like me to escalate to "
-                    f"{team} team?"
+                    f"{_offering(offer_rec, team)} team?"
                 )
                 out["suggest_quick_reply"] = _quick_reply(
                     [str(i + 1) for i in range(len(picks))] + [_YES, _NO]
@@ -3890,14 +3945,14 @@ def build_suggest_offer(
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean:\n" + "\n".join(dym_lines) + "\n"
                         f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        f"{_offering(offer_rec, team)} team?"
                     )
                 else:
                     out["suggest_response"] = (
                         f'Couldn\'t find "{jsc.js_string(raw_of_tok(d1["token"]))}"{d1_type_sfx}. '
                         f"Did you mean {_bso_human_list(codes)}? "
                         f"Reply with a code to continue, or would you like me to escalate to "
-                        f"{team} team?"
+                        f"{_offering(offer_rec, team)} team?"
                     )
                 out["suggest_quick_reply"] = _quick_reply([*codes, _YES, _NO])
                 out["suggest_last_result_set"] = [
@@ -4025,13 +4080,13 @@ def build_suggest_offer(
             summary = f"Here's what you want:\n{summary_text}\n\n" if summary_text else ""
             text = (
                 f"{summary}No delivery on {asked}. {jsc.js_string(cust)} has delivery on {near}. "
-                f"Reply with a date to continue, or would you like me to escalate to {team} team?"
+                f"Reply with a date to continue, or would you like me to escalate to {_offering(offer_rec, team)} team?"
             )
         else:
             text = (
                 f"No {jsc.js_string(noun)} for {asked_label}. "
                 f"Try: {', '.join(jsc.js_string(v) for v in values)}. "
-                f"Reply with a code to continue, or would you like me to escalate to {team} team?"
+                f"Reply with a code to continue, or would you like me to escalate to {_offering(offer_rec, team)} team?"
             )
 
         out["suggest_offer"] = True
@@ -4081,7 +4136,7 @@ def build_suggest_offer(
     out["suggest_selection_context"] = "suggest_offer"
     out["suggest_response"] = (
         f"No {jsc.js_string(noun)} for {asked_label}. Here are the closest matches:\n{numbered}\n"
-        f"Reply with a number to continue, or would you like me to escalate to {team} team?"
+        f"Reply with a number to continue, or would you like me to escalate to {_offering(offer_rec, team)} team?"
     )
     out["suggest_quick_reply"] = _quick_reply(
         [str(i + 1) for i in range(len(alt_picks))] + [_YES, _NO]

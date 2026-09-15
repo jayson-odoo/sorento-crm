@@ -122,6 +122,48 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
     }
 
 
+def _with_carried_product(entities: Any, focus: Any, carried_code: Any = None) -> list[Any]:
+    """This turn's resolved entities, plus the product the interrupted ask still holds when
+    none of them is a product (R16/R19).
+
+    A customer pick that resumes an outstanding ask resolves only the customer - the
+    interrupted ask's product was replaced off `entities` by the pick. It survives in two
+    places, and this reads whichever is alive: `focus.products` (a `reuse` pick), and the
+    RESOLVING customer_pick question's own `payload.filters.product_code` (a pick-all,
+    whose `entity_op: "clear"` wipes the focus slot but never the frozen filters the
+    question was asked over). Only ADDS, and only when the turn resolved no product of its
+    own (a turn that typed its own product is a new ask and never reaches here). The focus
+    slot stores the entity in its parse shape (`hint`, `canonical_code`); `entity_type` and
+    `code` are the keys `outstanding_product_code` and `_outstanding_filters_from` read, so
+    they are set here.
+    """
+    rows = [e for e in jsc.array(entities) if jsc.truthy(e)]
+    if any(isinstance(e, dict) and e.get("entity_type") == "product" for e in rows):
+        return rows
+    slots = focus if isinstance(focus, dict) else {}
+    slot = slots.get("products")
+    carried = slot.get("value") if isinstance(slot, dict) else None
+    for pe in jsc.array(carried):
+        if not isinstance(pe, dict):
+            continue
+        code = pe.get("canonical_code") or pe.get("code") or pe.get("raw")
+        if jsc.truthy(code):
+            rows.append({**pe, "entity_type": "product", "code": jsc.js_string(code)})
+            return rows
+    if jsc.truthy(carried_code):
+        rows.append(
+            {
+                "raw": jsc.js_string(carried_code),
+                "hint": "product",
+                "canonical_code": jsc.js_string(carried_code),
+                "entity_type": "product",
+                "code": jsc.js_string(carried_code),
+                "current_message": False,
+            }
+        )
+    return rows
+
+
 def _low_stock_not_enabled() -> dict[str, Any]:
     """AC-64: refuse the low stock ask BEFORE any fetch, and end in the team picker.
 
@@ -528,6 +570,7 @@ def _fetch_semantic_input(
     tier_gate: dict[str, Any] | None,
     contact_id: Any,
     space_id: str | None,
+    focus: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`Call 'sub-get-results'`'s `semantic_input`, all thirteen fields plus growth r1's two.
 
@@ -541,8 +584,24 @@ def _fetch_semantic_input(
     list otherwise, which is the legacy behaviour off the promotion lane.
     """
     tg = tier_gate if isinstance(tier_gate, dict) else None
+    # WHAT THE CONVERSATION IS ABOUT comes from `focus`, not from the emission (L1-S3).
+    # Four of the fields below are focus AXES - the domain, the date window, the requested
+    # attributes and the tier - and the whole point of the dialogue state is that one
+    # writer decides them and every reader reads the same answer. The emission is the
+    # fallback for a session written before the focus existed, and for the per-turn fields
+    # below that are not axes at all (`message_type`, `user_goal`, `is_active`,
+    # `order_status`), which describe THIS message and are never carried.
+    slots = focus if isinstance(focus, dict) else {}
+    domains = _slot_value(slots, "domains")
+    window = _slot_value(slots, "date_window")
+    window = window if isinstance(window, dict) else {}
+    attributes = _slot_value(slots, "attributes")
+    tier = _slot_value(slots, "tier")
+
     if tg is not None:
         access_levels = tg.get("access_levels_recomposed")
+    elif isinstance(tier, list) and tier:
+        access_levels = tier
     else:
         access_levels = (
             parse_output.get("access_levels")
@@ -552,20 +611,26 @@ def _fetch_semantic_input(
     return {
         "message_type": parse_output.get("message_type"),
         "intent_hint": parse_output.get("intent_hint"),
-        "domain_hint": parse_output.get("domain_hint"),
+        "domain_hint": (
+            domains[0] if isinstance(domains, list) and domains else parse_output.get("domain_hint")
+        ),
         "user_goal": parse_output.get("user_goal"),
         "access_levels": access_levels,
         "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
         "space_id": fetch_mod.space_id_or_default(space_id),
-        "date_mode": parse_output.get("date_mode"),
-        "date_filter_start": parse_output.get("date_filter_start"),
-        "date_filter_end": parse_output.get("date_filter_end"),
+        "date_mode": window.get("mode") or parse_output.get("date_mode"),
+        "date_filter_start": window.get("start") or parse_output.get("date_filter_start"),
+        "date_filter_end": window.get("end") or parse_output.get("date_filter_end"),
         "is_active": parse_output.get("is_active"),
         "order_status": parse_output.get("order_status"),
         "requested_attributes": (
-            parse_output.get("requested_attributes")
-            if parse_output.get("requested_attributes") is not None
-            else []
+            attributes
+            if isinstance(attributes, list) and attributes
+            else (
+                parse_output.get("requested_attributes")
+                if parse_output.get("requested_attributes") is not None
+                else []
+            )
         ),
         # Growth r1 (AC-909 / AC-910). Fifteen fields now, and these two are the reason the
         # docstring above says an empty object is not a small omission: `entity_ids_
@@ -584,6 +649,12 @@ def _fetch_semantic_input(
         # to render, passed straight through to the MCP tool's own `detail` param.
         "outstanding_detail_pick": parse_output.get("outstanding_detail_pick"),
     }
+
+
+def _slot_value(focus: dict[str, Any], name: str) -> Any:
+    """One focus slot's value, or None. The slot shape is `{value, set_at_turn, ...}`."""
+    slot = focus.get(name)
+    return slot.get("value") if isinstance(slot, dict) else None
 
 
 def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any]:
@@ -693,7 +764,14 @@ def run_fetch(
     contact_id = (ctx.get("contact") or {}).get("id")
     entities = gate.get("compatible_entities") or []
     semantic_input = _fetch_semantic_input(
-        parse_output, tier_gate=tier_gate, contact_id=contact_id, space_id=space_id
+        parse_output,
+        tier_gate=tier_gate,
+        contact_id=contact_id,
+        space_id=space_id,
+        # The dialogue state the engine applied before this lane ran. It rides `ctx.parse`
+        # beside `_parser_raw` because `parse.output` is the graded wire shape and may not
+        # grow a key (`head/output_exchange`'s own note on the out-parameter).
+        focus=(ctx.get("parse") or {}).get("_focus"),
     )
 
     def probe(tool: str, probe_entities: Any, probe_levels: Any) -> Any:
@@ -1031,7 +1109,28 @@ def run_fetch(
             and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
             and has_so_grant
         ):
-            return _outstanding_scope_ask(entities, semantic_input, db=db)
+            # R16/R19: the scope question resumed after a CUSTOMER pick has to name the
+            # product the interrupted ask was about, and that product is not in this turn's
+            # gated `entities` - the pick replaced the scope with the customer it resolved.
+            # It is still alive on `focus.products` (a reuse pick) or on the resolving
+            # customer_pick question's own frozen `payload.filters` (a pick-all, whose
+            # `entity_op: "clear"` wipes the focus slot), so the scope-ask entities are the
+            # picked customer(s) PLUS the carried product - or the header prints
+            # `Product: all` for an ask that named one and the answering turn reports the
+            # wrong scope (the owner's own live trace).
+            prev_vars = jsc.get(jsc.get(ctx.get("session") or {}, "session_vars"), "variables")
+            prev_q_filters = jsc.get(
+                jsc.get(jsc.get(prev_vars, "open_question"), "payload"), "filters"
+            )
+            return _outstanding_scope_ask(
+                _with_carried_product(
+                    entities,
+                    (ctx.get("parse") or {}).get("_focus"),
+                    carried_code=jsc.get(prev_q_filters, "product_code"),
+                ),
+                semantic_input,
+                db=db,
+            )
 
         scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
         so_refused = False
@@ -1278,6 +1377,15 @@ def complete_answer(
     entities_names = aggregate.get("name") if aggregate is not None else None
 
     fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
+    # THE OFFER THIS TURN PRINTED, recorded by whoever printed it (owner ruling, 15 Sep
+    # 2026, review S-1 / S-2). One recorder per turn, handed to each composer that can
+    # print the escalate sentence; the composers write the team into it at the point they
+    # print it (`answer._offering`) and nothing is added to their own node outputs, so no
+    # capture moves. The tail reads it off this fragment and records the offer from it -
+    # never from the composed text, where a customer's echoed token is indistinguishable
+    # from the bot's own promise.
+    offer_rec: dict[str, Any] = {}
+    fragments["escalate_offer"] = offer_rec
     lane_item: dict[str, Any]
 
     # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a
@@ -1374,6 +1482,7 @@ def complete_answer(
             # (`has_result is False`). Omitting it left `build_result` at `None` and the
             # gate short-circuited, so a partially-typed variant code never got its
             # sibling-family offer even though every other condition held.
+            offer_rec=offer_rec,
             build_result={"has_result": False},
         )
 
@@ -1389,7 +1498,7 @@ def complete_answer(
             not_allowed_check_stock=bool(payload.get("not_allowed_check_stock")),
         )
         promo = answer_mod.promo_picker(
-            validated, parser=parser, resolved=resolved, gate=gate
+            validated, parser=parser, resolved=resolved, gate=gate, offer_rec=offer_rec
         )
         # n8n feeds `crossdomain-zeroset` the PROMO-PICKER's output; this feeds it the
         # VALIDATOR item. Equivalent only because `promo_picker` returns its input
@@ -1469,6 +1578,7 @@ def complete_answer(
                 answer_mod=answer_mod,
                 dry_run=dry_run,
                 build_result=result_item.get("result"),
+                offer_rec=offer_rec,
             )
 
     # The row was closed `delegated` at `routed` by the caller before this function ran
@@ -1588,6 +1698,7 @@ def _run_miss_half(
     answer_mod: Any,
     dry_run: bool,
     build_result: Any = None,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`not-found-error-message` -> `sub-miss-suggest` -> `build-suggest-offer` ->
     `tag-not-found`.
@@ -1598,7 +1709,7 @@ def _run_miss_half(
     the composer's own output untagged, so what the tail grades is unchanged.
     """
     not_found = answer_mod.not_found_error_message(
-        payload, parser=parser, resolved=resolved, gate=gate
+        payload, parser=parser, resolved=resolved, gate=gate, offer_rec=offer_rec
     )
     fragments["not_found"] = not_found
 
@@ -1613,6 +1724,7 @@ def _run_miss_half(
         space_id=space_id,
         execution_id=execution_id,
         dry_run=dry_run,
+        offer_rec=offer_rec,
     )
     fragments["suggest_offer"] = offer
     return {**offer, "branch_kind": "not_found"}

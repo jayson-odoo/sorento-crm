@@ -113,6 +113,7 @@ describe('buildTimeline (AC-252)', () => {
     expect(rows[2].kind).toBe('not-reached');
     if (rows[2].kind === 'not-reached') {
       expect(rows[2].labels).toEqual([
+        'Answered',
         'Access',
         'Routed',
         'Looked up',

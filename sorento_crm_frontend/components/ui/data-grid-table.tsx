@@ -797,7 +797,24 @@ function DataGridTableBodyRow<TData>({
   dndAttributes?: Record<string, unknown>;
   dndListeners?: Record<string, unknown>;
 }) {
-  const { props, table } = useDataGrid();
+  const { props: gridProps, table } = useDataGrid();
+
+  // A row `isRowClickable` refuses opens nothing, so it must not offer to: no pointer, no
+  // press cue and no handler. Absent predicate means every row, which is every list that
+  // has used `onRowClick` until now.
+  //
+  // SHADOWED rather than renamed at each use, so the two class gates below still read
+  // `props.onRowClick` verbatim: `menu-item-pressed.test.tsx` is a SOURCE assertion on
+  // exactly those two expressions (M1-05 - a render test cannot reach them without
+  // standing up the whole grid context), and renaming them would have moved the press cue
+  // out from under its guard without changing a rendered byte.
+  const props =
+    gridProps.onRowClick && gridProps.isRowClickable
+      ? {
+          ...gridProps,
+          onRowClick: gridProps.isRowClickable(row.original) ? gridProps.onRowClick : undefined,
+        }
+      : gridProps;
 
   // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.

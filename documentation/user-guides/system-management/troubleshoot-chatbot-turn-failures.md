@@ -51,11 +51,15 @@ something is missing from the record.
 
 The **Remembered** step, when it ran, lists what changed in the bot's memory of this contact as
 **kept**, **new**, or **cleared** chips - in words (e.g. "topic", "price tier"), not the internal
-field name. Hover a chip to see the raw field name if you need it for a bug report.
+field name. Hover a chip to see the raw field name if you need it for a bug report. See "What the
+bot remembers between messages" below for what these chips mean in practice.
 
 If you need the underlying technical payload for a step (for a bug report to engineering), open
 **Technical details** at the bottom of the trace - it is the full record for every step, searchable
-in place.
+in place. For a more readable version of the same detail - including exactly which memory rule
+fired and why - click the small **Open full trace** icon beside the Turn line; it opens a drawer
+titled **Turn #&lt;id&gt;** with a section for each step, including **Focus** and **Open question**
+(see below).
 
 ## When a turn shows Failed
 
@@ -109,6 +113,76 @@ preview rather than actually done. Turns opened from an internal chat console, a
 deliberate dry run are marked this way automatically - you do not need to remember to flag
 anything yourself, and you can safely open, expand, and even attempt to retry a test turn without
 any risk of a real WhatsApp message going out.
+
+## What the bot remembers between messages
+
+Between one WhatsApp message and the next, the bot keeps two things about a contact: what it is
+currently focused on, and at most one question it is waiting for an answer to.
+
+**What it stays focused on.** The bot keeps what the dealer asked about - which products, which
+customer, a date range, which domains (stock, incoming, purchase orders, and so on) - across
+messages, so a dealer does not have to repeat themselves every turn. A focus is replaced only
+when the dealer names a new one (a different product code, a different domain word), says
+something like "another one", or the conversation is closed in Respond.io. **Nothing ages by turn
+count** - there is no setting that clears a focus after N messages, so a product asked about ten
+messages ago is still the one a bare follow-up question is answered against, as long as nothing
+above has reset it.
+
+**At most one open question.** When the bot needs one more thing before it can answer - which of
+several matching products, which customer, which price tier, which team to escalate to, which
+company, which staff member - it asks exactly one question and remembers that it is waiting.
+That question stays open until the dealer answers it, a newer question replaces it, or the dealer
+asks something new instead. A numbered list of options never repeats a number within the same
+message, so a reply like "2" always resolves to the same option the dealer was just shown. If the
+bot offers to escalate and more than one team could take it, a plain "yes" does not pick one for
+you - the bot asks which team, with a button per team.
+
+Where to see this at work: the **Decay** panel in a turn's full trace (see "Reading the expanded
+trace" above) names which slot was cleared this turn and why; the **Focus** panel lists what
+focus rule fired and what it changed; the **Open question** panel shows what was asked, how the
+dealer's reply was read, and what happened next. Each panel shows a plain sentence (e.g. "No focus
+rule fired this turn.") when nothing happened on that turn - that is normal, not a gap in the
+record.
+
+## Watching a new parser version before you trust it (the shadow window)
+
+Before an owner makes a new version of the bot's language-understanding step (the "parser") the
+live one, they can run it in a **shadow window**: the candidate version runs beside the live one
+on every real WhatsApp turn, but only *after* the customer has already been sent their reply. It
+writes its own record of what it understood; it never answers a customer, never changes what the
+bot remembers about a contact, and never sends anything. This lets the owner watch, over real
+traffic, whether the candidate version agrees with the live one before switching over.
+
+**Turning it on:** under **[User Management → Settings → Chatbot](/user-management/settings/chatbot)**,
+set **Parser shadow version** to the version to trial (shown as e.g. `v18 · full · production`,
+stored as `chatbot_semantic_parser@18`). It is a clearable select - set it back to **Off** to stop
+the shadow runs. Leaving it unset means nothing extra runs at all.
+
+**Watching it in Chat History:** on the **[Chat History](/system-management/chat-history)** list,
+the **Shadow** button swaps the usual message grid for a list of shadow turns across every
+contact, with columns **Time**, **Contact**, **Message**, **Live** (what the real turn decided),
+**Shadow** (what the candidate version decided for the same message), and **Drift** - a badge
+reading **agrees** when the two match, or naming which parts disagree (e.g. "branch, domains")
+when they don't. Above the grid, a summary line gives the count of shadow turns in the selected
+range plus how often the two agreed (**branch parity**, **asks parity**), reading "not measured"
+rather than 0% when nothing could be compared yet. The grid itself shows at most the newest 200
+shadow turns in the range; the summary line still describes the whole range even when there are
+more than that.
+
+Shadow turns never show up in the normal Chat History message list, are never counted as a failed
+turn, and there is no **Retry turn** for one - nothing was sent to a customer, so there is nothing
+to resend. Clicking a shadow row opens the same turn drawer as any other turn, but for the real,
+live turn the customer actually received (since that is the one that matters) - its **Parse**
+section shows the live parse and the shadow parse side by side.
+
+**Watching it inside one conversation:** open a thread and its own **Shadow** toggle (beside
+**Failed turns only**) compares that conversation's turns one by one instead - each Turn line
+gets a small badge reading **shadow agrees**, **shadow differs: &lt;what&gt;** (e.g. "branch,
+domains"), or "no shadow parse" when no shadow row exists yet for that message, and the same
+summary line appears above the transcript, scoped to that one conversation.
+
+Promoting the candidate version once the owner is satisfied is the same **Publish** action
+described under "Editing what the bot says" below.
 
 ## Settings that change what the bot answers itself
 

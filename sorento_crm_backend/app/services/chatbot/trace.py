@@ -100,6 +100,22 @@ def _cap(raw: Any, *, limit: int = RAW_BYTE_CAP) -> Any:
     }
 
 
+def stage_records(records: Any) -> list[dict[str, Any]]:
+    """The records that are STEPS the turn ran, out of an array that also holds decisions.
+
+    `chatbot.turns.trace` carries two kinds of record. A STAGE record has no `kind` and is
+    a timeline row. Everything else carries one: `note` (an operator asked for a retry,
+    written by the admin endpoint) and the structured decisions `TurnTrace.add` writes
+    (`decay`, `focus`, `open_question`, `tool`, ...), none of which has a start, a duration
+    or a status of its own.
+
+    The test is `kind` ABSENT, not `kind != "note"`: the one-known-value form meant every
+    new kind arrived in the timeline as a blank row. `turnPresentation.stageRecords` on the
+    frontend is the same rule, said once on each side of the wire.
+    """
+    return [r for r in (records or []) if isinstance(r, dict) and "kind" not in r]
+
+
 class TurnTrace:
     """An ordered list of stage records, plus the clock for the stage in progress."""
 
@@ -182,9 +198,15 @@ class TurnTrace:
 
     def add(self, kind: str, payload: dict[str, Any]) -> None:
         """A sub-event WITHIN the current stage (A9, chatbot-growth-r1): one MCP tool
-        call, one cross-domain rung probe, or which restricted fields a turn saw /
-        granted / dropped. See the `_events` slot's own comment for why this is a
-        SEPARATE list from `record()`'s, not an entry appended to it.
+        call, one cross-domain rung probe, which restricted fields a turn saw / granted /
+        dropped, or one dialogue decision (`decay`, `focus`, `open_question`). See the
+        `_events` slot's own comment for why this is a SEPARATE list from `record()`'s,
+        not an entry appended to it.
+
+        A decision the engine took INSIDE a stage has no start, no duration and no status
+        of its own, so writing it as a stage record would put a second "Received" row on
+        the timeline and lie about what ran. `kind` is what tells the two apart, and the
+        timeline is "every record with no `kind`" (`turnPresentation.stageRecords`).
 
         `payload` is SPREAD into the entry beside `kind` and `at`, not nested under a
         `payload` key: the reader keys on the flat shape
@@ -210,6 +232,10 @@ class TurnTrace:
             }
         )
 
+    def entries(self, kind: str) -> list[dict[str, Any]]:
+        """Every `add`ed entry of one kind, in the order they were written."""
+        return [r for r in self._events if r.get("kind") == kind]
+
     @property
     def records(self) -> list[dict[str, Any]]:
         return self._records
@@ -228,7 +254,8 @@ class TurnTrace:
         return [*self._records, *self._events]
 
     def stages(self) -> list[str]:
-        return [r["stage"] for r in self._records]
+        """The STAGE records' names. `add`ed entries carry a `kind` and are not stages."""
+        return [r["stage"] for r in stage_records(self._records)]
 
 
 # --------------------------------------------------------------------------- #
@@ -316,9 +343,16 @@ def routed_why(branch_kind: str, qf: dict[str, Any], access_allowed: bool) -> st
     return f"Routed to the {lane_words(branch_kind).lower()}: {access_words}, no escalation asked."
 
 
-def replied_summary(reply: dict[str, Any], branch_kind: str | None) -> str:
-    """"Replied with a 6-row list and 2 quick replies." - what was actually sent."""
-    rows = len((reply.get("session_patch") or {}).get("variables", {}).get("last_result_set") or [])
+def replied_summary(
+    reply: dict[str, Any], branch_kind: str | None, *, result_set: Any = None
+) -> str:
+    """"Replied with a 6-row list and 2 quick replies." - what was actually sent.
+
+    The rows are handed in, not read back out of the session patch: the patch is five keys
+    and has carried no roster since L1-S3, so the count on every trace line said zero
+    however many rows the customer was actually shown.
+    """
+    rows = len(result_set) if isinstance(result_set, list) else 0
     quick = reply.get("quick_replies")
     quick_count = len([q for q in str(quick).split(",") if q.strip()]) if quick else 0
     parts = [f"Replied on the {lane_words(branch_kind).lower()} lane"]

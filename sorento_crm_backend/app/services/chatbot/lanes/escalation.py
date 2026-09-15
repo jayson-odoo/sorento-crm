@@ -204,7 +204,10 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
     picked = jsc.get(jsc.get(output, "escalation"), "preferred_assignee_id") or None
     row = None
     if picked:
-        last_set = jsc.array(jsc.get(prev, "last_result_set"))
+        # THE ROSTER THE CUSTOMER WAS SHOWN is the open question's frozen options
+        # (L1-S3d step 4). The pick has to land on the row they read, which is the whole
+        # reason the rows travel with the question rather than being looked up again.
+        last_set = jsc.array(jsc.get(jsc.get(prev, "open_question"), "options"))
         row = jsc.find(last_set, lambda r: jsc.truthy(r) and jsc.get(r, "uuid") == picked)
 
     query_brands = jsc.get(output, "query_brands")
@@ -417,11 +420,11 @@ def _clarify_gate(context_item: dict[str, Any], ctx: dict[str, Any]) -> bool:
     `multi_company_unpicked`. Assigning here would round-robin a pool the customer was
     never shown a choice from, which is the live bug this arm exists to close.
     """
-    prev = _prev_variables(ctx)
+    question = jsc.get(_prev_variables(ctx), "open_question")
     return (
         jsc.get(context_item, "routing_source") == "multi_company_unpicked"
-        and jsc.get(prev, "selection_context") == "member_offer"
-        and len(jsc.array(jsc.get(prev, "last_result_set"))) > 0
+        and jsc.get(question, "kind") == "member_offer"
+        and len(jsc.array(jsc.get(question, "options"))) > 0
     )
 
 
@@ -458,14 +461,12 @@ def run(
     if _clarify_gate(context_item, ctx):
         clarify = clarify_company_reply(context_item, ctx=ctx)
         result = escalation_result(clarify_company=clarify)
-        # R3's marker, and it goes on the TURN ROW only - `response.pending` and the
-        # trace. It is NOT what the next turn reads: `compile_state` writes
-        # `variables.pending` from `pending_marker.derive`, which emits `escalation_offer`
-        # or nothing, and `output_exchange` reads only `escalation_offer` off it. What
-        # actually carries a company clarify across the turn boundary is the structured
-        # pair the tail re-persists - `selection_context` plus `last_result_set` - which
-        # `test_s5_escalation_seams.py` pins end to end. The marker is here so the trace
-        # says WHY this turn asked instead of assigning.
+        # A TRACE FACT, not a session key. It goes on the TURN ROW only -
+        # `response.pending` and the trace - so an operator reading the row can see WHY
+        # this turn asked instead of assigning. What carries the company clarify across
+        # the turn boundary is the `company_pick` the tail persists as the open question,
+        # with the companies it offered frozen onto it; `test_s5_escalation_seams.py`
+        # pins that end to end.
         return {
             **result,
             "actions": _clarify_actions(

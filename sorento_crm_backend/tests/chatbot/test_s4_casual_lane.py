@@ -38,7 +38,8 @@ one shape, not a guess):
   via a name bound inside `casual.py`, matching this package's existing lazy-import
   convention (`head/access.py`, `head/parser.py`) so a lazy import inside the function
   stays patchable at the source.
-- `construct_user_prompt(ctx, resolved)` - pure, the six-field dict.
+- `construct_user_prompt(ctx, resolved)` - pure, the eight-field dict (AC-1024 added
+  `focus_hints` and `open_question`).
   `central_exchange(item)` - pure, the fence-stripping parse.
 - `resolve_clarifier_config(db)` / `call_clarifier(config, user_prompt)` - the SAME
   session-bound-config / no-session-call split `head/parser.py` already uses for the
@@ -248,7 +249,7 @@ class TestResolveForPrompt:
 
 
 # --------------------------------------------------------------------------- #
-# AC-401 / AC-402 - construct_user_prompt: the six fields, verbatim.
+# AC-401 / AC-402 / AC-1024 - construct_user_prompt: the eight fields, verbatim.
 # --------------------------------------------------------------------------- #
 
 
@@ -270,7 +271,10 @@ class TestConstructUserPrompt:
             "text": {"message": {"message": {"text": text}}},
         }
 
-    def test_builds_exactly_the_six_fields(self):
+    def test_builds_exactly_the_eight_fields(self):
+        """AC-1024: two fields joined the original six - `focus_hints` and
+        `open_question` (D15, the dialogue module's hints replace the raw `session_vars`
+        echo)."""
         casual = _casual()
         ctx = self._ctx(message_type="clarification")
         resolved = {
@@ -295,6 +299,8 @@ class TestConstructUserPrompt:
             "session_vars",
             "entities",
             "user_goal",
+            "focus_hints",
+            "open_question",
         }
         # Only entity_type / canonical_code survive - the flatMap in the node body.
         assert out["entities"] == [{"entity_type": "product", "canonical_code": "SRTSCBD402"}]
@@ -390,6 +396,14 @@ def test_s4_vendored_subset_is_present(node: str) -> None:
 def _replay(fixture: _corpus.Fixture) -> None:
     actual = _corpus.json_round_trip(_REPLAY_RUNNERS[fixture.node](fixture))
     expected = _corpus.json_round_trip(fixture.expected)
+    # AC-1024: `focus_hints` / `open_question` are new, unconditional additions to
+    # `construct_user_prompt`'s output - every capture predates them the same way the
+    # gate's `incompatible_only` predates PR #735 (`tests/chatbot/_corpus.py`'s
+    # `CAPTURE_BODY_ADDITIONS`). Stripped from BOTH sides, and only where `expected`
+    # genuinely lacks the key, so a future capture that disagrees on it still fails.
+    stripped = _corpus.keys_to_strip(fixture.node, expected)
+    actual = _corpus.strip_keys(actual, stripped)
+    expected = _corpus.strip_keys(expected, stripped)
     assert actual == expected, (
         f"{fixture.node}/{fixture.name} diverges from the captured n8n output\n"
         f"fixture: {fixture.path}"
@@ -490,6 +504,54 @@ class TestLowSignalLaneIntegration:
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done", row.error
         assert row.branch_kind == "low_signal"
+
+    def test_an_em_dash_from_the_clarifier_never_reaches_the_send_action(
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, low_signal_enabled
+    ):
+        """S7b (Opus S6 review carried forward, hard rule): `sanitize_em_dash` runs only
+        on the TAIL's own output (`tail/compile_state.py`) - `reply.text` is folded, but
+        this lane's `send_message` action is built straight from the clarifier's RAW text
+        (`engine.py`, this arm, before the tail runs) and `reply.attachments_src.response`
+        is the same raw `{response}` envelope the tail never touches either. On a live
+        turn the caller sends `action.text`, so the em dash reaches the customer even
+        though `reply.text` looks clean - and the console's `_customer_texts` dedup
+        (`console_service.py`), which drops `actions[0]` only when it is byte-identical to
+        `reply.text`, then shows TWO bubbles for one message: the folded one and the raw
+        one (observed live, S6 evidence chain E, "another one").
+
+        RED: `action.text` and `reply["attachments_src"]["response"]` both still carry
+        U+2014 today, and `_customer_texts` returns the raw text as a second bubble.
+        """
+        em_dash = "\u2014"
+        en_dash = "\u2013"
+        raw_text = f"Sure {em_dash} do you want to switch to A or B{en_dash}C?"
+        casual = _casual()
+        stub_parser(_parser_output(message_type="casual", domain_hint=None, intent_hint=None))
+        stub_access()
+        _install_stub_lane(
+            monkeypatch, casual, response_json=json.dumps({"response": raw_text})
+        )
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.branch_kind == "low_signal"
+        for action in result.actions:
+            assert action.get("kind") != "send_message" or (
+                em_dash not in (action.get("text") or "")
+                and en_dash not in (action.get("text") or "")
+            ), f"action text still carries a dash character: {action.get('text')!r}"
+        attachments_response = (result.reply.get("attachments_src") or {}).get("response")
+        assert em_dash not in (attachments_response or "") and en_dash not in (
+            attachments_response or ""
+        ), f"reply.attachments_src.response still carries a dash character: {attachments_response!r}"
+
+        from app.services.chatbot import console_service
+
+        reply_text, send_messages = console_service._customer_texts(result.as_dict())
+        assert send_messages == [], (
+            "the console must show ONE bubble for this turn, not the folded reply.text "
+            f"plus a raw duplicate: reply_text={reply_text!r} send_messages={send_messages!r}"
+        )
 
     def test_clarifier_error_is_failed_stage(
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch, low_signal_enabled

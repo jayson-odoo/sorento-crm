@@ -19,6 +19,7 @@ from app.services.chatbot.lanes.business import pickers, resolve_gate
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices, production_services
 from app.services.error_handler import AppException
+from app.services.chatbot import trace as trace_mod
 from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     CONTACT_ID,
@@ -175,7 +176,7 @@ class TestShadowFailurePath:
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "delegated"
         assert row.error is None, "the SHADOW lane's failure must not fail the turn itself"
-        looked_up = [r for r in row.trace if r["stage"] == "looked_up"]
+        looked_up = [r for r in trace_mod.stage_records(row.trace) if r["stage"] == "looked_up"]
         assert len(looked_up) == 1, row.trace
         assert looked_up[0]["status"] == "failed"
         assert "resolve-entity is down" in (looked_up[0].get("error") or "")
@@ -467,9 +468,18 @@ class TestEntityPinsBody:
             },
         }
 
-    def test_and_mode_omits_entity_pins_even_with_a_pinned_uuid(self) -> None:
+    def test_and_mode_sends_entity_pins_with_a_pinned_uuid(self) -> None:
+        """Ruling reversed (S7 follow-up, owner-found on :3081): a picked code that is a
+        PREFIX of its siblings (SRTWC286-SH-NEW vs -NEW-150 / -NEW-P / -NEW-200)
+        re-expanded to all four the moment the lane re-resolved the bare token in AND
+        mode, because AND mode never sent the pin that would have narrowed it back to
+        the one row the customer picked. The lane sends pins in every mode now; the
+        route (not this file) is what narrows a pinned token's candidates BEFORE
+        intersecting in AND mode. RED: `resolve_entity_body` still omits `entity_pins`
+        whenever `match_mode == "and"`, regardless of a pinned uuid.
+        """
         body = resolve_gate.resolve_entity_body(self._ctx(match_mode="and"))
-        assert "entity_pins" not in body
+        assert body["entity_pins"] == {"ZZT1": "11111111-1111-1111-1111-111111111111"}
         assert body["match_mode"] == "and"
 
     def test_or_mode_with_a_pinned_uuid_carries_entity_pins(self) -> None:
@@ -1072,6 +1082,12 @@ class TestAPickerLineNamesEveryLedgerItsFamilySpans:
         assert titles == ["A CRAFT IDEA SDN BHD (SRT, MOCHA)", "A CRAFT IDEA TRADING SDN BHD (SRT)"], (
             f"a family spanning two ledgers must name both, in first-seen order: {titles!r}"
         )
+        # `out["picker_families"]` RESTORED (correction, 15 Sep 2026): the key itself
+        # stays - `gate.run_gate` keeps publishing it as a diagnostic. Only the
+        # SESSION-LEVEL read of it (`variables["picker_families"]`, fed back on the pick
+        # turn) is retired; the family the pick turn actually widens to now rides on
+        # `family_uuids`, the roster row / picked entity (see
+        # tests/chatbot/test_owner_regressions_15sep.py::TestRFAPickedMultiLedgerRowKeepsEveryLedger).
         families = out["picker_families"]
         assert set(families["A CRAFT IDEA"]) == {"u-srt-1", "u-mocha"}, families
         assert "1. A CRAFT IDEA SDN BHD (SRT, MOCHA)" in out["gate_clarification"]
