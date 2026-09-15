@@ -227,6 +227,32 @@ def _warehouse_only_uuids(parser: Any, resolver: Any) -> set[str]:
     return from_warehouse - from_elsewhere
 
 
+def _tokens_by_uuid(resolver: Any) -> dict[str, set[str]]:
+    """Which TOKEN(S) found each resolved uuid. `_warehouse_only_uuids`' attribution, kept
+    as a map instead of collapsed to one question.
+
+    R-C (15 Sep 2026): the picker narrowing needs it to tell a CO-RESOLVED SIBLING (another
+    word in the same message - "photo" beside "srtwc286") from ANOTHER READING OF THE SAME
+    WORD (capture rs09-t1: "7445" matched nine products by code AND four customers by phone
+    number). The first must survive the pick; the second is the very ambiguity the picker
+    exists to resolve and must not.
+
+    Only OR-mode `resolutions` carry a token. `intersection` / `by_entity_type` rows have
+    none, so a uuid reached that way is absent here and every caller must read that as "no
+    attribution" and fall back to its old behaviour, never as "a different token".
+    """
+    out: dict[str, set[str]] = {}
+    for resolution in jsc.array(jsc.get(resolver, "resolutions")):
+        token = jsc.js_string(jsc.get(resolution, "token") or "").strip().casefold()
+        if not token:
+            continue
+        for m in jsc.array(jsc.get(resolution, "matches")):
+            uuid = jsc.js_string(jsc.get(m, "uuid") or "") if jsc.truthy(m) else ""
+            if uuid:
+                out.setdefault(uuid, set()).add(token)
+    return out
+
+
 def _cust_name(match: Any) -> str:
     """`_custName` - the legal name with the ACCOUNT suffix stripped, nothing else."""
     display = jsc.get(match, "display") or {}
@@ -765,9 +791,43 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
 
         # FIX A: when prompting, the selectable set comes from the token-filtered,
         # exact-deduped `specific_options` - NOT from the unfiltered `entities` union.
+        #
+        # R-C (owner merge test, 15 Sep 2026): the narrowing keeps the OTHER AXES. It used
+        # to drop every entity that was not one of the picker's own candidates, which threw
+        # away what the SAME message resolved beside the ambiguous token - the attachment
+        # type in "photo for srtwc286", the product in "delivery for chin chun product
+        # wc286". That list is the only source `_keep_beside` and
+        # `miss_suggest._attach_question` have for `payload.keep`, so the pick's own
+        # sibling-carry (issue #708) was fed an empty set by construction and the next turn
+        # re-asked for a value the customer had already given.
+        #
+        # The picker is about ONE WORD. What ANOTHER word in the same message resolved is
+        # not on offer, cannot be mis-picked, and must survive - that is the sibling
+        # `_keep_beside` and `miss_suggest._attach_question` freeze as `payload.keep`.
+        #
+        # SCOPED BY TOKEN, not by type (capture rs09-t1, which the type test moved): "7445"
+        # matched nine products by code AND four customers by phone number, and those
+        # customers are a second reading of the picked word, not a sibling - keeping them
+        # would answer about companies the customer never named. A uuid with no token
+        # attribution at all (an AND-mode `intersection` row) keeps the old behaviour and
+        # is dropped, because "no attribution" is not evidence of a different word.
+        #
+        # `_picker_rows` reads this list only when no numbered lines were flattened at all,
+        # so the rendered roster is unchanged.
         if require_specific:
             opt_uuids = {c["uuid"] for o in specific_options for c in o["candidates"]}
-            compatible_entities = [e for e in entities if e["uuid"] in opt_uuids]
+            tokens_by_uuid = _tokens_by_uuid(resolver)
+            offered_tokens: set[str] = set()
+            for uuid in opt_uuids:
+                offered_tokens |= tokens_by_uuid.get(jsc.js_string(uuid), set())
+
+            def _other_word(entity: dict[str, Any]) -> bool:
+                own = tokens_by_uuid.get(jsc.js_string(entity.get("uuid")), set())
+                return bool(own) and not (own & offered_tokens)
+
+            compatible_entities = [
+                e for e in entities if e["uuid"] in opt_uuids or _other_word(e)
+            ]
         elif len(exact_entities) > 0:
             compatible_entities = exact_entities
 
@@ -954,15 +1014,42 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             # which is why the company code goes into `rep_labels` itself rather than only
             # into the printed line: a customer who types the whole line back must resolve
             # to the row they read.
+            #
+            # R-C: the OTHER AXES survive, for the reason the `require_specific` narrowing
+            # above states - "delivery for chin chun product wc286" resolved a product
+            # beside the ambiguous customer, and dropping it here is what fed the pick's
+            # `payload.keep` an empty set and answered "Product: all products".
+            #
+            # R-F: each row carries the ACCOUNT FAMILY it stands for. One rendered line can
+            # stand for accounts in several ledgers (`_company_suffix` above prints them
+            # all), and the pick has to reach every one of them. It used to travel as a
+            # `picker_families` map on a session key, which the five-key session
+            # (`SESSION_VAR_KEYS`) drops on write, so `fam_mem` below never found anything
+            # and a two-ledger pick reached one ledger. On the ROW instead, because the row
+            # IS the key - and because the captain's 2026-08-24 ruling is that the family
+            # outlives the roster: an entity keeps its uuid for as long as the customer
+            # keeps talking about it, and `_entity_of` copies this onto the picked entity,
+            # which `focus.customer` then carries for exactly that long.
+            other_axis_entities = [
+                c
+                for c in compatible_entities
+                if jsc.js_string(jsc.get(c, "entity_type")).lower() != "customer"
+            ]
             compatible_entities = [
                 {
                     "uuid": jsc.get(m, "uuid"),
                     "entity_type": "customer",
                     "code": jsc.get(m, "canonical_code"),
                     "title": rep_labels[i],
+                    # First-seen order, deduped - the resolver ranks by similarity and the
+                    # consumer appends in this order, so it is the order the fetch args
+                    # carry. `sorted()` here would re-order a graded capture's uuid list.
+                    "family_uuids": list(
+                        dict.fromkeys((cust_families or {}).get(_cust_base(m)) or [])
+                    ),
                 }
                 for i, m in enumerate(reps)
-            ]
+            ] + other_axis_entities
 
     # ── A PINNED PICK WINS OVER FUZZY RE-RESOLUTION ─────────────────────────
     # An entity carrying a uuid came from a roster pick. The resolver still re-resolves
@@ -1026,46 +1113,49 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             fam_added: set[str] = set()
             if all_present:
                 # A picked CUSTOMER selects its whole ACCOUNT FAMILY, never just the pinned
-                # row. This turn's resolver only sees the label it was handed, so read the
-                # family remembered from the picker turn.
-                fam_mem = None
-                variables = jsc.get(jsc.get(session, "session_vars"), "variables")
-                if not jsc.truthy(variables):
-                    variables = jsc.get(session, "variables")
-                if not jsc.truthy(variables):
-                    variables = {}
-                if isinstance(jsc.get(variables, "picker_families"), dict) and jsc.truthy(
-                    jsc.get(variables, "picker_families")
-                ):
-                    fam_mem = variables["picker_families"]
-                if fam_mem:
-                    have = {jsc.js_string(jsc.get(c, "uuid")) for c in compatible_entities}
-                    for e in pins_all:
-                        if jsc.lower_or_empty(jsc.get(e, "hint")) != "customer":
+                # row. This turn's resolver only sees the label it was handed, so the family
+                # has to come from the picker turn.
+                #
+                # R-F (owner merge test, 15 Sep 2026): it rides ON THE PIN, `family_uuids`,
+                # put there by the picker row (`compatible_entities` above) and copied onto
+                # the picked entity by `open_question._entity_of`. It used to be a
+                # `picker_families` MAP on a session key, and the five-key session
+                # (`SESSION_VAR_KEYS`) drops every key but its five on write, so the map was
+                # written and discarded every turn and this block never widened anything -
+                # a "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)" pick fetched one ledger under a
+                # line that promised two.
+                #
+                # On the pin rather than on the question because of the captain's 2026-08-24
+                # ruling, which the deleted `picker_families` carry existed to honour: the
+                # family OUTLIVES the roster, since the pin does. Binding it to
+                # `open_question` would lose it the moment another question replaces the
+                # roster - which is exactly what happens one turn later when the outstanding
+                # report arms its detail ask.
+                #
+                # The map's `_cust_base` re-key goes with it, and was itself broken: it was
+                # fed `e.raw`, a synthetic debtor code, while the map was keyed on family
+                # NAME bases, so the lookup could not have matched even had the map survived.
+                have = {jsc.js_string(jsc.get(c, "uuid")) for c in compatible_entities}
+                for e in pins_all:
+                    if jsc.lower_or_empty(jsc.get(e, "hint")) != "customer":
+                        continue
+                    fam = jsc.get(e, "family_uuids")
+                    if not isinstance(fam, list):
+                        continue
+                    for u in fam:
+                        key = jsc.js_string(u)
+                        if key in have:
                             continue
-                        b = _cust_base(
+                        compatible_entities = [
+                            *compatible_entities,
                             {
-                                "display": {},
-                                "canonical_code": jsc.get(e, "raw") or jsc.get(e, "canonical_code"),
-                            }
-                        )
-                        fam = jsc.get(fam_mem, b)
-                        if not isinstance(fam, list):
-                            continue
-                        for u in fam:
-                            key = jsc.js_string(u)
-                            if key in have:
-                                continue
-                            compatible_entities = [
-                                *compatible_entities,
-                                {
-                                    "uuid": key,
-                                    "entity_type": "customer",
-                                    "code": jsc.get(e, "raw") or jsc.get(e, "canonical_code"),
-                                },
-                            ]
-                            have.add(key)
-                            fam_added.add(key)
+                                "uuid": key,
+                                "entity_type": "customer",
+                                "code": jsc.get(e, "canonical_code") or jsc.get(e, "raw"),
+                            },
+                        ]
+                        have.add(key)
+                        fam_added.add(key)
 
                 row_by_uuid = {
                     jsc.js_string(jsc.get(m, "uuid")): m
@@ -1573,8 +1663,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     out["compatible_entities"] = compatible_entities
     if cust_probe_entities and len(cust_probe_entities) > 0:
         out["customer_probe_entities"] = cust_probe_entities
-    if cust_families and len(cust_families) > 0:
-        out["picker_families"] = cust_families
+    # `out["picker_families"]` is RETIRED (R-F, 15 Sep 2026). The map was published for one
+    # reader - `compile_state`'s `picker_families` session write - and that write was dropped
+    # by the five-key projection on every turn, so nothing has consumed this key since D8.
+    # The family it described now travels on the roster ROW that stands for it
+    # (`family_uuids`, stamped where `cust_families` is built above), which is the shape the
+    # pick can actually carry forward.
     # `{domain, allowed_lookup: ALLOWED[domain], entities_count}`. An unmapped domain
     # makes `allowed_lookup` UNDEFINED, and `JSON.stringify` DROPS an undefined value
     # rather than writing null - so the key is ABSENT on those turns, which 3 of the 213

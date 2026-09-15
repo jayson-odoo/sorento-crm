@@ -1207,13 +1207,36 @@ def apply_open_question_outcome(o: dict, question: dict, outcome: Any) -> None:
     """The handler's outcome, written into the emission the rest of the turn reads.
 
     ONE place, so the seven handlers stay pure and only this function knows the `qf`
-    vocabulary. Nothing here is reached until prompt v3 is promoted (see the call site).
+    vocabulary.
+
+    Reached under EVERY prompt version: the call site gates on the engine having resolved
+    an open question, and the engine resolves a numbered answer off `reference_positions`
+    just as it does off v3's `answers_open_question.picks`. (This docstring used to say
+    "nothing here is reached until prompt v3 is promoted", which stopped being true when
+    the engine learned the pre-v3 channel; corrected 15 Sep 2026, when the owner's v16
+    console run walked straight through it.)
     """
     if not outcome.resolved:
         return
     products = outcome.focus.get("products")
     customer = outcome.focus.get("customer")
-    entities = [*(products or []), *([customer] if customer else [])]
+    # R-C (owner merge test, 15 Sep 2026): a kept sibling with NO focus axis still has to
+    # reach the emission. `focus` covers products and the customer, so an `attachment_type`
+    # resolved beside the ambiguous product - "photo for srtwc286" - had no way through,
+    # and picking a row re-asked "Please provide the attachment type" for a type the
+    # customer had already named. `keep` is that path: everything issue #708 froze and the
+    # two slots above do not carry, deduped against them so nothing is stated twice.
+    axis_keys = {_ce_key(e) for e in [*(products or []), *([customer] if customer else [])]}
+    kept_off_axis = [
+        e
+        for e in getattr(outcome, "keep", None) or []
+        if isinstance(e, dict) and _ce_key(e) not in axis_keys
+    ]
+    entities = [
+        *(products or []),
+        *([customer] if customer else []),
+        *kept_off_axis,
+    ]
     if entities:
         # "replace", not "replace_combine": the picks ARE the scope (owner ruling B,
         # console pass 3). `outcome.keep` has already folded in the siblings issue #708

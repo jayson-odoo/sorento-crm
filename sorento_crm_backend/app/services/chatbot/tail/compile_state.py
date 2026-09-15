@@ -976,17 +976,26 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
                     or (jsc.get(first_field, "value") if first_field is not None else None)
                     or f"item {i + 1}"
                 )
-                indexed.append(
-                    {
-                        "idx": i + 1,
-                        "uuid": jsc.get(it, "uuid") or jsc.get(it, "id") or None,
-                        "label": jsc.js_string(label).replace("*", "").strip(),
-                        "entity_type": jsc.get(it, "entity_type") or None,
-                        "product": _field_value(it, "Product") or jsc.get(it, "product") or jsc.get(it, "code") or None,
-                        "attachment_type": jsc.get(it, "attachmentType") or jsc.get(it, "attachment_type") or None,
-                        "filename": jsc.get(it, "filename") or None,
-                    }
-                )
+                row = {
+                    "idx": i + 1,
+                    "uuid": jsc.get(it, "uuid") or jsc.get(it, "id") or None,
+                    "label": jsc.js_string(label).replace("*", "").strip(),
+                    "entity_type": jsc.get(it, "entity_type") or None,
+                    "product": _field_value(it, "Product") or jsc.get(it, "product") or jsc.get(it, "code") or None,
+                    "attachment_type": jsc.get(it, "attachmentType") or jsc.get(it, "attachment_type") or None,
+                    "filename": jsc.get(it, "filename") or None,
+                }
+                # R-F: the ACCOUNT FAMILY the row stands for, carried through the indexing
+                # so the pick can copy it onto the entity (`open_question._entity_of`).
+                # This builder is a whitelist, so a key the gate composes and this loop
+                # does not name is dropped here - which is where the family died once the
+                # `picker_families` session key went. Set only when the row HAS one, so
+                # every row shape without a family stays byte-identical for the graded
+                # `compile-current-state` captures.
+                family = jsc.get(it, "family_uuids")
+                if isinstance(family, list) and len(family) > 0:
+                    row["family_uuids"] = list(family)
+                indexed.append(row)
             what = indexed[0]["attachment_type"] or "records"
             response = (
                 f"Previous turn ({jsc.js_string(domain)}): returned {len(items_list)} {jsc.js_string(what)}"
@@ -2474,11 +2483,13 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
     picker_set = born["set"] if born is not None else carried
     if jsc.truthy(picker_set):
         variables["picker_last_result_set"] = picker_set
-        # The candidate-to-account-family map the gate built for this picker, so the PICK
-        # turn covers exactly the accounts the picker's probe counted.
-        fam = born["fam"] if born is not None else (jsc.get(prev, "picker_families") or None)
-        if jsc.truthy(fam) and len(fam) > 0:
-            variables["picker_families"] = fam
+        # R-F (15 Sep 2026): the `picker_families` MAP is gone from here. It was written
+        # into `variables` and then discarded by the five-key projection at the end of this
+        # function, every turn, so the gate that read it back (`lanes/business/gate.py`)
+        # never found one and a two-ledger pick reached a single ledger. The family now
+        # rides on the roster ROW and on the picked ENTITY as `family_uuids`, which honours
+        # the same 2026-08-24 ruling this map existed for - the family outlives the roster,
+        # because the PIN does - without a session key to be dropped.
         variables["picker_domain"] = (
             (jsc.get(qf, "domain_hint") if jsc.get(qf, "domain_hint") is not None else None)
             if born is not None
@@ -2492,20 +2503,15 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         variables["last_result_set"] = picker_set
         variables["selection_context"] = kind
 
-    # THE FAMILY OUTLIVES THE ROSTER (captain, 2026-08-24). `picker_families` maps a
-    # picked candidate to the ACCOUNTS it stands for, and the PIN is not bound to the
-    # roster's lifetime: an entity keeps its uuid for as long as the customer keeps
-    # talking about it. The roster expired, the family went with it, and the pick covered
-    # 1 account instead of the 12 the picker had measured.
-    if not jsc.truthy(variables.get("picker_families")):
-        fam_pinned = any(
-            jsc.truthy(e) and jsc.lower_or_empty(jsc.get(e, "hint")) == "customer" and jsc.truthy(jsc.get(e, "uuid"))
-            for e in jsc.array(jsc.get(qf, "entities"))
-        )
-        fam_keep = jsc.get(prev, "picker_families") if jsc.truthy(prev) else None
-        if fam_pinned and jsc.truthy(fam_keep) and len(fam_keep) > 0:
-            variables["picker_families"] = fam_keep
-            variables["picker_families_carried"] = True  # diagnostic
+    # THE FAMILY OUTLIVES THE ROSTER (captain, 2026-08-24) - still true, and now true BY
+    # CONSTRUCTION rather than by a carry. That ruling said the family must not be bound to
+    # the roster's lifetime, because the PIN is not: an entity keeps its uuid for as long as
+    # the customer keeps talking about it. This block re-copied the `picker_families` map
+    # forward every turn to achieve that, and the five-key projection at the end of this
+    # function threw the copy away each time. The family rides on the entity itself now
+    # (`family_uuids`, put on the roster row by the gate and copied at the pick by
+    # `dialogue/open_question._entity_of`), so it lives exactly as long as the pin does and
+    # there is nothing left to carry (R-F, 15 Sep 2026).
 
 
 def _offer_carry(
