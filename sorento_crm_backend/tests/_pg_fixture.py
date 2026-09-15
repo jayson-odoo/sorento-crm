@@ -196,20 +196,30 @@ def blank_session() -> Session:
     # LOCAL scopes it to this transaction, which is discarded below.
     #
     # Every module schema is listed, or raw SQL naming one of its tables resolves
-    # against nothing (the real `public` is NOT on this path, deliberately).
+    # against nothing.
     #
-    # ORDER MATTERS, and the projects schema must come LAST. The default schema stays
-    # first so `current_schema()` is still `{name}` (migration 354 reads it to find
-    # where the tables are). The projects schema trails everything because seven of its
-    # bare names -- brands, purchase_orders, purchase_order_lines, sales_orders,
-    # sales_order_lines, quotations, quotation_lines -- also exist as CORE tables, and
-    # unqualified raw SQL naming one of those means the core one. Put `{name}_projects`
-    # earlier and seven core tables silently repoint at the module's. `scm` and
-    # `dealer_kit` share no bare name with core, so their position is free.
+    # ORDER MATTERS, and the projects schema must come LAST before `public`. The default
+    # schema stays first so `current_schema()` is still `{name}` (migration 354 reads it
+    # to find where the tables are). The projects schema trails the module schemas
+    # because seven of its bare names -- brands, purchase_orders, purchase_order_lines,
+    # sales_orders, sales_order_lines, quotations, quotation_lines -- also exist as CORE
+    # tables, and unqualified raw SQL naming one of those means the core one. Put
+    # `{name}_projects` earlier and seven core tables silently repoint at the module's.
+    # `scm` and `dealer_kit` share no bare name with core, so their position is free.
+    #
+    # `public` is LAST, deliberately trailing every scratch schema: every table on
+    # `Base.metadata` was just created in one of the schemas above, so a real table name
+    # always resolves there first and this adds no exposure for tables. What it DOES add
+    # is Postgres EXTENSION objects that live only in `public` and are never part of
+    # `Base.metadata` at all - `pg_trgm`'s `similarity()` chief among them, which several
+    # resolver probes call by bare name. Without `public` on the path those calls raise
+    # `UndefinedFunction`, not "found nothing", which is a worse failure than the
+    # exposure this trades for it (measured: `tests/chatbot/test_rearch_s0_*.py` and
+    # `test_rearch_s2_*.py` pass unchanged with `public` appended here).
     name = _BLANK["name"]
     connection.exec_driver_sql(
         f'SET LOCAL search_path TO "{name}", "{name}_scm", "{name}_dealer_kit", '
-        f'"{name}_chatbot", "{name}_projects"'
+        f'"{name}_chatbot", "{name}_projects", "public"'
     )
 
     session = Session(bind=connection, join_transaction_mode="create_savepoint")

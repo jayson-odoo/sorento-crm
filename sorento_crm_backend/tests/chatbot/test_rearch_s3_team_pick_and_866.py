@@ -115,6 +115,8 @@ class TestPort866AsRunTurnCases:
 
         from sqlalchemy import text
 
+        from tests.chatbot._escalation_seed import seed_team_for_code
+
         db = session_factory()
         db.execute(
             text(
@@ -124,6 +126,14 @@ class TestPort866AsRunTurnCases:
             {"cid": str(CONTACT_ID), "phone": "+60000000001", "sv": json.dumps({"variables": {}})},
         )
         db.commit()
+        # The SLA policy + tier `_next_assignee_body` always names, plus an access
+        # agent/team/member for every team code a case in this class resolves to - the
+        # live `/external/next-assignee` handler this lane calls in-process 404s /
+        # 400s without them on the blank scratch schema (measured; see the captain's
+        # brief and _escalation_seed.py's own docstring).
+        seed_team_for_code(session_factory, "marketing_product")
+        seed_team_for_code(session_factory, "marketing_promotion")
+        seed_team_for_code(session_factory, "purchasing")
 
     def test_106_named_team_escalates_to_marketing_product(
         self, session_factory, stub_parser, stub_access
