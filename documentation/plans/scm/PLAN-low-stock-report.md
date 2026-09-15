@@ -130,7 +130,9 @@ the builders it reuses: `report`, `_qty_text`, `_ddmmyyyy`, `_docs_text`, `_rema
   BRW incoming qty, Last in qty, Last in date, Remarks. `_EXPORT_COLUMNS` is not touched
   (two tests pin it).
 - `export_low_stock(db, *, run_id, include_supplier=True) -> (bytes, content_type, filename)`:
-  1. `rep = report(db, run_id=run_id)`; NO hidden-row drop (AC-33).
+  1. `rep = report(db, run_id=run_id)`; NO hidden-row drop (AC-33). Superseded 15 Sep 2026 by
+     PLAN-low-stock-last-in-and-list-scope: the All sheet drops hidden_by_default rows like
+     the list.
   2. Master joins by `product_code` in ONE batch query over `Product` outer-joined to
      `ProductCategory`: `Product.description`, `ProductCategory.category_code`,
      `Product.reorder_quantity` (blank when NULL or 0) (AC-34).
