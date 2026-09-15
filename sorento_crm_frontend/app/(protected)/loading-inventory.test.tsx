@@ -253,7 +253,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // Local-supplier-oi-routing lane: `master-data-management/countries` is a new
     // DataGrid list segment with its own `loading.tsx`, found by the walk itself -
     // no BODY_ONLY_SEGMENTS entry needed. Total: 141.
-    expect(requiredSegmentNames.length).toBe(141);
+    // Chatbot turn re-architecture (S1): Chatbot Domains and Entity kinds are two
+    // new DataGrid list segments, found by the walk itself - no BODY_ONLY_SEGMENTS
+    // entry needed. Total: 143.
+    expect(requiredSegmentNames.length).toBe(143);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

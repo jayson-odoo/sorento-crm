@@ -7,20 +7,16 @@
  * can drive query/mutation state precisely.
  *
  * Expected hooks module: `./hooks/useChatbotSettings.ts`, exporting:
- *   - `useChatbotLanes()`      -> query over GET /settings/chatbot-lanes,
- *                                 resolving to `ChatbotLane[]` = `{kind, built}[]`
  *   - `useChatbotSettings()`   -> query over the existing GET /settings, picking
- *                                 the five chatbot fields into `ChatbotSettings`
+ *                                 the four chatbot fields into `ChatbotSettings`
  *   - `useSaveChatbotSettings()` -> mutation over POST /settings/general with a
  *                                 `ChatbotSettings` body
  *
  * Expected service module: `./services/chatbotSettingsService.ts`, exporting the
- * two types below and the three fetchers the hooks wrap.
+ * type below and the two fetchers the hooks wrap.
  *
  * ```ts
- * export interface ChatbotLane { kind: string; built: boolean }
  * export interface ChatbotSettings {
- *   chatbot_completed_lanes: string[];
  *   chatbot_stock_denial_enabled: boolean;
  *   chatbot_business_lane_enabled: boolean;
  *   chatbot_ordering_enabled: boolean;
@@ -28,8 +24,12 @@
  * }
  * ```
  *
- * No feature-explanation copy in the UI (cursor rule); a "not built" hint on a
- * disabled checkbox is a STATE label, not an explainer, and stays.
+ * No feature-explanation copy in the UI (cursor rule).
+ *
+ * retired: the "Lanes the CRM answers" card and `chatbot_completed_lanes` gating
+ * are superseded (PLAN-chatbot-turn-rearch S3 rulings, contract line 73) - the
+ * per-branch-kind checkbox grid, its `useChatbotLanes()` hook and `ChatbotLane`
+ * type are gone from this contract.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -54,12 +54,10 @@ if (!window.matchMedia) {
   });
 }
 
-const mockLanesQuery = vi.fn();
 const mockSettingsQuery = vi.fn();
 const mockMutation = vi.fn();
 
 vi.mock('./hooks/useChatbotSettings', () => ({
-  useChatbotLanes: () => mockLanesQuery(),
   useChatbotSettings: () => mockSettingsQuery(),
   useSaveChatbotSettings: () => mockMutation(),
 }));
@@ -69,37 +67,10 @@ vi.mock('@/lib/toast', () => ({
 }));
 
 import ChatbotSettingsPage from './page';
-import type {
-  ChatbotLane,
-  ChatbotSettings,
-} from './services/chatbotSettingsService';
-
-const ALL_KINDS = [
-  'access_denied',
-  'escalate_offer',
-  'out_of_scope',
-  'ideate',
-  'offer_hold',
-  'escalation_declined',
-  'check_promotion',
-  'low_signal',
-  'clarify_menu',
-  'not_supported',
-  'stock_denied',
-  'demand_qty',
-  'business_query',
-];
-
-function lanes(overrides: Partial<Record<string, boolean>> = {}): ChatbotLane[] {
-  return ALL_KINDS.map((kind) => ({
-    kind,
-    built: overrides[kind] ?? true,
-  }));
-}
+import type { ChatbotSettings } from './services/chatbotSettingsService';
 
 function settings(overrides: Partial<ChatbotSettings> = {}): ChatbotSettings {
   return {
-    chatbot_completed_lanes: [],
     chatbot_stock_denial_enabled: false,
     chatbot_business_lane_enabled: false,
     chatbot_ordering_enabled: false,
@@ -120,68 +91,13 @@ function renderPage() {
 const saveButton = () => screen.getByRole('button', { name: /save/i });
 
 beforeEach(() => {
-  mockLanesQuery.mockReset();
   mockSettingsQuery.mockReset();
   mockMutation.mockReset();
-  mockLanesQuery.mockReturnValue({ data: lanes(), isLoading: false, isError: false });
   mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
   mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
 });
 
 afterEach(() => cleanup());
-
-describe('ChatbotSettingsPage - lane checkboxes (AC-809)', () => {
-  it('renders a checkbox per branch kind, checked according to the current completed lanes', () => {
-    mockSettingsQuery.mockReturnValue({
-      data: settings({ chatbot_completed_lanes: ['low_signal', 'out_of_scope'] }),
-      isLoading: false,
-      isError: false,
-    });
-    renderPage();
-
-    for (const kind of ALL_KINDS) {
-      const checkbox = screen.getByRole('checkbox', { name: new RegExp(kind, 'i') });
-      const expected = kind === 'low_signal' || kind === 'out_of_scope' ? 'true' : 'false';
-      expect(checkbox.getAttribute('aria-checked')).toBe(expected);
-    }
-  });
-
-  it('disables a checkbox and shows a "not built" hint for a kind whose built flag is false', () => {
-    mockLanesQuery.mockReturnValue({
-      data: lanes({ business_query: false }),
-      isLoading: false,
-      isError: false,
-    });
-    renderPage();
-
-    const checkbox = screen.getByRole('checkbox', { name: /business_query/i });
-    expect(checkbox).toBeDisabled();
-    expect(screen.getByText(/not built/i)).toBeInTheDocument();
-  });
-
-  it('leaves a built kind enabled with no "not built" hint attached to it', () => {
-    renderPage();
-
-    const checkbox = screen.getByRole('checkbox', { name: /low_signal/i });
-    expect(checkbox).not.toBeDisabled();
-  });
-
-  it('renders the lane grid with exactly one checkbox per branch kind in the vocabulary, at 375px', () => {
-    // jsdom does not lay out CSS, so this cannot assert the grid does not clip at
-    // 375px - only that the same markup (one checkbox per kind, nothing dropped or
-    // duplicated) is what would be laid out there. `window.innerWidth` is set for
-    // any matchMedia-driven responsive logic the component might add later; the grid
-    // itself is plain Tailwind classes and renders identically regardless.
-    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 375 });
-    renderPage();
-
-    const checkboxes = screen.getAllByRole('checkbox');
-    expect(checkboxes).toHaveLength(ALL_KINDS.length);
-    for (const kind of ALL_KINDS) {
-      expect(screen.getByRole('checkbox', { name: new RegExp(kind, 'i') })).toBeInTheDocument();
-    }
-  });
-});
 
 describe('ChatbotSettingsPage - the three switches (AC-810)', () => {
   it('reflects stock denial, business lane and ordering from the current settings', () => {
@@ -202,14 +118,12 @@ describe('ChatbotSettingsPage - the three switches (AC-810)', () => {
   });
 });
 
-describe('ChatbotSettingsPage - Save payload (AC-809, AC-810)', () => {
+describe('ChatbotSettingsPage - Save payload (AC-810)', () => {
   it('calls the mutation with the exact current draft, snake_case, on every chatbot field', () => {
     const mutate = vi.fn();
     mockMutation.mockReturnValue({ isPending: false, mutate });
-    mockLanesQuery.mockReturnValue({ data: lanes(), isLoading: false, isError: false });
     mockSettingsQuery.mockReturnValue({
       data: settings({
-        chatbot_completed_lanes: ['low_signal'],
         chatbot_stock_denial_enabled: true,
         chatbot_business_lane_enabled: false,
         chatbot_ordering_enabled: false,
@@ -220,21 +134,16 @@ describe('ChatbotSettingsPage - Save payload (AC-809, AC-810)', () => {
     });
     renderPage();
 
-    // Check one more lane before saving, so the payload proves the draft is
-    // read back, not just echoed from the query.
-    fireEvent.click(screen.getByRole('checkbox', { name: /clarify_menu/i }));
     fireEvent.click(saveButton());
 
     expect(mutate).toHaveBeenCalledTimes(1);
     const [payload] = mutate.mock.calls[0];
     expect(payload).toEqual({
-      chatbot_completed_lanes: expect.arrayContaining(['low_signal', 'clarify_menu']),
       chatbot_stock_denial_enabled: true,
       chatbot_business_lane_enabled: false,
       chatbot_ordering_enabled: false,
       chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
     });
-    expect(payload.chatbot_completed_lanes).toHaveLength(2);
   });
 });
 
@@ -298,18 +207,19 @@ describe('ChatbotSettingsPage - ordering confirm dialog (AC-810)', () => {
 });
 
 describe('ChatbotSettingsPage - loading and error states', () => {
-  it('shows a loading state while either query is pending', () => {
-    mockLanesQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false });
-    renderPage();
+  // retired: the "shows a loading/error state" pair asserted absence of the
+  // now-gone per-branch-kind checkbox grid (`queryByRole('checkbox')`) as its
+  // ONLY signal - the "Lanes the CRM answers" card and `chatbot_completed_lanes`
+  // gating are superseded (PLAN-chatbot-turn-rearch S3 rulings, contract line 73).
+  // The three switches use `role="switch"`, not `role="checkbox"`, so that
+  // assertion would pass vacuously regardless of loading/error state once the
+  // grid is gone - a coder-scope test (naming the switch-based loading/error
+  // signal) replaces this, not a tester guess at markup that does not exist yet.
 
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
-  });
-
-  it('shows an error state, not an infinite loader, when a query fails', () => {
+  it('shows an error state, not an infinite loader, when the settings query fails', () => {
     mockSettingsQuery.mockReturnValue({ data: undefined, isLoading: false, isError: true });
     renderPage();
 
-    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
     expect(screen.getByText(/could not be loaded/i)).toBeInTheDocument();
   });
 });

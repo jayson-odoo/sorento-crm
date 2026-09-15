@@ -105,6 +105,12 @@ def verdict(**overrides: Any) -> dict[str, Any]:
         # of {domain, intent}; `focus.domains` = [a["domain"] for a in asks] when
         # non-empty, else the single `domain_hint`.
         "asks": [],
+        # The parser's OWN "this message continues the previous set" signal (16 Sep
+        # 2026 ruling): a "more"/"next"/"lagi" paging turn is the parser saying so,
+        # never the engine pattern-matching `user_goal`'s free text for it - that
+        # word-match rule is being deleted. Defaults to False; a paging test sets it
+        # True explicitly (`test_rearch_s3_attribute_first.py::TestPagingByFive`).
+        "continuation": False,
     }
     base.update(overrides)
     return base
