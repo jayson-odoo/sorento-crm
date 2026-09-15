@@ -257,3 +257,28 @@ above is left as-is (historical record) rather than rewritten in place.
   True`, `goods_receive.supported is False` - AC-911 holds under the new Policy
   object. File collects clean (66 tests), the other ~1350 lines (kept `lanes/
   business` ladder logic) untouched.
+
+- **`test_s8a_hardening.py` (657 lines) - done, split two ways.** Only
+  `TestPostProcessEmissionValidation` (two tests) used the doomed top-level import
+  (`from ... head.output_exchange import ParserOutputError, post_process`, which is
+  why this file WAS one of the 12 hard collection errors). Everything else
+  (`TestOutboundUrlGuardHardening`, `TestWorkspaceRoutePermissionsNotWidened`,
+  `TestChatbotRetryKeyWriteOnly`, `TestPromptOverridesAC807`,
+  `TestATestEnvelopeIsNeverADuplicateOfALiveTurn`) is independent and untouched -
+  confirmed by spot-run (`TestOutboundUrlGuardHardening`, 7/7 pass) and full-file
+  collection (19 tests, zero errors).
+  - `test_a_real_capture_with_no_broaden_axis_key_replays_cleanly` - RETIRED,
+    superseded by `test_turn_replay.py` (replays the same class of real capture end
+    to end through `engine.run_turn` for the whole corpus now, not one fixture
+    node-by-node).
+  - `test_a_right_key_wrong_container_type_fails_naming_key_and_type` - PORTED as
+    RED, low severity. Grepped: neither `_assert_emission` nor `ParserOutputError`
+    exists anywhere in `app/services/chatbot/` today. `head/parser.py::parse` now
+    passes `json_schema=PARSE_OUTPUT_JSON_SCHEMA` to the LLM provider, so a REAL
+    call cannot return a malformed container type (enforced server-side) - this
+    guard is now only reachable via a test-harness-injected malformed mock, not
+    live traffic. Probed `apply()` directly: an EMPTY malformed dict degrades
+    silently to `[]` (falsy-or fallback, no error); a NON-empty one raises an
+    unnamed `AttributeError` - still a loud failure, just not a named one. Sixth
+    finding this triage pass, flagged as LOW severity (not reachable from a real
+    LLM response) rather than escalated at the same level as the other five.
