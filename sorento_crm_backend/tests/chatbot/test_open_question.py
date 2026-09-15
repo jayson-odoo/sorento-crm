@@ -223,7 +223,14 @@ class TestIssue708PartialMissKeepsTheSiblings:
 
 
 class TestTheRemainingHandlers:
-    def test_a_customer_pick_sets_the_customer_slot(self) -> None:
+    def test_a_customer_pick_names_the_customer_never_the_debtor_code(self) -> None:
+        """R-E (owner-found on the merged head, coder a1f1112d diagnosis, 15 Sep 2026):
+        `_entity_of` (dialogue/open_question.py:573-586) reads `row.get("code")` for
+        BOTH `raw` and `canonical_code` - right for `canonical_code`, wrong for `raw`.
+        The "Customer:" header line prints `focus.customer.raw`, so a picked row showed
+        the debtor code (e.g. "300-G013") instead of the name the customer read off the
+        picker ("GOLDEN WIN HARDWARE SDN BHD"). `raw` must be the row's own LABEL - what
+        the customer was shown and picked - never the code."""
         outcome = oq.resolve(
             "customer_pick",
             _answer(resolved=True, picks=[1]),
@@ -232,7 +239,50 @@ class TestTheRemainingHandlers:
         )
 
         assert outcome.focus["customer"]["hint"] == "customer"
-        assert outcome.focus["customer"]["raw"] == "ABC"
+        assert outcome.focus["customer"]["raw"] == "ABC Trading", (
+            "raw must be the row's LABEL (the name the customer picked), never the code"
+        )
+        assert outcome.focus["customer"]["canonical_code"] == "ABC"
+
+    def test_a_customer_pick_keeps_the_co_resolved_product(self) -> None:
+        """R-C (coder a1f1112d diagnosis, 15 Sep 2026): "delivery for chin chun product
+        wc286" arms a `customer_pick` roster; issue #708's `payload.keep` rule (already
+        applied by `_product_pick`) must apply here too, so the picked customer's report
+        still runs scoped to the product the SAME message named. `_customer_pick`
+        (dialogue/open_question.py:377-387) reads no `payload` at all today - the pick
+        drops any co-resolved sibling on the floor, silently."""
+        kept_product = {
+            "raw": "wc286",
+            "hint": "product",
+            "canonical_code": "wc286",
+            "uuid": None,
+        }
+
+        outcome = oq.resolve(
+            "customer_pick",
+            _answer(resolved=True, picks=[1]),
+            [
+                {
+                    "idx": 1,
+                    "label": "CHIN CHUN HARDWARE SDN BHD",
+                    "code": "300-C043",
+                    "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                    "entity_type": "customer",
+                }
+            ],
+            {"keep": [kept_product]},
+        )
+
+        assert outcome.focus["customer"]["raw"] == "CHIN CHUN HARDWARE SDN BHD"
+        assert outcome.focus["customer"]["canonical_code"] == "300-C043"
+        assert outcome.keep == [kept_product], (
+            "the co-resolved product must survive the customer pick, same as "
+            "_product_pick already keeps a co-resolved product sibling"
+        )
+        assert [e["raw"] for e in outcome.focus.get("products") or []] == ["wc286"], (
+            f"the kept product must reach focus.products so the report re-runs scoped "
+            f"to it: {outcome.focus!r}"
+        )
 
     def test_a_team_pick_sets_the_routing_and_continues_the_escalation(self) -> None:
         outcome = oq.resolve(

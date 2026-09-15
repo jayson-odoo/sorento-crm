@@ -596,8 +596,20 @@ class TestADisambiguationTurnArmsItsRoster:
         assert len(after["options"]) == 3
 
 
-class TestTheOfferDoesNotReplaceABornDisambiguationRoster:
-    def test_the_offer_does_not_replace_a_born_disambiguation_roster(self) -> None:
+class TestTheOfferRidesOnABornDisambiguationRoster:
+    """R-A (owner-found on the merged head, coder a1f1112d diagnosis, 15 Sep 2026): a
+    turn that misses to a picker AND appends an escalate offer in the SAME reply must
+    merge the two (D19 rule 3), exactly as `_offer_rides_on_roster` already does for a
+    roster BORN A TURN EARLIER. It does not today: `_ask_for_turn`'s disambiguation arm
+    (compile_state.py:578-602, "BEFORE the offer arm") returns the plain roster and the
+    offer arm below it (613-624) never runs, so `_offer_rides_on_roster(asked, previous)`
+    is never even consulted for a roster and its offer born on the SAME turn - it only
+    merges an offer asked THIS turn onto a roster carried from `previous` (an EARLIER
+    turn). The previous version of this test pinned the result of that gap (`kind ==
+    "product_pick"`, no offer, no assertion on `expects`/`payload.offer`); this rewrite
+    asserts the fix instead: the offer RIDES the roster it was born beside."""
+
+    def test_the_offer_rides_on_a_born_disambiguation_roster(self) -> None:
         codes = [f"SRTWC286-{i}" for i in range(1, 4)]
         ctx = _ctx(
             message_type="business_query",
@@ -615,7 +627,8 @@ class TestTheOfferDoesNotReplaceABornDisambiguationRoster:
                 # The reply ACTUALLY carries the escalate sentence this turn
                 # (`escalate-catalog`'s own `is_escalate_offer` flag, which is what
                 # `offer_open` is computed from) - a turn that both misses to a picker
-                # AND appends an escalate offer must not let the offer win.
+                # AND appends an escalate offer must not let the offer win, and must not
+                # let it silently vanish either: it rides the roster.
                 "escalate-catalog": {
                     "is_escalate_offer": True,
                     "response": "Would you like me to escalate to purchasing team?",
@@ -630,7 +643,17 @@ class TestTheOfferDoesNotReplaceABornDisambiguationRoster:
         after = result["variables"]["open_question"]
         assert after is not None
         assert after["kind"] == "product_pick", (
-            f"the roster must win over the plain escalate offer: got {after.get('kind')!r}"
+            f"the roster's own kind must survive - the offer rides it, never replaces "
+            f"it: got {after.get('kind')!r}"
+        )
+        assert after["expects"] == "pick_or_yes_no", (
+            f"a number still re-picks (rule 1); a yes/no now answers the offer riding "
+            f"beside it: got {after.get('expects')!r}"
+        )
+        offer = (after.get("payload") or {}).get("offer") or {}
+        assert offer.get("team") == "purchasing", (
+            f"the offer this turn composed must ride the roster's payload, not vanish: "
+            f"{after.get('payload')!r}"
         )
 
     def test_no_offer_means_no_payload_offer(self) -> None:
