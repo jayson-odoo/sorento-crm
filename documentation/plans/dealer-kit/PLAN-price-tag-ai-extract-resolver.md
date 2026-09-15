@@ -88,6 +88,15 @@ Chromium and prints it. It therefore has to know where the frontend is. The back
 knows: `FRONTEND_BASE_URL` is set on prod and is what every portal link is built from. The
 separate `DEALER_KIT_PRINT_BASE_URL` was only ever a second copy of that fact.
 
+Batch of seven from the owner's combo walk-through, 15 Sep (SRTKS8648-BL sink + kitchen tap):
+(a) a choice group with ONE candidate still shows an open "Not sure, any of 1" row; (b) the
+open-row copy "Marketing will prepare one tag per option" is unwanted; (c) after removing a
+package part row there is no way to put it back short of re-picking the product; (d) a spec
+merge field renders `860 mm`, but the tag wants `L860XW480XH250mm`, the unit typed once by
+the designer; (e) double-clicking a text layer shows the placeholders, and the designer
+wanted to copy the rendered text; (f) the Text colour on a price badge does not reach the
+amount; (g) the combo's part (the tap) has no merge field, so it cannot be put on the tag.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -183,6 +192,28 @@ separate `DEALER_KIT_PRINT_BASE_URL` was only ever a second copy of that fact.
   change; the dedicated env stays only as an override for a stack where the worker must reach
   the frontend by an internal name. `CONTAINER-PDF-EXPORT-RUNBOOK.md` gets a one-paragraph note
   saying the alias step is now optional.
+- D17 `partsFromCombo`: a choice group with exactly one candidate becomes a RESOLVED row
+  (`product_id`, code, name of that candidate, `role` kept, `candidates` kept so clearing
+  still reopens it per AC-S2-3 of combos). Two or more candidates keep the open row.
+- D18 `OPEN_ROW_COPY` and the `showOpenRowCopy` plumbing are deleted. The open row is the
+  select with its placeholder and the role label, nothing under it.
+- D19 The package warning row gains a "Restore" button when the line has a `combo_id` and
+  `packageWarningFor` names something missing. Restore appends exactly the missing entries,
+  built by `partsFromCombo` on the chosen combo and filtered to the fixed parts and choice
+  groups the line does not already hold. Rows the salesperson kept are untouched.
+- D20 `specText` in `lib/dealer-kit/merge-fields.ts` returns `spec.value` alone; the unit is
+  the designer's to type. `product.dimensions` (the composed slot string) is unchanged.
+- D21 `InspectorPanel` Content block: when the content holds a `{{...}}` token and
+  `resolvedText` is non-null, a read-only line under the textarea shows the rendered text
+  with a Copy icon button (`navigator.clipboard.writeText`, toast "Copied"). The canvas
+  inline edit keeps showing the source; that is the editor, the preview is the copy surface.
+- D22 The unboxed price badge branch in `KonvaTagLayer.tsx` (`!parts.boxed`, the `Text` whose
+  fill is `parts.amountText ? '#000000' : '#999999'`) uses `props.textColor` when there is an
+  amount, the muted grey only for the empty placeholder. The boxed branch already does.
+- D23 Two merge fields in the Line group: `line.parts` (the resolved parts' codes joined with
+  ", ") and `line.parts_names` (their names). `resolvePath` answers from `data.line.parts`;
+  null when the binding is not a line, empty string when the line has no parts. A part image
+  is NOT added: `TagPartData` carries no image, and the tag's image slot stays the host's.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -204,7 +235,8 @@ BE
 
 FE
 - `app/(auth)/portal/lib/portal-client.ts`: `AIExtractedProductLine` gains the three fields.
-- `app/(auth)/portal/components/PriceTagRequestForm.tsx`: D3, D4.
+- `app/(auth)/portal/components/PriceTagRequestForm.tsx`: D3, D4, D17, D18, D19.
+- `lib/dealer-kit/merge-fields.ts`: D20, D23. `InspectorPanel.tsx`: D21. `KonvaTagLayer.tsx`: D22.
 - `app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestDetail.tsx`: D7.
 - `app/(protected)/dealer-kit/price-tag-requests/[id]/design/components/RequestTagDesigner.tsx`: D8.
 - `app/(protected)/dealer-kit/components/TagSizeControl.tsx`: D9.

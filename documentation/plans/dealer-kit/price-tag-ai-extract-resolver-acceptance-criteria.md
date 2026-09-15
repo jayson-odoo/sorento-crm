@@ -137,6 +137,53 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
 - AC-S11-2 `[BE]` With both set, `DEALER_KIT_PRINT_BASE_URL` wins.
 - AC-S11-3 `[BE]` With neither set, the base is `http://localhost:3000` (today's default).
 
+## S12 One candidate is not a choice
+
+- AC-S12-1 `[FE]` A combo whose choice group "Kitchen Tap" has one candidate fills the line
+  with a resolved part row (code shown, role "Kitchen Tap"), no "Not sure, any of 1" select.
+- AC-S12-2 `[FE]` A group with two candidates still yields the open row.
+
+## S13 No open-row copy
+
+- AC-S13-1 `[FE]` The text "Marketing will prepare one tag per option" appears nowhere in the
+  form for a line with an open row.
+
+## S14 Restore a removed package part
+
+- AC-S14-1 `[FE]` After removing the "Kitchen Tap" row, the package warning reads
+  "Missing: Kitchen Tap" and carries a "Restore" button; clicking it puts the row back (resolved
+  when the group has one candidate, open otherwise) and the warning clears.
+- AC-S14-2 `[FE]` Restore on a line missing one fixed part and one group adds exactly those
+  two rows and leaves the rows already present untouched.
+- AC-S14-3 `[FE]` No Restore button when the line has no `combo_id` or no warning.
+
+## S15 Spec fields carry no unit
+
+- AC-S15-1 `[FE]` `{{spec.diameter}}` with value "407" and unit "mm" renders "407".
+  `L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm` renders
+  `L860XW480XH250mm`. `{{product.dimensions}}` still renders the composed string.
+
+## S16 Copy the rendered text
+
+- AC-S16-1 `[FE]` Inspector Content for a layer whose content holds a token shows the rendered
+  text beneath the textarea and a button labelled "Copy rendered text"; clicking writes that
+  text to the clipboard and toasts "Copied".
+- AC-S16-2 `[FE]` A layer whose content has no token shows no preview line.
+
+## S17 Price badge amount honours Text colour
+
+- AC-S17-1 `[FE]` An unboxed price badge with `textColor: '#FFFFFF'` and a resolved amount
+  draws the amount `Text` with fill `#FFFFFF`; with no amount the placeholder stays `#999999`.
+- AC-S17-2 `[FE]` The boxed badge still draws label, amount and NETT with `textColor`.
+
+## S18 Parts on the tag
+
+- AC-S18-1 `[FE]` Insert field lists "Parts (codes)" and "Parts (names)" in the Line group.
+  `{{line.parts}}` on a line with parts `[SRTKT71SS-BL]` renders `SRTKT71SS-BL`; two parts
+  join with ", ". `{{line.parts_names}}` renders the names the same way.
+- AC-S18-2 `[FE]` On a product binding (template page) both resolve to null (the token's
+  unanswered form); on a line with no parts, to an empty string.
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and
