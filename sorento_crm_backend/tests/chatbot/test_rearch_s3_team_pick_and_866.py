@@ -134,6 +134,9 @@ class TestPort866AsRunTurnCases:
         seed_team_for_code(session_factory, "marketing_product")
         seed_team_for_code(session_factory, "marketing_promotion")
         seed_team_for_code(session_factory, "purchasing")
+        # The hard default team (contract 77) - a turn that names no team and carries
+        # none resolves to this one (`test_brand_of_resolved_product_in_add_comment_body`).
+        seed_team_for_code(session_factory, "customer_service")
 
     def test_106_named_team_escalates_to_marketing_product(
         self, session_factory, stub_parser, stub_access
@@ -155,9 +158,18 @@ class TestPort866AsRunTurnCases:
 
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert "marketing" in (result.reply or {}).get("text", "").lower() or any(
-            "marketing_product" in str(a) for a in result.actions
-        ), (result.reply, result.actions)
+        # `result.reply["text"]` is legitimately None on this arm (`branch_kind ==
+        # "out_of_scope"`): the sealed reply is never sent to the customer on its own -
+        # the acknowledgement lives in the two `send_message` actions instead (measured;
+        # coordinator ruling 16 Sep 2026). Assert on the actions, not on `reply.text`.
+        send_messages = [a for a in result.actions if a.get("kind") == "send_message"]
+        assert any("marketing" in (a.get("text") or "").lower() for a in send_messages), (
+            result.actions
+        )
+        comments = [a for a in result.actions if a.get("kind") == "add_comment"]
+        assert any("marketing_product" in (a.get("text") or "") for a in comments), (
+            f"add_comment body must name the team: {result.actions!r}"
+        )
 
     def test_108_family_word_resolves_open_offers_team(
         self, session_factory, stub_parser, stub_access

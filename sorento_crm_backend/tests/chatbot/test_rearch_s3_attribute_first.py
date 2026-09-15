@@ -216,12 +216,72 @@ def _seed_promotion(session_factory, product_codes: list[str], *, access_levels:
     return promo.id
 
 
+def _stub_certificate_tools(session_factory, monkeypatch, *, codes: list[str]) -> None:
+    """Answer `crm_master_product_attachments_list` / `crm_certificates_list` (the
+    `product_attachment` domain's own two tools, `policy_rows.py`) with one row per
+    id in the call's OWN `product_ids` argument, in the shape
+    `sorento_crm_mcp/presenters.py`'s `_product_attachments` builds (`title` = product
+    code, a `Certificate Number` field). The envelope key is `items`, not `answers` -
+    `fetch.py::_find_payload` only recognises a dict carrying `items` (or
+    `portal_url`/`token`) as a render envelope; `answers` is the INCOMING picker
+    probe's own shape (`pickers._probe_rows`), a different seam.
+
+    Filtering by `arguments["product_ids"]` matters, not just returning every seeded
+    row: `fetch.py` slices `product_ids` to the first FIVE itself (`out["product_ids"]
+    = out["product_ids"][:5]`, "the PAGE is built by slicing product_ids itself") and
+    the header's own "Showing N" counts DISTINCT product codes actually present in the
+    tool's answer - a stub that ignores the slice and returns all eleven makes "Showing
+    5" and the second-page "Showing 6 to 10" both permanently false regardless of what
+    the real code does.
+
+    Without any of this, `MCPRuntimeClient.call_tool` reaches the REAL MCP server on
+    :8765, which reads a DIFFERENT (non-test) database that has never heard of a
+    `ZZT-TAP-*` code - measured: the qualifying COUNT in the reply text was always
+    right (it comes from `resolve_product_set`'s own direct, company-scoped SQL, never
+    MCP), but the rendered PAGE was always empty ("Showing 0") because the real
+    server's answer for these codes is genuinely nothing.
+    """
+    from app.models.product import Product
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    import json as _json
+
+    db = _db(session_factory)
+    code_by_id = {
+        p.id: p.product_code
+        for p in db.query(Product).filter(Product.product_code.in_(codes)).all()
+    }
+
+    def fake_call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        if name in ("crm_master_product_attachments_list", "crm_certificates_list"):
+            wanted_ids = arguments.get("product_ids") or list(code_by_id)
+            page_codes = [code_by_id[i] for i in wanted_ids if i in code_by_id]
+            return _json.dumps(
+                {
+                    "items": [
+                        {
+                            "title": code,
+                            "fields": [
+                                {"label": "Product Code", "value": code},
+                                {"label": "Certificate Number", "value": f"ZZT-CERT-{code}"},
+                            ],
+                        }
+                        for code in page_codes
+                    ],
+                    "attachments": [],
+                    "action_links": [],
+                }
+            )
+        return _json.dumps({"items": []})
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", fake_call_tool)
+
+
 class TestCountedSetAnswer:
     """Console case "a class word scopes the set and the header counts it" (AC-1306,
     AC-1316): "which tap has cert" -> "taps have certificates ... Showing 5"."""
 
     def test_counted_answer_names_kind_attribute_and_shows_five(
-        self, session_factory, stub_parser, stub_access
+        self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
         _seed_contact(session_factory, phone="+60000000020")
         # A company-scoped read (certificates, below) sees nothing for a contact with
@@ -229,6 +289,7 @@ class TestCountedSetAnswer:
         _link_contact_company(session_factory, company_id=SORENTO)
         codes = _seed_products(session_factory, class_label="tap", synonyms=["taps"], count=11)
         _seed_certificates(session_factory, codes, company_id=SORENTO)
+        _stub_certificate_tools(session_factory, monkeypatch, codes=codes)
 
         v = verdict(
             domain_hint="product_attachment",
@@ -248,13 +309,16 @@ class TestCountedSetAnswer:
 
 
 class TestPagingByFive:
-    def test_more_pages_the_same_set_by_five(self, session_factory, stub_parser, stub_access) -> None:
+    def test_more_pages_the_same_set_by_five(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ) -> None:
         _seed_contact(session_factory, phone="+60000000021")
         # Same company-link requirement as `TestCountedSetAnswer` - the certificate
         # read is company-scoped.
         _link_contact_company(session_factory, company_id=SORENTO)
         codes = _seed_products(session_factory, class_label="tap", synonyms=["taps"], count=11)
         _seed_certificates(session_factory, codes, company_id=SORENTO)
+        _stub_certificate_tools(session_factory, monkeypatch, codes=codes)
 
         offsets_seen: list[int] = []
 
