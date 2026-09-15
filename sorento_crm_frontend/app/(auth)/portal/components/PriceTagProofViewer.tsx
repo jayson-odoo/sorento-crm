@@ -27,6 +27,7 @@ import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 
 interface PriceTagProofViewerProps {
   doc: TagSheetDoc | null;
+  /** Keyed by REQUEST TAG id since S3 (D3) - a line may print several tags. */
   resolvedData: Record<string, ResolvedLineData>;
 }
 

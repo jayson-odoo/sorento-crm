@@ -342,8 +342,14 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
         for row in tag_data_service.resolve_request_line_data(db, request):
             for image in row["images"]:
                 images[image["attachment_id"]] = image["url"]
-            resolved_data[row["line_id"]] = {
+            # Keyed by REQUEST TAG since S3 (D3) - a line may print several
+            # tags, so a line id could no longer name one tile's data.
+            resolved_data[row["tag_id"]] = {
+                "tag_id": row["tag_id"],
                 "line_id": row["line_id"],
+                "tag_label": row["tag_label"],
+                "open_groups": row["open_groups"],
+                "parts": row["parts"],
                 "code": row["code"],
                 "name": row["name"],
                 "dimensions": row["dimensions"],

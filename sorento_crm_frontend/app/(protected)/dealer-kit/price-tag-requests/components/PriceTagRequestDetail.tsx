@@ -26,7 +26,7 @@
  * designer, one click away through the same primary CTA.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Download,
@@ -114,7 +114,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // Which lines already have a tag drawn, so the Lines tab can say so per row
   // without a second page of clicking (D25/AC-S10-2). Fetched once, off the
   // same tag-sheet doc the designer itself reads and writes.
-  const [designedLineIds, setDesignedLineIds] = useState<Set<string>>(new Set());
+  const [designedTagIds, setDesignedTagIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -137,7 +137,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     getTagSheetDoc(requestId)
       .then((doc) => {
         if (cancelled) return;
-        setDesignedLineIds(new Set(tagsFromDoc(doc).keys()));
+        // Keyed by REQUEST TAG id since S3 (D3): `tagsFromDoc` reads the
+        // document's own key, which is what a "Designed" cell asks about.
+        setDesignedTagIds(new Set(tagsFromDoc(doc).keys()));
       })
       .catch(() => {
         // No design yet, or the fetch failed - every line reads "No tag",
@@ -214,12 +216,14 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     router.push(`/dealer-kit/price-tag-requests/${requestId}/design`);
   }, [requestId, router]);
 
-  // A row's own Design action (AC-S10-2): the same designer, opened with THAT
-  // line pre-selected rather than whichever line the designer defaults to.
-  const openDesignerForLine = useCallback(
-    (lineId: string) => {
+  // A tag row's own Design action (AC-S10-2, AC-S3-2): the same designer,
+  // opened with THAT tag pre-selected rather than whichever one the designer
+  // defaults to. `?tag=` since S3; the designer still honours `?line=` for a
+  // link written before it.
+  const openDesignerForTag = useCallback(
+    (tagId: string) => {
       router.push(
-        `/dealer-kit/price-tag-requests/${requestId}/design?line=${encodeURIComponent(lineId)}`,
+        `/dealer-kit/price-tag-requests/${requestId}/design?tag=${encodeURIComponent(tagId)}`,
       );
     },
     [requestId, router],
@@ -476,6 +480,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                 </p>
               ) : (
                 <div className="overflow-x-auto">
+                  {/* Line, then the parts it asked for, then the tags that get
+                      printed for it (D3). One line is one row; a split line has
+                      several tag rows under it, labelled 1a / 1b. */}
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
@@ -498,78 +505,141 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                     </thead>
                     <tbody>
                       {request.lines.map((line) => {
-                        const designed = designedLineIds.has(line.id);
+                        const columns = canDesign ? 9 : 8;
                         return (
-                          <tr key={line.id} className="border-b last:border-b-0">
-                            <td className="py-2 pr-3">
-                              <Badge variant="secondary" className="text-xs">
-                                {line.line_type === 'product' ? 'Product' : 'Set'}
-                              </Badge>
-                            </td>
-                            <td className="py-2 pr-3 font-mono text-xs">
-                              {line.code}
-                            </td>
-                            <td className="py-2 pr-3">
-                              <span
-                                className="truncate block max-w-[200px]"
-                                title={line.name}
-                              >
-                                {line.name}
-                              </span>
-                            </td>
-                            <td className="py-2 pr-3 text-right">{line.quantity}</td>
-                            <td className="py-2 pr-3 text-right">
-                              {line.list_price != null
-                                ? `RM ${line.list_price.toFixed(2)}`
-                                : '-'}
-                            </td>
-                            <td className="py-2 pr-3 text-right">
-                              {line.show_promo_price && line.sell_price != null ? (
-                                <span className="text-green-700 font-medium">
-                                  RM {line.sell_price.toFixed(2)}
-                                </span>
-                              ) : (
-                                '-'
-                              )}
-                              {line.marketing_price_override != null && (
-                                <span className="block text-xs text-amber-600">
-                                  Override: RM{' '}
-                                  {line.marketing_price_override.toFixed(2)}
-                                </span>
-                              )}
-                            </td>
-                            <td
-                              className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
-                              title={line.remarks ?? undefined}
-                            >
-                              {line.remarks || '-'}
-                            </td>
-                            <td className="py-2 pr-3">
-                              {designed ? (
-                                <span className="text-xs text-emerald-700 font-medium">
-                                  Designed
-                                </span>
-                              ) : (
-                                <span className="text-xs text-muted-foreground">
-                                  No tag
-                                </span>
-                              )}
-                            </td>
-                            {canDesign && (
-                              <td className="py-2 text-right">
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  className="gap-1.5"
-                                  onClick={() => openDesignerForLine(line.id)}
-                                  aria-label={`Design ${line.code || line.name}`}
-                                >
-                                  <Palette className="size-3.5" />
-                                  Design
-                                </Button>
+                          <Fragment key={line.id}>
+                            <tr className="border-b last:border-b-0">
+                              <td className="py-2 pr-3">
+                                <Badge variant="secondary" className="text-xs">
+                                  {line.line_type === 'product' ? 'Product' : 'Set'}
+                                </Badge>
                               </td>
-                            )}
-                          </tr>
+                              <td className="py-2 pr-3 font-mono text-xs">
+                                {line.code}
+                              </td>
+                              <td className="py-2 pr-3">
+                                <span
+                                  className="truncate block max-w-[200px]"
+                                  title={line.name}
+                                >
+                                  {line.name}
+                                </span>
+                                {line.package_warning && (
+                                  <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    <Badge
+                                      variant="warning"
+                                      appearance="light"
+                                      size="sm"
+                                    >
+                                      Package warning
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      {line.package_warning}
+                                    </span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-2 pr-3 text-right">{line.quantity}</td>
+                              {/* Price is a TAG fact since D4 - the host plus that
+                                  tag's own resolved parts - so the line leaves both
+                                  money columns empty rather than repeating one
+                                  tag's figure as if it were the line's. */}
+                              <td className="py-2 pr-3" />
+                              <td className="py-2 pr-3" />
+                              <td
+                                className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
+                                title={line.remarks ?? undefined}
+                              >
+                                {line.remarks || '-'}
+                              </td>
+                              <td className="py-2 pr-3" />
+                              {canDesign && <td className="py-2" />}
+                            </tr>
+                            {/* What the salesperson asked to come with it (S2). */}
+                            {(line.parts ?? []).map((part) => (
+                              <tr key={part.id} className="border-b last:border-b-0">
+                                <td className="py-1.5 pr-3" />
+                                <td
+                                  className="py-1.5 pr-3 pl-4 font-mono text-xs text-muted-foreground"
+                                  colSpan={columns - 1}
+                                >
+                                  {part.product_id
+                                    ? `${part.code ?? ''}${part.name ? ` - ${part.name}` : ''}${part.role ? ` (${part.role})` : ''}`
+                                    : `${part.role ?? 'Open'}: ${part.candidates
+                                        .map((candidate) => candidate.code)
+                                        .join(' / ')}`}
+                                </td>
+                              </tr>
+                            ))}
+                            {/* What actually prints (D3). */}
+                            {(line.tags ?? []).map((tag) => (
+                              <tr key={tag.id} className="border-b last:border-b-0">
+                                <td className="py-1.5 pr-3" />
+                                <td className="py-1.5 pr-3 pl-4 font-mono text-xs">
+                                  {tag.label}
+                                </td>
+                                <td className="py-1.5 pr-3 text-xs text-muted-foreground">
+                                  {tag.open_groups.length > 0
+                                    ? tag.open_groups
+                                        .map(
+                                          (group) =>
+                                            `Open: ${group.role} (${group.candidates.length})`,
+                                        )
+                                        .join(', ')
+                                    : tag.choices_display
+                                        .map((choice) => choice.code)
+                                        .join(', ') || '-'}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">{tag.quantity}</td>
+                                <td className="py-1.5 pr-3 text-right">
+                                  {tag.list_price != null
+                                    ? `RM ${tag.list_price.toFixed(2)}`
+                                    : '-'}
+                                </td>
+                                <td className="py-1.5 pr-3 text-right">
+                                  {line.show_promo_price && tag.sell_price != null ? (
+                                    <span className="text-green-700 font-medium">
+                                      RM {tag.sell_price.toFixed(2)}
+                                    </span>
+                                  ) : (
+                                    '-'
+                                  )}
+                                  {tag.marketing_price_override != null && (
+                                    <span className="block text-xs text-amber-600">
+                                      Override: RM{' '}
+                                      {tag.marketing_price_override.toFixed(2)}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="py-1.5 pr-3" />
+                                <td className="py-1.5 pr-3">
+                                  {designedTagIds.has(tag.id) ? (
+                                    <span className="text-xs text-emerald-700 font-medium">
+                                      Designed
+                                    </span>
+                                  ) : (
+                                    <span className="text-xs text-muted-foreground">
+                                      No tag
+                                    </span>
+                                  )}
+                                </td>
+                                {canDesign && (
+                                  <td className="py-1.5 text-right">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="gap-1.5"
+                                      onClick={() => openDesignerForTag(tag.id)}
+                                      aria-label={`Design tag ${tag.label}`}
+                                    >
+                                      <Palette className="size-3.5" />
+                                      Design
+                                    </Button>
+                                  </td>
+                                )}
+                              </tr>
+                            ))}
+                          </Fragment>
                         );
                       })}
                     </tbody>

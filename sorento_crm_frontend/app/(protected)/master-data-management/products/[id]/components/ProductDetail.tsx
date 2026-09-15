@@ -32,6 +32,8 @@ import ProductSuppliersTab from './ProductSuppliersTab';
 import ProductPromotionsTab from './ProductPromotionsTab';
 import ProductVariantsTab from './ProductVariantsTab';
 import ProductSpecificationsTab from './ProductSpecificationsTab';
+import ProductCombosSection from './ProductCombosSection';
+import ProductSoldWithSection from './ProductSoldWithSection';
 import { useProductAttachmentsByProduct } from '../../../product-attachments/hooks/useProductAttachments';
 import { getPromotionsByProductId } from '@/app/(protected)/marketing-management/promotions/services/promotionService';
 // The floor is project-sales pricing POLICY, not a product column, so the panel and its
@@ -327,7 +329,7 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
             </TabsList>
 
             {/* Tab: Overview - always show all fields from edit view regardless of value */}
-            <TabsContent value="overview">
+            <TabsContent value="overview" className="space-y-5">
               <Card>
                 <CardHeader>
                   <CardTitle>Overview</CardTitle>
@@ -543,6 +545,15 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
                   </div>
                 </CardContent>
               </Card>
+
+              {/* PLAN-price-tag-combos.md D1: the catalogue packages this product is
+                  sold as ("Combos", it is the host) and the mirror of anyone else's
+                  ("Sold with", it is a part). A product can be both at once, so both
+                  sections render unconditionally, each with its own empty state. They
+                  sit on Overview rather than Suppliers because a combo is what the
+                  product IS sold as, not a fact about how it is bought. */}
+              <ProductCombosSection productId={productId} />
+              <ProductSoldWithSection productId={productId} />
             </TabsContent>
 
             {/* Tab: Stock */}

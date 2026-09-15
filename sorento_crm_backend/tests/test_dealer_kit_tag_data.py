@@ -585,16 +585,31 @@ class TestResolveLines:
         assert row["show_promo_price"] is True
 
     def test_marketing_override_wins_over_the_resolved_offer(self, db):
+        """The override beats the promotion engine's offer - on the TAG since S3.
+
+        It moved off the line (D3) because two tags split off one line print two
+        different basins at two different prices, and a line-level figure would
+        put the same hand-set number on both. The rule it encodes is unchanged:
+        a price somebody decided and logged a reason for wins over one the
+        engine derived.
+        """
         from app.services.dealer_kit import tag_data_service
 
         product = _product(db, list_price="1599.00")
         promotion = _promotion(db, product, promo_price="599.00")
         request = self._request_with_line(db, product, promotion_id=promotion.id)
 
-        request.lines[0].marketing_price_override = Decimal("499.00")
+        # One tag per line exists from creation (`_add_lines`), so there is a
+        # tag to set this on without seeding one by hand.
+        tag = request.lines[0].tags[0]
+        tag.marketing_price_override = Decimal("499.00")
         db.flush()
 
-        row = tag_data_service.resolve_request_line_data(db, request)[0]
+        rows = tag_data_service.resolve_request_line_data(db, request)
+        assert len(rows) == 1, "one row per TAG, and this line has one tag"
+        row = rows[0]
+        assert row["tag_id"] == tag.id
+        assert row["line_id"] == request.lines[0].id
         assert row["sell_price"] == Decimal("499.00")
 
     def test_a_set_line_carries_its_members(self, db):

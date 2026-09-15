@@ -8,6 +8,7 @@ from app.models.product import Product, ProductCategory, Brand, UnitOfMeasure
 from app.models.country import Country
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+from app.models.product_combo import ProductCombo, ProductComboPart
 from app.models.product_set_proposal import ProductSetProposalBatch, ProductSetProposal
 from app.models.product_spec import ProductSpecRegistry, ProductSpecifications, ProductSpecException, ProductSpecVerification, ProductSpecFlyerBatch, ProductSpecFlyerProposal
 from app.models.order import Order, OrderStatus, Customer, CustomerContact, OrderLine, SalesOrder, SalesOrderLine
