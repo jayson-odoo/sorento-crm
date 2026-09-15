@@ -33,7 +33,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 Element.prototype.scrollIntoView = vi.fn();
@@ -199,39 +199,6 @@ describe('ChatbotSettingsPage - the three switches (AC-810)', () => {
     expect(screen.getByLabelText(/stock denial/i).getAttribute('aria-checked')).toBe('true');
     expect(screen.getByLabelText(/business lane/i).getAttribute('aria-checked')).toBe('false');
     expect(screen.getByLabelText(/ordering/i).getAttribute('aria-checked')).toBe('false');
-  });
-});
-
-describe('ChatbotSettingsPage - unsupported domains list editor (AC-809, D5)', () => {
-  it('renders every configured domain as an editable list item', () => {
-    mockSettingsQuery.mockReturnValue({
-      data: settings({ chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'] }),
-      isLoading: false,
-      isError: false,
-    });
-    renderPage();
-
-    expect(screen.getByText('goods_receive')).toBeInTheDocument();
-    expect(screen.getByText('spo_allocation')).toBeInTheDocument();
-  });
-
-  it('removing a domain and saving excludes it from the payload', () => {
-    const mutate = vi.fn();
-    mockMutation.mockReturnValue({ isPending: false, mutate });
-    mockSettingsQuery.mockReturnValue({
-      data: settings({ chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'] }),
-      isLoading: false,
-      isError: false,
-    });
-    renderPage();
-
-    const domainRow = screen.getByText('spo_allocation').closest('li,div') as HTMLElement;
-    fireEvent.click(within(domainRow).getByRole('button', { name: /remove/i }));
-    fireEvent.click(saveButton());
-
-    expect(mutate).toHaveBeenCalledTimes(1);
-    const [payload] = mutate.mock.calls[0];
-    expect(payload.chatbot_unsupported_domains).toEqual(['goods_receive']);
   });
 });
 

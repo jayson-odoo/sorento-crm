@@ -46,19 +46,72 @@ def test_pending_dot_ask_is_the_only_constructor_of_a_pending():
     assert not outside, outside
 
 
+def _pending_resolver_calls(tree: ast.AST, *, label: str) -> list[str]:
+    """Sites that resolve a PENDING, narrowed (captain ruling, 16 Sep 2026, item 2) to:
+
+    * a bare call to `resolve_pending(` or `answer_pending(`;
+    * an attribute call `<receiver>.resolve(` whose receiver's own name CONTAINS
+      "pending" (`pending.resolve(...)`, `state.pending.resolve(...)`, a variable named
+      `pending_obj`, ...).
+
+    Deliberately does NOT match every `.resolve(` in the package: `copy_mod.resolve(db)`
+    / `reply_copy.resolve(db)` (canned-copy TEMPLATE resolution, `app/services/chatbot/
+    copy.py` and `chatbot_reply_copy.py`) are a different `resolve` entirely, and matching
+    on the method name alone made this guard fail on the merged tree for a reason that
+    has nothing to do with Pending.
+    """
+    sites: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id in ("resolve_pending", "answer_pending"):
+            sites.append(f"{label}:{node.lineno}")
+        elif isinstance(func, ast.Attribute) and func.attr == "resolve":
+            receiver = func.value
+            receiver_name = (
+                receiver.id if isinstance(receiver, ast.Name)
+                else getattr(receiver, "attr", "")
+            )
+            if "pending" in receiver_name.lower():
+                sites.append(f"{label}:{node.lineno}")
+    return sites
+
+
 def test_apply_is_the_only_pending_resolver():
-    """No site outside `turn/apply.py` calls `resolve_pending(` or `.resolve(` on a
-    Pending-shaped value."""
+    """No site outside `turn/apply.py` resolves a Pending (see `_pending_resolver_calls`
+    for exactly what counts)."""
     if not TURN_DIR.is_dir():
         pytest.fail("app/services/chatbot/turn/ does not exist yet", pytrace=False)
     sites = []
     for path in _all_chatbot_py_files():
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for name in ("resolve_pending", "resolve"):
-            for call in _calls_named(tree, name):
-                sites.append(f"{path.relative_to(CHATBOT_DIR.parent.parent.parent)}:{call.lineno}")
+        label = str(path.relative_to(CHATBOT_DIR.parent.parent.parent))
+        sites.extend(_pending_resolver_calls(tree, label=label))
     outside = [s for s in sites if "turn/apply.py" not in s]
     assert not outside, outside
+
+
+def test_the_guard_would_catch_a_pending_resolve_call_outside_apply():
+    """Proves `_pending_resolver_calls` is not vacuously green: fed a small inline
+    source string standing in for a violation in `engine.py`, it must be caught -
+    a bare `answer_pending(` call and a `pending.resolve(...)` attribute call - while
+    the canned-copy `copy_mod.resolve(db)` / `reply_copy.resolve(db)` shape it is
+    deliberately narrowed away from stays silent."""
+    violation_source = (
+        "def _close_turn(pending, db):\n"
+        "    answer_pending(pending, 2)\n"
+        "    pending.resolve(2)\n"
+        "    copy_mod.resolve(db)\n"
+        "    reply_copy.resolve(db)\n"
+    )
+    tree = ast.parse(violation_source, filename="engine.py")
+    sites = _pending_resolver_calls(tree, label="app/services/chatbot/engine.py")
+
+    assert "app/services/chatbot/engine.py:2" in sites  # answer_pending(
+    assert "app/services/chatbot/engine.py:3" in sites  # pending.resolve(
+    assert not any(":4" in s for s in sites)  # copy_mod.resolve( excluded
+    assert not any(":5" in s for s in sites)  # reply_copy.resolve( excluded
 
 
 def test_pending_has_the_contract_fields():
