@@ -298,3 +298,25 @@ above is left as-is (historical record) rather than rewritten in place.
   flag's job. RETIRED, not the low-confidence PORT the original table guessed at.
   File collects clean (18 tests); every other class (seed grant idempotency, branch
   kind parity, settle-wait, business-lane preflight) untouched.
+
+- **`test_parser_growth_r1_reachability.py` (560 lines) - AC-1592 part done,
+  BLOCKED by the pre-existing out-of-scope defect on the rest.** Three doomed spots
+  found (one more than the table's original count): `DEFAULT_UNSUPPORTED_DOMAINS`
+  x2 + `decide()` x1 (purchase_order/spo_allocation support + check_po routing) -
+  PORTED to `test_rearch_port_growth_r1_reachability.py` against `Policy.from_rows`
+  + `apply()`/`route()`, all 3 confirmed CORRECT (passed). `_required_emission_
+  keys()` (AC-910 compatibility) - RETIRED, superseded by the replay harness's own
+  design (mocks the parser straight from a recorded verdict, no required-key set
+  enforced). `DOMAIN_BLOCKED_HINTS["spo_allocation"]` (A6, product not blocked) -
+  RETIRED as a DUPLICATE of already-green `test_warehouse_entity.py::
+  TestGateKeepsWarehouse::test_spo_allocation_keeps_product_and_warehouse_and_
+  drops_customer`. **Could not confirm the file's own collection is clean**: it hits
+  the SAME pre-existing, out-of-AC-1592-scope defect the original table flagged only
+  for `test_parser_warehouse_arrival_cue.py` -
+  `ImportError: cannot import name 'SEMANTIC_PARSER_PROMPT_SLIM' from
+  app.services.chatbot_parser_prompt` (confirmed this session:
+  `chatbot_parser_prompt.py` only defines `SEMANTIC_PARSER_PROMPT`, no `_SLIM`
+  variant exists at all today) - a SECOND file hit by the same unrelated defect, not
+  just the one originally named. Flagged for the captain; not fixed here (out of
+  AC-1592 scope, names no head/tail/dialogue import). The port file itself
+  (independent of this file) collects and passes clean (3/3).
