@@ -15,7 +15,10 @@
  * reaches the service.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+// The designer mounts a react-query mutation (the deferred tag Remove), so a
+// bare `render` throws "No QueryClient set" before the component exists.
+import { renderWithQueryClient as render } from './testQueryClient';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -122,7 +125,13 @@ vi.mock('../../../../services/tagTemplateService', () => ({
 }));
 
 vi.mock('../../../../services/priceTagRequestService', () => ({
-  resolveRequestLines: vi.fn(),
+  // One row per TAG since the combos slice - `resolveRequestLines` is gone with
+  // the line-keyed document. The three beside it are what the rail's Split /
+  // Pick one actions and the post-split reload call.
+  resolveRequestTags: vi.fn(),
+  getPriceTagRequest: vi.fn(),
+  splitRequestTag: vi.fn(),
+  updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
 }));
@@ -133,14 +142,14 @@ vi.mock('../../../../services/priceTagReviewService', () => ({
 }));
 
 vi.mock('../../../../services/priceTagDataService', () => ({
-  listLineDataChanges: vi.fn(),
-  resolveLinePin: vi.fn(),
-  updateAllLinePins: vi.fn(),
+  listTagDataChanges: vi.fn(),
+  resolveTagPin: vi.fn(),
+  updateAllTagPins: vi.fn(),
   listRequestVersions: vi.fn(async () => []),
   getRequestVersion: vi.fn(),
   restoreRequestVersion: vi.fn(),
   // Owner round finding 3: "Check product data" re-runs the comparison.
-  recheckLineDataChanges: vi.fn(),
+  recheckTagDataChanges: vi.fn(),
 }));
 
 /** Owner round finding 2: what the lightbox was actually handed, per open. */
@@ -164,28 +173,52 @@ vi.mock('../../../../tag-sizes/hooks/useTagSizes', () => ({
   useCreateTagSize: () => ({ mutateAsync: vi.fn(async () => ({})), isPending: false }),
 }));
 
-import { resolveRequestLines } from '../../../../services/priceTagRequestService';
+import { resolveRequestTags } from '../../../../services/priceTagRequestService';
 import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
-  listLineDataChanges,
+  listTagDataChanges,
   listRequestVersions,
   getRequestVersion,
-  recheckLineDataChanges,
-  resolveLinePin,
+  recheckTagDataChanges,
+  resolveTagPin,
 } from '../../../../services/priceTagDataService';
 import { RequestTagDesigner } from './RequestTagDesigner';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
+  PriceTagRequestTag,
 } from '../../../../services/priceTagRequestService';
 
-const mockResolveLines = vi.mocked(resolveRequestLines);
+const mockResolveTags = vi.mocked(resolveRequestTags);
 const mockComments = vi.mocked(listReviewComments);
-const mockChanges = vi.mocked(listLineDataChanges);
-const mockDecide = vi.mocked(resolveLinePin);
+const mockChanges = vi.mocked(listTagDataChanges);
+const mockDecide = vi.mocked(resolveTagPin);
 const mockListVersions = vi.mocked(listRequestVersions);
 const mockGetVersion = vi.mocked(getRequestVersion);
-const mockRecheck = vi.mocked(recheckLineDataChanges);
+const mockRecheck = vi.mocked(recheckTagDataChanges);
+
+/**
+ * The one tag a line carries by default.
+ *
+ * Its id IS the line id, so every id these tests already assert on stays the id
+ * they assert on: submit mints exactly one tag per line, and only a Split ever
+ * gives a line a second one.
+ */
+function requestTag(lineId: string): PriceTagRequestTag {
+  return {
+    id: lineId,
+    sort_order: 0,
+    label: '1a',
+    quantity: 1,
+    choices: {},
+    choices_display: [],
+    open_groups: [],
+    marketing_price_override: null,
+    marketing_override_reason: null,
+    list_price: 1599,
+    sell_price: null,
+  };
+}
 
 function line(id: string, code: string, order: number): PriceTagRequestLine {
   return {
@@ -197,18 +230,25 @@ function line(id: string, code: string, order: number): PriceTagRequestLine {
     code,
     show_promo_price: false,
     quantity: 1,
-    alternatives: [],
     included_accessories: null,
     sort_order: order,
-    marketing_price_override: null,
-    marketing_override_reason: null,
     list_price: 1599,
     sell_price: null,
-  };
+    parts: [],
+    package_warning: null,
+    tags: [requestTag(id)],
+  } as PriceTagRequestLine;
 }
 
 function tagData(id: string, code: string): LineTagData {
   return {
+    // One row per TAG, and the everyday request has one tag per line whose id
+    // is the line's - so a row named by `line_id` keys on the same id it always
+    // did.
+    tag_id: id,
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     line_id: id,
     code,
     name: 'Kitchen Sink',
@@ -249,7 +289,7 @@ function comment(overrides: Record<string, unknown> = {}) {
   return {
     id: 'comment-1',
     request_id: 'req-1',
-    line_id: 'line-1',
+    tag_id: 'line-1',
     round: 1,
     x: 0.25,
     y: 0.5,
@@ -283,7 +323,7 @@ beforeEach(() => {
   pinRenders.length = 0;
   lightboxPayloads.length = 0;
   vi.clearAllMocks();
-  mockResolveLines.mockResolvedValue([
+  mockResolveTags.mockResolvedValue([
     tagData('line-1', 'SRT-1234'),
     tagData('line-2', 'SRT-5678'),
   ]);
@@ -297,10 +337,10 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('change-request markers on the canvas (AC-S2-6)', () => {
-  it('hands the canvas only the SELECTED line pins', async () => {
+  it('hands the canvas only the SELECTED tag pins', async () => {
     mockComments.mockResolvedValue([
-      comment({ id: 'c1', line_id: 'line-1' }),
-      comment({ id: 'c2', line_id: 'line-2', body: 'Other line' }),
+      comment({ id: 'c1', tag_id: 'line-1' }),
+      comment({ id: 'c2', tag_id: 'line-2', body: 'Other line' }),
     ]);
     await renderDesigner();
 
@@ -315,8 +355,8 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
 
   it('numbers a marker the same way every other surface numbers it', async () => {
     mockComments.mockResolvedValue([
-      comment({ id: 'c1', line_id: 'line-2', body: 'First sent' }),
-      comment({ id: 'c2', line_id: 'line-1', body: 'Second sent' }),
+      comment({ id: 'c1', tag_id: 'line-2', body: 'First sent' }),
+      comment({ id: 'c2', tag_id: 'line-1', body: 'Second sent' }),
     ]);
     await renderDesigner();
 
@@ -398,11 +438,11 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
     expect(screen.getByTestId('canvas-pin-2')).not.toHaveTextContent(/Done/);
   });
 
-  it('the LINES rail badges the lines that have open pins', async () => {
+  it('the LINES rail badges the tags that have open pins', async () => {
     mockComments.mockResolvedValue([
-      comment({ id: 'c1', line_id: 'line-1' }),
-      comment({ id: 'c2', line_id: 'line-1', body: 'And this' }),
-      comment({ id: 'c3', line_id: 'line-2', resolved_at: '2026-09-14T02:00:00Z' }),
+      comment({ id: 'c1', tag_id: 'line-1' }),
+      comment({ id: 'c2', tag_id: 'line-1', body: 'And this' }),
+      comment({ id: 'c3', tag_id: 'line-2', resolved_at: '2026-09-14T02:00:00Z' }),
     ]);
     await renderDesigner();
 
@@ -420,6 +460,8 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
 
 describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
   const CHANGED = {
+    tag_id: 'line-1',
+    tag_label: '1a',
     line_id: 'line-1',
     code: 'SRT-1234',
     name: 'Kitchen Sink',
@@ -428,18 +470,18 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
     ],
   };
 
-  it('marks only the changed line with a red dot', async () => {
+  it('marks only the changed tag with a red dot', async () => {
     mockChanges.mockResolvedValue([CHANGED]);
     await renderDesigner();
 
     expect(
       await screen.findByRole('button', {
-        name: 'Review product data changes on SRT-1234',
+        name: 'Review product data changes on SRT-1234 1a',
       }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', {
-        name: 'Review product data changes on SRT-5678',
+        name: 'Review product data changes on SRT-5678 1a',
       }),
     ).toBeNull();
   });
@@ -469,7 +511,7 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
 
     expect(
       await screen.findByRole('button', {
-        name: 'Review product data changes on SRT-1234',
+        name: 'Review product data changes on SRT-1234 1a',
       }),
     ).toBeInTheDocument();
   });
@@ -480,7 +522,7 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
 
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Review product data changes on SRT-1234',
+        name: 'Review product data changes on SRT-1234 1a',
       }),
     );
 
@@ -495,7 +537,7 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
     await renderDesigner();
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Review product data changes on SRT-1234',
+        name: 'Review product data changes on SRT-1234 1a',
       }),
     );
     await screen.findByText('Product data changed');
@@ -513,7 +555,7 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
     await renderDesigner();
     fireEvent.click(
       await screen.findByRole('button', {
-        name: 'Review product data changes on SRT-1234',
+        name: 'Review product data changes on SRT-1234 1a',
       }),
     );
     await screen.findByText('Product data changed');
@@ -527,13 +569,13 @@ describe('the product data gate (AC-S5-3, AC-S5-4)', () => {
 
   it('focusing the window resolves NOTHING (D18 retires the r4 refresh)', async () => {
     await renderDesigner();
-    await waitFor(() => expect(mockResolveLines).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(mockResolveTags).toHaveBeenCalledTimes(1));
 
     window.dispatchEvent(new Event('focus'));
     document.dispatchEvent(new Event('visibilitychange'));
     await new Promise((resolve) => setTimeout(resolve, 20));
 
-    expect(mockResolveLines).toHaveBeenCalledTimes(1);
+    expect(mockResolveTags).toHaveBeenCalledTimes(1);
   });
 });
 

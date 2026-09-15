@@ -7,7 +7,7 @@
  * before the columns existed. Phase 2 swaps each body for the real call and no
  * caller changes, so what is asserted here is the wire: path, method, body.
  *
- * `updateAllLinePins` matters more than it looks. "Update all" is one press by
+ * `updateAllTagPins` matters more than it looks. "Update all" is one press by
  * a person who has read one dialog, so it has to reach EVERY changed line - a
  * loop that stops at the first failure leaves half the sheet on old data with
  * no sign that it did.
@@ -20,11 +20,11 @@ vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
 
 import { apiFetch } from '@/lib/api';
 import {
-  listLineDataChanges,
+  listTagDataChanges,
   listRequestVersions,
-  resolveLinePin,
+  resolveTagPin,
   restoreRequestVersion,
-  updateAllLinePins,
+  updateAllTagPins,
 } from './priceTagDataService';
 
 const mockFetch = vi.mocked(apiFetch);
@@ -53,11 +53,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('listLineDataChanges (AC-S5-3)', () => {
+describe('listTagDataChanges (AC-S5-3)', () => {
   it('reads the resolver output the page already asks the server for', async () => {
     mockFetch.mockResolvedValue(
       ok([
         {
+          tag_id: 'tag-1',
+          tag_label: '1a',
           line_id: 'line-1',
           code: 'ZZT-SINK-1',
           name: 'ZZT Kitchen Sink',
@@ -68,7 +70,7 @@ describe('listLineDataChanges (AC-S5-3)', () => {
       ]),
     );
 
-    const sets = await listLineDataChanges('req-1');
+    const sets = await listTagDataChanges('req-1');
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(String(mockFetch.mock.calls[0][0])).toContain(`${BASE}/req-1`);
@@ -79,17 +81,17 @@ describe('listLineDataChanges (AC-S5-3)', () => {
   it('a terminal request carries no changes and that is not an error', async () => {
     mockFetch.mockResolvedValue(ok([]));
 
-    await expect(listLineDataChanges('req-1')).resolves.toEqual([]);
+    await expect(listTagDataChanges('req-1')).resolves.toEqual([]);
   });
 });
 
-describe('resolveLinePin (AC-S5-5)', () => {
+describe('resolveTagPin (AC-S5-5)', () => {
   it.each(['update', 'keep'] as const)('posts the %s decision for that line', async (action) => {
-    mockFetch.mockResolvedValue(ok({ line_id: 'line-1', pinned_at: '2026-09-14T00:00:00Z' }));
+    mockFetch.mockResolvedValue(ok({ tag_id: 'tag-1', pinned_at: '2026-09-14T00:00:00Z' }));
 
-    await resolveLinePin('req-1', 'line-1', action);
+    await resolveTagPin('req-1', 'tag-1', action);
 
-    expect(mockFetch.mock.calls[0][0]).toBe(`${BASE}/req-1/lines/line-1/pin`);
+    expect(mockFetch.mock.calls[0][0]).toBe(`${BASE}/req-1/tags/tag-1/pin`);
     const init = mockFetch.mock.calls[0][1] as RequestInit;
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual({ action });
@@ -98,22 +100,22 @@ describe('resolveLinePin (AC-S5-5)', () => {
   it('raises the server message so the dialog can stay open', async () => {
     mockFetch.mockResolvedValue(fail(409, 'This request is finished'));
 
-    await expect(resolveLinePin('req-1', 'line-1', 'update')).rejects.toThrow(
+    await expect(resolveTagPin('req-1', 'tag-1', 'update')).rejects.toThrow(
       'This request is finished',
     );
   });
 });
 
-describe('updateAllLinePins (AC-S5-4)', () => {
+describe('updateAllTagPins (AC-S5-4)', () => {
   it('reaches every changed line', async () => {
     mockFetch.mockResolvedValue(ok({}));
 
-    await updateAllLinePins('req-1', ['line-1', 'line-2', 'line-3']);
+    await updateAllTagPins('req-1', ['tag-1', 'tag-2', 'tag-3']);
 
     expect(mockFetch.mock.calls.map((call) => call[0])).toEqual([
-      `${BASE}/req-1/lines/line-1/pin`,
-      `${BASE}/req-1/lines/line-2/pin`,
-      `${BASE}/req-1/lines/line-3/pin`,
+      `${BASE}/req-1/tags/tag-1/pin`,
+      `${BASE}/req-1/tags/tag-2/pin`,
+      `${BASE}/req-1/tags/tag-3/pin`,
     ]);
     for (const call of mockFetch.mock.calls) {
       expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({
@@ -127,7 +129,7 @@ describe('updateAllLinePins (AC-S5-4)', () => {
       .mockResolvedValueOnce(ok({}))
       .mockResolvedValueOnce(fail(500, 'Could not update the tag'));
 
-    await expect(updateAllLinePins('req-1', ['line-1', 'line-2'])).rejects.toThrow(
+    await expect(updateAllTagPins('req-1', ['tag-1', 'tag-2'])).rejects.toThrow(
       'Could not update the tag',
     );
   });

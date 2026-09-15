@@ -25,7 +25,7 @@ const mockFetch = vi.mocked(apiFetch);
 const ROW: ReviewComment = {
   id: 'comment-1',
   request_id: 'req-1',
-  line_id: 'line-1',
+  tag_id: 'tag-1',
   round: 1,
   x: 0.25,
   y: 0.5,

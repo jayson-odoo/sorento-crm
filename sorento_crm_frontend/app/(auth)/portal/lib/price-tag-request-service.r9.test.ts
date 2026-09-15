@@ -54,7 +54,7 @@ function fail(status: number, message: string) {
 }
 
 const PIN = {
-  line_id: 'line-1',
+  tag_id: 'tag-1',
   x: 0.25,
   y: 0.5,
   w: 0,
@@ -83,7 +83,7 @@ describe('requestChanges (AC-S2-3)', () => {
     expect(init.method).toBe('POST');
     const body = JSON.parse(init.body as string);
     expect(body.comments).toHaveLength(2);
-    expect(body.comments[0]).toMatchObject({ line_id: 'line-1', x: 0.25, y: 0.5 });
+    expect(body.comments[0]).toMatchObject({ tag_id: 'tag-1', x: 0.25, y: 0.5 });
     expect(body.note).toBe('Overall it is too busy');
   });
 

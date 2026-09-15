@@ -12,17 +12,19 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 
 import ProductDataReviewDialog from './ProductDataReviewDialog';
-import type { LineDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
+import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 
 /**
- * THE REAL WIRE SHAPE. `LineDataChangeSet` is answered by
+ * THE REAL WIRE SHAPE. `TagDataChangeSet` is answered by
  * `GET .../data-changes`, whose response model declares `old_image_url` and
  * `new_image_url`, so FastAPI serialises them as `null` on every row - text
  * rows included. A fixture that omits the keys tests a body the server never
  * sends: `undefined` and `null` take different branches, and only one of them
  * is what a reader actually gets.
  */
-const CHANGE_SET: LineDataChangeSet = {
+const CHANGE_SET: TagDataChangeSet = {
+  tag_id: 'tag-1',
+  tag_label: '1a',
   line_id: 'line-1',
   code: 'ZZT-SINK-1',
   name: 'ZZT Kitchen Sink',

@@ -14,12 +14,12 @@
 import { describe, it, expect } from 'vitest';
 
 import {
-  canvasPinsForLine,
+  canvasPinsForTag,
   clampFraction,
   latestRound,
   numberedPins,
   openComments,
-  openCountByLine,
+  openCountByTag,
   tagRectsForSheet,
   type DraftPin,
   type ReviewComment,
@@ -38,7 +38,7 @@ function doc(tagX = 20, tagY = 30): TagSheetDoc {
         tags: [
           {
             id: 'tag-1',
-            request_line_id: 'line-1',
+            request_tag_id: 'rtag-1',
             x_mm: tagX,
             y_mm: tagY,
             width_mm: 80,
@@ -47,7 +47,7 @@ function doc(tagX = 20, tagY = 30): TagSheetDoc {
           },
           {
             id: 'tag-2',
-            request_line_id: 'line-2',
+            request_tag_id: 'rtag-2',
             x_mm: 110,
             y_mm: 30,
             width_mm: 80,
@@ -64,7 +64,7 @@ function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {
   return {
     id: 'c1',
     request_id: 'req-1',
-    line_id: 'line-1',
+    tag_id: 'rtag-1',
     round: 1,
     x: 0.25,
     y: 0.5,
@@ -84,7 +84,7 @@ describe('tagRectsForSheet (AC-S2-4)', () => {
     const [first] = tagRectsForSheet(doc(), 0, 1);
 
     expect(first.tagId).toBe('tag-1');
-    expect(first.lineId).toBe('line-1');
+    expect(first.requestTagId).toBe('rtag-1');
     expect(first.left).toBeCloseTo(20 * PX_PER_MM, 5);
     expect(first.top).toBeCloseTo(30 * PX_PER_MM, 5);
     expect(first.width).toBeCloseTo(80 * PX_PER_MM, 5);
@@ -138,7 +138,7 @@ describe('numbering', () => {
   it('numbers sent comments in order and continues into the drafts', () => {
     const comments = [comment({ id: 'c1' }), comment({ id: 'c2' })];
     const drafts: DraftPin[] = [
-      { key: 'd1', line_id: 'line-1', x: 0.1, y: 0.1, w: 0, h: 0, body: 'New' },
+      { key: 'd1', tag_id: 'rtag-1', x: 0.1, y: 0.1, w: 0, h: 0, body: 'New' },
     ];
 
     const { commentNumbers, draftNumbers } = numberedPins(comments, drafts);
@@ -150,7 +150,7 @@ describe('numbering', () => {
 
   it('a general comment takes no number - it has no marker to wear it', () => {
     const comments = [
-      comment({ id: 'general', line_id: null, x: null, y: null }),
+      comment({ id: 'general', tag_id: null, x: null, y: null }),
       comment({ id: 'pinned' }),
     ];
 
@@ -183,19 +183,19 @@ describe('open counts (AC-S2-6 rail badge, AC-S2-7 CTA label)', () => {
     expect(openComments(rows).map((row) => row.id)).toEqual(['c1']);
   });
 
-  it('counts open pins per line, ignoring general comments', () => {
+  it('counts open pins per tag, ignoring general comments', () => {
     const rows = [
-      comment({ id: 'c1', line_id: 'line-1' }),
-      comment({ id: 'c2', line_id: 'line-1' }),
-      comment({ id: 'c3', line_id: 'line-2' }),
-      comment({ id: 'c4', line_id: 'line-2', resolved_at: '2026-09-14T01:00:00Z' }),
-      comment({ id: 'c5', line_id: null }),
+      comment({ id: 'c1', tag_id: 'rtag-1' }),
+      comment({ id: 'c2', tag_id: 'rtag-1' }),
+      comment({ id: 'c3', tag_id: 'rtag-2' }),
+      comment({ id: 'c4', tag_id: 'rtag-2', resolved_at: '2026-09-14T01:00:00Z' }),
+      comment({ id: 'c5', tag_id: null }),
     ];
 
-    const counts = openCountByLine(rows);
+    const counts = openCountByTag(rows);
 
-    expect(counts.get('line-1')).toBe(2);
-    expect(counts.get('line-2')).toBe(1);
+    expect(counts.get('rtag-1')).toBe(2);
+    expect(counts.get('rtag-2')).toBe(1);
     expect(counts.size).toBe(2);
   });
 
@@ -205,15 +205,15 @@ describe('open counts (AC-S2-6 rail badge, AC-S2-7 CTA label)', () => {
   });
 });
 
-describe('canvasPinsForLine (AC-S2-6)', () => {
-  it('gives the designer this line pins only, numbered as everywhere else', () => {
+describe('canvasPinsForTag (AC-S2-6)', () => {
+  it('gives the designer this tag pins only, numbered as everywhere else', () => {
     const rows = [
-      comment({ id: 'c1', line_id: 'line-1' }),
-      comment({ id: 'c2', line_id: 'line-2' }),
-      comment({ id: 'c3', line_id: null, x: null, y: null }),
+      comment({ id: 'c1', tag_id: 'rtag-1' }),
+      comment({ id: 'c2', tag_id: 'rtag-2' }),
+      comment({ id: 'c3', tag_id: null, x: null, y: null }),
     ];
 
-    const pins = canvasPinsForLine(rows, 'line-2');
+    const pins = canvasPinsForTag(rows, 'rtag-2');
 
     expect(pins.map((pin) => pin.id)).toEqual(['c2']);
     expect(pins[0].number).toBe(2);
@@ -223,38 +223,35 @@ describe('canvasPinsForLine (AC-S2-6)', () => {
   });
 
   it('says Done in the caption once it is resolved', () => {
-    const pins = canvasPinsForLine(
+    const pins = canvasPinsForTag(
       [comment({ resolved_at: '2026-09-14T01:00:00Z' })],
-      'line-1',
+      'rtag-1',
     );
 
     expect(pins[0].resolved).toBe(true);
     expect(pins[0].caption).toContain('Done');
   });
 
-  it('no selected line is no pins', () => {
-    expect(canvasPinsForLine([comment()], null)).toEqual([]);
+  it('no selected tag is no pins', () => {
+    expect(canvasPinsForTag([comment()], null)).toEqual([]);
   });
 
-  it('filters by the copy id when given (owner round finding 1)', () => {
-    const onCopyA = { ...comment({ id: 'c1' }), placed_tag_id: 'tag-a' };
-    const onCopyB = { ...comment({ id: 'c2' }), placed_tag_id: 'tag-b' };
+  /**
+   * Replaces the two `placed_tag_id` cases this file used to carry.
+   *
+   * The owner's finding was that a pin must not appear on a copy it was never
+   * put on. Since the combos slice, the thing that differs between two copies
+   * IS a different tag - a line split into one option per basin prints two
+   * tags - so the anchor answers it without a copy id: siblings of the same
+   * line never show each other's pins.
+   */
+  it('a sibling tag of the same line never shows the other tag pins', () => {
+    const rows = [
+      comment({ id: 'c1', tag_id: 'rtag-1' }),
+      comment({ id: 'c2', tag_id: 'rtag-1b' }),
+    ];
 
-    const pins = (canvasPinsForLine as unknown as (
-      comments: unknown[],
-      lineId: string | null,
-      placedTagId?: string | null,
-    ) => { id: string }[])([onCopyA, onCopyB], 'line-1', 'tag-a');
-
-    expect(pins.map((pin) => pin.id)).toEqual(['c1']);
-  });
-
-  it('with no copy id given, every pin on the line still comes back', () => {
-    const onCopyA = { ...comment({ id: 'c1' }), placed_tag_id: 'tag-a' };
-    const onCopyB = { ...comment({ id: 'c2' }), placed_tag_id: 'tag-b' };
-
-    const pins = canvasPinsForLine([onCopyA, onCopyB] as never, 'line-1');
-
-    expect(pins.map((pin) => pin.id).sort()).toEqual(['c1', 'c2']);
+    expect(canvasPinsForTag(rows, 'rtag-1').map((pin) => pin.id)).toEqual(['c1']);
+    expect(canvasPinsForTag(rows, 'rtag-1b').map((pin) => pin.id)).toEqual(['c2']);
   });
 });

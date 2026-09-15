@@ -113,7 +113,7 @@ function comment(overrides: Record<string, unknown> = {}) {
   return {
     id: 'comment-1',
     request_id: 'req-1',
-    line_id: 'line-1',
+    tag_id: 'tag-1',
     round: 1,
     x: 0.25,
     y: 0.5,
@@ -133,7 +133,7 @@ function renderSection(currentRound?: number) {
     <RequestDesignSection
       requestId="req-1"
       docNumber="PT-202609-0001"
-      lineLabels={new Map([['line-1', 'ZZT-SINK-1']])}
+      tagLabels={new Map([['tag-1', 'ZZT-SINK-1']])}
       currentRound={currentRound}
     />,
   );
@@ -184,7 +184,7 @@ describe('the change request list (AC-S2-5)', () => {
 
   it('a general comment is labelled General rather than given a tag', async () => {
     mockList.mockResolvedValue([
-      comment({ id: 'c2', line_id: null, x: null, y: null, body: 'Too busy' }),
+      comment({ id: 'c2', tag_id: null, x: null, y: null, body: 'Too busy' }),
     ]);
     renderSection();
 

@@ -1892,7 +1892,7 @@ function TagRailRow({
             type="button"
             className="mr-1 size-2.5 rounded-full bg-destructive"
             title="Product data changed - review"
-            aria-label={`Review product data changes on tag ${tag.label}`}
+            aria-label={`Review product data changes on ${data?.code || 'this tag'} ${tag.label}`}
             onClick={() => onReview(tag.id)}
           />
         )}

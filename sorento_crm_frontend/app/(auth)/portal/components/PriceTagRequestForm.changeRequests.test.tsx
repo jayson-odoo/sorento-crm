@@ -56,6 +56,9 @@ vi.mock('../lib/price-tag-request-service', () => ({
   lookupDebtors: vi.fn(async () => []),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(async () => []),
+  // The form asks for a product's packages on every pick since the combos
+  // slice; a mock without it throws before the page renders at all.
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   updateRequest: vi.fn(),
@@ -120,8 +123,10 @@ const REQUEST = {
       code: 'ZZT-SINK-1',
       show_promo_price: false,
       quantity: 1,
-      alternatives: [],
       included_accessories: null,
+      // One tag per line at submit (combos D3). Its id IS the line id here, so
+      // every id this file already asserts on keeps meaning what it meant.
+      tags: [{ id: 'line-1', label: '1a', quantity: 1 }],
     },
   ],
   attachments: [],
@@ -140,7 +145,7 @@ const DESIGN = {
         tags: [
           {
             id: 'tag-1',
-            request_line_id: 'line-1',
+            request_tag_id: 'line-1',
             x_mm: 20,
             y_mm: 30,
             width_mm: 80,
@@ -290,7 +295,7 @@ describe('Send (AC-S2-3)', () => {
     const [id, payload] = asMock(requestChanges).mock.calls[0];
     expect(id).toBe('req-1');
     expect(payload.comments).toHaveLength(2);
-    expect(payload.comments[0]).toMatchObject({ line_id: 'line-1', w: 0, h: 0 });
+    expect(payload.comments[0]).toMatchObject({ tag_id: 'line-1', w: 0, h: 0 });
     expect(payload.comments[0].x).toBeCloseTo(0.25, 5);
     expect(payload.note).toBe('Too busy overall');
   });

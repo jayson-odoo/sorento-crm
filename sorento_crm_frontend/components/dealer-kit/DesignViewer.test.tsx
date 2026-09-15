@@ -50,10 +50,10 @@ vi.mock('@/lib/dealer-kit/fonts', async (importOriginal) => {
 const ASSET_URL = 'https://cdn.example.test/signed/artwork.png';
 const PHOTO_URL = 'https://cdn.example.test/signed/photo.jpg';
 
-function tag(lineId: string, id: string) {
+function tag(requestTagId: string, id: string) {
   return {
     id,
-    request_line_id: lineId,
+    request_tag_id: requestTagId,
     x_mm: 10,
     y_mm: 10,
     width_mm: 80,
@@ -75,7 +75,7 @@ function tag(lineId: string, id: string) {
         y_mm: 0,
         width_mm: 40,
         height_mm: 50,
-        // A product photo slot: the picture follows the LINE's primary photo,
+        // A product photo slot: the picture follows the TAG's primary photo,
         // resolved through `images`, not through the asset library.
         props: { kind: 'product_slot', fieldKey: 'product_image' },
       },
@@ -97,7 +97,13 @@ function payload(sheetCount = 1): TagSheetDesignPayload {
       })),
     } as unknown as TagSheetDesignPayload['doc'],
     resolvedData: {
+      // Keyed by REQUEST TAG since the combos slice; the everyday request has
+      // one tag per line and its id is the line's here.
       'line-1': {
+        tag_id: 'line-1',
+        tag_label: '1a',
+        open_groups: [],
+        parts: [],
         line_id: 'line-1',
         code: 'ZZT-SINK-1',
         name: 'ZZT Kitchen Sink',

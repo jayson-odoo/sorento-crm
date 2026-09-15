@@ -24,6 +24,9 @@ vi.mock('../lib/price-tag-request-service', () => ({
   lookupDebtors: vi.fn(async () => []),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(async () => []),
+  // The form asks for a product's packages on every pick since the combos
+  // slice; a mock without it throws before the page renders at all.
+  lookupProductCombos: vi.fn(async () => ({ host_guarded: false, combos: [] })),
   getRequest: vi.fn(),
   createRequest: vi.fn(),
   updateRequest: vi.fn(),

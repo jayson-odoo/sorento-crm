@@ -1379,6 +1379,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           needed_by_date: neededByDate || null,
           notes: notes || null,
           price_mode: priceMode,
+          // Live finding, PT-202609-0013: Save Draft and Submit both carry the
+          // print choice and this payload did not, so revising a request
+          // silently dropped who prints it.
+          print_by: printBy,
         },
         products: payloadLines(),
       });

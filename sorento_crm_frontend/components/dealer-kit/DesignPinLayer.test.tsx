@@ -18,7 +18,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import DesignPinLayer from './DesignPinLayer';
 import type { ReviewComment, DraftPin } from '@/lib/dealer-kit/review-comments';
 
-const LINE = 'line-1';
+const TAG = 'rtag-1';
 
 const DOC = {
   kind: 'tag_sheet',
@@ -29,7 +29,7 @@ const DOC = {
       tags: [
         {
           id: 'tag-1',
-          request_line_id: LINE,
+          request_tag_id: TAG,
           x_mm: 20,
           y_mm: 30,
           width_mm: 80,
@@ -45,7 +45,7 @@ function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {
   return {
     id: 'comment-1',
     request_id: 'req-1',
-    line_id: LINE,
+    tag_id: TAG,
     round: 1,
     x: 0.5,
     y: 0.5,
@@ -64,8 +64,8 @@ function comment(overrides: Partial<ReviewComment> = {}): ReviewComment {
  * The tag hit area, with a real box: jsdom reports 0 for every rect, and the
  * fraction maths divides by the width.
  */
-function hitArea(lineId = LINE) {
-  const node = screen.getByTestId(`pin-hit-${lineId}`);
+function hitArea(tagId = TAG) {
+  const node = screen.getByTestId(`pin-hit-${tagId}`);
   node.getBoundingClientRect = () =>
     ({ left: 100, top: 200, width: 200, height: 100, right: 300, bottom: 300 }) as DOMRect;
   return node;
@@ -120,8 +120,7 @@ describe('placing a pin (AC-S2-1)', () => {
 
     expect(onPlace).toHaveBeenCalledTimes(1);
     expect(onPlace).toHaveBeenCalledWith({
-      line_id: LINE,
-      placed_tag_id: 'tag-1',
+      tag_id: TAG,
       x: 0.25,
       y: 0.5,
       w: 0,
@@ -222,14 +221,14 @@ describe('placing a pin (AC-S2-1)', () => {
   it('nobody can place a pin on a design that is not waiting on them', () => {
     renderLayer({ canPlace: false });
 
-    expect(screen.queryByTestId(`pin-hit-${LINE}`)).toBeNull();
+    expect(screen.queryByTestId(`pin-hit-${TAG}`)).toBeNull();
   });
 });
 
 describe('reading the pins that exist (AC-S2-2)', () => {
   it('numbers sent comments first and continues the sequence into the drafts', () => {
     const drafts: DraftPin[] = [
-      { key: 'draft-a', line_id: LINE, x: 0.1, y: 0.1, w: 0, h: 0, body: 'New one' },
+      { key: 'draft-a', tag_id: TAG, x: 0.1, y: 0.1, w: 0, h: 0, body: 'New one' },
     ];
     renderLayer({ comments: [comment()], drafts });
 
@@ -249,7 +248,7 @@ describe('reading the pins that exist (AC-S2-2)', () => {
 
   it('a draft can be deleted before it is sent', () => {
     const drafts: DraftPin[] = [
-      { key: 'draft-a', line_id: LINE, x: 0.1, y: 0.1, w: 0, h: 0, body: 'New one' },
+      { key: 'draft-a', tag_id: TAG, x: 0.1, y: 0.1, w: 0, h: 0, body: 'New one' },
     ];
     const { onRemoveDraft } = renderLayer({ drafts });
 
@@ -309,7 +308,7 @@ describe('reading the pins that exist (AC-S2-2)', () => {
 
   it('a general comment carries no marker at all', () => {
     renderLayer({
-      comments: [comment({ line_id: null, x: null, y: null, w: null, h: null })],
+      comments: [comment({ tag_id: null, x: null, y: null, w: null, h: null })],
     });
 
     expect(screen.queryByLabelText(/Change request/)).toBeNull();
@@ -317,13 +316,21 @@ describe('reading the pins that exist (AC-S2-2)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Owner test round, finding 1 - a pin anchors to ONE placed copy, not every
-// copy of the line, once a sheet prints that line more than once.
+// Owner test round, finding 1 - a pin must not appear on something it was
+// never put on.
+//
+// It used to be answered with a `placed_tag_id` naming ONE copy of a line.
+// Since the combos slice the thing that actually differs between two boxes is
+// a different TAG (a line split into one option per basin prints two), and the
+// copies a quantity > 1 mints all draw the SAME tag - the same artwork - so the
+// anchor answers the finding on its own: siblings never share a pin, copies
+// always do.
 // ---------------------------------------------------------------------------
 
-/** Two copies of the SAME line on one sheet - what "Apply to all lines" or a
- * quantity > 1 produces. Different `PlacedTag.id`s, same `request_line_id`. */
-const TWO_COPY_DOC = {
+const SIBLING_TAG = 'rtag-1b';
+
+/** Two SIBLING tags of one line - what a split produces. */
+const TWO_TAG_DOC = {
   kind: 'tag_sheet',
   imposition: { page_width_mm: 210, page_height_mm: 297 },
   sheets: [
@@ -333,7 +340,7 @@ const TWO_COPY_DOC = {
         {
           id: 'tag-a',
           template_id: 'tmpl-1',
-          request_line_id: LINE,
+          request_tag_id: TAG,
           x_mm: 0,
           y_mm: 0,
           width_mm: 80,
@@ -343,7 +350,7 @@ const TWO_COPY_DOC = {
         {
           id: 'tag-b',
           template_id: 'tmpl-1',
-          request_line_id: LINE,
+          request_tag_id: SIBLING_TAG,
           x_mm: 100,
           y_mm: 0,
           width_mm: 80,
@@ -355,19 +362,56 @@ const TWO_COPY_DOC = {
   ],
 } as never;
 
-function twoCopyHitAreas() {
-  const nodes = screen.getAllByTestId(`pin-hit-${LINE}`);
-  nodes[0].getBoundingClientRect = () =>
-    ({ left: 0, top: 0, width: 200, height: 100, right: 200, bottom: 100 }) as DOMRect;
-  nodes[1].getBoundingClientRect = () =>
-    ({ left: 300, top: 0, width: 200, height: 100, right: 500, bottom: 100 }) as DOMRect;
-  return nodes;
+/** Two COPIES of ONE tag - what a quantity of 2 mints. Same `request_tag_id`. */
+const TWO_COPY_DOC = {
+  kind: 'tag_sheet',
+  imposition: { page_width_mm: 210, page_height_mm: 297 },
+  sheets: [
+    {
+      id: 'sheet-1',
+      tags: [
+        {
+          id: 'tag-a',
+          template_id: 'tmpl-1',
+          request_tag_id: TAG,
+          x_mm: 0,
+          y_mm: 0,
+          width_mm: 80,
+          height_mm: 40,
+          layers: [],
+        },
+        {
+          id: 'tag-a-c1',
+          template_id: 'tmpl-1',
+          request_tag_id: TAG,
+          x_mm: 100,
+          y_mm: 0,
+          width_mm: 80,
+          height_mm: 40,
+          layers: [],
+        },
+      ],
+    },
+  ],
+} as never;
+
+function boxed(node: HTMLElement, left: number) {
+  node.getBoundingClientRect = () =>
+    ({
+      left,
+      top: 0,
+      width: 200,
+      height: 100,
+      right: left + 200,
+      bottom: 100,
+    }) as DOMRect;
+  return node;
 }
 
-describe('a pin anchors to the placed copy that was clicked (owner round finding 1)', () => {
-  it('placing a pin on the SECOND copy sends that copy id as placed_tag_id', () => {
-    const { onPlace } = renderLayer({ doc: TWO_COPY_DOC });
-    const [, second] = twoCopyHitAreas();
+describe('a pin anchors to the TAG that was clicked (owner round finding 1)', () => {
+  it('placing a pin on the sibling tag sends THAT tag id', () => {
+    const { onPlace } = renderLayer({ doc: TWO_TAG_DOC });
+    const second = boxed(screen.getByTestId(`pin-hit-${SIBLING_TAG}`), 300);
 
     fireEvent.pointerDown(second, { clientX: 350, clientY: 50 });
     fireEvent.pointerUp(second, { clientX: 350, clientY: 50 });
@@ -377,35 +421,28 @@ describe('a pin anchors to the placed copy that was clicked (owner round finding
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
 
     expect(onPlace).toHaveBeenCalledWith(
-      expect.objectContaining({ line_id: LINE, placed_tag_id: 'tag-b' }),
+      expect.objectContaining({ tag_id: SIBLING_TAG }),
     );
   });
 
-  it('a sent pin with placed_tag_id draws on that copy only, the sibling stays empty', () => {
-    renderLayer({
-      doc: TWO_COPY_DOC,
-      comments: [comment({ placed_tag_id: 'tag-a' } as never)],
-    });
+  it('a sent pin draws on its own tag only, the sibling stays empty', () => {
+    renderLayer({ doc: TWO_TAG_DOC, comments: [comment()] });
 
-    // One marker only - not one per copy of the line.
     expect(screen.getAllByTestId('pin-comment-1')).toHaveLength(1);
   });
 
-  it('placed_tag_id null falls back to every copy of the line', () => {
-    renderLayer({
-      doc: TWO_COPY_DOC,
-      comments: [comment({ placed_tag_id: null } as never)],
-    });
+  it('every COPY of the pinned tag carries the marker - they are one artwork', () => {
+    renderLayer({ doc: TWO_COPY_DOC, comments: [comment()] });
 
     expect(screen.getAllByTestId('pin-comment-1')).toHaveLength(2);
   });
 
-  it('a placed_tag_id no copy carries any more (re-arranged away) falls back to every copy', () => {
+  it('a pin on a tag the sheet no longer carries draws nowhere, never everywhere', () => {
     renderLayer({
-      doc: TWO_COPY_DOC,
-      comments: [comment({ placed_tag_id: 'tag-gone' } as never)],
+      doc: TWO_TAG_DOC,
+      comments: [comment({ tag_id: 'rtag-gone' })],
     });
 
-    expect(screen.getAllByTestId('pin-comment-1')).toHaveLength(2);
+    expect(screen.queryByTestId('pin-comment-1')).toBeNull();
   });
 });
