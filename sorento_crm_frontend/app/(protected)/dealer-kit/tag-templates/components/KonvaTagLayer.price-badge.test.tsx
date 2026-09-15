@@ -367,6 +367,24 @@ describe('KonvaTagLayer unboxed price badge colour (S17, AC-S17-1/S17-2)', () =>
     expect(node.getAttribute('data-fill')).toBe('#999999');
   });
 
+  // Blocker follow-up (B1/S17): a `promo` badge whose offer never resolved
+  // (no sell price, or `show_promo_price` off upstream) falls through to
+  // the SAME unboxed branch a genuine `list_only` badge draws through - but
+  // its own `textColor` default is white, meant for the boxed callout it
+  // normally draws. Honouring it here would print white text on the tag's
+  // own background.
+  it('draws black, never its own white, when a promo badge falls through to the unboxed branch', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({ variant: 'promo', textColor: '#ffffff' })}
+        scale={3}
+        display={{ price: { listPrice: 1599, offerPrice: null } }}
+      />,
+    );
+
+    expect(figure(container).getAttribute('data-fill')).toBe('#000000');
+  });
+
   it('AC-S17-2: the boxed badge still draws label, amount and NETT with textColor (unchanged)', () => {
     const { container } = render(
       <KonvaTagLayer

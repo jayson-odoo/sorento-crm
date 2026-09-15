@@ -780,10 +780,11 @@ function PriceBadgeContent({
         textDecoration={badgeTextDecoration(typo)}
         lineHeight={typo.lineHeight ?? undefined}
         letterSpacing={typo.letterSpacing * scale * 0.1}
-        // D22 (AC-S17-1): an amount honours the layer's own Text colour, the
-        // same as the boxed branch below always has; the muted grey stays
-        // only for the empty "no price" placeholder.
-        fill={parts.amountText ? props.textColor : '#999999'}
+        // D22 (AC-S17-1) / blocker follow-up: `priceBadgeParts` resolves the
+        // colour once, since a `promo` badge that fell through to this same
+        // unboxed branch must NOT honour its own (white, boxed-callout)
+        // `textColor` here - see `amountColor`'s own doc.
+        fill={parts.amountColor}
       />
     );
   }

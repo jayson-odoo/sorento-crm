@@ -267,15 +267,26 @@ class PriceTagRequestService:
         carry_tags = carry_tags or {}
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
-            key = (line_data.get("product_id"), line_data.get("product_set_id"))
-            # Security review: the line's own host id arrives from the
+            # Re-review finding: the line's own host id arrives from the
             # portal exactly like a part id does, and was written straight
-            # through with no company check - the very gap that made the D5
+            # through with no shape check - the very gap that made the D5
             # combo guard (`_add_line_parts`) a cross-company existence
-            # oracle in the first place. Same shape as that path: scoped
-            # lookup, 422 naming the line on a miss.
-            product_id = line_data.get("product_id")
-            product_set_id = line_data.get("product_set_id")
+            # oracle in the first place. Routed through the SAME `_part_uuid`
+            # the part ids already go through, so a non-UUID string is a 422
+            # naming the line here too, not a Postgres `DataError` once it
+            # reaches `Product.id.in_(...)` inside the visibility query below.
+            product_id = PriceTagRequestService._part_uuid(
+                line_data.get("product_id"), idx
+            )
+            product_set_id = PriceTagRequestService._part_uuid(
+                line_data.get("product_set_id"), idx
+            )
+            key = (product_id, product_set_id)
+            # Security review: the line's own host id must be visible to
+            # THIS request's company, the same reason `_add_line_parts`
+            # scopes a part - written straight through with no company check
+            # would answer "does this id exist anywhere" for a product in
+            # another company. Scoped lookup, 422 naming the line on a miss.
             if product_id and product_id not in PriceTagRequestService._visible_product_ids(
                 db, {product_id}, request.company_id
             ):
@@ -302,8 +313,8 @@ class PriceTagRequestService:
                 PriceTagRequestLine(
                     request_id=request.id,
                     line_type=line_data["line_type"],
-                    product_id=line_data.get("product_id"),
-                    product_set_id=line_data.get("product_set_id"),
+                    product_id=product_id,
+                    product_set_id=product_set_id,
                     show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
                     combo_id=PriceTagRequestService._resolve_combo_id(

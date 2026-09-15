@@ -540,11 +540,13 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
             style={{
               ...figureStyle(13, 700),
               ...figureInset,
-              // D22 (PLAN-price-tag-ai-extract-resolver.md): an amount
-              // honours the layer's own Text colour, the same as
-              // `KonvaTagLayer` and the boxed branches below - the muted
-              // grey stays only for the empty "no price" placeholder.
-              color: parts.amountText ? props.textColor : '#999999',
+              // D22 (PLAN-price-tag-ai-extract-resolver.md) / blocker
+              // follow-up: `priceBadgeParts` resolves the colour once, so
+              // this and `KonvaTagLayer` can never disagree, and so a
+              // `promo` badge that fell through to this same unboxed branch
+              // never honours its own (white, boxed-callout) `textColor`
+              // here - see `amountColor`'s own doc.
+              color: parts.amountColor,
             }}
           >
             {parts.plainText}

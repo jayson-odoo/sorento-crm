@@ -509,27 +509,53 @@ def test_validate_drops_unresolvable_lookup(db_session, seeded_warranty):
     assert "within_warranty" not in values
 
 
-def test_fk_product_field_ignores_a_set_code_match_stays_raw(db_session):
+def test_fk_product_field_ignores_a_set_code_match_stays_raw(db_session, monkeypatch):
     """S6 (code review): a `fk_product` field (a stock inquiry / purchase
     request product code) resolves against PRODUCTS only - a set code that
     would match `_extract_products`'s own wider {"product", "product_set"}
     scope must stay raw here, since the field can only ever hold a product.
+
+    Re-review finding: the original version of this test seeded the set
+    under the SAME code it extracted (`SRTFKSET1` both stored and raw), so
+    the canonical code a set match would have produced was byte-identical to
+    the raw text kept on a miss - the assertion could not tell the two
+    apart and stayed green even with `allowed_entity_types` dropped
+    entirely. Stored as `SRT-FKSET1`, extracted as `SRTFKSET1` (the same
+    dash-stripped separator normalization `test_ai_extract_resolver_match.py`
+    exercises): a set match would answer the STORED form back, which
+    disagrees with the raw text, so this only passes when the set is
+    genuinely excluded. The `resolve_references` spy pins the actual guard
+    (`allowed_entity_types == {"product"}`) directly, the same idiom
+    `test_extract_products_calls_resolver_once_with_whole_code_list_exact_only`
+    uses for the sales-order path's wider scope.
     """
     import uuid
 
+    import app.services.ai_extract.extract_service as extract_service_mod
     from app.models.base import company_scope
     from app.models.product_set import ProductSet
+    from app.services.entity_resolver import resolve_references as real_resolve
 
     company_id = "00000000-0000-0000-0000-000000000001"
     pset = ProductSet(
         id=str(uuid.uuid4()),
         company_id=company_id,
-        set_code="SRTFKSET1",
+        set_code="SRT-FKSET1",
         name="ZZT Set",
         is_active=True,
     )
     db_session.add(pset)
     db_session.flush()
+
+    calls: list[dict] = []
+
+    def _spying_resolve_references(db_arg, codes, **kwargs):
+        calls.append(kwargs)
+        return real_resolve(db_arg, codes, **kwargs)
+
+    monkeypatch.setattr(
+        extract_service_mod, "resolve_references", _spying_resolve_references
+    )
 
     schema = [
         ExtractFieldSpec(name="product_code", label="Product code", kind="fk_product"),
@@ -540,8 +566,11 @@ def test_fk_product_field_ignores_a_set_code_match_stays_raw(db_session):
             {"product_code": "SRTFKSET1"}, schema
         )
 
+    # The raw text, unchanged - a set match would have answered "SRT-FKSET1".
     assert values["product_code"] == "SRTFKSET1"
     assert per_field["product_code"].source == "llm"
+    assert len(calls) == 1
+    assert calls[0].get("allowed_entity_types") == frozenset({"product"})
 
 
 def test_validate_do_number_coerces_string_to_list():

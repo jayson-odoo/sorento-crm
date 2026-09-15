@@ -1027,6 +1027,21 @@ class AIExtractService:
                 if not tr.resolved or len(tr.matches) != 1:
                     continue
                 match = tr.matches[0]
+                # Re-review finding: `resolve_references` widens a `product`
+                # request to ALSO probe `product_set` internally (n8n relies
+                # on that widening elsewhere - `_expand_entity_types` in
+                # `entity_resolver.py`), so a caller that asked for
+                # `{"product"}` alone (the fk_product path, S6) still gets a
+                # `product_set` row back in `tr.matches` when that is the
+                # only thing that matched. The resolver's own D10b guard only
+                # uses this distinction to decide whether to compute "did you
+                # mean" alternatives - `tr.matches` itself is unfiltered.
+                # Filtered against THIS caller's own `allowed_entity_types`
+                # (not the resolver's internally-widened set), so a type the
+                # caller never asked for reads exactly like no match at all,
+                # not a match to something it has nowhere to send.
+                if match.entity_type not in allowed_entity_types:
+                    continue
                 if match.entity_type == "product":
                     name = (match.display or {}).get("product_name")
                     out[tr.token] = (match.canonical_code, "product", match.uuid, None, name)

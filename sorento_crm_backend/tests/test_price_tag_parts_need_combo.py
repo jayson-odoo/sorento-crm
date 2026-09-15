@@ -309,3 +309,34 @@ def test_replace_lines_refuses_a_foreign_product_id_on_a_line(db):
         .count()
         == 0
     )
+
+
+# --------------------------------------------------------------------------- #
+# Re-review finding: the line's own `product_id` used to reach
+# `Product.id.in_(...)` (inside `_visible_product_ids`) unvalidated - a
+# non-UUID string from the portal is a Postgres `DataError`, not the 422 the
+# other malformed-id paths (`_part_uuid` for a package part) already answer
+# with. Routed through the SAME `_part_uuid` before the visibility query.
+# --------------------------------------------------------------------------- #
+def test_create_request_refuses_a_non_uuid_product_id_on_a_line(db):
+    contact = _contact(db)
+
+    savepoint = db.begin_nested()
+    with pytest.raises(AppException) as exc:
+        PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {"line_type": "product", "product_id": "not-a-uuid", "quantity": 1}
+                ],
+            },
+        )
+    savepoint.rollback()
+
+    assert exc.value.status_code == 422
+    assert exc.value.detail["code"] == "INVALID_PART"
+    assert exc.value.detail["detail"] == "line:0"
+    assert db.query(PriceTagRequest).count() == 0

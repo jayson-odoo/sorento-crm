@@ -133,6 +133,28 @@ describe('price_badge on the print page', () => {
     expect(screen.getByText('Price TBC')).toHaveStyle({ color: '#999999' });
   });
 
+  // Blocker follow-up (B1/S17): a `promo` badge whose offer never resolved
+  // (`show_promo_price` false, or no sell price) falls through to the SAME
+  // unboxed branch a genuine `list_only` badge draws through - but its own
+  // `textColor` default is white, meant for the boxed callout it normally
+  // draws. Honouring it here would print white text on the tag's own
+  // background.
+  it('draws black, never its own white, when a promo badge falls through to the unboxed branch', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('promo'), textColor: '#ffffff' },
+          }),
+        ])}
+        resolvedData={{ [TAG_ID]: resolved({ show_promo_price: false }) }}
+      />,
+    );
+
+    expect(screen.getByText('RM 1,599')).toHaveStyle({ color: '#000000' });
+  });
+
   it('prints the struck list price above SP RM 599 NETT in the promo variant', () => {
     render(
       <TagSheetRenderer
