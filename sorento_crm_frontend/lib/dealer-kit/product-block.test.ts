@@ -882,4 +882,37 @@ describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
 
     expect(subjectOf(data, layer)).toBe(data);
   });
+
+  // -------------------------------------------------------------------------
+  // F6 (Reviewer S8): parentAlonePrice's subtraction fallback mistreats a
+  // part with NO offer (sell_price null, "at list") as contributing ZERO to
+  // the roll-up, instead of the list price it actually contributed
+  // (AC-S1-8/S7-3: an uncovered part prints at list, which means it IS in
+  // the roll-up total at its list price - subtracting `?? 0` for it
+  // therefore under-subtracts).
+  // -------------------------------------------------------------------------
+  it("a price badge set to the parent, with no parent_sell_price pinned and a part at list, shows the parent's own offer (roll-up minus what the part actually contributed), not the parent's list price", () => {
+    // Parent's own real figures: list 900, offer 700 (covered by the line's
+    // promotion). The part (list 200) is NOT covered, so it contributes its
+    // OWN LIST PRICE (200) to the roll-up, not zero.
+    // Roll-up sell_price (line.sell_price, the tag total) = 700 + 200 = 900.
+    // Roll-up list_price (line.list_price) = 900 + 200 = 1100.
+    const data = lineData({
+      list_price: 1100,
+      sell_price: 900,
+      show_promo_price: true,
+      // Old-pin shape: no `parent_sell_price` carried, forcing the
+      // subtraction fallback.
+      parent_sell_price: undefined,
+      parts: [part({ list_price: 200, sell_price: null })],
+    });
+    const badgeLayer = { props: { kind: 'price_badge' as const, subjectPart: -1 } as never };
+
+    // Correct: 900 (roll-up) - 200 (the part's actual, list-price
+    // contribution) = 700, the parent's real offer.
+    // Today's subtraction does 900 - (null ?? 0) = 900, which is the
+    // parent's OWN LIST PRICE by coincidence of this construction - the bug
+    // this test is named for.
+    expect(priceBadgeInput(data, badgeLayer).offerPrice).toBe(700);
+  });
 });
