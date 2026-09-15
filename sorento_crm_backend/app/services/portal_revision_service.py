@@ -332,6 +332,11 @@ def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
             "product_set_id": ln.product_set_id,
             "quantity": _jsonable(ln.quantity),
             "remarks": ln.remarks,
+            # D1/D5 (this round): without these two, a revision's history
+            # diff could not show a promotion pick or a hand-typed price
+            # changing - the two facts this whole slice moved onto the line.
+            "promotion_id": ln.promotion_id,
+            "manual_sell_price": _jsonable(ln.manual_sell_price),
         }
         for ln in lines
     ]
@@ -543,7 +548,19 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
         # identical create/update payload would have been refused. The SAME
         # viewer create/update already pass (`tag_data_service.contact_viewer`).
         viewer = tag_data_service.contact_viewer(db, row.contact_id)
-    PriceTagRequestService.replace_lines(db, row, converted, viewer=viewer)
+    # Security review (this round, M2): `_covering_promotions`' query for a
+    # line's own promotion is scoped through the ORM's company filter, so
+    # without a scope set here it ran UNSCOPED - the same class of gap R5's
+    # own regression test already covers under the request's SINGLE company
+    # (green because the request row itself is company-scoped elsewhere),
+    # but a genuinely multi-company caller reaching this code path with no
+    # scope set at all would see every company's promotions. Scoped exactly
+    # like create (`portal_create_price_tag_request`) and update
+    # (`portal_update_price_tag_request`) already are.
+    from app.models.base import company_scope
+
+    with company_scope(db, frozenset({row.company_id})):
+        PriceTagRequestService.replace_lines(db, row, converted, viewer=viewer)
     # Where the retired set guard ran, the D2 warning is stamped instead - on the
     # rows that now exist, so submit and revise cannot answer differently.
     PriceTagRequestService.apply_package_warnings(db, row)
