@@ -569,10 +569,22 @@ describe('ContainerRequestSection - the grid', () => {
     );
   });
 
-  it('a cancelled plan shows the same grid, with nothing typeable (AC-A8)', () => {
+  it('a cancelled plan shows the same grid, with nothing typeable (AC-A8, AC-Q4)', () => {
+    // S3: readOnly renders BOTH qty columns as plain text - there is no input left to
+    // disable, so the old "disabled input" shape is gone (AC-Q4). Distinct engine/suggested
+    // figures so the two text cells cannot be confused for one another.
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ suggested_qty: 100, engine_qty: 20 })],
+      sources: EMPTY_SOURCES,
+    };
     renderSection(true);
 
-    expect(screen.getByDisplayValue('10')).toBeDisabled();
+    expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
+    const bodyRow = screen.getByRole('button', { name: /ITEM-1/ }).closest('tr') as HTMLElement;
+    const cells = within(bodyRow).getAllByRole('cell');
+    expect(cells[2].textContent?.trim()).toBe('20');
+    expect(cells[3].textContent?.trim()).toBe('100');
   });
 
   it('the formula tooltip explains the ENGINE figure, not the typed one', () => {
@@ -670,12 +682,16 @@ describe('ContainerRequestSection - the grid', () => {
   });
 });
 
-describe('ContainerRequestSection - the fold (S5, AC-E1/AC-E2/AC-E3)', () => {
-  it('splits held-but-no-demand rows out of the ranked grid, into their own fold line', () => {
-    state.build.data = {
+describe('ContainerRequestSection - one grid, no fold (S2, AC-F1..AC-F5)', () => {
+  // The owner's finding, 15 Sep: 18 products sat behind a collapsed line under the ranked
+  // grid and got overlooked. The fold (S5, 2 Sep) is gone - one grid over every candidate,
+  // the no-demand rows still muted, still rankless, still last.
+  function oneRankedOneHeld() {
+    return {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [
-        row({ product_id: 'p1', item_code: 'ITEM-1' }),
+        // The held row is FIRST in the build's own order on purpose: "after every ranked
+        // row" has to be something the GRID does, not something the array happened to say.
         row({
           product_id: 'p2',
           item_code: 'ITEM-2',
@@ -683,26 +699,55 @@ describe('ContainerRequestSection - the fold (S5, AC-E1/AC-E2/AC-E3)', () => {
           rank: null,
           open_so_need: 0,
         }),
+        row({ product_id: 'p1', item_code: 'ITEM-1' }),
       ],
       sources: EMPTY_SOURCES,
     };
+  }
+
+  it('renders ONE grid and no fold line, with held rows in the set (AC-F1)', () => {
+    state.build.data = oneRankedOneHeld();
     renderSection();
 
-    expect(screen.getByText('ITEM-1')).toBeInTheDocument();
-    expect(screen.queryByText('ITEM-2')).not.toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: /1 products held with no open demand/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole('button', { name: /products held with no open demand/i }),
+    ).toBeNull();
+    expect(screen.queryByText(/products held with no open demand/i)).toBeNull();
+    expect(screen.getAllByRole('table')).toHaveLength(1);
   });
 
-  it('is collapsed on load; expanding renders the folded row in its own grid, same columns', () => {
+  it('puts the held rows in that grid, after every ranked row, muted and rankless (AC-F2)', () => {
+    state.build.data = oneRankedOneHeld();
+    renderSection();
+
+    const codes = screen.getAllByText(/^ITEM-[12]$/).map((el) => el.textContent);
+    expect(codes).toEqual(['ITEM-1', 'ITEM-2']);
+
+    // The same muting the fold's rows carried, now carried by the row itself.
+    expect(screen.getByRole('button', { name: /ITEM-2/ })).toHaveClass('opacity-70');
+    expect(screen.getByRole('button', { name: /ITEM-1/ })).not.toHaveClass('opacity-70');
+
+    const heldRow = screen.getByRole('button', { name: /ITEM-2/ }).closest('tr') as HTMLElement;
+    const rankCell = within(heldRow).getAllByRole('cell')[0];
+    // Blank rank: a dash, no number, and none of the rank-factors affordance a ranked row has.
+    expect(rankCell.textContent?.trim()).toBe('-');
+  });
+
+  it('counts the ranked and the held rows together in the pager (AC-F3)', () => {
+    state.build.data = oneRankedOneHeld();
+    renderSection();
+
+    expect(screen.getByText('1 - 2 of 2')).toBeInTheDocument();
+  });
+
+  it('search filters the held rows in that one grid, and clearing restores them (AC-F4)', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [
-        row({ product_id: 'p1', item_code: 'ITEM-1' }),
+        row({ product_id: 'p1', item_code: 'ABC123' }),
         row({
           product_id: 'p2',
-          item_code: 'ITEM-2',
+          item_code: 'XYZ999',
           has_demand: false,
           rank: null,
           open_so_need: 0,
@@ -712,25 +757,19 @@ describe('ContainerRequestSection - the fold (S5, AC-E1/AC-E2/AC-E3)', () => {
     };
     renderSection();
 
-    const trigger = screen.getByRole('button', { name: /products held with no open demand/i });
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByText('ITEM-2')).not.toBeInTheDocument();
+    // Visible with nothing to open first - that is the whole point of AC-F1.
+    expect(screen.getByText('XYZ999')).toBeInTheDocument();
 
-    fireEvent.click(trigger);
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: 'xyz' } });
+    expect(screen.getByText('XYZ999')).toBeInTheDocument();
+    expect(screen.queryByText('ABC123')).not.toBeInTheDocument();
 
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    expect(screen.getByText('ITEM-2')).toBeInTheDocument();
-    // Same column set as the ranked grid: rank reads a dash, Need reads the muted copy.
-    expect(screen.getByText('No open demand')).toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: '' } });
+    expect(screen.getByText('ABC123')).toBeInTheDocument();
+    expect(screen.getByText('XYZ999')).toBeInTheDocument();
   });
 
-  it('the fold line is absent when every row carries open demand', () => {
-    renderSection(); // default single row, has_demand: true
-
-    expect(screen.queryByText(/products held with no open demand/i)).not.toBeInTheDocument();
-  });
-
-  it('a typed qty on a folded row still reaches the record (AC-E3)', () => {
+  it('a typed qty on a held row still reaches the record (AC-F5, AC-E3 preserved)', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
       rows: [
@@ -747,8 +786,7 @@ describe('ContainerRequestSection - the fold (S5, AC-E1/AC-E2/AC-E3)', () => {
     };
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: /1 products held with no open demand/i }));
-    fireEvent.change(screen.getByDisplayValue('0'), { target: { value: '15' } });
+    fireEvent.change(screen.getByRole('spinbutton'), { target: { value: '15' } });
 
     expect(onQtyChange).toHaveBeenCalledWith('p2', 15);
   });
@@ -1169,37 +1207,6 @@ describe('ContainerRequestSection - search (AC-N3)', () => {
     expect(within(cards).getByTestId('stat-need')).toHaveTextContent('30');
   });
 
-  it('filters the folded rows too, and clearing the box restores every row', () => {
-    state.build.data = {
-      stock_list_as_of: '2026-08-18T00:00:00',
-      rows: [
-        row({ product_id: 'p1', item_code: 'ABC123' }),
-        row({
-          product_id: 'p2',
-          item_code: 'XYZ999',
-          has_demand: false,
-          rank: null,
-          open_so_need: 0,
-        }),
-      ],
-      sources: EMPTY_SOURCES,
-    };
-    renderSection();
-
-    fireEvent.click(screen.getByRole('button', { name: /1 products held with no open demand/i }));
-    expect(screen.getByText('XYZ999')).toBeInTheDocument();
-
-    fireEvent.change(screen.getByPlaceholderText('Search product'), {
-      target: { value: 'abc' },
-    });
-    expect(screen.getByText('ABC123')).toBeInTheDocument();
-    expect(screen.queryByText('XYZ999')).not.toBeInTheDocument();
-
-    fireEvent.change(screen.getByPlaceholderText('Search product'), { target: { value: '' } });
-    expect(screen.getByText('ABC123')).toBeInTheDocument();
-    expect(screen.getByText('XYZ999')).toBeInTheDocument();
-  });
-
   it('shows "No product matches" when nothing matches, in the table body', () => {
     renderSection();
 
@@ -1293,5 +1300,96 @@ describe('ContainerRequestSection - sortable columns (AC-N5)', () => {
 
     const codesAfter = screen.getAllByText(/^(LOW|HIGH)$/).map((el) => el.textContent);
     expect(codesAfter).toEqual(['LOW', 'HIGH']);
+  });
+});
+
+// S3, owner 15 Sep: "every time we change the suggested quantity manually, we forgot what's
+// the original suggested quantity". The formula's own answer (`engine_qty`) gets a column of
+// its own beside the one she types into (`suggested_qty`, the saved override).
+describe('ContainerRequestSection - Suggested qty beside Requested qty (S3, AC-Q1..AC-Q5)', () => {
+  function rowCells(code: string) {
+    const bodyRow = screen.getByRole('button', { name: new RegExp(code) }).closest('tr');
+    return within(bodyRow as HTMLElement).getAllByRole('cell');
+  }
+
+  it('heads both columns, in the order Rank, Product, Suggested qty, Requested qty, Remarks (AC-Q1)', () => {
+    renderSection();
+
+    expect(screen.getByText('Suggested qty')).toBeInTheDocument();
+    expect(screen.getByText('Requested qty')).toBeInTheDocument();
+
+    const headers = screen.getAllByRole('columnheader').map((th) => th.textContent ?? '');
+    const at = (title: string) => headers.findIndex((h) => h.includes(title));
+    expect(at('Rank')).toBe(0);
+    expect(at('Product')).toBe(1);
+    expect(at('Suggested qty')).toBe(2);
+    expect(at('Requested qty')).toBe(3);
+    expect(at('Remarks')).toBe(4);
+
+    // Suggested is the record of what the engine said - reading only, nothing to type into.
+    const cells = rowCells('ITEM-1');
+    expect(within(cells[2]).queryByRole('spinbutton')).toBeNull();
+    expect(within(cells[3]).getByRole('spinbutton')).toBeInTheDocument();
+  });
+
+  it('a typed Requested qty leaves Suggested qty on the engine figure (AC-Q2)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ITEM-1', open_so_need: 0, suggested_qty: 0, engine_qty: 0 }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(rowCells('ITEM-1')[2].textContent?.trim()).toBe('0');
+
+    fireEvent.change(within(rowCells('ITEM-1')[3]).getByRole('spinbutton'), {
+      target: { value: '50' },
+    });
+
+    expect(onQtyChange).toHaveBeenCalledWith('p1', 50);
+    // The engine still says 0 - which is the whole complaint the split answers.
+    expect(rowCells('ITEM-1')[2].textContent?.trim()).toBe('0');
+    expect(within(rowCells('ITEM-1')[3]).getByRole('spinbutton')).toHaveValue(50);
+  });
+
+  it('a saved override shows the engine figure BESIDE it, not instead of it (AC-Q3)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [
+        row({ product_id: 'p1', item_code: 'ITEM-1', suggested_qty: 100, engine_qty: 20 }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(rowCells('ITEM-1')[2].textContent?.trim()).toBe('20');
+    expect(within(rowCells('ITEM-1')[3]).getByRole('spinbutton')).toHaveValue(100);
+  });
+
+  it('Suggested qty sorts on the engine figure, Requested qty on the saved override (AC-Q5)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      // Array order is BBB then AAA, so neither assertion below can be satisfied by the
+      // order the build happened to send - each one needs the click to move the rows.
+      rows: [
+        row({ product_id: 'pB', item_code: 'BBB', rank: 2, suggested_qty: 10, engine_qty: 50 }),
+        row({ product_id: 'pA', item_code: 'AAA', rank: 1, suggested_qty: 100, engine_qty: 5 }),
+      ],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    const codes = () => screen.getAllByText(/^(AAA|BBB)$/).map((el) => el.textContent);
+    expect(codes()).toEqual(['BBB', 'AAA']);
+
+    fireEvent.click(screen.getByText('Suggested qty'));
+    // engine 5 (AAA) before engine 50 (BBB).
+    expect(codes()).toEqual(['AAA', 'BBB']);
+
+    fireEvent.click(screen.getByText('Requested qty'));
+    // override 10 (BBB) before override 100 (AAA) - the order the old single column had.
+    expect(codes()).toEqual(['BBB', 'AAA']);
   });
 });
