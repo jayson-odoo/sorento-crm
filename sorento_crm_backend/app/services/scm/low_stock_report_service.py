@@ -13,10 +13,11 @@ already prints.
 
 What is DIFFERENT from the order sheet, and why:
 
-* **Hidden-by-default rows stay in.** `export_report` drops them, because the order sheet
-  prints what the plan's own list shows. This workbook must not: "covered" is a judgement
-  about the NET, and a product can be comfortably covered and still sit below its raw
-  level. That row is exactly what the buyer opened this file to find (AC-32/AC-33).
+* **The "All" sheet matches the plan list** (PLAN-low-stock-last-in-and-list-scope S2,
+  owner ruling 15 Sep, superseding the parent plan's AC-32/AC-33 "hidden covered rows
+  included"): hidden-by-default rows are dropped through the SAME `visible_rows` helper
+  `export_report` calls, because the owner measured the two documents disagreeing (1,266
+  All rows against 833 on the list for one run) and ruled they must not.
 * **Three columns come from MASTER DATA, joined at export time** (AC-34) - Description,
   Category and Reorder qty. Every other column reads the frozen row, because it is a
   planning figure that belongs to the run's moment; a description a buyer fixed this
@@ -38,7 +39,9 @@ from app.services.scm import summary_order_service as svc
 
 #: The sixteen columns, in the client's own order (AC-31). Description and Category lead,
 #: and Reorder qty sits beside Reorder level, because that is how the sheet this replaces
-#: is read: find the category, read what is short, read what to order.
+#: is read: find the category, read what is short, read what to order. No new column for
+#: PLAN-low-stock-last-in-and-list-scope S1 (owner ruling, second round): "Last in qty"
+#: itself becomes a text cell (`svc._last_in_text`).
 LOW_STOCK_COLUMNS = (
     "Item code", "Description", "Category", "BRW on hand", "Reorder level",
     "Reorder qty", "Suggested qty", "Suggestion", "Order qty", "Dealer o/s",
@@ -139,12 +142,18 @@ def _is_low(row: dict) -> bool:
 def _split(db: Session, run_id: Optional[str]) -> dict:
     """The two row sets and the stamp, from ONE read of the frozen run.
 
-    Both sheets are sorted by `(category_code, product_code)` (AC-32): the client's file is
-    filed by category and a buyer walks it category by category. A product with no category
+    Both sheets are sorted by `(category_code, product_code)`: the client's file is filed
+    by category and a buyer walks it category by category. A product with no category
     sorts under "" - first - rather than being hidden at the end of a file nobody scrolls.
+
+    "All" is the SAME population the plan list shows (PLAN-low-stock-last-in-and-list-
+    scope S2, owner ruling 15 Sep: "I prefer All to match the list exported") - hidden-by-
+    default rows dropped via the shared `svc.visible_rows`, superseding the parent plan's
+    AC-32 ("hidden covered rows included"). "Low stock" stays a subset of whatever "All"
+    prints.
     """
     rep = svc.report(db, run_id=run_id)
-    rows = rep["rows"]
+    rows = svc.visible_rows(db, rep)
     master = _master_map(db, [r["product_code"] for r in rows])
     ordered = sorted(
         rows,
@@ -173,10 +182,12 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
 
     Quantities are NUMBERS (the order sheet's H1 rule): a workbook is opened to be summed,
     and a text "1,234" defeats that the moment somebody selects the column. BRW on hand,
-    Reorder level, Order qty, Reorder qty, Last in qty and Last in date print BLANK rather
-    than 0 when the row carries none - a 0 there reads as a fact nobody measured. BRW PO
-    qty / BRW incoming qty keep the order sheet's one exception: once a document exists
-    behind the total the cell becomes `_docs_text`'s text, container line and all (S2).
+    Reorder level, Order qty, Reorder qty and Last in date print BLANK rather than 0 when
+    the row carries none - a 0 there reads as a fact nobody measured. BRW PO qty / BRW
+    incoming qty keep the order sheet's exception: once a document exists behind the total
+    the cell becomes `_docs_text`'s text, container line and all (S2). Last in qty
+    (PLAN-low-stock-last-in-and-list-scope S1) is the order sheet's own `_last_in_text` -
+    ALWAYS text, the SPO/container/qty document line, never a bare number.
     """
     chosen = row.get("chosen_qty")
     pool_on_hand = row.get("pool_on_hand")
@@ -203,7 +214,7 @@ def _sheet_row(row: dict, master: dict, *, include_supplier: bool) -> tuple:
          else float(po_open_qty or 0)),
         (svc._xlsx_safe_text(svc._docs_text(incoming_spo_qty, incoming_spo_docs))
          if incoming_spo_docs else float(incoming_spo_qty or 0)),
-        float(receipt.get("qty") or 0) if receipt else "",
+        svc._xlsx_safe_text(svc._last_in_text(receipt)),
         svc._xlsx_safe_text(svc._ddmmyyyy(receipt.get("date"))) if receipt else "",
         svc._xlsx_safe_text(svc._remarks_text(row)),
     )

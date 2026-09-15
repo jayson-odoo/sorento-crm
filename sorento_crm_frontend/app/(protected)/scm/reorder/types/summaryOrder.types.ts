@@ -154,9 +154,15 @@ export interface OrderSummaryRow {
   po_open_qty?: number;
   /** Open incoming SPO quantity for this product. */
   incoming_spo_qty?: number;
-  /** The latest `goods_received` picking line for this product, or null when it has
-   *  never been received. */
-  last_receipt?: { date: string; qty: number } | null;
+  /** The newest visible SPO allocation line for this product, received or not, or null
+   *  when it has none (PLAN-low-stock-last-in-and-list-scope S1). `spo_number` /
+   *  `container` are null on a run frozen before migration 518. */
+  last_receipt?: {
+    date: string;
+    qty: number;
+    spo_number?: string | null;
+    container?: string | null;
+  } | null;
   /** The chosen supplier's MOQ, or null when there is none on file. */
   moq?: number | null;
   /** Site-pool stock only (S14) - the export's "BRW on hand". Null on a run frozen

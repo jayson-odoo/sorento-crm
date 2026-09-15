@@ -159,6 +159,12 @@ class ProjectCustomerOut(BaseModel):
 class LastReceiptOut(BaseModel):
     date: str
     qty: float = 0.0
+    # PLAN-low-stock-last-in-and-list-scope S1: NULL on a run frozen before migration 518
+    # (R4, no backfill) - both are Optional so `response_model` does not drop them on a
+    # row that does carry them (a bare BaseModel field default silently strips an
+    # undeclared key).
+    spo_number: Optional[str] = None
+    container: Optional[str] = None
 
 
 class OrderSummaryReportOut(BaseModel):
