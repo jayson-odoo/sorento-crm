@@ -17,18 +17,28 @@ is never zero: an item nobody measured must not look like an item that takes no 
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
 from app.services.import_alias_service import AliasResolver, normalize_header
-from app.services.scm.outstanding_reader import RowProblem, sheet_rows
+from app.services.scm.outstanding_reader import RowProblem, sheet_merges, sheet_rows
+
+logger = logging.getLogger(__name__)
 
 DOC_TYPE = "supplier_inventory"
 
 #: Without an item code and a packed figure the row cannot be placed on a container at all.
 _REQUIRED_COLUMNS = ("item_code", "qty_packed")
+
+#: The supplier merges one row's text/volume over a family of models that share it - 品名,
+#: 商标, 规格, 备注 and 体积(cbm) per unit are all a BODY property, the same for every model in
+#: the family. Quantities never fill through: `qty_packed`, `qty_unfinished` and `cbm_total`
+#: are each one figure for the WHOLE merged family, and copying it onto every covered row
+#: would count that figure once per row instead of once.
+_MERGE_FILL_FIELDS = {"product_name", "brand", "spec", "remark", "cbm_per_unit"}
 
 
 @dataclass
@@ -150,11 +160,23 @@ def read_workbook(
     if result.missing_columns:
         return result
 
+    try:
+        merges = sheet_merges(file_data)
+    except Exception:  # noqa: BLE001 - a merge-read failure must not turn a readable file
+        # into a problem row; the fill-through is lost, not the whole import.
+        logger.exception("could not read merged cells; continuing without fill-through")
+        merges = {}
+
     for offset, raw in enumerate(all_rows[header_idx + 1 :], start=header_idx + 2):
         values: dict[str, Any] = {}
         for pos, f in col_field.items():
             if pos < len(raw):
                 values[f] = raw[pos]
+            if f in _MERGE_FILL_FIELDS:
+                anchor = merges.get((offset, pos + 1))
+                if anchor is not None:
+                    anchor_row, anchor_col = anchor
+                    values[f] = all_rows[anchor_row - 1][anchor_col - 1]
         code = _text(values.get("item_code"))
         if code is None:
             # A blank model number is the sheet's own spacing, a total line, or a note. Only
