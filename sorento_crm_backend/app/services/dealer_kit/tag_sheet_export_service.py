@@ -388,6 +388,13 @@ def design_media(
     for row in rows:
         for image in row["images"]:
             images[image["attachment_id"]] = image["url"]
+        # R9 (reviewer B1): a layer may pick ANY part as its subject (D7),
+        # so a part's own photo needs a signed URL in this map exactly like
+        # the host's - walking only `row["images"]` left a part-bound image
+        # layer with nothing to draw in the export payload at all.
+        for part in row.get("parts") or []:
+            for image in part.get("images") or []:
+                images[image["attachment_id"]] = image["url"]
 
     return rows, {
         # assetId -> signed URL, for every library asset the document names.
