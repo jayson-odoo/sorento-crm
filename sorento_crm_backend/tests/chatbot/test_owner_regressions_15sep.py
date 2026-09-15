@@ -175,6 +175,93 @@ class TestRCTheArmingSideFreezesCoResolvedSiblings:
             f"{out['compatible_entities']!r}"
         )
 
+    def test_a_co_resolved_multi_match_product_survives_the_customers_own_picker(
+        self,
+    ) -> None:
+        """R-D, live regression on the FIXED head (9d5b66dd1, coder a1f1112d, 15 Sep
+        2026): R-D's earlier red seeded "wc286" as a SINGLE resolved product uuid,
+        which is not the live shape - "delivery for chin chun product wc286" on
+        sorento_ai_automation_focus_full (two newest chatbot.turns rows for contact
+        437264483, 06:57:23 / 06:57:25 UTC) resolves "chin chun" to an ambiguous
+        3-company customer roster (armed reply "Which customer do you mean?") AND
+        "wc286" to a MULTI-MATCH product token - ten real SRTWC286/WC286-family SKUs,
+        none exact, no single uuid, exactly the parser's own un-resolved entity shape
+        `{raw: "wc286", hint: "product", canonical_code: null, current_message: true}`.
+        Picking "1" (the live pick turn's own emission carries ONLY the resolved
+        customer entity - no product at all, current_message: false or absent; the
+        product has to survive via the ARMED state, not this turn's own entities) came
+        back "Product: all products" - measured directly against `run_gate`, its
+        `compatible_entities` carries only the 3 customer rows, the ten WC286
+        candidates are gone entirely. R-C/R-E/R-F are fixed on this head (name +
+        family widen correctly); this is the remaining gap: the customer-ambiguity
+        `require_specific` arm (`lanes/business/gate.py` ~941-949) REPLACES
+        `compatible_entities` wholesale with only its own roster rows, the same class
+        of defect R-C's product-ambiguity arm had, now on the OTHER arm, and for a
+        token with NO exact match at all (nothing to freeze as a resolved entity -
+        the family/prefix itself has to survive, however the fix represents it)."""
+        resolver = {
+            "tokens": ["chin chun", "wc286"],
+            "resolutions": [
+                {
+                    "token": "chin chun",
+                    "resolved": False,
+                    "matches": [
+                        {
+                            "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C043",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                        {
+                            "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C124",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                        {
+                            "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C001",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                    ],
+                },
+                {
+                    "token": "wc286",
+                    "resolved": False,
+                    "matches": _ambiguous_product_matches(
+                        "SRTWC286-SH", "SRTWC286-SH-P", "SRTWC286-SH-200",
+                        "SRTWC286-SH-NEW", "SRTWC286-SH-NEW-P", "SRTWC286-SH-NEW-200",
+                        "SRTWC286-S-150-RL", "SRTWC286A-P-RL", "SRTWC286A-RL-320",
+                        "SRTWC286-P",
+                    ),
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [
+                {"hint": "customer", "raw": "chin chun", "current_message": True},
+                {"hint": "product", "raw": "wc286", "current_message": True},
+            ],
+        }
+
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+
+        assert out["require_specific"] is True, out.get("gate_reason")
+        compat_types = {e["entity_type"] for e in out["compatible_entities"]}
+        assert "product" in compat_types, (
+            f"the customer-ambiguity arm (gate.py ~941-949) replaces "
+            f"compatible_entities wholesale with only the customer picker's own "
+            f"rows, dropping the co-resolved WC286 family entirely - live: the "
+            f"delivery report answered 'Product: all products' instead of scoping "
+            f"to wc286: {out['compatible_entities']!r}"
+        )
+
 
 class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
     """R-F (coder a1f1112d diagnosis, 15 Sep 2026, design revised same day - NO
