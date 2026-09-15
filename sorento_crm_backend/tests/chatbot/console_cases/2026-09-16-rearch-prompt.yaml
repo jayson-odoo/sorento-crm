@@ -1,0 +1,96 @@
+# Console cases for the chatbot turn re-architecture's S4 prompt lineage (AC-1551,
+# PLAN-chatbot-turn-rearch.md, chatbot-turn-rearch-acceptance-criteria.md).
+#
+# NOT collected by pytest (`test_rearch_s4_prompt_cases_shape.py` validates only this
+# file's SHAPE - every case has text, expect.parser, live_only). `live_only: true` on
+# every case: these hit the real parser LLM and must be run by hand, paced, once per
+# prompt change, recorded as replay verdicts (AC-1551's own evidence line) - never in
+# CI.
+#
+# Run with `scripts/chatbot_console_check.py` against the lane stack once S4 is green:
+#
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-16-rearch-prompt.yaml \
+#       --base-url http://127.0.0.1:8085 \
+#       --prompt-version <the new rearch version id>
+#
+# Export EXTERNAL_API_KEY from the backend .env before running.
+#
+# `expect.parser` fields (document, status, reference_positions, entities,
+# scope_exclusive, asks, intent_hint) are read directly off the shadow-parse verdict
+# the turn's trace carries (`parse` stage / `understood_raw`) - NOT off the reply
+# text. `scripts/chatbot_console_check.py::_grade` has no branch for `expect.parser`
+# today (AC-1551's own pytest asserts this) - the coder adds it alongside the new key.
+
+contact: "438930735"
+
+cases:
+  - name: DO outstanding names the document (D6, contract 38)
+    text: "DO outstanding for chin chun"
+    cold: true
+    live_only: true
+    expect:
+      parser:
+        document: ["DO"]
+        status: "outstanding"
+
+  - name: PO outstanding names the document
+    text: "PO outstanding for SRTWC286"
+    cold: true
+    live_only: true
+    expect:
+      parser:
+        document: ["PO"]
+        status: "outstanding"
+
+  - name: outstanding with no document named asks SO/DO/both (D6, contract 38)
+    text: "outstanding for chin chun"
+    cold: true
+    live_only: true
+    expect:
+      parser:
+        document: []
+        status: "outstanding"
+
+  - name: another one over a ten-row roster volunteers no position (#933)
+    live_only: true
+    cold: true
+    turns:
+      - text: "check stock srtwc286"
+      - text: "another one"
+        expect:
+          parser:
+            reference_positions: []
+
+  - name: only BRW over an outstanding report is an exclusive filter, not a pick
+    live_only: true
+    cold: true
+    turns:
+      - text: "outstanding DO for chin chun"
+      - text: "1"
+      - text: "only BRW"
+        expect:
+          parser:
+            reference_positions: []
+            entities:
+              - hint: "warehouse"
+                raw: "BRW"
+            scope_exclusive: true
+
+  - name: low stock report routing survives (#921)
+    text: "low stock report"
+    cold: true
+    live_only: true
+    expect:
+      parser:
+        intent_hint: "low_stock_report"
+
+  - name: two domains in one message fan out in message order (contract 122)
+    text: "stock and eta for SRTWT2634"
+    cold: true
+    live_only: true
+    expect:
+      parser:
+        asks:
+          - domain: "inventory"
+          - domain: "incoming"

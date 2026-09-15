@@ -13,6 +13,16 @@ the CURRENT external contract, per the same assumption documented in
 State carries forward turn to turn via the REAL `respond_contacts.session_vars` row
 (each step reads what the previous step wrote), so this is a true multi-turn chain,
 not six independent fixtures.
+
+Session shape (fix, captain ruling 16 Sep 2026): the five keys (`focus`,
+`open_question`, `ideation`, `access_levels`, `contains_flyer`) live at the TOP LEVEL
+of `session_vars`, not nested under a `"variables"` wrapper - measured against the
+committed S0 code, `app.services.conversation_variables_service.get_for_contact`
+returns `_coerce_to_dict(row.session_vars)` verbatim with no `variables` unwrap, and
+`SessionVars(extra="forbid")` (`test_rearch_s0_session_slots.py`) declares exactly
+those five field names. Every seed/read helper below writes and reads the top level
+directly; this file's OWN AC-1532 sibling (`test_rearch_s3_tail.py`) already used the
+top-level shape and is unaffected.
 """
 from __future__ import annotations
 
@@ -29,13 +39,28 @@ from tests.chatbot.test_engine import CONTACT_ID, _envelope, seeded, stub_access
 
 
 def _seed(session_factory) -> None:
+    _set_session_vars(session_factory, {})
+
+
+def _set_session_vars(session_factory, state: dict) -> None:
+    """Upsert the contact row with session_vars = `state` AT THE TOP LEVEL (the five
+    keys directly, no `variables` wrapper - see module docstring). UPSERT rather than
+    a bare UPDATE: `session_factory` (`conftest.py`) hands each TEST its own isolated,
+    rolled-back transaction, so a step-N-only test (steps 2 to 6 each simulate "as if
+    the prior turns already happened" rather than truly running after step 1's own
+    test function) needs the row created here too, not merely updated.
+    """
+    # `respond_io_id` carries no unique constraint (`phone_number` does - measured,
+    # `app/models/access.py::RespondContact`), so the upsert conflict target is the
+    # phone number, held fixed across every call in this file.
     db = session_factory()
     db.execute(
         text(
             "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
-            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb)) "
+            "ON CONFLICT (phone_number) DO UPDATE SET session_vars = CAST(:sv AS jsonb)"
         ),
-        {"cid": str(CONTACT_ID), "phone": "+60000000006", "sv": json.dumps({"variables": {}})},
+        {"cid": str(CONTACT_ID), "phone": "+60000000006", "sv": json.dumps(state)},
     )
     db.commit()
 
@@ -45,7 +70,7 @@ def _session_vars(session_factory) -> dict:
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
         {"c": str(CONTACT_ID)},
     ).first()
-    return (row.session_vars or {}).get("variables", {})
+    return row.session_vars or {}
 
 
 def _turn(session_factory, stub_parser, v: dict, *, message_id: str):
@@ -75,26 +100,17 @@ class TestJourneyChain:
     def test_step_2_pick_8_roster_stays_alive_incoming_renders(
         self, session_factory, stub_parser, stub_access
     ) -> None:
-        db = session_factory()
-        db.execute(
-            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+        _set_session_vars(
+            session_factory,
             {
-                "cid": str(CONTACT_ID),
-                "sv": json.dumps(
-                    {
-                        "variables": {
-                            "open_question": {
-                                "kind": "product_pick",
-                                "options": [
-                                    {"position": i, "label": f"WC286-{i}", "uuid": f"uuid-{i}"} for i in range(1, 11)
-                                ],
-                            }
-                        }
-                    }
-                ),
+                "open_question": {
+                    "kind": "product_pick",
+                    "options": [
+                        {"position": i, "label": f"WC286-{i}", "uuid": f"uuid-{i}"} for i in range(1, 11)
+                    ],
+                }
             },
         )
-        db.commit()
         stub_access()
 
         v = verdict(answers_open_question={"resolved": True, "picks": [8], "answer": "8"}, reference_positions=[8])
@@ -111,22 +127,13 @@ class TestJourneyChain:
     def test_step_3_domain_switch_product_kept_not_reasked(
         self, session_factory, stub_parser, stub_access
     ) -> None:
-        db = session_factory()
-        db.execute(
-            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+        _set_session_vars(
+            session_factory,
             {
-                "cid": str(CONTACT_ID),
-                "sv": json.dumps(
-                    {
-                        "variables": {
-                            "focus": {"products": [{"raw": "WC286-8", "canonical_code": "WC286-8"}]},
-                            "open_question": None,
-                        }
-                    }
-                ),
+                "focus": {"products": [{"raw": "WC286-8", "canonical_code": "WC286-8"}]},
+                "open_question": None,
             },
         )
-        db.commit()
         stub_access()
 
         v = verdict(domain_hint="inventory")
@@ -141,12 +148,7 @@ class TestJourneyChain:
     def test_step_4_outstanding_do_customer_must_narrow_one_no_document_question(
         self, session_factory, stub_parser, stub_access
     ) -> None:
-        db = session_factory()
-        db.execute(
-            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
-            {"cid": str(CONTACT_ID), "sv": json.dumps({"variables": {}})},
-        )
-        db.commit()
+        _set_session_vars(session_factory, {})
         stub_access()
 
         v = verdict(
@@ -170,32 +172,23 @@ class TestJourneyChain:
     def test_step_5_pick_1_family_becomes_customer_detail_question_open(
         self, session_factory, stub_parser, stub_access
     ) -> None:
-        db = session_factory()
-        db.execute(
-            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+        _set_session_vars(
+            session_factory,
             {
-                "cid": str(CONTACT_ID),
-                "sv": json.dumps(
-                    {
-                        "variables": {
-                            "focus": {"document": ["DO"], "status": "outstanding"},
-                            "open_question": {
-                                "kind": "customer_pick",
-                                "options": [
-                                    {
-                                        "position": 1,
-                                        "label": "Chin Chun (family)",
-                                        "uuids": ["led-1", "led-2"],
-                                        "entity_type": "customer",
-                                    }
-                                ],
-                            },
+                "focus": {"document": ["DO"], "status": "outstanding"},
+                "open_question": {
+                    "kind": "customer_pick",
+                    "options": [
+                        {
+                            "position": 1,
+                            "label": "Chin Chun (family)",
+                            "uuids": ["led-1", "led-2"],
+                            "entity_type": "customer",
                         }
-                    }
-                ),
+                    ],
+                },
             },
         )
-        db.commit()
         stub_access()
 
         v = verdict(answers_open_question={"resolved": True, "picks": [1], "answer": "1"}, reference_positions=[1])
@@ -213,27 +206,18 @@ class TestJourneyChain:
     def test_step_6_exclusive_product_only_customer_family_survives(
         self, session_factory, stub_parser, stub_access
     ) -> None:
-        db = session_factory()
-        db.execute(
-            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+        _set_session_vars(
+            session_factory,
             {
-                "cid": str(CONTACT_ID),
-                "sv": json.dumps(
-                    {
-                        "variables": {
-                            "focus": {
-                                "document": ["DO"],
-                                "status": "outstanding",
-                                "customers": [{"raw": "chin chun", "canonical_code": "led-1"}, {"raw": "chin chun", "canonical_code": "led-2"}],
-                                "products": [{"raw": "OLD-PRODUCT", "canonical_code": "OLD-PRODUCT"}],
-                            },
-                            "open_question": None,
-                        }
-                    }
-                ),
+                "focus": {
+                    "document": ["DO"],
+                    "status": "outstanding",
+                    "customers": [{"raw": "chin chun", "canonical_code": "led-1"}, {"raw": "chin chun", "canonical_code": "led-2"}],
+                    "products": [{"raw": "OLD-PRODUCT", "canonical_code": "OLD-PRODUCT"}],
+                },
+                "open_question": None,
             },
         )
-        db.commit()
         stub_access()
 
         v = verdict(
