@@ -421,3 +421,64 @@ class TestDataChangesReachEveryPayload:
         body = client.get(_CRM.format(id=request.id)).json()
 
         assert "data_changes" not in body["lines"][0]
+
+
+# ---------------------------------------------------------------------------
+# R9 (Phase 3 review) - `design_media`'s `images` map only walks each row's
+# own HOST images (`row["images"]`), never `row["parts"][*]["images"]` - a
+# layer bound to a PART's photo (D7: "a layer may pick ANY part as its
+# subject") has no signed URL in the export payload at all.
+# ---------------------------------------------------------------------------
+
+
+def test_every_part_photo_is_in_the_image_map_too():
+    """R9: a part's own photo must reach `images` the same way the host's
+    does - `design_media` unit-tested directly (service level), since the
+    gap is in the map builder itself, not any one route."""
+    from app.models.product_combo import ProductCombo, ProductComboPart
+    from app.services.dealer_kit.tag_sheet_export_service import design_media
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    with blank_session() as db:
+        contact_id = seed.seed_portal_contact(db)
+        cabinet = seed.seed_product(db)
+        mirror = seed.seed_product(db)
+        mirror_photo = seed.seed_product_photo(db, mirror)
+
+        combo = ProductCombo(
+            id=str(uuid.uuid4()), host_product_id=cabinet.id, name="2 pc", sort_order=0
+        )
+        db.add(combo)
+        db.flush()
+        db.add(
+            ProductComboPart(
+                id=str(uuid.uuid4()),
+                combo_id=combo.id,
+                part_product_id=mirror.id,
+                choice_group=None,
+                sort_order=0,
+            )
+        )
+        db.flush()
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact_id,
+            company_id=seed.SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": cabinet.id,
+                        "combo_id": combo.id,
+                        "parts": [{"product_id": mirror.id}],
+                    }
+                ],
+            },
+        )
+        db.flush()
+
+        _rows, media = design_media(db, request, doc={})
+
+    assert mirror_photo.id in media["images"], media["images"]

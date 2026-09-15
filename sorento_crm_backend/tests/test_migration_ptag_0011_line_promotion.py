@@ -391,3 +391,73 @@ def test_upgrade_splits_existing_open_tags(db):
     )
     assert by_request_tag[new_tag_id]["x_mm"] == 5
     assert by_request_tag[new_tag_id]["width_mm"] == 95
+
+
+def test_upgrade_two_open_groups_same_combo_order_as_the_service_builder(db):
+    """R14: `_split_open_tags`'s own `SELECT ... FROM price_tag_request_line_parts`
+    carries no `ORDER BY` - with TWO open groups on one line, which group is
+    treated as the outer loop of `itertools.product` depends on whatever
+    order Postgres happens to return the two rows in. The service builder
+    (`PriceTagRequestService._add_line_tags`) never has this problem: it
+    reads `line.parts`, a relationship ordered by `sort_order` (the LOWER
+    sort_order group is always outermost).
+
+    Forced deterministic here by inserting the HIGHER-sort_order group
+    (Basin, 1) BEFORE the LOWER one (Faucet, 0) - a plain heap scan of a
+    fresh two-row table within one uncommitted transaction returns insertion
+    order, so an un-ordered migration puts Basin outermost while the service
+    convention puts Faucet outermost; the second tag minted (sort_order 1)
+    is where the two orderings are guaranteed to diverge.
+    """
+    _rewind_to_pre_migration(db)
+    request_id, line_ids = _request_with_lines(db, line_count=1)
+    line_id = line_ids[0]
+    silver_id = _product(db, "PT11FSIL")
+    gold_id = _product(db, "PT11FGLD")
+    white_id = _product(db, "PT11BWHT")
+    black_id = _product(db, "PT11BBLK")
+
+    # Basin (sort_order 1) inserted FIRST.
+    db.execute(
+        text(
+            "INSERT INTO price_tag_request_line_parts "
+            "(id, line_id, role, candidates, sort_order) "
+            "VALUES (:i, :l, 'Basin', CAST(:c AS jsonb), 1)"
+        ),
+        {"i": _uid(), "l": line_id, "c": f'["{white_id}", "{black_id}"]'},
+    )
+    # Faucet (sort_order 0) inserted SECOND.
+    db.execute(
+        text(
+            "INSERT INTO price_tag_request_line_parts "
+            "(id, line_id, role, candidates, sort_order) "
+            "VALUES (:i, :l, 'Faucet', CAST(:c AS jsonb), 0)"
+        ),
+        {"i": _uid(), "l": line_id, "c": f'["{silver_id}", "{gold_id}"]'},
+    )
+    db.execute(
+        text(
+            "INSERT INTO price_tag_request_tags (id, line_id, sort_order, quantity, choices) "
+            "VALUES (:i, :l, 0, 1, '{}'::jsonb)"
+        ),
+        {"i": _uid(), "l": line_id},
+    )
+    db.flush()
+
+    _run_upgrade(db)
+
+    tags = db.execute(
+        text(
+            "SELECT choices FROM price_tag_request_tags "
+            "WHERE line_id = :l ORDER BY sort_order"
+        ),
+        {"l": line_id},
+    ).all()
+    assert len(tags) == 4, "2 x 2 combinations"
+
+    # Faucet (sort_order 0) outermost, Basin (sort_order 1) innermost - the
+    # SAME convention `line.parts`' `order_by` gives the service builder.
+    # The SECOND tag (index 1) is where an un-ordered read diverges: Faucet
+    # outermost puts {silver, black} second; Basin outermost (today's bug)
+    # puts {white, gold} second instead.
+    assert dict(tags[1].choices) == {"Faucet": silver_id, "Basin": black_id}
