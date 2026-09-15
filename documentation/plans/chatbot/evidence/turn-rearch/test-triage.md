@@ -196,3 +196,19 @@ above is left as-is (historical record) rather than rewritten in place.
   hits). RED for that real reason; the guard negative (warehouse kept on
   `inventory`/`spo_allocation`) stays green. Third genuine regression found by this
   triage, not the tester's fix to make.
+
+- **`test_s6c_answer_lane.py` (2774 lines) - MIXED, split done.** Exactly the two
+  functions the original triage row named
+  (`TestR1DemandQuantityAnswer::test_with_the_switch_on_...`/
+  `test_with_the_switch_off_...`) used `head.route.decide` (LOCAL imports, so the
+  file collected fine - 565 tests, zero errors - and only these two would have
+  errored when actually run). `turn/route.py`'s own docstring: stock_denied/
+  demand_qty "are decided from the CONTACT's own record before a plan exists at all
+  ... the engine settles those before it routes" - found the real seam,
+  `engine.py::_stock_check_denied`/`_demand_qty_missing` (both still exist,
+  unchanged in shape). Added one small `_decide()` staticmethod to the test class
+  that builds a real `Envelope` and calls those two functions directly (not a
+  hand-rolled reimplementation of the rule); swapped the two call sites. All three
+  tests in the class pass (the untouched third, `test_a_demand_the_stock_
+  covers...`, never used `decide` at all). The other ~2770 lines - every other
+  class in the file - untouched.
