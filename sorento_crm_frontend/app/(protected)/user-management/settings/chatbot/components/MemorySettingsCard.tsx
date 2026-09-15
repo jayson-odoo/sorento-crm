@@ -1,19 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { LoaderCircleIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import {
-  useChatbotMemorySettings,
-  useSaveChatbotMemorySettings,
-} from '../hooks/useChatbotConfigMock';
-import type { ChatbotMemorySettings } from '../services/chatbotConfigMockService';
+import type { ChatbotMemorySettings } from '../services/chatbotSettingsService';
 
 const RETENTION_OPTIONS = [30, 90, 180, 365].map((days) => ({
   value: String(days),
@@ -23,45 +15,30 @@ const RETENTION_OPTIONS = [30, 90, 180, 365].map((days) => ({
 const PROFILE_FIELD_OPTIONS = [
   { value: 'tier', label: 'Tier' },
   { value: 'language', label: 'Language' },
-  { value: 'ledgers', label: 'Default ledgers' },
+  { value: 'default_ledgers', label: 'Default ledgers' },
 ];
 
 const FOCUS_RESET_OPTIONS = [
-  { value: 'topic switch', label: 'Topic switch' },
-  { value: 'conversation close', label: 'Conversation close' },
+  { value: 'topic_switch', label: 'Topic switch' },
+  { value: 'conversation_close', label: 'Conversation close' },
 ];
 
-/** Settings > Chatbot > Memory card (S1, AC-1513, M5). */
-export default function MemorySettingsCard() {
-  const query = useChatbotMemorySettings();
-  const save = useSaveChatbotMemorySettings();
-  const [draft, setDraft] = useState<ChatbotMemorySettings | null>(null);
-
-  useEffect(() => {
-    if (query.data && draft === null) setDraft(query.data);
-  }, [query.data, draft]);
-
-  const set = <K extends keyof ChatbotMemorySettings>(key: K, value: ChatbotMemorySettings[K]) =>
-    setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
-
-  if (query.isError && !draft) {
-    return (
-      <Card>
-        <CardHeader className="border-b border-border">
-          <CardTitle>Memory</CardTitle>
-        </CardHeader>
-        <CardContent className="py-5">
-          <p className="text-sm text-destructive">
-            Memory settings could not be loaded. Reload the page to try again.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (query.isLoading || !draft) {
-    return <Skeleton className="h-56 w-full" />;
-  }
+/**
+ * Settings > Chatbot > Memory card (chatbot turn re-architecture, AC-1513, M5).
+ *
+ * Backed by `system_settings.chatbot_memory` (S5, AC-1561), one JSONB with these four
+ * sub-keys - a single decision made on one card, not four columns. Controlled: the
+ * page's own draft carries the value, saved by the page's single Save button.
+ */
+export default function MemorySettingsCard({
+  value,
+  onChange,
+}: {
+  value: ChatbotMemorySettings;
+  onChange: (next: ChatbotMemorySettings) => void;
+}) {
+  const set = <K extends keyof ChatbotMemorySettings>(key: K, next: ChatbotMemorySettings[K]) =>
+    onChange({ ...value, [key]: next });
 
   return (
     <Card>
@@ -75,14 +52,14 @@ export default function MemorySettingsCard() {
           </Label>
           <Switch
             id="chatbot-recall-default"
-            checked={draft.recall_default}
+            checked={value.recall_default}
             onCheckedChange={(v) => set('recall_default', v === true)}
           />
         </div>
         <div className="space-y-1.5">
           <Label>Keep episodes for</Label>
           <SearchableSelect
-            value={String(draft.episode_retention_days)}
+            value={String(value.episode_retention_days)}
             onChange={(v) => set('episode_retention_days', Number(v))}
             options={RETENTION_OPTIONS}
           />
@@ -90,7 +67,7 @@ export default function MemorySettingsCard() {
         <div className="space-y-1.5">
           <Label>Profile fields</Label>
           <SearchableMultiSelect
-            value={draft.profile_fields}
+            value={value.profile_fields}
             onChange={(v) => set('profile_fields', v)}
             options={PROFILE_FIELD_OPTIONS}
           />
@@ -98,21 +75,10 @@ export default function MemorySettingsCard() {
         <div className="space-y-1.5">
           <Label>Focus reset on</Label>
           <SearchableMultiSelect
-            value={draft.focus_reset_events}
+            value={value.focus_reset_events}
             onChange={(v) => set('focus_reset_events', v)}
             options={FOCUS_RESET_OPTIONS}
           />
-        </div>
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            size="sm"
-            disabled={save.isPending}
-            onClick={() => draft && save.mutate(draft, { onSuccess: (saved) => setDraft(saved) })}
-          >
-            {save.isPending && <LoaderCircleIcon className="size-4 animate-spin" />}
-            Save
-          </Button>
         </div>
       </CardContent>
     </Card>

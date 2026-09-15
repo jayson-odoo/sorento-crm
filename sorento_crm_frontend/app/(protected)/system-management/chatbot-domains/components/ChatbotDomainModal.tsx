@@ -123,7 +123,7 @@ export default function ChatbotDomainModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden p-0">
+      <DialogContent className="flex max-h-[90dvh] max-w-2xl flex-col overflow-hidden p-0">
         <DialogHeader className="flex-row items-center justify-between gap-4 border-b px-6 py-4 pr-12">
           <div className="min-w-0 flex-1">
             <p className="text-xs text-muted-foreground">Chatbot Domains</p>

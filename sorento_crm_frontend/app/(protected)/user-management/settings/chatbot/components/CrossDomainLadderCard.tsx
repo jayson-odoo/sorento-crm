@@ -7,29 +7,36 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import OrderableList from '@/components/common/OrderableList';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { useChatbotDomainsQuery } from '@/app/(protected)/system-management/chatbot-domains/hooks/useChatbotDomains';
 import {
-  useChatbotDefaultLadder,
-  useSaveChatbotDefaultLadder,
-} from '../hooks/useChatbotConfigMock';
+  useChatbotDomainsQuery,
+  useUpdateChatbotDomain,
+} from '@/app/(protected)/system-management/chatbot-domains/hooks/useChatbotDomains';
+import type { ChatbotDomainInput } from '@/app/(protected)/system-management/chatbot-domains/types/chatbotDomain.types';
+
+/** The domain the default (stock) ladder climbs from - contract line 3. */
+const DEFAULT_LADDER_DOMAIN = 'inventory';
 
 /**
- * Settings > Chatbot > Cross-domain ladder card (S1, AC-1513, M5).
+ * Settings > Chatbot > Cross-domain ladder card (chatbot turn re-architecture, AC-1513, M5).
  *
  * The default (stock) ladder: when a stock answer is zero or short, climb in this
- * order (contract line 3). This is a shortcut onto the "inventory" domain row's own
- * `ladder` column - the same field the Domain modal's Ladder tab edits - not a
- * second setting; mocked here as its own array for Phase 1 (see the service header).
+ * order. A shortcut onto the "inventory" domain row's own `ladder` column - the SAME
+ * field the Domain modal's Ladder tab edits (S5, AC-1561) - not a second setting; saved
+ * through `chatbotDomainService` rather than duplicating the column.
  */
 export default function CrossDomainLadderCard() {
-  const query = useChatbotDefaultLadder();
-  const save = useSaveChatbotDefaultLadder();
+  const { data: domains, isLoading, isError } = useChatbotDomainsQuery();
+  const update = useUpdateChatbotDomain();
   const [draft, setDraft] = useState<string[] | null>(null);
-  const { data: domains } = useChatbotDomainsQuery();
+
+  const inventoryDomain = useMemo(
+    () => (domains ?? []).find((d) => d.name === DEFAULT_LADDER_DOMAIN),
+    [domains],
+  );
 
   useEffect(() => {
-    if (query.data && draft === null) setDraft(query.data);
-  }, [query.data, draft]);
+    if (inventoryDomain && draft === null) setDraft(inventoryDomain.ladder);
+  }, [inventoryDomain, draft]);
 
   const labelByName = useMemo(
     () => new Map((domains ?? []).map((d) => [d.name, d.label])),
@@ -38,12 +45,12 @@ export default function CrossDomainLadderCard() {
   const rungOptions = useMemo(
     () =>
       (domains ?? [])
-        .filter((d) => !(draft ?? []).includes(d.name))
+        .filter((d) => d.name !== DEFAULT_LADDER_DOMAIN && !(draft ?? []).includes(d.name))
         .map((d) => ({ value: d.name, label: d.label })),
     [domains, draft],
   );
 
-  if (query.isError && !draft) {
+  if (isError && !draft) {
     return (
       <Card>
         <CardHeader className="border-b border-border">
@@ -58,9 +65,20 @@ export default function CrossDomainLadderCard() {
     );
   }
 
-  if (query.isLoading || !draft) {
+  if (isLoading || !draft || !inventoryDomain) {
     return <Skeleton className="h-56 w-full" />;
   }
+
+  const save = () => {
+    if (!draft) return;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stripped, not sent
+    const { id, updated_at, ...rest } = inventoryDomain;
+    const input: ChatbotDomainInput = { ...rest, ladder: draft };
+    update.mutate(
+      { id: inventoryDomain.id, input },
+      { onSuccess: (saved) => setDraft(saved.ladder) },
+    );
+  };
 
   return (
     <Card>
@@ -89,13 +107,8 @@ export default function CrossDomainLadderCard() {
           emptyMessage="No other domain to add."
         />
         <div className="flex justify-end">
-          <Button
-            type="button"
-            size="sm"
-            disabled={save.isPending}
-            onClick={() => draft && save.mutate(draft, { onSuccess: (saved) => setDraft(saved) })}
-          >
-            {save.isPending && <LoaderCircleIcon className="size-4 animate-spin" />}
+          <Button type="button" size="sm" disabled={update.isPending} onClick={save}>
+            {update.isPending && <LoaderCircleIcon className="size-4 animate-spin" />}
             Save
           </Button>
         </div>

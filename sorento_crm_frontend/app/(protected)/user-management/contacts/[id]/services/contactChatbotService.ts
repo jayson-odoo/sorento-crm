@@ -1,73 +1,84 @@
 /**
  * ============================================================================
- * Contact > Access > Chatbot card - MOCK service (chatbot turn re-architecture,
- * S1, AC-1515)
+ * Contact > Access > Chatbot card (chatbot turn re-architecture, S5, AC-1560/AC-1561)
  * ============================================================================
- * Layering: UI -> hooks (useContactChatbotProfile) -> THIS service -> (Phase 2:
- * lib/api-client).
+ * Layering: UI -> hooks (useContactChatbotProfile) -> THIS service -> lib/api -> backend.
  *
- * PHASE 1 - MOCKED. Swapped for the real contract in S5 (PLAN "Phase 1" note):
- *
- *   GET /api/v1/user-management/contacts/{id}/chatbot
+ *   GET /api/v1/user-management/contacts/{id}          the contact record already
+ *     carries `chatbot_profile` / `chatbot_recall_enabled` (AC-1503, both dict
+ *     builders) - no dedicated GET route exists for the card alone.
  *   PUT /api/v1/user-management/contacts/{id}/chatbot
- *     { recall_enabled, tier, language }
- *     `tier` is READ-ONLY here once a pick has set it (`tier_set_by_pick`): the
- *     Profile shelf's writer is "explicit picks" (PLAN "Design > State"), and this
- *     card is one of those writers, but a value the CONTACT already picked in a
- *     conversation is not overwritten from here without the picture of what that
- *     changes downstream - AC-1515 asks for read-only in that case, not a second
- *     writer race.
+ *     { chatbot_profile?, chatbot_recall_enabled? }
+ *     Absent means "leave it alone", never "clear it" - a recall toggle must not
+ *     switch off as a side effect of saving a language.
+ *
+ * The mocked S1 shape (`tier_set_by_pick`, `tier_set_at`, `ledgers_summary`) does not
+ * exist on the real contact - the backend has no signal distinguishing a value a pick
+ * set from one typed here, so `tier` is edited directly like `language`, same as every
+ * other profile field on this card.
  */
 
-import type { NarrowingPolicy } from '@/app/(protected)/system-management/chatbot-domains/types/chatbotDomain.types';
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
+import { getContact } from './contactService';
 
 export interface ContactChatbotProfile {
   recall_enabled: boolean;
   tier: string | null;
-  /** True once a WhatsApp pick set this contact's tier - the field renders read-only. */
-  tier_set_by_pick: boolean;
-  tier_set_at: string | null;
   language: string | null;
-  /** Read-only summary - the default ledger scope for this contact's family. */
-  ledgers_summary: string;
+  default_ledgers: string[];
+  /** Not edited on this card - carried through unchanged so a save from here never
+   * clears it (the PUT route replaces the whole `chatbot_profile` dict, not a merge). */
+  always_full_report: boolean;
 }
 
-const NETWORK_DELAY_MS = 150;
-
-function delay<T>(value: T): Promise<T> {
-  return new Promise((resolve) => setTimeout(() => resolve(value), NETWORK_DELAY_MS));
-}
-
-// One row per contact id, in-memory. A contact never seen before reads as the
-// same defaults every fresh conversation starts from.
-const PROFILES = new Map<string, ContactChatbotProfile>();
-
-function defaults(): ContactChatbotProfile {
+function fromContact(contact: {
+  chatbot_profile?: {
+    tier?: string | null;
+    language?: string | null;
+    default_ledgers?: string[] | null;
+    always_full_report?: boolean | null;
+  } | null;
+  chatbot_recall_enabled?: boolean;
+}): ContactChatbotProfile {
+  const profile = contact.chatbot_profile ?? null;
   return {
-    recall_enabled: false,
-    tier: null,
-    tier_set_by_pick: false,
-    tier_set_at: null,
-    language: 'en',
-    ledgers_summary: 'All ledgers in this contact’s family.',
+    recall_enabled: Boolean(contact.chatbot_recall_enabled),
+    tier: profile?.tier ?? null,
+    language: profile?.language ?? null,
+    default_ledgers: profile?.default_ledgers ?? [],
+    always_full_report: Boolean(profile?.always_full_report),
   };
 }
 
 export async function getContactChatbotProfile(contactId: string): Promise<ContactChatbotProfile> {
-  const row = PROFILES.get(contactId) ?? defaults();
-  return delay({ ...row });
+  const contact = await getContact(contactId);
+  return fromContact(contact);
 }
+
+export type ContactChatbotSaveInput = ContactChatbotProfile;
 
 export async function saveContactChatbotProfile(
   contactId: string,
-  input: { recall_enabled: boolean; language: string | null },
+  input: ContactChatbotSaveInput,
 ): Promise<ContactChatbotProfile> {
-  const existing = PROFILES.get(contactId) ?? defaults();
-  const next: ContactChatbotProfile = { ...existing, ...input };
-  PROFILES.set(contactId, next);
-  return delay({ ...next });
+  const response = await apiFetch(`/api/v1/user-management/contacts/${contactId}/chatbot`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      // The route replaces the whole `chatbot_profile` dict (never a merge), so every
+      // field the contact already had is sent back, not just the one edited here.
+      chatbot_profile: {
+        tier: input.tier,
+        language: input.language,
+        default_ledgers: input.default_ledgers,
+        always_full_report: input.always_full_report,
+      },
+      chatbot_recall_enabled: input.recall_enabled,
+    }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to save chatbot settings'));
+  }
+  return fromContact(await response.json());
 }
-
-// Narrowing policy re-exported only so the card's docblock can point at the one
-// enum the "tier" field is validated against on the real route - not used yet.
-export type { NarrowingPolicy };
