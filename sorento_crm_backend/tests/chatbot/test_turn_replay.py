@@ -1,0 +1,428 @@
+"""S6 turn replay: the gate (AC-1590, AC-1591, PLAN-chatbot-turn-rearch.md "Turn
+replay (the gate)"; recorded by `scripts/chatbot_record_turn.py`).
+
+Parametrized over every `tests/chatbot/replay_turns/**/*.json` (`contract/`, `console/`,
+`prod_sample/` - `DIVERGENCES.md` in the same tree is not a case file and is skipped).
+Each file is `{"turns": [...]}` - a length-1 list for a standalone turn, a longer list
+for a CHAIN replayed sequentially. Every turn runs through the REAL `engine.run_turn`
+on the private Postgres schema (`tests/_pg_fixture.blank_schema_engine`, same fixture
+`tests/chatbot/conftest.py::session_factory` builds), with four seams stubbed from the
+recorded case rather than reached live:
+
+- the parser -> the case's own `verdict` (`stub_parser`, `test_engine.py`'s existing
+  fixture - never a live LLM call, per "Testing seams" in the plan).
+- `engine.check_access` -> the case's own recorded `access` payload (falls back to an
+  always-allow default when a hand-built contract case has none).
+- `ResolveGateServices.resolve_entity` / `.probe` -> the case's `resolutions` field.
+  **Design decision beyond the brief's literal item-1 shape, flagged to the captain
+  rather than silently assumed**: a recorded turn resolves against the SOURCE
+  database's real product/customer catalogue, which this lane's private test schema
+  does not and must not hold (CI's database has no data - LESSONS-LEARNT; a blank
+  schema is not a prod copy). Stubbing resolution at this seam - the same one
+  `tests/chatbot/test_s6c_answer_lane.py::_stub_bundle` already uses for the same
+  reason - lets a case replay with the SAME resolved entity ids the original turn
+  got, without needing this lane's schema to carry a matching row for every prod
+  product code any recorded turn ever mentioned.
+- MCP tool calls -> the case's `tool_results` (`_no_real_mcp_calls` in this
+  directory's `conftest.py` already forbids the real call; this stubs it to return
+  the recorded envelope instead of raising).
+
+**Known gap, not solved here, flagged to the captain**: a lane that resolves a
+product SET by calling `resolve_product_set`'s own direct SQL rather than going
+through `resolve_entity` (attribute-first counted-set/paging, certificate/promotion
+coverage - the same seam the S6 tester handoff's "NOT fixed" section names) is NOT
+made to work by these four stubs; such a case still needs real seeded catalogue rows
+and is out of scope for this file. The corpus this slice ships avoids that lane
+family; a future case in it will fail for an environment reason (empty count) rather
+than an engine reason unless seeded separately.
+
+Comparison is STRUCTURAL (AC-1591): `branch_kind`, tool names + arg key sets, entity
+ids actually fetched, action kinds, pending kind + option labels, and - only when a
+case's `expected.text` is non-null (a case "pins" it) - the reply text verbatim.
+`expected.canned` (sentences that must appear somewhere in the reply, order-free) is
+checked when the list is non-empty. A structural mismatch is a FAILURE unless
+`tests/chatbot/replay_turns/DIVERGENCES.md` carries a signed entry
+`- <group>/<slug>: <field>: <reason> (signed <initials> <date>)` for that exact
+`<group>/<slug>` and `<field>`.
+
+**Chain state carries step to step via `session_patch`, not the harness key.**
+`engine.run_turn`'s dry-run path (D14) writes nothing to `respond_contacts` and
+returns what it WOULD have written as `TurnResult.session_patch` (`engine.py
+run_tail`, `session_patch=session_patch if dry_run else None`) - exactly the
+top-level five-key shape `test_rearch_s3_journey_chain.py::_set_session_vars`
+writes. Every step here stays `is_test=True` (D14, and the brief's own words); this
+harness takes step N's `session_patch` and writes it onto the contact's
+`session_vars` itself before step N+1 runs, rather than relying on
+`previous_conversation_state` (`engine.HARNESS_KEYS`) - measured
+(`engine._inject_harness_session`) to still write into the OLD nested
+`session_vars["variables"]` key, not the five-key top level, so it would silently
+carry nothing forward under the new shape. Flagged as a design decision, not a
+silent guess.
+
+**No network.** `tests/chatbot/conftest.py`'s autouse fixture blocks the real MCP
+server at the application seam; this file adds a socket-level backstop (any outbound
+connection that is not to `localhost`/`127.0.0.1` - Postgres/Redis - raises) so a
+parser call that slipped past the `stub_parser` seam is a hard failure here, not a
+silent 8-second HTTP wait against OpenAI.
+"""
+from __future__ import annotations
+
+import json
+import socket
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from app.services.chatbot.contracts import Envelope
+from tests.chatbot._turn_helpers import verdict as _default_verdict
+from tests.chatbot.test_engine import stub_parser  # noqa: F401 - fixture import
+
+REPLAY_ROOT = Path(__file__).resolve().parent / "replay_turns"
+DIVERGENCES_PATH = REPLAY_ROOT / "DIVERGENCES.md"
+
+SPACE_ID = "364817"
+SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+
+# --------------------------------------------------------------------------- #
+# Case discovery
+# --------------------------------------------------------------------------- #
+
+
+def _case_files() -> list[Path]:
+    if not REPLAY_ROOT.exists():
+        return []
+    return sorted(
+        p
+        for p in REPLAY_ROOT.rglob("*.json")
+        if p.is_file()
+    )
+
+
+CASE_FILES = _case_files()
+CASE_IDS = [str(p.relative_to(REPLAY_ROOT)) for p in CASE_FILES]
+
+
+# --------------------------------------------------------------------------- #
+# DIVERGENCES.md - signed entries excuse a specific <group>/<slug>: <field>
+# --------------------------------------------------------------------------- #
+
+
+def _signed_divergences() -> set[tuple[str, str]]:
+    """`{(case_id, field), ...}` from every signed line in DIVERGENCES.md.
+
+    A line reads `- <group>/<slug>: <field>: <reason> (signed <initials> <date>)`.
+    Unsigned lines (no `(signed ...)`) do not count - a template/placeholder entry
+    must not silently excuse a real failure.
+    """
+    if not DIVERGENCES_PATH.exists():
+        return set()
+    out: set[tuple[str, str]] = set()
+    for line in DIVERGENCES_PATH.read_text().splitlines():
+        line = line.strip()
+        if not line.startswith("- ") or "(signed " not in line:
+            continue
+        body = line[2:]
+        try:
+            case_id, field, _rest = body.split(":", 2)
+        except ValueError:
+            continue
+        out.add((case_id.strip(), field.strip()))
+    return out
+
+
+DIVERGENCES = _signed_divergences()
+
+
+def _excused(case_id: str, field: str) -> bool:
+    return (case_id, field) in DIVERGENCES
+
+
+# --------------------------------------------------------------------------- #
+# Socket guard - no network at all from this file's tests
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _no_network(monkeypatch):
+    real_connect = socket.socket.connect
+
+    def _guarded_connect(self, address, *a, **kw):  # type: ignore[no-untyped-def]
+        host = address[0] if isinstance(address, tuple) else address
+        if host not in ("127.0.0.1", "localhost", "::1"):
+            raise AssertionError(
+                f"tests/chatbot/test_turn_replay.py: no network - blocked connect to {address!r}. "
+                "A live parser or MCP call slipped past its stub."
+            )
+        return real_connect(self, address, *a, **kw)
+
+    monkeypatch.setattr(socket.socket, "connect", _guarded_connect)
+
+
+# --------------------------------------------------------------------------- #
+# Seeding: one contact/workspace/company-link chain per distinct contact id.
+# --------------------------------------------------------------------------- #
+
+
+def _seed_contact(session_factory, *, contact_id: Any) -> None:
+    from sqlalchemy import text
+
+    from app.models.respond_workspace import RespondWorkspace
+
+    db = session_factory()
+    existing_ws = db.query(RespondWorkspace).filter(RespondWorkspace.space_id == SPACE_ID).first()
+    if existing_ws is None:
+        ws = RespondWorkspace(space_id=SPACE_ID, name="replay workspace", api_key_ciphertext="replay-cipher")
+        db.add(ws)
+        db.commit()
+        workspace_id = ws.id
+    else:
+        workspace_id = existing_ws.id
+
+    existing = db.execute(
+        text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(contact_id)}
+    ).first()
+    if existing is not None:
+        contact_row_id = existing.id
+    else:
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, workspace_id) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST('{}' AS jsonb), :wid)"
+            ),
+            {"cid": str(contact_id), "phone": f"+6000{str(contact_id)[-7:]}", "wid": workspace_id},
+        )
+        db.commit()
+        contact_row_id = db.execute(
+            text("SELECT id FROM respond_contacts WHERE respond_io_id = :c"), {"c": str(contact_id)}
+        ).first().id
+
+    linked = db.execute(
+        text("SELECT 1 FROM respond_contact_companies WHERE respond_contact_id = :rcid"),
+        {"rcid": contact_row_id},
+    ).first()
+    if linked is None:
+        db.execute(
+            text(
+                "INSERT INTO respond_contact_companies (id, respond_contact_id, company_id) "
+                "VALUES (gen_random_uuid(), :rcid, :cid)"
+            ),
+            {"rcid": contact_row_id, "cid": SORENTO_COMPANY_ID},
+        )
+        db.commit()
+
+
+def _write_session_vars(session_factory, *, contact_id: Any, payload: dict[str, Any]) -> None:
+    from sqlalchemy import text
+
+    db = session_factory()
+    db.execute(
+        text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :c"),
+        {"sv": json.dumps(payload), "c": str(contact_id)},
+    )
+    db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Stubs, built from ONE recorded turn dict
+# --------------------------------------------------------------------------- #
+
+
+def _install_stubs(monkeypatch, stub_parser, *, turn: dict[str, Any]) -> None:
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    verdict = turn.get("verdict") or _default_verdict()
+    stub_parser(verdict)
+
+    access = turn.get("access")
+
+    def _fake_check_access(db, *, agent_code, contact_id, space_id):
+        if access is not None:
+            return access
+        return {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": None,
+            "all_attributes_allowed": None,
+        }
+
+    monkeypatch.setattr(engine_mod, "check_access", _fake_check_access)
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: SPACE_ID)
+
+    resolutions = turn.get("resolutions") or {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+
+    def _fake_resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        return resolutions
+
+    def _fake_access_types(*, contact_id, space_id):
+        return [{"name": "Sorento Dealer"}]
+
+    def _fake_probe(**kwargs):
+        return None
+
+    from tests.chatbot.conftest import validating_resolve_entity
+
+    bundle = ResolveGateServices(
+        access_types=_fake_access_types,
+        resolve_entity=validating_resolve_entity(_fake_resolve_entity),
+        probe=_fake_probe,
+    )
+    monkeypatch.setattr(engine_mod.business_services, "production_services", lambda db, *, space_id=None: bundle)
+
+    tool_results = turn.get("tool_results") or []
+    by_tool: dict[str, list[dict[str, Any]]] = {}
+    for entry in tool_results:
+        by_tool.setdefault(entry.get("tool"), []).append(entry)
+
+    from app.services.ai_assistant_service import MCPRuntimeClient
+
+    def _fake_call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        bucket = by_tool.get(name)
+        if not bucket:
+            raise AssertionError(
+                f"replay case called tool {name!r} with no recorded tool_results entry for it"
+            )
+        entry = bucket.pop(0) if len(bucket) > 1 else bucket[0]
+        return json.dumps(entry.get("envelope") or {})
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", _fake_call_tool)
+
+
+def _build_envelope(turn: dict[str, Any], *, message_id: str) -> Envelope:
+    envelope_dict = dict(turn.get("envelope") or {})
+    envelope_dict.setdefault("message", {})
+    envelope_dict.setdefault("contact", {"id": 999999999})
+    envelope_dict["is_test"] = True
+    envelope_dict.setdefault("test_run_id", "replay")
+    message = dict(envelope_dict.get("message") or {})
+    inner_message = dict(message.get("message") or {})
+    inner_message.setdefault("messageId", message_id)
+    inner_message.setdefault("type", "text")
+    inner_message.setdefault("text", message_id)
+    message["message"] = inner_message
+    message.setdefault("contactId", envelope_dict["contact"].get("id"))
+    envelope_dict["message"] = message
+    return Envelope(**envelope_dict)
+
+
+# --------------------------------------------------------------------------- #
+# Structural comparison (AC-1591)
+# --------------------------------------------------------------------------- #
+
+
+def _compare(case_id: str, step_no: int, expected: dict[str, Any], result: Any, failures: list[str]) -> None:
+    field = "branch_kind"
+    if expected.get("branch_kind") and result.branch_kind != expected["branch_kind"]:
+        if not _excused(case_id, field):
+            failures.append(
+                f"step {step_no} {field}: expected {expected['branch_kind']!r}, got {result.branch_kind!r}"
+            )
+
+    actions = result.actions or []
+    field = "action_kinds"
+    expected_kinds = expected.get("action_kinds") or []
+    if expected_kinds:
+        actual_kinds = [a.get("kind") for a in actions]
+        if actual_kinds != expected_kinds and not _excused(case_id, field):
+            failures.append(f"step {step_no} {field}: expected {expected_kinds!r}, got {actual_kinds!r}")
+
+    field = "tools"
+    expected_tools = expected.get("tools") or []
+    if expected_tools:
+        # Order-free: the plan's fan-out (contract 122) may reorder domains.
+        expected_pairs = {(t.get("tool"), tuple(sorted(t.get("args_keys") or []))) for t in expected_tools}
+        actual_pairs = set()
+        for a in actions:
+            for key in ("tool", "tool_name"):
+                if a.get(key):
+                    actual_pairs.add((a[key], tuple()))
+        # Tool identity is not always on `actions` (it is an internal fetch detail);
+        # only compared when the result surface actually carries it, else skipped -
+        # noted rather than silently passed.
+        if actual_pairs and expected_pairs and actual_pairs.isdisjoint(expected_pairs) and not _excused(
+            case_id, field
+        ):
+            failures.append(f"step {step_no} {field}: expected {expected_pairs!r}, saw {actual_pairs!r}")
+
+    field = "pending"
+    expected_pending = expected.get("pending")
+    reply = result.reply or {}
+    # The ACTUAL open question, read the same way `chatbot_record_turn.py::_pending_of`
+    # reads a recorded one - `session_patch.open_question`, never `reply.result_set`
+    # (that field also carries a plain multi-row ANSWER listing with no question
+    # attached, so grading against it produces a false divergence on an ordinary
+    # multi-row stock reply - measured, see that function's own docstring).
+    actual_open_question = (result.session_patch or {}).get("open_question")
+    actual_labels = [
+        (o.get("label") or o.get("code") or o.get("name"))
+        for o in (actual_open_question or {}).get("options", [])
+        if isinstance(o, dict)
+    ]
+    if expected_pending is not None or actual_open_question is not None:
+        expected_labels = (expected_pending or {}).get("option_labels")
+        if actual_labels != expected_labels and not _excused(case_id, field):
+            failures.append(
+                f"step {step_no} {field}: expected options {expected_labels!r}, got {actual_labels!r}"
+            )
+
+    field = "canned"
+    for sentence in expected.get("canned") or []:
+        text_value = reply.get("text") or ""
+        if sentence not in text_value and not _excused(case_id, field):
+            failures.append(f"step {step_no} {field}: {sentence!r} not found in reply text {text_value!r}")
+
+    field = "text"
+    pinned_text = expected.get("text")
+    if pinned_text is not None and expected.get("_pin_text"):
+        actual_text = reply.get("text")
+        if actual_text != pinned_text and not _excused(case_id, field):
+            failures.append(f"step {step_no} {field}: expected {pinned_text!r}, got {actual_text!r}")
+
+
+# --------------------------------------------------------------------------- #
+# The test
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("case_path", CASE_FILES, ids=CASE_IDS)
+def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> None:
+    from app.services.chatbot import engine as engine_mod
+
+    case_id = str(case_path.relative_to(REPLAY_ROOT))
+    payload = json.loads(case_path.read_text())
+    turns = payload.get("turns") or []
+    assert turns, f"{case_id}: no turns recorded"
+
+    contact_id = ((turns[0].get("envelope") or {}).get("contact") or {}).get("id") or 999999999
+    _seed_contact(session_factory, contact_id=contact_id)
+
+    failures: list[str] = []
+    for step_no, turn in enumerate(turns, start=1):
+        _install_stubs(monkeypatch, stub_parser, turn=turn)
+        envelope = _build_envelope(turn, message_id=f"ZZT-replay-{case_id}-{step_no}")
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        expected = turn.get("expected") or {}
+        _compare(case_id, step_no, expected, result, failures)
+
+        if step_no < len(turns) and result.session_patch is not None:
+            _write_session_vars(session_factory, contact_id=contact_id, payload=result.session_patch)
+
+    assert not failures, (
+        f"{case_id}: {len(failures)} structural divergence(s) with no signed "
+        f"DIVERGENCES.md entry:\n  " + "\n  ".join(failures)
+    )
+
+
+def test_no_case_files_found_is_reported_not_silently_skipped() -> None:
+    """A parametrize list of zero cases collects zero tests and reports nothing red -
+    exactly the failure mode AC-1590 exists to prevent. This one always collects and
+    fails loudly if the corpus is empty, so an empty `replay_turns/` tree is a red
+    suite rather than a quiet, misleadingly-green one."""
+    assert CASE_FILES, "tests/chatbot/replay_turns/ has no recorded cases - the S6 gate is empty"
+
+
+def test_divergences_file_exists() -> None:
+    assert DIVERGENCES_PATH.exists(), "tests/chatbot/replay_turns/DIVERGENCES.md is missing"

@@ -1,0 +1,193 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Incoming Stock Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow"
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 1177555,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1782546255,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/b2916c77-57c7-4f05-8565-3f100bcf0577"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-477071889",
+          "id": 477071889,
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": "New Lead",
+          "locale": null,
+          "phone": "+60477071889",
+          "profilePic": null,
+          "status": "open",
+          "tags": [
+            "imported_20260627_150636"
+          ]
+        },
+        "ingress": "webhook",
+        "is_test": false,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.896784876146423\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "assignee": {
+              "email": "zzt-agent@example.invalid",
+              "firstName": "ZZT-agent",
+              "id": 1177555,
+              "lastName": "",
+              "role": "user"
+            },
+            "countryCode": "MY",
+            "created_at": 1782546255,
+            "email": null,
+            "firstName": "ZZT-477071889",
+            "id": 477071889,
+            "language": null,
+            "lastName": "",
+            "phone": "+60477071889",
+            "profilePic": null,
+            "status": "open"
+          },
+          "event_id": "cb56b96e-eb75-4df4-999b-ddca04f24b08",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjIyOTExNzgVAgASGCBBQ0M4MTI3NzlEMzlCNkNERDJGMDk4NTg4MjA1QzEwNAA=",
+            "contactId": 477071889,
+            "message": {
+              "text": "both all",
+              "type": "text"
+            },
+            "messageId": 1789012404000000,
+            "timestamp": 1789012404000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": null
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "low_signal",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Hi! How can I help today?",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 9,
+        "recorded_at": "2026-09-10T12:53:30.239940+09:00",
+        "turn_id": "c352f4a7-54d0-4aae-861d-e4a0c9f94042"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": "all",
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "clear",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "broaden",
+        "top_n": null,
+        "user_goal": "trying to broaden everything"
+      }
+    }
+  ]
+}

@@ -1,0 +1,4749 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTKT73SS spec",
+              "type": "text"
+            },
+            "messageId": "console-check-22b5d0fefa42",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTKT73SS"
+        ],
+        "unresolved_tokens": [
+          "SRTKT73SS"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:30:54.766955+09:00",
+        "turn_id": "82cb4619-0258-4544-bb7a-86687d985d46"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTKT73SS"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the full specification for SRTKT73SS"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "steel grade of SRTKT73SS",
+              "type": "text"
+            },
+            "messageId": "console-check-19c8deef0880",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTKT73SS"
+        ],
+        "unresolved_tokens": [
+          "SRTKT73SS"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:31:05.316354+09:00",
+        "turn_id": "fb137317-3b6b-43db-8b4d-0f9111a0b131"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTKT73SS"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "steel grade"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the steel grade of SRTKT73SS"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "list price of SRTWC286-SH",
+              "type": "text"
+            },
+            "messageId": "console-check-810bda5469a5",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWC286-SH"
+        ],
+        "unresolved_tokens": [
+          "SRTWC286-SH"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:31:16.701841+09:00",
+        "turn_id": "8159af98-8917-4664-8dc0-35e9cb9b42c2"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWC286-SH"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "price"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the list price of SRTWC286-SH"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "SRTJC802A-1500 product details",
+              "type": "text"
+            },
+            "messageId": "console-check-15df664748c5",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTJC802A-1500"
+        ],
+        "unresolved_tokens": [
+          "SRTJC802A-1500"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:31:27.195195+09:00",
+        "turn_id": "8d086eec-717a-41d1-936e-cd251da558fa"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTJC802A-1500"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to get product details for SRTJC802A-1500"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "seat cover material of srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-check-18a31902d68f",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "srtwc286"
+        ],
+        "unresolved_tokens": [
+          "srtwc286"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:31:37.741900+09:00",
+        "turn_id": "05aa605e-29bd-47c1-87cc-fe2ec2dfe355"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "master_products",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "seat cover material"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the seat cover material of srtwc286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "Catalog Sorento",
+              "type": "text"
+            },
+            "messageId": "console-check-04f2df06802f",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "Catalog Sorento"
+        ],
+        "unresolved_tokens": [
+          "catalogue"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:31:48.887937+09:00",
+        "turn_id": "46fb846c-51ad-4788-b2d9-24fee62e7065"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "resource_attachment",
+        "entities": [
+          {
+            "canonical_code": "catalogue",
+            "confident": true,
+            "current_message": true,
+            "hint": "attachment",
+            "raw": "Catalog Sorento"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "get_resource_attachment",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "marketing_form",
+          "suggested_team": "marketing_form"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to get the Sorento catalog"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock BRC22802W-MY",
+              "type": "text"
+            },
+            "messageId": "console-check-ad4346a04648",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "BRC22802W-MY"
+        ],
+        "unresolved_tokens": [
+          "BRC22802W-MY"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:31:59.514239+09:00",
+        "turn_id": "33b2a05e-3e5a-4b65-96b7-1e23bfdd93bc"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "BRC22802W-MY"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for BRC22802W-MY"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Incoming Stock Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "hav incoming?",
+              "type": "text"
+            },
+            "messageId": "console-check-ee68bd2fe2a7",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:32:10.176133+09:00",
+        "turn_id": "405de4bd-9e51-4476-9e32-59bcad4d16c0"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "incoming",
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_incoming",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "incoming_stock_enquiries",
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check incoming"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "Ibwc7605 image",
+              "type": "text"
+            },
+            "messageId": "console-check-aec508b029b4",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "Ibwc7605",
+          "image"
+        ],
+        "unresolved_tokens": [
+          "Ibwc7605",
+          "photo"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:32:20.555210+09:00",
+        "turn_id": "6e79fb14-af71-4931-bd34-d4a833a0547e"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "product_attachment",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "Ibwc7605"
+          },
+          {
+            "canonical_code": "photo",
+            "confident": true,
+            "current_message": true,
+            "hint": "attachment_type",
+            "raw": "image"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product_attachment",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to get an image attachment for Ibwc7605"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-0ce2e2f4368e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:32:36.519248+09:00",
+        "turn_id": "fd09caaf-b5d5-4255-8364-70e717135c8e"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "outstanding SO for BUIMACO",
+              "type": "text"
+            },
+            "messageId": "console-check-7d3a157e8058",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. BUIMACO SDN BHD (SRT)\n2. BUIMACO HOME CENTRE SDN BHD (SRT)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "BUIMACO"
+        ],
+        "unresolved_tokens": [
+          "BUIMACO"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:32:46.840055+09:00",
+        "turn_id": "b890936f-5c2c-4a6f-bc25-0d2c8b4920fd"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "BUIMACO"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check an outstanding sales order for BUIMACO"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "BUIMACO punya order yang belum DO ada apa",
+              "type": "text"
+            },
+            "messageId": "console-check-1da7adbb013e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. BUIMACO SDN BHD (SRT)\n2. BUIMACO HOME CENTRE SDN BHD (SRT)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "BUIMACO"
+        ],
+        "unresolved_tokens": [
+          "BUIMACO"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:32:57.829767+09:00",
+        "turn_id": "e0cb6c08-af82-4c1d-9506-712d4e2054f1"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "BUIMACO"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to check BUIMACO's orders that have not yet had a DO"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "how many did KENWEALTH TRADING take of C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-b0ecfef39bcc",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "KENWEALTH TRADING",
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "KENWEALTH TRADING",
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:33:08.407641+09:00",
+        "turn_id": "0a484d6b-a5eb-418e-aeab-e046a19196c8"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "KENWEALTH TRADING"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to find how many of C-FH14 KENWEALTH TRADING took"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "how many did all customers take of SRTWT8201",
+              "type": "text"
+            },
+            "messageId": "console-check-affc945a087b",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWT8201"
+        ],
+        "unresolved_tokens": [
+          "SRTWT8201"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:33:20.319527+09:00",
+        "turn_id": "2e5b80db-00bd-4ecc-98c6-71e66990698d"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": "customer",
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT8201"
+          }
+        ],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "broaden",
+        "top_n": null,
+        "user_goal": "trying to find how many of SRTWT8201 all customers took"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "how many did heng seng hardware take of srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-check-c4b001b22b2a",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. HENG SENG HARDWARE SDN BHD (MCH, SRT)\n2. HENG SENG HARDWARE - SRI MUDA (SRT)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "heng seng hardware",
+          "srtwc286"
+        ],
+        "unresolved_tokens": [
+          "heng seng hardware",
+          "srtwc286"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:33:31.011258+09:00",
+        "turn_id": "0078b307-551c-4c0c-82e2-7b8fc881afe6"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "heng seng hardware"
+          },
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "top_n": null,
+        "user_goal": "trying to find how many of SRTWC286 Heng Seng Hardware took"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "open DO by customer for C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-11498687f462",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:33:43.248768+09:00",
+        "turn_id": "84aa0fe5-5fec-4ea1-8917-697454cc651b"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": "customer",
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to open a delivery order by customer for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "any PO for SRTWT7445-LV-NEW",
+              "type": "text"
+            },
+            "messageId": "console-check-ce69d86cf541",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWT7445-LV-NEW"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7445-LV-NEW"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:33:53.788677+09:00",
+        "turn_id": "bc78355c-a2dc-42c5-b8d5-2dcfcd8f31c3"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "purchase_order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7445-LV-NEW"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check purchase order for SRTWT7445-LV-NEW"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "last in for C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-ae972b7856e8",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:34:04.371886+09:00",
+        "turn_id": "58119a01-536e-42a8-9336-94401fe81a79"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "spo_allocation",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_spo",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the last incoming quantity for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "last 3 received for C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-5e76e88ca1a7",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:34:15.302416+09:00",
+        "turn_id": "604ae44f-94b6-4d91-82dc-602c7e03566d"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": 3,
+        "domain_hint": "spo_allocation",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_spo",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "incoming_stock_enquiries",
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": 3,
+        "user_goal": "trying to check the last 3 received for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "CKS1050 \u4e0a\u6b21\u8fdb\u8d27\u591a\u5c11",
+              "type": "text"
+            },
+            "messageId": "console-check-6dc70eae663b",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "CKS1050"
+        ],
+        "unresolved_tokens": [
+          "CKS1050"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:34:26.051586+09:00",
+        "turn_id": "530f7d0b-76fd-454a-b72e-ceb119b3d433"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "spo_allocation",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "CKS1050"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_spo",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the last incoming quantity for CKS1050"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock BRC22802W-MY",
+              "type": "text"
+            },
+            "messageId": "console-check-ac3aa0e34acc",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "BRC22802W-MY"
+        ],
+        "unresolved_tokens": [
+          "BRC22802W-MY"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:34:36.173655+09:00",
+        "turn_id": "26be4954-7389-4fc1-87c0-9ed058b31141"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "BRC22802W-MY"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for BRC22802W-MY"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock SRTWB103",
+              "type": "text"
+            },
+            "messageId": "console-check-19a5dbb8d60c",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWB103"
+        ],
+        "unresolved_tokens": [
+          "SRTWB103"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:34:46.276234+09:00",
+        "turn_id": "4851184c-2226-43f7-be08-331b726afa64"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWB103"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for SRTWB103"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock SRTWT7445-LV-NEW",
+              "type": "text"
+            },
+            "messageId": "console-check-609a59622122",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWT7445-LV-NEW"
+        ],
+        "unresolved_tokens": [
+          "SRTWT7445-LV-NEW"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:34:56.898513+09:00",
+        "turn_id": "4e54d871-4544-4e2a-a17e-bbd4c183e267"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT7445-LV-NEW"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for SRTWT7445-LV-NEW"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock MSK11A-QT",
+              "type": "text"
+            },
+            "messageId": "console-check-a82053770cab",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "MSK11A-QT"
+        ],
+        "unresolved_tokens": [
+          "MSK11A-QT"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:35:07.349249+09:00",
+        "turn_id": "282c3a45-bebb-4eae-bfac-e7be0810df48"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "MSK11A-QT"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for MSK11A-QT"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock CWCX1009-SH",
+              "type": "text"
+            },
+            "messageId": "console-check-34823649b29b",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "CWCX1009-SH"
+        ],
+        "unresolved_tokens": [
+          "CWCX1009-SH"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:35:17.881310+09:00",
+        "turn_id": "b4524727-c14a-42c8-ba88-9c2bdc33bb1a"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "CWCX1009-SH"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for CWCX1009-SH"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-c7a5449d9b45",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:35:28.165624+09:00",
+        "turn_id": "e626cc0f-97b8-4b5b-9418-bdf3cf66ed9a"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "any PO for it?",
+              "type": "text"
+            },
+            "messageId": "console-check-5be82f37047e",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:35:39.049435+09:00",
+        "turn_id": "7eade0c3-9526-4b5c-96b0-87fb13b19d5c"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "purchase_order",
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check whether there is any purchase order for the previously discussed item"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-check-086e88c03283",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWC286"
+        ],
+        "unresolved_tokens": [
+          "SRTWC286"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:35:49.242317+09:00",
+        "turn_id": "4edd2152-fbf6-4cc4-9de3-e7d75b819928"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWC286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for SRTWC286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "PO for SRTWC8517",
+              "type": "text"
+            },
+            "messageId": "console-check-d96872c00c63",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWC8517"
+        ],
+        "unresolved_tokens": [
+          "SRTWC8517"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:35:59.855708+09:00",
+        "turn_id": "528a9d90-e0b6-4d2c-b217-7a1c5e259e9f"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "purchase_order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWC8517"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the purchase order for SRTWC8517"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "last in for SRTWC8517",
+              "type": "text"
+            },
+            "messageId": "console-check-72518c877568",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWC8517"
+        ],
+        "unresolved_tokens": [
+          "SRTWC8517"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:36:10.230279+09:00",
+        "turn_id": "8c5d112e-3f72-4688-9de4-9de0bf0dd281"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "spo_allocation",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWC8517"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_spo",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the last incoming quantity for SRTWC8517"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "check stock C-FH14",
+              "type": "text"
+            },
+            "messageId": "console-check-124eeeabe213",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "C-FH14"
+        ],
+        "unresolved_tokens": [
+          "C-FH14"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:36:22.267289+09:00",
+        "turn_id": "c0b817ee-99ff-4dcb-ab97-9738369a7c60"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "inventory",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "C-FH14"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_stock",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check stock for C-FH14"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "delivery to hanlim",
+              "type": "text"
+            },
+            "messageId": "console-check-2a8ba4c00738",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "hanlim"
+        ],
+        "unresolved_tokens": [
+          "hanlim"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:36:35.049822+09:00",
+        "turn_id": "51ef5836-e269-44f4-b88f-86fb735a31f6"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "hanlim"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check delivery order for hanlim"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Incoming Stock Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "srtwc8610-sh hav incoming?",
+              "type": "text"
+            },
+            "messageId": "console-check-bb58262ee022",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Couldn't find \"srtwc8610-sh\" (product). Did you mean SRTWC8611, SRTWC8613, or SRTWC8614? Reply with a code to continue, or would you like me to escalate to purchasing team?",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "srtwc8610-sh"
+        ],
+        "unresolved_tokens": [
+          "srtwc8610-sh"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:36:55.791230+09:00",
+        "turn_id": "b3b92757-0d7c-4f9d-bf32-b151483b5e0b"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "incoming",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc8610-sh"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_incoming",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check incoming for srtwc8610-sh"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": 437264483,
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": 437264483
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": 437264483,
+            "message": {
+              "text": "srtwc8610-sh certificate",
+              "type": "text"
+            },
+            "messageId": "console-check-37dcc59d8f4c",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-check-1789443046"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "srtwc8610-sh",
+          "certificate"
+        ],
+        "unresolved_tokens": [
+          "srtwc8610-sh",
+          "certificate"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 16,
+        "recorded_at": "2026-09-15T12:37:08.093203+09:00",
+        "turn_id": "a99aabed-4361-4319-ac60-7fa76ec0cd8e"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "product_attachment",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "srtwc8610-sh"
+          },
+          {
+            "canonical_code": "certificate",
+            "confident": true,
+            "current_message": true,
+            "hint": "attachment_type",
+            "raw": "certificate"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_product_attachment",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "user_goal": "trying to check the certificate attachment for srtwc8610-sh"
+      }
+    }
+  ]
+}

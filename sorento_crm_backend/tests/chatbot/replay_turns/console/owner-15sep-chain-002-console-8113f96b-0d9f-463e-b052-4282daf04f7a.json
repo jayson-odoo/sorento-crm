@@ -1,0 +1,1028 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": "437264483"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": "437264483",
+            "message": {
+              "text": "SRTWT2634 outstanding",
+              "type": "text"
+            },
+            "messageId": "console-66cee7dd5db9",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {},
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "7cbcf54f-0b88-47df-beac-8f40dd25fb74"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-8113f96b-0d9f-463e-b052-4282daf04f7a"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: SRTWT2634\nCustomer: all\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 6\nDO qty: 66\nDelivered: 0\nOutstanding: 66\nDO date range: 20/04/2026 to 28/04/2026\n*_By location_*\nBRW-BB: 35 (O/S: 35)\nBRW: 31 (O/S: 31)\n*_By customer_*\nCHIN HOO SDN BHD (PROJECT): 35 (O/S: 35)\nNURTECH ESG SDN BHD (PROJECT): 11 (O/S: 11)\nDILOOMA SDN BHD [A/C I]: 7 (O/S: 7)\nJUNGLE BATH GALLERY SDN BHD [A/C I]: 7 (O/S: 7)\nEUROTAN ENTERPRISE SDN BHD [A/C I]: 3 (O/S: 3)\nGLORY MOTION SDN BHD [A/C I]: 3 (O/S: 3)\n\nReply 1 for the delivery order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "SRTWT2634"
+        ],
+        "unresolved_tokens": [
+          "SRTWT2634"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 15,
+        "recorded_at": "2026-09-15T00:26:09.963602+09:00",
+        "turn_id": "5554646c-5709-43ef-a9d7-6263160d022c"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 4,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 4,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_code": "SRTWT2634",
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: SRTWT2634\nCustomer: all\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 6\nDO qty: 66\nDelivered: 0\nOutstanding: 66\nDO date range: 20/04/2026 to 28/04/2026\n*_By location_*\nBRW-BB: 35 (O/S: 35)\nBRW: 31 (O/S: 31)\n*_By customer_*\nCHIN HOO SDN BHD (PROJECT): 35 (O/S: 35)\nNURTECH ESG SDN BHD (PROJECT): 11 (O/S: 11)\nDILOOMA SDN BHD [A/C I]: 7 (O/S: 7)\nJUNGLE BATH GALLERY SDN BHD [A/C I]: 7 (O/S: 7)\nEUROTAN ENTERPRISE SDN BHD [A/C I]: 3 (O/S: 3)\nGLORY MOTION SDN BHD [A/C I]: 3 (O/S: 3)\n\nReply 1 for the delivery order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": false,
+        "answers_open_question": {
+          "free_text": null,
+          "picks": [],
+          "resolved": false,
+          "yes_no": null
+        },
+        "ask_binding": {
+          "order": [
+            0
+          ]
+        },
+        "asks": [
+          {
+            "domain": "order",
+            "entities": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWT2634"
+              }
+            ]
+          }
+        ],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "domains": [
+          "order"
+        ],
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "raw": "SRTWT2634"
+          }
+        ],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "topic_reset": false,
+        "user_goal": "trying to check the outstanding status for SRTWT2634"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": "437264483"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": "437264483",
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-a6fdc33e5832",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 2,
+              "source": "current_message",
+              "value": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT2634"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 2,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Delivery order list",
+                "value": "do"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the delivery order list.",
+                "product_code": "SRTWT2634",
+                "scope": "do",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "7cbcf54f-0b88-47df-beac-8f40dd25fb74"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-8113f96b-0d9f-463e-b052-4282daf04f7a"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "1. *DO Number:* 202604-4130\n*Customer:* JUNGLE BATH GALLERY SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 7\n*Delivered:* 0\n*Outstanding:* 7\n*DO Date:* 28/04/2026\n\n2. *DO Number:* 202604-3523\n*Customer:* GLORY MOTION SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 3\n*Delivered:* 0\n*Outstanding:* 3\n*DO Date:* 27/04/2026\n\n3. *DO Number:* PS202604-0439\n*Customer:* CHIN HOO SDN BHD (PROJECT)\n*Product:* SRTWT2634\n*Location:* BRW-BB\n*DO Qty:* 35\n*Delivered:* 0\n*Outstanding:* 35\n*DO Date:* 24/04/2026\n\n4. *DO Number:* PS202604-0405\n*Customer:* NURTECH ESG SDN BHD (PROJECT)\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 11\n*Delivered:* 0\n*Outstanding:* 11\n*DO Date:* 22/04/2026\n\n5. *DO Number:* 202604-2874\n*Customer:* DILOOMA SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 7\n*Delivered:* 0\n*Outstanding:* 7\n*DO Date:* 20/04/2026\n\n6. *DO Number:* 202604-2853\n*Customer:* EUROTAN ENTERPRISE SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 3\n*Delivered:* 0\n*Outstanding:* 3\n*DO Date:* 20/04/2026",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "detail",
+              "is_active",
+              "product_code",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 15,
+        "recorded_at": "2026-09-15T00:26:52.297577+09:00",
+        "turn_id": "2b7b7ba9-4a56-4d06-b157-227d7be163d9"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 0,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 0,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "detail": "do",
+            "is_active": null,
+            "product_code": "SRTWT2634",
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "1. *DO Number:* 202604-4130\n*Customer:* JUNGLE BATH GALLERY SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 7\n*Delivered:* 0\n*Outstanding:* 7\n*DO Date:* 28/04/2026\n\n2. *DO Number:* 202604-3523\n*Customer:* GLORY MOTION SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 3\n*Delivered:* 0\n*Outstanding:* 3\n*DO Date:* 27/04/2026\n\n3. *DO Number:* PS202604-0439\n*Customer:* CHIN HOO SDN BHD (PROJECT)\n*Product:* SRTWT2634\n*Location:* BRW-BB\n*DO Qty:* 35\n*Delivered:* 0\n*Outstanding:* 35\n*DO Date:* 24/04/2026\n\n4. *DO Number:* PS202604-0405\n*Customer:* NURTECH ESG SDN BHD (PROJECT)\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 11\n*Delivered:* 0\n*Outstanding:* 11\n*DO Date:* 22/04/2026\n\n5. *DO Number:* 202604-2874\n*Customer:* DILOOMA SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 7\n*Delivered:* 0\n*Outstanding:* 7\n*DO Date:* 20/04/2026\n\n6. *DO Number:* 202604-2853\n*Customer:* EUROTAN ENTERPRISE SDN BHD [A/C I]\n*Product:* SRTWT2634\n*Location:* BRW\n*DO Qty:* 3\n*Delivered:* 0\n*Outstanding:* 3\n*DO Date:* 20/04/2026",
+            "result_type": "outstanding_detail"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": false,
+        "answers_open_question": {
+          "free_text": null,
+          "picks": [
+            1
+          ],
+          "resolved": true,
+          "yes_no": null
+        },
+        "ask_binding": {},
+        "asks": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "domains": [],
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "topic_reset": false,
+        "user_goal": "trying to pick the first outstanding detail option"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": "437264483"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": "437264483",
+            "message": {
+              "text": "outstanding for chin",
+              "type": "text"
+            },
+            "messageId": "console-8c7a0e1829ad",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "pick",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "pick",
+              "value": "do_outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWT2634",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT2634"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 2,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "domain": "order",
+                "idx": 1,
+                "label": "Delivery order list",
+                "value": "do"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the delivery order list.",
+                "product_code": "SRTWT2634",
+                "scope": "do",
+                "warehouse_codes": []
+              },
+              "team": "customer_service"
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "7cbcf54f-0b88-47df-beac-8f40dd25fb74"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-8113f96b-0d9f-463e-b052-4282daf04f7a"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": null,
+        "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. MBJ BINA JAYA MACHINERY & HARDWARE SDN BHD (MCH)\n4. PERNIAGAAN ALAY JAYA MACHINERY HARDWARE - [A/C I] (MCH)\n5. PERNIAGAAN MOZEK CHIN TAK SDN BHD (MCH)\n6. SK HARDWARE (KUCHING) SDN BHD - [A/C I] (MCH)\n7. GS HOME HARDWARE & MACHINERY SDN BHD - [IBORN] (MCH)\n8. KH HARDWARE & MACHINERY SDN BHD - [A/C I] (MCH)",
+        "tools": []
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [
+          "chin"
+        ],
+        "unresolved_tokens": [
+          "chin"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 15,
+        "recorded_at": "2026-09-15T00:28:28.714597+09:00",
+        "turn_id": "6492ac2a-a9a7-4c69-8d08-4aa5820c51ba"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": false,
+        "answers_open_question": {
+          "free_text": null,
+          "picks": [],
+          "resolved": false,
+          "yes_no": null
+        },
+        "ask_binding": {
+          "order": [
+            0
+          ]
+        },
+        "asks": [
+          {
+            "domain": "order",
+            "entities": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "chin"
+              }
+            ]
+          }
+        ],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": "order",
+        "domains": [
+          "order"
+        ],
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "raw": "chin"
+          }
+        ],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "topic_reset": false,
+        "user_goal": "trying to ask for outstanding for chin"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.placed"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": []
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "firstName": "ZZT-agent",
+            "id": null,
+            "lastName": ""
+          },
+          "chat_id": "c26d8857-d7cf-4d45-8d57-451f6282f885",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "lastName": "",
+          "phone": "+60437264483"
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "contact": {
+            "id": "437264483"
+          },
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "contactId": "437264483",
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-c3f775170320",
+            "timestamp": 1788746781677,
+            "traffic": "incoming"
+          }
+        },
+        "mode": "chat-stateful",
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "customer": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "raw": "chin"
+              }
+            },
+            "domains": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": [
+                "order"
+              ]
+            },
+            "order_status": {
+              "set_at": null,
+              "set_at_turn": 4,
+              "source": "current_message",
+              "value": "outstanding"
+            },
+            "products": {
+              "set_at": null,
+              "set_at_turn": 3,
+              "source": "pick",
+              "value": [
+                {
+                  "canonical_code": "SRTWT2634",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWT2634"
+                }
+              ]
+            }
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at": null,
+            "asked_at_turn": 4,
+            "expects": "pick",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 1,
+                "label": "CHIN CHUN HARDWARE SDN BHD (MCH)",
+                "product": "300-C043",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 2,
+                "label": "CHIN CHUN HOMEMART SDN BHD (MCH)",
+                "product": "300-C124",
+                "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 3,
+                "label": "MBJ BINA JAYA MACHINERY & HARDWARE SDN BHD (MCH)",
+                "product": "300-M062",
+                "uuid": "4535aa6f-5c6b-4fe0-8bf9-b80bbd05e1d4"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 4,
+                "label": "PERNIAGAAN ALAY JAYA MACHINERY HARDWARE - [A/C I] (MCH)",
+                "product": "300-P109",
+                "uuid": "5ecb415b-0197-4651-9f1c-2e81796d3c8d"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 5,
+                "label": "PERNIAGAAN MOZEK CHIN TAK SDN BHD (MCH)",
+                "product": "300-P041",
+                "uuid": "d34d8015-1564-4e19-a037-4a9a10d3228b"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 6,
+                "label": "SK HARDWARE (KUCHING) SDN BHD - [A/C I] (MCH)",
+                "product": "300-S124",
+                "uuid": "f2692d14-8eea-4406-8348-abe23ce0a67b"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 7,
+                "label": "GS HOME HARDWARE & MACHINERY SDN BHD - [IBORN] (MCH)",
+                "product": "300-G033",
+                "uuid": "0cba937e-6cee-45a9-891c-b76951d4375f"
+              },
+              {
+                "attachment_type": null,
+                "domain": "order",
+                "entity_type": "customer",
+                "filename": null,
+                "idx": 8,
+                "label": "KH HARDWARE & MACHINERY SDN BHD - [A/C I] (MCH)",
+                "product": "300-K070",
+                "uuid": "c3d6dc6b-0a05-4ab4-b924-d0b7ceb694e3"
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "keep": []
+            }
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "7cbcf54f-0b88-47df-beac-8f40dd25fb74"
+        },
+        "scope": "chat-ui",
+        "shadow_of": null,
+        "test_run_id": "console-8113f96b-0d9f-463e-b052-4282daf04f7a"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message",
+          "send_attachments"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I]\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 2\nDO qty: 4\nDelivered: 0\nOutstanding: 4\nDO date range: 01/09/2026\n*_By location_*\nSPARPART: 2 (O/S: 2)\nMOCHA-WH: 1 (O/S: 1)\nREPAIR: 1 (O/S: 1)\n*_By product_*\nMA0105: 1 (O/S: 1)\nMA0158: 1 (O/S: 1)\nMWT6805SS-FRG: 1 (O/S: 1)\nRPACC: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          }
+        ]
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_focus_full",
+        "expected_from": "recorded",
+        "prompt_version": 15,
+        "recorded_at": "2026-09-15T00:28:46.644418+09:00",
+        "turn_id": "024e6453-03ee-495b-a22d-55ed7256f26d"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I]\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 2\nDO qty: 4\nDelivered: 0\nOutstanding: 4\nDO date range: 01/09/2026\n*_By location_*\nSPARPART: 2 (O/S: 2)\nMOCHA-WH: 1 (O/S: 1)\nREPAIR: 1 (O/S: 1)\n*_By product_*\nMA0105: 1 (O/S: 1)\nMA0158: 1 (O/S: 1)\nMWT6805SS-FRG: 1 (O/S: 1)\nRPACC: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": false,
+        "answers_open_question": {
+          "free_text": null,
+          "picks": [
+            1
+          ],
+          "resolved": true,
+          "yes_no": null
+        },
+        "ask_binding": {},
+        "asks": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "domains": [],
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "top_n": null,
+        "topic_reset": false,
+        "user_goal": "trying to pick option 1"
+      }
+    }
+  ]
+}
