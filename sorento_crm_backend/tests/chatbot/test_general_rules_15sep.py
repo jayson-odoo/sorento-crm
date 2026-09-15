@@ -812,21 +812,49 @@ class TestTheOfferHasOneWriterAndOneTeam:
 def test_a_number_still_repicks_under_a_riding_offer(arm, session_factory, monkeypatch) -> None:
     """D19 rule 1 and rule 3 together: with an offer riding the roster, a NUMBER is still
     a pick against the rows the reply numbered, and it wins over the yes/no (a number is
-    unambiguous)."""
+    unambiguous).
+
+    **Graded on the PICK, not on the fetch** (coordinator's ruling on the R-J round): what
+    the lane does with the re-picked customer depends on which axes the focus carries into
+    that turn - under R16's broad `order_status` carry an inherited `outstanding` sends it
+    to the report and a missing grant can then refuse it - and none of that is what this
+    test is about. So: the dialogue resolved the SECOND row, the turn SAID something, and
+    any tool it did reach is scoped to that row.
+
+    The grant is passed in so a legitimate outstanding re-run is not refused for want of
+    it; the arming chain here names no document type, so nothing in it asks for one.
+
+    **A refused pick may never be SILENT** (D13): the customer typed a number off a list
+    the bot printed, and a turn that answers nothing at all is a defect whichever lane
+    declined it.
+    """
     _reply, services = arm.build(session_factory, monkeypatch, "repick")
     result, calls = _run_turn(
         session_factory, monkeypatch, qf=_pick_v1(2), text_body="2",
         msg_id="ZZT-gr-repick-answer", resolve_services=services, lanes=arm.lanes,
-        fetch_response=_report_call(REPORT_HIT),
+        attributes=["sales_orders.outstanding"], fetch_response=_report_call(REPORT_HIT),
     )
     assert result.status == "done", (result.status, result.error)
-    tool_calls = [c for c in calls if not c[0].startswith("probe:")]
-    assert tool_calls, f"a re-pick must run the lane again: {calls!r}"
-    _name, args = tool_calls[0]
-    assert args.get("customer_ids") == [CHIN_CHUN[1][0]], (
-        f"'2' must resolve the roster's own SECOND row (CHIN CHUN HOMEMART), never the "
-        f"offer and never a row the reply did not number: {args!r}"
+    said = ((result.reply or {}).get("text") or "").strip() or " ".join(
+        str(a.get("text") or "")
+        for a in (result.actions or [])
+        if isinstance(a, dict) and a.get("kind") == "send_message"
+    ).strip()
+    assert said, (
+        f"arm {arm.id!r}: the customer picked row 2 off a list the bot printed and the "
+        f"turn said nothing at all: actions={result.actions!r}"
     )
+    picked = _picked_labels(session_factory, result.turn_id)
+    assert any(CHIN_CHUN[1][2] in label for label in picked), (
+        f"arm {arm.id!r}: '2' must resolve the roster's own SECOND row (CHIN CHUN "
+        f"HOMEMART), never the offer and never a row the reply did not number: "
+        f"{picked!r}"
+    )
+    for name, args in [c for c in calls if not c[0].startswith("probe:")]:
+        assert args.get("customer_ids") in (None, [CHIN_CHUN[1][0]]), (
+            f"arm {arm.id!r}: whatever the re-pick fetched must be scoped to the row the "
+            f"customer chose: {name} {args!r}"
+        )
 
 
 class TestTheYesNoBridgeAnswersNothingItWasNotAsked:
@@ -2251,34 +2279,60 @@ def _decline_with_a_new_ask_qf(
     )
 
 
-_NEW_SUBJECTS = (
-    ("product", STOCK_CODE, "product", STOCK_UUID),
-    ("customer", "hanlim", "customer", CARRIED_CUSTOMER_UUID),
+#: The four B1 cases, and what the EXISTING rules owe each of them once the decline stops
+#: swallowing the ask (coordinator's ruling, R-J round - no new domain-inheritance rule is
+#: being asked for):
+#:
+#: * a domain WORD is present -> that domain answers: the stock tool for a product, and
+#:   the gate's own refusal for a customer, which is not a stock axis.
+#: * NO domain word -> the ALIVE domains re-run for the new entity, and under an open
+#:   outstanding question the alive domain is `order`. So the order lane re-runs for
+#:   SRTWT2634 here; the STOCK tool for a bare "check stock X" is the parser's own half
+#:   and belongs to #928's class, not to this one.
+_B1_CASES = (
+    ("product-inventory", STOCK_CODE, "product", STOCK_UUID, "inventory", "stock-tool"),
+    ("product-null", STOCK_CODE, "product", STOCK_UUID, None, "order-domain"),
+    ("customer-null", "hanlim", "customer", CARRIED_CUSTOMER_UUID, None, "order-domain"),
+    ("customer-inventory", "hanlim", "customer", CARRIED_CUSTOMER_UUID, "inventory", "gate-refusal"),
+)
+
+#: Every tool the ORDER domain answers with. `crm_outstanding_report` is in here because a
+#: new product named under an open outstanding ask can legitimately re-run the report for
+#: THAT product - what it may never do is re-run it for the OLD one.
+_ORDER_DOMAIN_TOOLS = (
+    "crm_order_management_orders_list",
+    "crm_order_management_orders_by_product_list",
+    "crm_outstanding_report",
 )
 
 
-@pytest.mark.parametrize("domain_hint", (None, "inventory"), ids=lambda d: f"domain-{d or 'null'}")
 @pytest.mark.parametrize(
-    ("subject_id", "raw", "hint", "uuid"), _NEW_SUBJECTS, ids=lambda x: str(x)
+    ("case_id", "raw", "hint", "uuid", "domain_hint", "expect"), _B1_CASES,
+    ids=lambda x: str(x),
 )
 def test_b1_a_decline_that_brings_its_own_question_is_answered_not_just_acknowledged(
-    subject_id, raw, hint, uuid, domain_hint, session_factory, monkeypatch
+    case_id, raw, hint, uuid, domain_hint, expect, session_factory, monkeypatch
 ) -> None:
     """B1 (reviewer, NEW regression on the general-rule round): "no, check stock
     SRTWT2634" over an open outstanding question is a decline AND an ask.
 
     R22(a)'s way out reads `is_affirmative: False` on a turn that "picked nothing, named
     nothing and refined nothing" and answers with one line from the registry's
-    `offer_declined` key ("Okay, noted.", `lanes/business/__init__._outstanding_offer_closed`).
-    A turn that names its OWN subject is not that turn: closing the question is right, and
-    stopping there leaves the customer's actual question unanswered.
+    `offer_declined` key ("Okay, noted.",
+    `lanes/business/__init__._outstanding_offer_closed`). A turn that names its OWN
+    subject is not that turn: closing the question is right, and stopping there leaves the
+    customer's actual question unanswered. Measured on all four shapes below - every one
+    of them replies `"Okay, noted."`, stamps `outstanding_offer_declined`, and calls
+    nothing.
+
+    The DEFECT is that one reading, so that is what the first three assertions grade; the
+    fourth says only what the rules that already exist owe this turn afterwards.
     """
     _seed_open_detail(session_factory, filters=_customer_subject_filters())
     result, calls = _run_turn(
         session_factory, monkeypatch,
         qf=_decline_with_a_new_ask_qf(domain_hint, raw=raw, hint=hint),
-        text_body=f"no, check stock {raw}",
-        msg_id=f"ZZT-gr6-b1-{subject_id}-{domain_hint or 'null'}",
+        text_body=f"no, check stock {raw}", msg_id=f"ZZT-gr6-b1-{case_id}",
         attributes=["sales_orders.outstanding"],
         resolve_services=_exact_services(
             single={
@@ -2292,30 +2346,75 @@ def test_b1_a_decline_that_brings_its_own_question_is_answered_not_just_acknowle
     )
     assert result.status in ("done", "delegated"), (result.status, result.error)
     reply = (result.reply or {}).get("text") or ""
-    assert "Okay, noted." not in reply, (
-        f"{subject_id} / {domain_hint!r}: the customer declined the offer AND asked "
-        f"something - acknowledging the decline is not an answer to the question: {reply!r}"
+    said = reply.strip() or " ".join(
+        str(a.get("text") or "")
+        for a in (result.actions or [])
+        if isinstance(a, dict) and a.get("kind") == "send_message"
+    ).strip()
+    emission = ((result.ctx or {}).get("parse") or {}).get("output") or {}
+
+    # THE DEFECT, three ways of saying the same thing.
+    assert "Okay, noted." not in said, (
+        f"{case_id}: the customer declined the offer AND asked something - acknowledging "
+        f"the decline is not an answer to the question: {said!r}"
     )
-    tool_calls = [c for c in calls if not c[0].startswith("probe:")]
-    assert tool_calls, (
-        f"{subject_id} / {domain_hint!r}: the new subject must reach a tool - nothing ran: "
-        f"{calls!r}"
+    assert not jsc_truthy(emission.get("outstanding_offer_declined")), (
+        f"{case_id}: this turn is not the bare decline R22(a) is for - it named its own "
+        f"subject: {emission.get('outstanding_offer_declined')!r}"
     )
-    for name, args in tool_calls:
-        assert not (
-            name == "crm_outstanding_report" and args.get("product_code") == PRODUCT_CODE_IN_OFFER
-        ), (
-            f"{subject_id} / {domain_hint!r}: the declined report must not be what answers "
-            f"the new ask: {name} {args!r}"
-        )
-    if domain_hint == "inventory" and hint == "product":
-        assert [name for name, _a in tool_calls] == ["crm_inventory_stock_balance_list"], (
-            f"a stock ask is answered by the stock tool: {tool_calls!r}"
-        )
+    assert said, f"{case_id}: the turn answered nothing at all: {result.actions!r}"
+
+    # The old question still closes, which is the half that was always right.
     question = _stored_oq(_final_vars(session_factory, result))
     assert question.get("kind") != "outstanding_detail", (
-        f"{subject_id} / {domain_hint!r}: the declined question still closes: {question!r}"
+        f"{case_id}: the declined question still closes: {question!r}"
     )
+
+    tool_calls = [c for c in calls if not c[0].startswith("probe:")]
+    for name, args in tool_calls:
+        assert not (
+            name == "crm_outstanding_report"
+            and args.get("product_code") == PRODUCT_CODE_IN_OFFER
+        ), (
+            f"{case_id}: the declined report must not be what answers the new ask: "
+            f"{name} {args!r}"
+        )
+
+    if expect == "stock-tool":
+        assert [name for name, _a in tool_calls] == ["crm_inventory_stock_balance_list"], (
+            f"{case_id}: the message named the stock domain, so the stock tool answers it: "
+            f"{tool_calls!r}"
+        )
+    elif expect == "order-domain":
+        assert tool_calls, (
+            f"{case_id}: no domain word, so the ALIVE domain (order, from the question "
+            f"that was open) re-runs for the new entity: {calls!r}"
+        )
+        name, args = tool_calls[0]
+        assert name in _ORDER_DOMAIN_TOOLS, (
+            f"{case_id}: the alive domain is `order`; a stock answer here would be a new "
+            f"domain-inheritance rule nobody asked for: {name}"
+        )
+        if hint == "product":
+            assert raw in json.dumps(args), (
+                f"{case_id}: the re-run is for the entity THIS turn named: {args!r}"
+            )
+        else:
+            assert args.get("customer_ids") == [uuid], (
+                f"{case_id}: the re-run is for the customer THIS turn named: {args!r}"
+            )
+    else:  # gate-refusal
+        assert tool_calls == [], (
+            f"{case_id}: a customer is not a stock axis, so the gate refuses before any "
+            f"tool runs: {tool_calls!r}"
+        )
+        assert said, f"{case_id}: and it says so rather than going quiet: {said!r}"
+
+
+def jsc_truthy(value: Any) -> bool:
+    """`None` / `False` / empty all read as "not stamped", which is what the emission's
+    optional markers mean when the arm that writes them did not run."""
+    return bool(value)
 
 
 #: The product the seeded offer is about, so B1 can assert the OLD report is not re-run.
