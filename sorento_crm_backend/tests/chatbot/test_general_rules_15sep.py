@@ -426,16 +426,23 @@ def _exact_services(
     multi: dict[str, list[dict[str, Any]]] | None = None,
     single: dict[str, dict[str, Any]] | None = None,
     unresolved: tuple[str, ...] = (),
+    token_log: list[str] | None = None,
 ) -> ResolveGateServices:
     """A `resolve_entity` seam keyed on EXACT tokens (see the module docstring).
 
     `multi` maps a token to the several rows it is ambiguous across; `single` maps a token
     to the one row it resolves to. A request that asks about neither resolves nothing,
-    which is what a bare positional pick sends.
+    which is what a bare positional pick sends. `token_log`, given a list, records every
+    token every call asked about.
     """
 
     def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
         asked = _tokens_of(body)
+        if token_log is not None:
+            # WHAT THE RESOLVER WAS ASKED, which is the only honest way to prove a row
+            # LABEL was never minted into an entity: a label that reaches resolution is a
+            # label the head turned into a token (R-M).
+            token_log.extend(sorted(asked))
         resolutions = []
         for token, rows in (multi or {}).items():
             if token.lower() in asked:
@@ -3080,6 +3087,17 @@ def test_a_bare_number_resolves_the_frozen_row_however_many_casual_turns_interve
         f"{roster.id} after {casual_turns} casual turn(s): the question is still open and "
         f"the rows the customer is looking at are gone: {alive!r}"
     )
+    # B-2 (light review): THE TEAM IS HALF OF THE SAME FACT and nothing guarded it -
+    # deleting `_re_armed`'s `live_team` block left the suite green while a member offer
+    # seeded `payload.team: warehouse` came back `customer_service` after one casual turn.
+    # A re-prompt keeps the rows AND the team it was asked under; where the roster was
+    # asked without one there is nothing to keep and this reads as absent on both sides.
+    asked_team = (roster.question.get("payload") or {}).get("team")
+    assert (alive.get("payload") or {}).get("team") == asked_team, (
+        f"{roster.id} after {casual_turns} casual turn(s): the question was asked under "
+        f"team {asked_team!r} and the re-prompt re-derived "
+        f"{(alive.get('payload') or {}).get('team')!r}: {alive!r}"
+    )
     result, calls = _run_turn(
         session_factory, monkeypatch, qf=_number_v1(roster.position),
         text_body=str(roster.position),
@@ -3201,3 +3219,613 @@ def test_showing_the_parser_a_roster_adds_exactly_one_line_to_the_v1_block() -> 
     )
     assert len(after) == len(before) + 1, (with_rows, without)
     assert after[-1].startswith("Open question options: "), after[-1]
+
+
+# =========================================================================== #
+# GROUP 8 - R-K's real cause: a riding offer hides the roster from the parser
+#
+# `engine._pending_kind` (engine.py:448-450) answers `"team_pick"` for ANY question whose
+# `payload.offer` is set, which is a deliberate choice for the one line a v1 prompt gets
+# ("on that turn the thing the customer is most likely answering is the yes/no question
+# the reply ended with"). `_pending_options` then reads THAT word against
+# `_OPTION_PENDING_KINDS`, and a roster carrying an offer is therefore shown no rows at
+# all - so D19 rule 3's own promise ("a number re-picks, a yes/no answers the offer") is
+# true of the engine and invisible to the model.
+#
+# Live, on the same contact and the same ten-row roster:
+#
+# | turn | question before | open_question_options |
+# |---|---|---|
+# | 7e14db69 | `product_pick`, `expects: pick`, 10 rows | all ten rows |
+# | 34000918 | `product_pick`, `expects: pick_or_yes_no`, 10 rows + `payload.offer` | **null** |
+#
+# The second turn's message was "10" and it answered `low_signal`.
+# =========================================================================== #
+
+
+def _with_offer_payload(question: dict[str, Any], team: str = "purchasing") -> dict[str, Any]:
+    """The same question with an escalate offer riding it (D19 rule 3), exactly as
+    `open_question.with_offer` composes it."""
+    payload = dict(question.get("payload") or {})
+    payload["offer"] = {
+        "team": team,
+        "domain": payload.get("domain"),
+        "options": [{"idx": 1, "team": team, "label": team}],
+    }
+    return {**question, "expects": "pick_or_yes_no", "payload": payload}
+
+
+def _tier_rows() -> list[dict[str, Any]]:
+    return [
+        {"idx": 1, "tier": "office", "label": "Office", "value": "office"},
+        {"idx": 2, "tier": "dealer", "label": "Dealer", "value": "dealer"},
+    ]
+
+
+#: The three kinds D19 makes sticky, each with an offer riding it. `tier_pick` is in here
+#: because the tier menu takes an offer the same way (`_offer_carry`'s tier arm) and its
+#: rows are the ones a "2" counts against.
+RIDDEN_ROSTERS = (
+    (
+        "product_pick",
+        _with_offer_payload(
+            _open_question("product_pick", options=_roster_rows(*WC286_CODES), turn_no=2)
+            | {"payload": {"domain": "incoming", "keep": []}}
+        ),
+    ),
+    (
+        "customer_pick",
+        _with_offer_payload(
+            _open_question("customer_pick", options=_customer_roster_rows(), turn_no=2)
+            | {"payload": {"domain": "order", "keep": []}}
+        ),
+    ),
+    (
+        "tier_pick",
+        _with_offer_payload(
+            _open_question("tier_pick", options=_tier_rows(), turn_no=2)
+            | {"payload": {"domain": "promotion", "keep": []}}
+        ),
+    ),
+)
+
+
+def _pending_line(block: str) -> str | None:
+    for line in (block or "").splitlines():
+        if line.startswith("Pending: "):
+            return line
+    return None
+
+
+@pytest.mark.parametrize("casual_turns", (0, 1, 2), ids=lambda n: f"{n}-casual")
+@pytest.mark.parametrize(("kind", "question"), RIDDEN_ROSTERS, ids=lambda x: x if isinstance(x, str) else "")
+def test_a_roster_carrying_an_offer_still_shows_the_parser_its_rows(
+    kind, question, casual_turns, session_factory, monkeypatch
+) -> None:
+    """R-K's real cause. The rows are what a NUMBER is counted against, and a number is
+    still an answer to a roster carrying an offer - D19 rule 3 says so and
+    `dialogue/open_question.resolve` implements it ("a number wins: it is unambiguous").
+    So the model has to be shown them, and the `Pending:` line has to name the question
+    the rows belong to, not the yes/no riding on it.
+    """
+    _seed_contact(session_factory, variables={"open_question": dict(question)})
+    _run_casual_turns(
+        session_factory, monkeypatch, count=casual_turns, tag=f"gr8-{kind}-{casual_turns}"
+    )
+    blocks: list[str] = []
+    result, _calls = _run_turn(
+        session_factory, monkeypatch, qf=_number_v1(2), text_body="2",
+        msg_id=f"ZZT-gr8-{kind}-{casual_turns}", attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(), capture_user_block=blocks,
+        lanes=(*LANES, "low_signal", "check_promotion"),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    recorded = _open_question_options_fact(session_factory, result.turn_id)
+    expected_rows = [str(row.get("label")) for row in (question.get("options") or [])]
+    assert recorded, (
+        f"{kind} with an offer riding it, after {casual_turns} casual turn(s): no rows "
+        f"were shown to the parser, so a bare number has nothing to be counted against - "
+        f"live turn 34000918's own shape: {recorded!r}"
+    )
+    for label in expected_rows:
+        assert any(label in str(row) for row in recorded), (
+            f"{kind}: {label!r} missing from the rows the parser was shown: {recorded!r}"
+        )
+    pending = _pending_line(blocks[-1] if blocks else "")
+    assert pending and kind in pending, (
+        f"{kind}: the Pending line must name the question the ROWS belong to - a roster "
+        f"carrying an offer is still that roster (D19 rule 3): {pending!r}"
+    )
+
+
+def test_a_plain_escalate_offer_sends_no_options_line(session_factory, monkeypatch) -> None:
+    """The negative, and it is why `_pending_kind`'s collapse exists in the first place: a
+    one-team yes/no offer has no roster to count against, so it sends no rows and names
+    itself. Nothing about R-K's fix may change this turn."""
+    _seed_contact(
+        session_factory,
+        variables={
+            "open_question": {
+                "kind": "team_pick",
+                "options": [{"idx": 1, "team": "warehouse", "label": "warehouse"}],
+                "expects": "yes_no",
+                "asked_at_turn": 2,
+                "asked_at": None,
+                "payload": {"team": "warehouse", "domain": "inventory"},
+            }
+        },
+    )
+    blocks: list[str] = []
+    result, _calls = _run_turn(
+        session_factory, monkeypatch, qf=_yes_v1(), text_body="yes",
+        msg_id="ZZT-gr8-plain-offer", resolve_services=_exact_services(),
+        capture_user_block=blocks, is_test=True,
+    )
+    assert result.status == "done", (result.status, result.error)
+    assert not _open_question_options_fact(session_factory, result.turn_id), (
+        "a one-team offer numbers nothing, so there is no roster to show"
+    )
+    assert "Open question options:" not in (blocks[-1] if blocks else ""), blocks
+    pending = _pending_line(blocks[-1] if blocks else "")
+    assert pending and "team_pick" in pending, pending
+
+
+@pytest.mark.xfail(
+    strict=False,
+    reason=(
+        "v20 prompt over-eager pick, issue filed. Turn 7e14db69: 'another one' over the "
+        "ten-row incoming roster came back message_type casual, entities [], "
+        "reference_positions [2], reference_target dym, entity_op reuse, user_goal "
+        "'trying to pick another product option' - and the turn answered SRTWC286-SH-P, "
+        "which is the re-pick AC-1020 and focus.yaml case H both forbid. It is written as "
+        "an xfail rather than a red because NO head rule can separate it from a real pick "
+        "without reading the customer's words (D11): under v20 a bare '8' is ALSO "
+        "message_type casual with a position and nothing else - byte-identical shape, "
+        "opposite meaning. The fix is the prompt's, not the engine's."
+    ),
+)
+def test_a_casual_turn_that_names_nothing_mints_no_pick(session_factory, monkeypatch) -> None:
+    """Turn 7e14db69's exact emission, pasted. The roster stays and nothing is picked."""
+    roster = next(r for r in STICKY_ROSTERS if r.id == "multi-match-product")
+    _seed_contact(session_factory, variables={"open_question": dict(roster.question)})
+    result, _calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None, entity_op="reuse",
+            entities=[], asks=[], reference_positions=[2], reference_target="dym",
+            is_affirmative=None, order_status=None,
+            user_goal="trying to pick another product option",
+        ),
+        text_body="another one", msg_id="ZZT-gr7-another-one",
+        resolve_services=_exact_services(), lanes=(*LANES, "low_signal"),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    assert not _picked_labels(session_factory, result.turn_id), (
+        "'another one' names no row - the position the model volunteered for it must not "
+        "become a pick"
+    )
+    alive = _stored_oq(_final_vars(session_factory, result))
+    assert alive.get("kind") == "product_pick" and len(alive.get("options") or []) == 10, (
+        f"and the roster the customer is still reading stays: {alive!r}"
+    )
+
+
+# =========================================================================== #
+# GROUP 9 - R-M: a stray position over a head-resolved question mints a row
+# LABEL into the turn's entities
+#
+# Turn 0b610e47, "only BRW" over an open `outstanding_detail` whose options were
+# ["1. Delivery order list"]. The v20 emission (raw, verbatim):
+#
+#   message_type casual, domain_hint null, entity_op replace_combine, reference_target
+#   "result", reference_positions [1],
+#   entities [{raw "BRW", hint "warehouse", canonical_code null, current_message true}]
+#
+# and what the turn ENDED with:
+#
+#   entities [{raw "Delivery order list", hint "order", ordinal 1, canonical_code
+#   "Delivery order list", current_message true}], outstanding_pending_dropped true
+#
+# Three steps, in order:
+#
+# 1. arm 1 (`output_exchange.py:1692`) vetoes the refinement because something was picked
+#    (`picked is None` is part of its premise), so "only BRW" is not read as the narrowing
+#    it plainly is;
+# 2. arm 2 (:1706) then closes the question as a new ask on `names_entity`;
+# 3. the generic REFERENCE POSITIONS -> ENTITIES block (:2648-2713) maps position 1 to the
+#    row LABEL and overwrites `o["entities"]` wholesale (:2713) - so BRW is gone and
+#    "Delivery order list" goes to the resolver, where "list" matches every SPECIALIST
+#    customer. That is R-B's mechanism, and the good turn 40c57419 escaped it only because
+#    arm 3's second pass happened to reset `entities` to [].
+#
+# The rulings, as the coder is implementing them: a position over a HEAD-RESOLVED kind
+# (`outstanding_scope`, `outstanding_detail`) is never converted into an entity, keyed on
+# the live question's kind; and what the MESSAGE NAMES decides the reading - only
+# off-subject axes is a refinement whatever stray position rode along, nothing named plus
+# a position is an answer, a subject-capable entity is a new ask.
+# =========================================================================== #
+
+_HEAD_RESOLVED_KINDS = ("outstanding_scope", "outstanding_detail")
+
+#: The label of the row the stray position lands on, per kind - the token that must never
+#: reach `o["entities"]` or the resolver.
+_ROW_LABELS = {
+    "outstanding_scope": "Sales orders",
+    "outstanding_detail": "Sales order list",
+}
+
+
+def _seed_head_question(
+    session_factory, kind: str, *, filters: dict[str, Any] | None = None
+) -> None:
+    options = (
+        [
+            {"idx": 1, "label": "Sales orders", "value": "so"},
+            {"idx": 2, "label": "Delivery orders", "value": "do"},
+            {"idx": 3, "label": "Both", "value": "both"},
+        ]
+        if kind == "outstanding_scope"
+        else [
+            {"idx": 1, "label": "Sales order list", "value": "so"},
+            {"idx": 2, "label": "Delivery order list", "value": "do"},
+            {"idx": 3, "label": "Both lists", "value": "both"},
+        ]
+    )
+    _seed_contact(
+        session_factory,
+        variables={
+            "open_question": _open_question(
+                kind,
+                options=options,
+                filters=filters
+                or {
+                    "product_code": None,
+                    "date_filter_start": None,
+                    "date_filter_end": None,
+                    "customer_ids": [CARRIED_CUSTOMER_UUID],
+                    "warehouse_codes": [],
+                    "location_token": None,
+                    "scope": "both",
+                },
+            ),
+            "focus": {"domains": _focus_slot(["order"])},
+        },
+    )
+
+
+def _entities_of(result: Any) -> list[dict[str, Any]]:
+    emission = ((result.ctx or {}).get("parse") or {}).get("output") or {}
+    return [e for e in (emission.get("entities") or []) if isinstance(e, dict)]
+
+
+def _no_row_label_anywhere(result: Any, tokens: list[str], *, label: str, case: str) -> None:
+    """The label may not become an entity, and it may not be resolved as a token.
+
+    Two readings of the same rule, and both are needed: the emission says whether the head
+    MINTED it, the resolver log says whether it was ACTED on. Live turn 0b610e47 carries
+    it on the emission to the very end, and that is how "list" reached six SPECIALIST
+    customers.
+    """
+    minted = [
+        e
+        for e in _entities_of(result)
+        if label.lower() in f"{e.get('raw')} {e.get('canonical_code')}".lower()
+    ]
+    assert not minted, (
+        f"{case}: the row LABEL {label!r} was minted into this turn's entities - live "
+        f"turn 0b610e47's own defect: {minted!r}"
+    )
+    asked = [t for t in tokens if label.lower() in t.lower()]
+    assert not asked, (
+        f"{case}: the row label {label!r} reached the resolver as a token, which is how "
+        f"'list' matched every SPECIALIST customer (R-B): {tokens!r}"
+    )
+
+
+@pytest.mark.parametrize("kind", _HEAD_RESOLVED_KINDS, ids=lambda k: k)
+def test_rm_a_location_with_a_stray_position_narrows_and_mints_no_label(
+    kind, session_factory, monkeypatch
+) -> None:
+    """(a) Turn 0b610e47's own shape: a warehouse entity the customer really named, with a
+    position riding along. Only off-subject axes are named, so it is the refinement it
+    looks like - whatever the stray position says."""
+    _seed_brw_warehouse(session_factory)
+    _seed_head_question(session_factory, kind)
+    tokens: list[str] = []
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None,
+            entity_op="replace_combine", reference_positions=[1], reference_target="result",
+            asks=[], entities=[_entity("BRW", "warehouse")],
+            user_goal="trying to narrow it to BRW",
+        ),
+        text_body="only BRW", msg_id=f"ZZT-gr9-a-{kind}",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(token_log=tokens),
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    _no_row_label_anywhere(result, tokens, label=_ROW_LABELS[kind], case=f"{kind}/(a)")
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, f"{kind}: the narrowing re-runs the report once: {calls!r}"
+    assert reports[0].get("warehouse_codes") == ["BRW"], (
+        f"{kind}: narrowed to the location the customer named: {reports[0]!r}"
+    )
+    assert reports[0].get("customer_ids") == [CARRIED_CUSTOMER_UUID], (
+        f"{kind}: with the stored subject intact: {reports[0]!r}"
+    )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") == kind, (
+        f"{kind}: a refinement re-arms the same question over the narrower window "
+        f"(AC-1157/AC-1158): {question!r}"
+    )
+
+
+@pytest.mark.parametrize("kind", _HEAD_RESOLVED_KINDS, ids=lambda k: k)
+def test_rm_a_customer_with_a_stray_position_is_a_new_ask(
+    kind, session_factory, monkeypatch
+) -> None:
+    """(b) D17 point 3, unchanged: a customer CAN be this report's subject, so naming one
+    is a new question even with a position riding along - and the row label still never
+    becomes an entity."""
+    _seed_head_question(session_factory, kind)
+    tokens: list[str] = []
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="business_query", intent_hint=None, domain_hint=None,
+            entity_op="replace_combine", reference_positions=[1], reference_target="result",
+            asks=[], entities=[_entity("hanlim", "customer")],
+            user_goal="trying to ask about hanlim's deliveries",
+        ),
+        text_body="1, delivery status for hanlim", msg_id=f"ZZT-gr9-b-{kind}",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(
+            single={
+                "hanlim": {
+                    "uuid": "cccccccc-cccc-cccc-cccc-cccccccccccc", "entity_type": "customer",
+                    "canonical_code": "HANLIM", "match_tier": "exact", "company_name": "Sorento",
+                }
+            },
+            token_log=tokens,
+        ),
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    _no_row_label_anywhere(result, tokens, label=_ROW_LABELS[kind], case=f"{kind}/(b)")
+    for _name, args in _report_tool_calls(calls) and [
+        (n, a) for n, a in calls if not n.startswith("probe:")
+    ]:
+        assert args.get("customer_ids") != [CARRIED_CUSTOMER_UUID], (
+            f"{kind}: the customer named THIS turn is the new subject, not the stored one: "
+            f"{args!r}"
+        )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") != kind or _stored_oq_filters(
+        _final_vars(session_factory, result)
+    ).get("customer_ids") != [CARRIED_CUSTOMER_UUID], (
+        f"{kind}: a new ask drops the old question's filter set: {question!r}"
+    )
+
+
+@pytest.mark.parametrize("kind", _HEAD_RESOLVED_KINDS, ids=lambda k: k)
+def test_rm_a_pure_position_is_the_answer_and_mints_no_label(
+    kind, session_factory, monkeypatch
+) -> None:
+    """(c) Nothing named plus a position is the answer it has always been - and the row it
+    lands on is read as a SCOPE, never minted as an entity to go looking for."""
+    _seed_head_question(session_factory, kind)
+    tokens: list[str] = []
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None, entity_op="reuse",
+            reference_positions=[2], reference_target="dym", asks=[], entities=[],
+            user_goal="trying to choose delivery orders",
+        ),
+        text_body="2", msg_id=f"ZZT-gr9-c-{kind}",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(token_log=tokens),
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    _no_row_label_anywhere(
+        result, tokens, label="Delivery order", case=f"{kind}/(c)"
+    )
+    reports = _report_tool_calls(calls)
+    assert reports, f"{kind}: the answer runs the report: {calls!r}"
+    if kind == "outstanding_scope":
+        assert reports[0].get("scope") == "do", reports[0]
+    else:
+        assert reports[0].get("detail") == "do", reports[0]
+    assert reports[0].get("customer_ids") == [CARRIED_CUSTOMER_UUID], reports[0]
+
+
+def test_rm_a_scope_word_and_a_location_in_one_message_are_both_applied(
+    session_factory, monkeypatch
+) -> None:
+    """(d) "2, only BRW" over the scope question: the customer answered AND narrowed in
+    one message, and both halves have to land."""
+    _seed_brw_warehouse(session_factory)
+    _seed_head_question(session_factory, "outstanding_scope")
+    tokens: list[str] = []
+    result, calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_parser_output(
+            message_type="casual", intent_hint=None, domain_hint=None,
+            entity_op="replace_combine", reference_positions=[2], reference_target="result",
+            asks=[], entities=[_entity("BRW", "warehouse")],
+            user_goal="trying to choose delivery orders and narrow to BRW",
+        ),
+        text_body="2, only BRW", msg_id="ZZT-gr9-d",
+        attributes=["sales_orders.outstanding"],
+        resolve_services=_exact_services(token_log=tokens),
+        fetch_response=_report_call(REPORT_HIT),
+    )
+    assert result.status in ("done", "delegated"), (result.status, result.error)
+    _no_row_label_anywhere(result, tokens, label="Delivery orders", case="scope/(d)")
+    reports = _report_tool_calls(calls)
+    assert len(reports) == 1, f"one report call: {calls!r}"
+    assert reports[0].get("scope") == "do", (
+        f"'2' is the DO scope, and it was answered: {reports[0]!r}"
+    )
+    assert reports[0].get("warehouse_codes") == ["BRW"], (
+        f"and the location the same message named was applied: {reports[0]!r}"
+    )
+    assert reports[0].get("customer_ids") == [CARRIED_CUSTOMER_UUID], (
+        f"with the stored subject intact: {reports[0]!r}"
+    )
+    question = _stored_oq(_final_vars(session_factory, result))
+    assert question.get("kind") != "outstanding_scope", (
+        f"the scope question was ANSWERED, so it is not re-asked: {question!r}"
+    )
+
+
+# =========================================================================== #
+# GROUP 10 - S-1: every composer that PRINTS the sentence records the offer
+#
+# The fix records the offer at the COMPOSER, and deliberately with NO text fallback: the
+# team travels with the fact instead of being read back out of the reply, so
+# `team_from_reply` becomes a parity check rather than the source. That makes a composer
+# which prints the sentence and records nothing a SILENT failure - the customer reads an
+# offer and their "yes" resolves nothing (which is R-I all over again). One case per
+# top-level composer, each driven through the real turn path with a shape that makes it
+# print, so a new composer cannot be added without one.
+#
+# The seven declared sites, and where each is covered:
+#
+# | composer | covered by |
+# |---|---|
+# | `answer.promo_picker` (~1576, `esc_team` ~1618) | `promo-entitlement-miss` below |
+# | `answer.not_found_error_message` (~2388, `team` ~2550) | `stock-miss` below |
+# | `answer.build_suggest_offer` (~3304, `team` ~3344) | `did-you-mean` below |
+# | `compile_state`'s two miss arms (:2903 / :2942) | group 1's `miss` arm (the plain arm appends the phrase there) |
+# | `compose.crossdomain_compose` (:104) | group 1's `crossdomain-ladder` arm |
+# | `member_offer.py` (:294) | group 1c's `member-offer` case |
+# =========================================================================== #
+
+
+def _build_promo_entitlement_miss(session_factory, monkeypatch, tag: str):
+    """`promo_picker`'s own arm: the promotion RESOLVED and is not available at this
+    contact's level, so the picker composes the refusal and the offer itself."""
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(
+        single={
+            "a3 flyer": {
+                "uuid": "66666666-1111-1111-1111-111111111111",
+                "entity_type": "promotion",
+                "canonical_code": "PROMO-1",
+                "match_tier": "exact",
+                "company_name": "Sorento",
+                "display": {"description": "SORENTO A3 FLYER 2026", "is_active": True},
+            }
+        }
+    )
+    result, _calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_qf([_entity("a3 flyer", "promotion")], domain="promotion",
+               intent_hint="check_promotion", access_levels=["Dealer"]),
+        text_body="promo a3 flyer", msg_id=f"ZZT-gr10-promo-{tag}", lanes=PROMO_LANES,
+        resolve_services=services,
+        fetch_response={
+            "result_type": "promotion", "intro": "I found 1 promotion.",
+            "items": [], "answers": [], "has_result": False,
+        },
+    )
+    return (result.reply or {}).get("text") or "", services
+
+
+def _build_did_you_mean_offer(session_factory, monkeypatch, tag: str):
+    """`build_suggest_offer`: a near-miss ATTACHMENT TYPE beside a resolved product.
+
+    `attachment_type` is not one of `_QUERIED_TYPES`, so its candidates are not treated as
+    "already answered over" and survive into the did-you-mean offer - which is how this
+    composer's own sentence ("or would you like me to escalate to X team?", the lower-case
+    variant) gets printed on a turn a test can drive.
+    """
+    _seed_contact(session_factory, variables={})
+    services = _exact_services(
+        single={
+            PROMO_CODE: {
+                "uuid": PROMO_UUID, "entity_type": "product", "canonical_code": PROMO_CODE,
+                "match_tier": "exact", "company_name": "Sorento",
+            }
+        },
+        multi={
+            "photoo": [
+                {
+                    "uuid": f"7777777{i}-1111-1111-1111-111111111111",
+                    "entity_type": "attachment_type",
+                    "canonical_code": name,
+                    "match_tier": "trgm",
+                    "company_name": None,
+                    "display": {"description": name},
+                }
+                for i, name in enumerate(("Product Photos", "Product Photos 3D"), start=1)
+            ]
+        },
+    )
+    result, _calls = _run_turn(
+        session_factory, monkeypatch,
+        qf=_qf([_entity(PROMO_CODE, "product"), _entity("photoo", "attachment_type")],
+               domain="product_attachment", intent_hint="check_product_attachment",
+               requested_attributes=["attachment"]),
+        text_body=f"photoo for {PROMO_CODE}", msg_id=f"ZZT-gr10-dym-{tag}",
+        resolve_services=services,
+    )
+    return (result.reply or {}).get("text") or "", services
+
+
+COMPOSER_ARMS = (
+    OfferArm("stock-miss", roster=False, lanes=LANES, build=_build_miss_arm),
+    OfferArm(
+        "promo-entitlement-miss", roster=False, lanes=PROMO_LANES,
+        build=_build_promo_entitlement_miss,
+    ),
+    OfferArm("did-you-mean", roster=True, lanes=LANES, build=_build_did_you_mean_offer),
+)
+
+
+@pytest.mark.parametrize("arm", COMPOSER_ARMS, ids=lambda a: a.id)
+def test_s1_the_composer_that_printed_the_offer_recorded_it(
+    arm, session_factory, monkeypatch
+) -> None:
+    """Printed and recorded, per composer. `_printed_team` is the READER used to say what
+    the customer was promised; the assertion is on the RECORDED question, because that is
+    what the fix moves - so this stays true when the text stops being the source."""
+    reply, _services = arm.build(session_factory, monkeypatch, "rec")
+    printed = _printed_team(reply)
+    assert printed, (
+        f"arm {arm.id!r} is only itself if this composer printed its offer: {reply!r}"
+    )
+    question = _stored_oq(_vars(session_factory))
+    recorded = _recorded_team(question)
+    assert recorded, (
+        f"arm {arm.id!r}: the composer printed an offer for {printed!r} and recorded "
+        f"nothing - with no text fallback the customer's yes resolves nothing: "
+        f"{question!r}"
+    )
+    assert _pretty(recorded) == printed, (
+        f"arm {arm.id!r}: printed {printed!r}, recorded {recorded!r}: {question!r}"
+    )
+
+
+@pytest.mark.parametrize("arm", COMPOSER_ARMS, ids=lambda a: a.id)
+def test_s1_a_yes_after_each_composers_offer_routes_to_its_team(
+    arm, session_factory, monkeypatch
+) -> None:
+    """And the whole point of recording it: the next bare "yes" reaches that team."""
+    reply, services = arm.build(session_factory, monkeypatch, "yes")
+    printed = _printed_team(reply)
+    result, _calls = _run_turn(
+        session_factory, monkeypatch, qf=_yes_v1(), text_body="yes",
+        msg_id=f"ZZT-gr10-yes-{arm.id}", resolve_services=services, lanes=arm.lanes,
+        is_test=True,
+    )
+    assert result.status == "done", (result.status, result.error)
+    teams = _comment_teams(result)
+    assert teams == [_pretty(printed).replace(" ", "_")], (
+        f"arm {arm.id!r}: the reply promised {printed!r} and the escalation was filed "
+        f"against {teams!r}"
+    )
