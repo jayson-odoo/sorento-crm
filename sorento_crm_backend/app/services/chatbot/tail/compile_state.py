@@ -232,20 +232,17 @@ def _prev_context(prev_question: Any) -> str | None:
 
 
 # The two `expects` a ROSTER can be in, and they are the SAME QUESTION (S6 review, B1).
-# A roster reads `pick` normally and `pick_or_yes_no` while an escalate offer rides on it
-# (D19 rule 3); `_ask_for_turn` re-derives the label from this turn's own keys and can only
-# ever produce the plain `pick`, so comparing the two for equality made the re-arm guard
-# below permanently false for exactly the questions it exists to protect - the merged ones.
+# Why they are read as one, in `_same_expectation` below.
 _PICK_EXPECTS = ("pick", "pick_or_yes_no")
 
 
 def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
-    """Is this turn's ask the LIVE ROSTER over again, rather than a new list? (D19 r1)
+    """Is this turn's ask the LIVE QUESTION over again, rather than a new one? (D19 r1)
 
-    A ROSTER kind, the same kind as the live one, both in a PICK expectation, and the live
-    one has rows. Whether the re-arm brought rows of its OWN is deliberately not asked:
-    that was the B1 shape of this test and it missed the case the owner hit on 13 Sep,
-    where the rows it brought were THIS TURN'S ANSWER (see `_re_armed`).
+    The same kind as the live one, expecting the same answer, and the live one has rows.
+    Whether the re-arm brought rows of its OWN is deliberately not asked: that was the B1
+    shape of this test and it missed the case the owner hit on 13 Sep, where the rows it
+    brought were THIS TURN'S ANSWER (see `_re_armed`).
 
     Nor is it asked whether the LABEL was born this turn or carried, and that is a
     deliberate simplification rather than an oversight. The only roster `_ask_for_turn`
@@ -256,25 +253,54 @@ def _is_a_re_arm_of(asked: Any, previous: Any) -> bool:
     topic reset, by a message naming its own subject, or by the conversation closing
     (`dialogue/clearing.py`).
 
-    ROSTER kinds only, and the exclusion is load-bearing rather than tidy. A `member_offer`
-    is re-offered with NO options on purpose - it is a plain accept or decline, and the two
-    company names the customer reads ride the composed text rather than a persisted roster
-    (`escalation`'s clarify arm, pinned by `test_s5_escalation_seams.py::
-    test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state` and
-    `test_s3_canned_and_ideate.py::TestOfferHold`) - so an empty re-offer there is the
-    question, not a re-arm of one. The expectation test is why `_PICK_EXPECTS` exists
-    rather than a `==`: the plain escalate offer (`team_pick`, `yes_no`) must never inherit
-    the roster of a team CLARIFY (`team_pick`, `pick`), and a MERGED roster
-    (`pick_or_yes_no`) must be recognised as the same question its own re-arm names.
+    **EVERY KIND, not the roster kinds** (owner ruling, 15 Sep 2026: "our fix needs to be
+    general and not targeted to 1 scenario only"). S6 wrote this test as a `ROSTER_KINDS`
+    membership, which fixed the re-arm-returns-nothing defect for the three lists and left
+    it standing everywhere else: a `member_offer` re-prompted by `offer_hold` after ONE
+    casual turn came back `options: []` with its team re-derived, so the "2" the customer
+    typed over a numbered people roster picked nobody (R-L, tester 2's member-offer arm of
+    `test_general_rules_15sep.py::
+    test_a_bare_number_resolves_the_frozen_row_however_many_casual_turns_intervened`).
+    The rule is about a RE-ARM, which is a fact about the two questions rather than about
+    which kind they are, so the kind test is now only "the same kind as the live one" and
+    `member_offer` is NOT added to `ROSTER_KINDS` - what a pick does to a question
+    (`carry_after_answer`) is a different rule and stays where it is.
+
+    The EXPECTATION test is what the kind test used to carry, and it is the one
+    distinction that was earned by evidence rather than by tidiness: the plain escalate
+    offer (`team_pick`, `yes_no`) must never inherit the roster of a team CLARIFY
+    (`team_pick`, `pick`), and a MERGED roster (`pick_or_yes_no`) must be recognised as
+    the same question its own re-arm names. So the two must EXPECT the same answer -
+    either literally, or both inside `_PICK_EXPECTS`.
+
+    And the live question must have ROWS, which is why nothing about the plain accept or
+    decline moves: an offer armed with no roster (`test_s3_canned_and_ideate.py::
+    TestOfferHold`'s own prior, and the miss-company plain arm it stands for) has no rows
+    to keep and its re-prompt is still `options: []`.
     """
     if not isinstance(asked, dict) or not isinstance(previous, dict):
         return False
     kind = asked.get("kind")
-    if kind not in pending_open_question.ROSTER_KINDS or kind != previous.get("kind"):
+    if not jsc.truthy(kind) or kind != previous.get("kind"):
         return False
-    if asked.get("expects") not in _PICK_EXPECTS or previous.get("expects") not in _PICK_EXPECTS:
+    if not _same_expectation(asked, previous):
         return False
     return len(jsc.array(previous.get("options"))) > 0
+
+
+def _same_expectation(asked: Mapping[str, Any], previous: Mapping[str, Any]) -> bool:
+    """Do the two asks expect the SAME answer? (S6 review, B1)
+
+    Literally the same `expects`, or both inside `_PICK_EXPECTS` - a roster reads `pick`
+    normally and `pick_or_yes_no` while an escalate offer rides on it (D19 rule 3), and
+    `_ask_for_turn` re-derives the label from this turn's own keys and can only ever
+    produce the plain `pick`, so comparing the two for equality made the re-arm guard
+    permanently false for exactly the questions it exists to protect - the merged ones.
+    """
+    expects = asked.get("expects")
+    return expects == previous.get("expects") or (
+        expects in _PICK_EXPECTS and previous.get("expects") in _PICK_EXPECTS
+    )
 
 
 def _re_armed(asked: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str, Any]:
@@ -304,6 +330,14 @@ def _re_armed(asked: Mapping[str, Any], previous: Mapping[str, Any]) -> dict[str
         payload["offer"] = offer
     else:
         payload.pop("offer", None)
+    # AND THE RECORDED TEAM (same ruling). A re-prompt derives its own routing from this
+    # turn, which is how a warehouse member offer came back `payload.team:
+    # customer_service` - the customer was reading a warehouse roster and a "yes" would
+    # have gone somewhere else. The live question's team is what the customer was told, so
+    # it survives its own re-prompt exactly as its rows do.
+    live_team = jsc.get(previous.get("payload"), "team")
+    if jsc.truthy(live_team):
+        payload["team"] = live_team
     return {
         **asked,
         "options": previous.get("options"),

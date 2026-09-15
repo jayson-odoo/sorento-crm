@@ -253,7 +253,7 @@ console.
   under Cross-domain, and the Focus panel lists `domains` in order. Evidence: agent-browser
   run over a fan-out console turn.
 
-## Owner merge test, 15 Sep 2026 (AC-1060 to AC-1064)
+## Owner merge test, 15 Sep 2026 (AC-1060 to AC-1068)
 
 Added after the owner's console pass on the merged head (`d4ae8203b`), which found six
 defects at the pick seam and one pre-existing arm. The plan's "Found during owner merge
@@ -317,6 +317,29 @@ test" table carries the diagnosis; these are the independently-verifiable criter
   prompt and not only under v3. A `member_offer` keeps its own re-prompt, and a roster with no
   offer resolves nothing from an affirmative (D19). Evidence: the owner chain
   cca6b365 -> 570610f0, plus the parametrized arm reds.
+- AC-1067 [T] THE PARSER IS SHOWN THE ROWS IT HAS TO COUNT. A question whose answer is a
+  POSITION states its frozen rows to the parser in the user block, on every turn it is
+  open - the numbered pickers, the did-you-mean roster, the tier menu, the outstanding
+  scope and detail questions, and the member offer. It has to be the block and not the
+  state, because the PROMOTED prompt is v1-shaped and sees no `Focus:` / `Open question:`
+  section at all, so a roster it is not told about does not exist: the live chain
+  `incoming wc286` -> "8" -> two casual turns -> "10" came back `casual` with
+  `reference_positions: []` while the question itself was perfect. Nothing new is stored -
+  the rows come off the question, the same frozen list the position is resolved against -
+  and the line is ADDITIVE: the block the promoted prompt already reads does not move.
+  The same turn records `understood.facts.open_question_options`, so "it was never told"
+  and "it was told and did not take it" stay separable. Evidence: turns ab73f52b /
+  8440c1ff / 3fd0d37c, the per-kind block reds, and the v1 parity test.
+- AC-1068 [T] A RE-PROMPT KEEPS ITS FROZEN OPTIONS AND ITS RECORDED TEAM. When a turn asks
+  the question that is already open again - any kind, expecting the same answer - the rows
+  the customer was shown and the team they were promised survive it: the re-prompt derives
+  a LABEL only, so the rows beside it are this turn's (empty when no lane ran, the ANSWER's
+  own rows when one did) and the team is re-derived from this turn's routing. Measured on
+  the member offer: one casual turn came back `options: []` with `payload.team` flipped
+  from warehouse to customer service, so a "2" over a numbered people roster picked nobody
+  and a "yes" would have gone to the wrong team. The clock does not restart either. A live
+  question with no rows still re-prompts with none. Evidence: the sticky-roster reds over
+  0, 1 and 2 intervening casual turns, on every kind.
 
 ## Supersession map (growth-r1 section D)
 

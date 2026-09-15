@@ -574,15 +574,14 @@ def reuse_alive(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     # `replace_combine` - `ParseOutput`'s own default, and what R-D's live pick turn
     # carried. Gated on `reuse` alone, the `replace_combine` spelling lost the status, the
     # outstanding ask degraded into a plain order answer, and the scope question was never
-    # asked at all. A pick is an answer to the question that is open; it does not re-scope
-    # the conversation, so the status it was asked under stands either way.
-    # OR A PICK, whatever `entity_op` the model stamped on it. Keyed on the pick rather than
-    # on `_apply_outstanding_pending`'s markers deliberately: on the turn that answers the
-    # CUSTOMER picker the open question is that roster, not the report, so the head's
-    # outstanding reader bails before stamping anything - and that is exactly the turn R16
-    # describes ("the scope question resumed after a CUSTOMER pick"). A pick is an answer to
-    # whatever is open; it never re-scopes the conversation, so the status the conversation
-    # was asked under stands.
+    # asked at all.
+    #
+    # Keyed on the PICK rather than on `_apply_outstanding_pending`'s markers deliberately:
+    # on the turn that answers the CUSTOMER picker the open question is that roster, not the
+    # report, so the head's outstanding reader bails before stamping anything - and that is
+    # exactly the turn R16 describes ("the scope question resumed after a CUSTOMER pick"). A
+    # pick is an answer to whatever is open; it never re-scopes the conversation, so the
+    # status the conversation was asked under stands.
     picked_something = jsc.js_number(jsc.get(o, "positions_resolved")) > 0 or (
         jsc.is_array(o.get("reference_positions")) and len(o["reference_positions"]) > 0
     )

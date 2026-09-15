@@ -464,12 +464,15 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
 #: because nothing in its input mentioned a list. The same chain passes under v15, which is
 #: the tell: v3 emits `answers_open_question` from its own state block. Prod runs v20.
 #:
-#: `member_offer` is deliberately absent for now (same ruling): it prints people rather than
-#: rows and has its own resolution path, and a guard test decides whether it joins.
-#: `escalation_offer` has no roster at all.
+#: `member_offer` JOINS (owner ruling, 15 Sep 2026, after tester 2's guard came back red):
+#: its answer is a position too - it prints numbered people and a "2" means the second one -
+#: so the rule reaches it like any other. `escalation_offer` has no roster at all, and a
+#: kind whose live question carries no rows sends no line, so the clarify arm's own
+#: row-less re-offer is unaffected either way.
 _OPTION_PENDING_KINDS = (
     "outstanding_scope",
     "outstanding_detail",
+    "member_offer",
     *open_question_mod.ROSTER_KINDS,
 )
 
@@ -3630,6 +3633,7 @@ def _arm_cross_domain_offer(
     *,
     ctx: Mapping[str, Any],
     domain: Any,
+    offer_open: bool = False,
 ) -> None:
     """THE escalate offer, recorded as part of the ONE open question - every arm, one writer
     (owner ruling, 15 Sep 2026: "our fix needs to be general and not targeted to 1 scenario
@@ -3640,7 +3644,7 @@ def _arm_cross_domain_offer(
     which the reply is FINAL: `crossdomain_compose` appends the sentence after the tail has
     compiled, so a writer inside the tail can only ever see a draft. Three tail arms used to
     try - the standalone arm in `_ask_for_turn`, `_offer_rides_on_roster` for an offer over a
-    carried roster, and `_offer_born_beside_roster` for one born beside a fresh roster - and
+    carried roster, and one for an offer born beside a roster the tail had just armed - and
     between them they covered the shapes somebody had hit and missed the rest: a hit with a
     cross-domain ladder armed nothing a `yes` could answer (R-I, owner turn
     cca6b365 -> 570610f0), which is what proved the per-arm approach wrong.
@@ -3687,6 +3691,15 @@ def _arm_cross_domain_offer(
         return
     parse = jsc.get(ctx, "parse")
     if _spend_the_answer(variables, parse):
+        return
+
+    # AN OFFER HAS TO BE OPEN (final review B-1, 15 Sep 2026). The tail's own arm gates on
+    # `offer_open` - the lane's `is_escalate_offer` - as well as on the sentence, and this
+    # one did not, so a reply whose only offering clause was a customer's ECHOED token
+    # (`raw_of_tok` prints the token back above the answer) could mint a `team_pick` a
+    # later bare "yes" would accept. `xd_offer` naming a team is the cross-domain composer
+    # saying it appended one, which is that arm's own version of the same fact.
+    if not offer_open and not jsc.truthy(jsc.get(offer, "team")):
         return
 
     # THE PRINTED SENTENCE FIRST, because it is the promise the customer read (one source,
@@ -3823,7 +3836,10 @@ def run_tail(
         offer_out=xd_offer,
     )
     sealed = composed.get("reply") or {}
-    _arm_cross_domain_offer(sealed, xd_offer, ctx=ctx, domain=compiled.answered_domain)
+    _arm_cross_domain_offer(
+        sealed, xd_offer, ctx=ctx, domain=compiled.answered_domain,
+        offer_open=bool(compiled.offer_open),
+    )
     # A lane may have composed quick replies of its own before the tail ran: the
     # escalation clarifies name the teams so the answer is a tap, and the tail composes no
     # `quick_reply` on that arm. Seeded HERE rather than at the send seal so the persisted

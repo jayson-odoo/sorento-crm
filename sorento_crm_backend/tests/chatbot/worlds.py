@@ -299,11 +299,13 @@ _GATE_DERIVED_KEYS = (
     "routing_brand_source",
     "routing_roster_plan",
     "picker_last_result_set",
-    # `picker_families` is GONE (R-F, 15 Sep 2026): the key, its two writers and the
-    # gate's unread output of it were deleted when the account family moved onto the
-    # roster row and the picked entity (`family_uuids`). A world skipped for "the
-    # capture carries a gate-derived key this replay has no gate for" over a key no
-    # body writes any more would be a permanent skip with nothing behind it.
+    # The SESSION key `picker_families` is gone (R-F, 15 Sep 2026): it and its two
+    # writers were deleted when the account family moved onto the roster row and the
+    # picked entity (`family_uuids`). The gate still PUBLISHES `picker_families` on its
+    # own output (`lanes/business/gate.py`), as a diagnostic 9 graded gate captures
+    # carry, and nothing reads it into the session any more - so a world skipped for
+    # "the capture carries a gate-derived key this replay has no gate for" over this one
+    # would be a permanent skip with nothing behind it.
 )
 
 

@@ -307,14 +307,40 @@ def team_from_reply(reply_text: Any) -> str | None:
     from app.services.chatbot.contracts import SUGGESTED_TEAMS
 
     text = jsc.js_string(reply_text or "")
-    match = _ESCALATE_TEAM_RE.search(text)
+    # THE LAST MATCH, not the first (final review B-1, 15 Sep 2026). Anchoring on the
+    # offering clause was not enough: a customer's token can BE that clause - measured end
+    # to end with `or 'yes' to escalate to warehouse.` and `would you like me to escalate to
+    # purchasing team.`, echoed by `compile_state`'s and `answer.py`'s `raw_of_tok` ABOVE
+    # the real offer - and the first match is then the echo, so the reply promised customer
+    # service while the question recorded warehouse. Every composer appends its offering
+    # clause at the END, so the last span that reduces to a catalogue team is the promise;
+    # a reply that only echoes has no such span after it and returns None.
+    match = None
+    for candidate in _ESCALATE_TEAM_RE.finditer(text):
+        if _catalogue_team(candidate.group("team")) is not None:
+            match = candidate
     if match is None:
         return None
     # Bold markers come off (the company insert is written `*Sorento*`), then leading words
     # are dropped one at a time until what remains is a real catalogue team - which is how a
     # company prefix, a lower-case composer and the "or 'yes' to escalate to X." shape all
     # read the same without a list of companies or a list of sentences.
-    words = [w for w in match.group("team").replace("*", " ").strip().lower().split() if w]
+    return _catalogue_team(match.group("team"))
+
+
+def _catalogue_team(span: Any) -> str | None:
+    """A captured span reduced to a real catalogue team, or None.
+
+    Bold markers come off (the company insert is written `*Sorento*`), then leading words
+    are dropped one at a time until what remains is a `SUGGESTED_TEAMS` member - which is
+    how a company prefix, a lower-case composer and the "or 'yes' to escalate to X." shape
+    all read the same without a list of companies or a list of sentences. Nothing is
+    invented: a span that never reduces returns None, and that is what makes taking the
+    LAST matching span safe.
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    words = [w for w in jsc.js_string(span or "").replace("*", " ").strip().lower().split() if w]
     for start in range(len(words)):
         team = "_".join(words[start:])
         if team in SUGGESTED_TEAMS:
