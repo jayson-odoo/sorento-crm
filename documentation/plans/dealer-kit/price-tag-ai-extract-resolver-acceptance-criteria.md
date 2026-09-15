@@ -43,6 +43,18 @@ Plan: PLAN-price-tag-ai-extract-resolver.md
 - AC-S3-4 `[FE]` The Design button on a folded row opens the designer for that tag (same
   `openDesignerForTag(tag.id)`), and Review opens the change review for it.
 
+## S4 Designer rail: one block per line when the line has one tag and no parts
+
+- AC-S4-1 `[FE]` A line with one tag, no parts and no open group renders one block: code, name
+  (when it differs from the code), `Qty <n> / <family> / LP <price>` (or SP / Override per the
+  existing rules), the designed check, the open-pins count. No "1a" text. Clicking the block
+  selects that tag (`onSelect(tag.id)`), and the block carries the selected highlight.
+- AC-S4-2 `[FE]` "Use template for tag 1a" and the Review button (when the tag has a pending
+  change) are on that block; no Remove button.
+- AC-S4-3 `[FE]` A line with two tags renders the line block plus `1a` / `1b` tag rows, as today.
+- AC-S4-4 `[FE]` A line with one tag and an open group keeps the tag row (the Split / Pick one
+  controls live there).
+
 ## Verification
 
 - pytest: the two new BE files green; `tests/test_ai_extract_service.py` and

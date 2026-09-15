@@ -34,6 +34,10 @@ product with no combo still renders as two rows, the line row with empty price c
 "1a" tag row carrying the price, tag status and Design action. Owner: with no combo, just one
 row per product; no 1a / 2a.
 
+Fourth finding (owner screenshot 15 Sep, the tag designer's Lines rail): the same split, a
+line block ("P SRTWT8203, Qty 1 / Shower") with a "1a" tag row under it carrying the price,
+the check and the actions. Owner: a line with no parts is one row on the rail too.
+
 ## Decisions
 
 - D1 `_canonical_product_code` is deleted. `_extract_products` calls `resolve_references(db,
@@ -67,6 +71,14 @@ row per product; no 1a / 2a.
   still resolve. A line with parts, or two or more tags, keeps today's shape (line row, part
   rows, `1a` / `1b` tag rows). The line-level "Changed" roll-up is redundant on a folded row, so
   it is not shown there (the tag's own Changed pill is on the same row).
+- D8 Designer rail (`RequestTagDesigner.tsx`, `LinesRail`): a line with exactly ONE tag, NO
+  parts and NO open group renders as ONE block: the line block becomes the selectable button
+  (`onSelect(tag.id)`, `selected` highlight, `Check` when designed, the open-pins count, the
+  Changed / Review affordance, the Use template button) and the Qty line carries the tag's
+  price text (`Qty 1 / Shower / LP RM 300`, same `formatTagPrice` rules, override included).
+  No `1a` text, no `TagRailRow` under it. The Remove button is not shown (it is already hidden
+  when a line has one tag). A line with two or more tags, any parts, or an open group keeps
+  today's shape. `aria-label`s keep the tag label.
 - D6 No new endpoint, no registry, no flag. One resolver call, one boolean in the FE, one guard
   in the service.
 
@@ -84,7 +96,9 @@ FE
 - `app/(auth)/portal/lib/portal-client.ts`: `AIExtractedProductLine` gains the three fields.
 - `app/(auth)/portal/components/PriceTagRequestForm.tsx`: D3, D4.
 - `app/(protected)/dealer-kit/price-tag-requests/components/PriceTagRequestDetail.tsx`: D7.
-- tests: `PriceTagRequestDetail.test.tsx` (one tag + no parts = one row; two tags = sub-rows),
+- `app/(protected)/dealer-kit/price-tag-requests/[id]/design/components/RequestTagDesigner.tsx`: D8.
+- tests: `RequestTagDesigner.tags.test.tsx` (one tag + no parts = one selectable block, no "1a";
+  two tags = tag rows), `PriceTagRequestDetail.test.tsx` (one tag + no parts = one row; two tags = sub-rows),
   `PriceTagRequestForm.aiExtractApply.test.tsx` (update the mocks: no `lookupTagItems`
   call, statuses from payload), `PriceTagRequestForm.parts.test.tsx` (Add part hidden when
   combos empty, shown when one or more).
