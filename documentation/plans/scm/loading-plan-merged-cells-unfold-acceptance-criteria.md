@@ -35,3 +35,21 @@ Plan: PLAN-loading-plan-merged-cells-unfold.md
 - AC-F6: Browser: on the CHAOZHOU JINBAICHUAN plan (stock list 14/09/2026) the Lines grid
   shows 53 rows across pages (35 ranked + 18 no-demand), no fold line; Supplier codes tab shows
   MWB247 and CGB247 with `盆小孔 · M` / `盆小孔 · C` after re-uploading the stock list.
+
+## Qty split (S3)
+
+- AC-Q1: The Lines grid has a column headed "Suggested qty" whose cell is read-only text equal
+  to `engine_qty`, with the formula tooltip; and a separate column headed "Requested qty" whose
+  cell is the number input. Order: Rank, Product, Suggested qty, Requested qty, Remarks.
+- AC-Q2: Typing 50 into Requested qty on a row whose engine_qty is 0 leaves "Suggested qty"
+  showing 0 and the input showing 50; `onQtyChange(row_key, 50)` fires.
+- AC-Q3: A row with a saved override (`suggested_qty` 100, `engine_qty` 20) renders Suggested
+  qty 20 and Requested qty input value 100 on load.
+- AC-Q4: On a cancelled (read-only) plan both columns render as text: Suggested 20, Requested
+  100.
+- AC-Q5: Sorting by "Suggested qty" orders on engine_qty; sorting by "Requested qty" orders on
+  the saved override (`suggested_qty`), as the old single column did.
+- AC-Q6: A previously saved column-visibility preference for this listing that predates
+  `requested_qty` still shows the Requested qty column (unknown id defaults to visible).
+- AC-Q7: Browser: on the CHAOZHOU JINBAICHUAN plan, SRTWB247 (override 50) shows Suggested 0
+  and Requested 50 side by side; the stat card "To request" still reads the requested total.

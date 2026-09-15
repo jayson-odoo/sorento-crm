@@ -42,6 +42,26 @@ G89:G90 = 3549), cbm merges in 体积 (H86:H88, H89:H90, H97:H102) and total cbm
   qty on a no-demand row (AC-E3) keep working because the rows are the same objects in the same
   grid.
 
+## S3 (owner, 15 Sep, second message): split Suggested qty from Requested qty
+
+Owner: "every time we change the suggested quantity manually, we forgot what's the original
+suggested quantity". Today ONE column, "Suggested qty", holds the input, and the input shows the
+override, so the formula's answer is only in the cell's hover title.
+
+Measured: `build_for_plan` already emits `engine_qty` (the untouched formula answer) beside the
+overridden `suggested_qty`, it is typed on `ContainerRequestRow` (`fulfilmentService.ts:682`)
+and `LoadingPlanView` already uses it for Save (N). No backend change.
+
+- "Suggested qty": read-only text, `engine_qty`, sortable, keeps the `FormulaTip` and the
+  hover formula. Muted when a no-demand row.
+- "Requested qty": the existing input (`renderQtyCell`, `qtyFor` / `onQtyChange`), column id
+  `requested_qty`, sortable on `qtyFor(row)` is NOT needed - sort on `row.suggested_qty` (the
+  saved override, what the record holds) as the old column did. Sits right after Suggested qty,
+  before Remarks. Read-only plan (cancelled) renders it as text like today.
+- Same row object, same `row_key`, so search, Save (N), the stat cards and the row dialog are
+  unchanged. Column-preference store: a saved visibility set must not hide the new column
+  (check how unknown ids default in `useListingColumnConfig` / the DataGrid personalisation).
+
 ## Out of scope
 
 Editable "Supplier says"; `.xls` merged cells; any change to `sheet_rows` callers
@@ -52,3 +72,4 @@ Editable "Supplier says"; `.xls` merged cells; any change to `sheet_rows` caller
 - S1 backend: `sheet_merges` + fill-through in `read_workbook` (pytest, file-only via injected
   `AliasResolver`, synthetic workbook with the exact merge shape above).
 - S2 frontend: un-fold (vitest on `ContainerRequestSection`).
+- S3 frontend: Suggested qty (read-only, engine_qty) + Requested qty (input) columns (vitest).
