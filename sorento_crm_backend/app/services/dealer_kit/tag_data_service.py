@@ -58,6 +58,23 @@ def staff_viewer() -> ViewerContext:
     return STAFF_VIEWER
 
 
+def contact_viewer(db: Session, contact_id: str) -> ViewerContext:
+    """A portal contact's own audience, as a pricing/promotion viewer (D4).
+
+    Every line-level promotion check that reaches a portal contact's own
+    request - create, update, revise, the line-pricing lookup - reads THIS,
+    never a bare pass-through of ``access_codes`` built ad hoc per call site
+    (or, worse, ``staff_viewer()``, which is ``is_internal_copy=True`` and so
+    never gates on audience at all). One place answers "what can this
+    contact see", matching the rule the old ``lookup_promotions`` audience
+    gate followed.
+    """
+    from app.services.contact_access_type_service import ContactAccessTypeService
+
+    codes = ContactAccessTypeService(db).get_contact_access_codes(contact_id)
+    return ViewerContext(access_codes=frozenset(codes))
+
+
 # ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------

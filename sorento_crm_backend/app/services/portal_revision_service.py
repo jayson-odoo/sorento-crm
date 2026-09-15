@@ -385,6 +385,7 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
     immediately, so a guard raised only AFTER calling it would still have
     wiped the request's existing lines on a refused revision.
     """
+    from app.services.dealer_kit import tag_data_service
     from app.services.error_handler import AppException
     from app.services.price_tag_request_service import PriceTagRequestService
 
@@ -507,7 +508,15 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 # overriding a deliberate clear.
                 line.setdefault("promotion_id", promotion_id)
                 line.setdefault("manual_sell_price", manual_sell_price)
-    PriceTagRequestService.replace_lines(db, row, converted)
+        # Security review (this round): a revision is a PORTAL CONTACT
+        # writing, exactly like create/update - `replace_lines` with no
+        # viewer falls back to `staff_viewer()` (`is_internal_copy=True`),
+        # which `_may_see_offer` never gates, so a promotion outside this
+        # contact's own audience passed AC-S6-5's check here even though the
+        # identical create/update payload would have been refused. The SAME
+        # viewer create/update already pass (`tag_data_service.contact_viewer`).
+        viewer = tag_data_service.contact_viewer(db, row.contact_id)
+    PriceTagRequestService.replace_lines(db, row, converted, viewer=viewer)
     # Where the retired set guard ran, the D2 warning is stamped instead - on the
     # rows that now exist, so submit and revise cannot answer differently.
     PriceTagRequestService.apply_package_warnings(db, row)

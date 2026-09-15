@@ -237,6 +237,50 @@ class PriceTagRequestService:
         )
 
     @staticmethod
+    def _validate_line_price_basis(
+        promotion_id: str | None,
+        manual_sell_price,
+        price_mode: str,
+        *,
+        detail: str | None = None,
+    ) -> None:
+        """AC-S6-4: a manual price and a promotion are mutually exclusive on
+        a line, and a manual figure only means anything in Selling mode -
+        List mode prints the list price regardless of what was typed, so a
+        stray manual figure there is a mistake worth naming rather than a
+        value silently thrown away.
+
+        The ONE seam every arm that can set a line's price basis passes
+        through - create, update and revise (`_add_lines`), and the CRM line
+        PATCH (`set_line_price`) - so none of them can accept something
+        another refuses. Used to live twice: once here (raising an
+        `AppException`, naming the line by index) and once again as a
+        Pydantic ``@model_validator`` on the create/update schemas, which
+        revise's raw-dict payload never ran through at all (security review
+        finding) - the validator produced a different error SHAPE
+        (`RequestValidationError`'s `{"detail": [...]}` list) than this
+        one's (`AppException`'s `{"message", "detail", "code"}`), so it was
+        deleted rather than kept as an "earlier" duplicate: two shapes for
+        the same refusal is worse than one that runs a query later.
+        """
+        if manual_sell_price is None:
+            return
+        if promotion_id is not None:
+            raise AppException(
+                status_code=422,
+                message="A manual price and a promotion are mutually exclusive.",
+                detail=detail,
+                code="INVALID_LINE_PRICE",
+            )
+        if price_mode != "selling":
+            raise AppException(
+                status_code=422,
+                message="A manual price only applies in Selling mode.",
+                detail=detail,
+                code="INVALID_LINE_PRICE",
+            )
+
+    @staticmethod
     def _add_lines(
         db: Session,
         request: PriceTagRequest,
@@ -327,6 +371,9 @@ class PriceTagRequestService:
 
             promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
+            PriceTagRequestService._validate_line_price_basis(
+                promotion_id, manual_sell_price, request.price_mode, detail=f"line:{idx}"
+            )
             # D1/D3/AC-S7-5: a product line's price basis, resolved through
             # the SAME engine the portal's and the CRM's own line-pricing
             # routes call (S7) - `show_promo_price` can never disagree with
@@ -879,19 +926,9 @@ Marketing's own work is not part of the form's payload, so it is captured
         if "manual_sell_price" in data and data["manual_sell_price"] is not None:
             promotion_id = None
 
-        if manual_sell_price is not None:
-            if promotion_id is not None:
-                raise AppException(
-                    status_code=422,
-                    message="A manual price and a promotion are mutually exclusive.",
-                    code="INVALID_LINE_PRICE",
-                )
-            if request.price_mode != "selling":
-                raise AppException(
-                    status_code=422,
-                    message="A manual price only applies in Selling mode.",
-                    code="INVALID_LINE_PRICE",
-                )
+        PriceTagRequestService._validate_line_price_basis(
+            promotion_id, manual_sell_price, request.price_mode
+        )
 
         basis = "list"
         if line.product_id:

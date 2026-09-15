@@ -37,6 +37,7 @@ from app.schemas.price_tag import (
     ReviewCommentResponse,
     TagItemLookupItem,
 )
+from app.services.dealer_kit import tag_data_service
 from app.services.dealer_kit.tag_sheet_export_service import latest_completed_export
 from app.services.error_handler import AppException, handle_not_found
 from app.services import price_tag_review_service
@@ -111,7 +112,7 @@ def portal_create_price_tag_request(
 
     D1 (S6): the promotion is a LINE fact now - each line's own
     ``promotion_id``, if any, is validated (AC-S6-5) by ``_add_lines``
-    itself, against THIS contact's own audience (``_contact_viewer``), not by
+    itself, against THIS contact's own audience (``tag_data_service.contact_viewer``), not by
     a header-level check here.
     """
     _assert_visible(db, token.contact_id)
@@ -122,7 +123,7 @@ def portal_create_price_tag_request(
             contact_id=token.contact_id,
             company_id=company_id,
             data=payload.model_dump(),
-            viewer=_contact_viewer(db, token.contact_id),
+            viewer=tag_data_service.contact_viewer(db, token.contact_id),
         )
     db.commit()
     return _detail_body(db, req)
@@ -349,7 +350,7 @@ def portal_update_price_tag_request(
         # against THIS contact's audience - same as create.
         with company_scope(db, frozenset({req.company_id})):
             PriceTagRequestService.replace_lines(
-                db, req, lines, viewer=_contact_viewer(db, req.contact_id)
+                db, req, lines, viewer=tag_data_service.contact_viewer(db, req.contact_id)
             )
 
     db.flush()
@@ -778,7 +779,7 @@ def portal_line_pricing(
         rows = line_pricing(
             db,
             lines=[line.model_dump() for line in payload.lines],
-            viewer=_contact_viewer(db, token.contact_id),
+            viewer=tag_data_service.contact_viewer(db, token.contact_id),
         )
     return [LinePricingRow(**row) for row in rows]
 
@@ -914,21 +915,6 @@ def _detail_body(db: Session, req) -> dict:
     body["revision"] = revision_service.policy_for("price_tag_request", req.id).as_dict()
     body["revision_draft"] = revision_service.get_draft("price_tag_request", req.id)
     return body
-
-
-def _contact_viewer(db: Session, contact_id: str):
-    """The portal contact's own audience, as a pricing/promotion viewer (D4).
-
-    Every line-level promotion check (create, update, the line-pricing
-    lookup) reads THIS, never a bare pass-through of ``access_codes`` built
-    ad hoc per call site - one place answers "what can this contact see",
-    matching the old ``lookup_promotions``' own audience rule.
-    """
-    from app.services.contact_access_type_service import ContactAccessTypeService
-    from app.services.dealer_kit.viewer import ViewerContext
-
-    codes = ContactAccessTypeService(db).get_contact_access_codes(contact_id)
-    return ViewerContext(access_codes=frozenset(codes))
 
 
 def _resolve_company(db: Session, token: PortalToken) -> str:

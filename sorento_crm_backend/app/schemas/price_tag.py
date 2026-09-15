@@ -193,24 +193,6 @@ class PriceTagRequestLineResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _check_line_price_basis(price_mode: str, lines) -> None:
-    """AC-S6-4: manual and a promotion are mutually exclusive on a line, and
-    a manual figure only means anything in Selling mode - List mode prints
-    the list price regardless of what was typed, so a stray manual figure
-    there is a mistake worth naming rather than a value the form silently
-    throws away.
-    """
-    for idx, line in enumerate(lines or []):
-        if line.manual_sell_price is None:
-            continue
-        if line.promotion_id is not None:
-            raise ValueError(
-                f"line {idx}: a manual price and a promotion are mutually exclusive"
-            )
-        if price_mode != "selling":
-            raise ValueError(f"line {idx}: a manual price only applies in Selling mode")
-
-
 class PriceTagRequestCreate(BaseModel):
     """What the portal posts when it saves a draft (D48a).
 
@@ -223,6 +205,15 @@ class PriceTagRequestCreate(BaseModel):
     ``extra="forbid"`` (D1, S6): the promotion moved to the LINE - a
     request-level ``promotion_id`` is now an unknown field, 422, rather than
     a value this schema quietly accepted and nothing ever read.
+
+    AC-S6-4 (a line's manual price and its promotion are mutually exclusive,
+    and manual only applies in Selling mode) is NOT re-validated here - it
+    used to be a ``@model_validator`` on this class, but revise's raw-dict
+    payload never runs through Pydantic at all, so the rule lived twice with
+    two different error shapes. Moved into
+    ``PriceTagRequestService._validate_line_price_basis``, the one seam
+    create, update, revise (``_add_lines``) and the CRM line PATCH
+    (``set_line_price``) all pass through (security review finding).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -244,10 +235,6 @@ class PriceTagRequestCreate(BaseModel):
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
 
-    @model_validator(mode="after")
-    def _validate_line_price_basis(self):
-        _check_line_price_basis(self.price_mode, self.lines)
-        return self
     #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
     #: longer value 500s on the flush instead of being refused with a 422.
     print_by: Optional[Literal["office", "self"]] = None
@@ -258,6 +245,8 @@ class PriceTagRequestUpdate(BaseModel):
     replaces them, which is what the form does when it re-saves a draft.
 
     ``extra="forbid"`` for the same reason as ``PriceTagRequestCreate``.
+    AC-S6-4 is not re-validated here either, for the same reason - see that
+    class's own docstring.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -281,11 +270,6 @@ class PriceTagRequestUpdate(BaseModel):
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
 
-    @model_validator(mode="after")
-    def _validate_line_price_basis(self):
-        if self.lines is not None:
-            _check_line_price_basis(self.price_mode, self.lines)
-        return self
     #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
     #: longer value 500s on the flush instead of being refused with a 422.
     print_by: Optional[Literal["office", "self"]] = None
