@@ -1502,6 +1502,24 @@ def _run_stages(  # noqa: PLR0915
                     raw=None,
                 )
             else:
+                # AC-1317: where the counted set got to, so "more" pages the SAME set
+                # next turn instead of counting it again from nothing.
+                if predicate is not None and plan.fetch:
+                    state_out.focus.set_page = turn_runtime.set_page_carry(
+                        predicate,
+                        plan.fetch[0],
+                        [
+                            jsc.nullish_str(e.get("raw"))
+                            for e in (verdict.get("entities") or [])
+                            if isinstance(e, dict)
+                            and jsc.nullish_str(e.get("hint")).strip().lower()
+                            in ("product_type", "category")
+                        ],
+                    )
+                elif not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
+                    # An answer that is not a counted set closes the page: the customer
+                    # has moved on, and "more" must not resume a set they left.
+                    state_out.focus.set_page = None
                 turn_trace.record(
                     "looked_up",
                     summary="Looked the answer up.",

@@ -30,6 +30,17 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
 }
 
 
+# AC-1317: the goals that mean "show me the next page of the set you just counted".
+# The PARSER's own word for it (`user_goal`), never a phrase test over the message -
+# a turn that names a continuation is the one signal the carry needs.
+CONTINUATION_GOALS: frozenset[str] = frozenset({"more", "next", "lagi", "show_more"})
+
+
+def _is_continuation(verdict: dict[str, Any]) -> bool:
+    goal = verdict.get("user_goal")
+    return isinstance(goal, str) and goal.strip().lower() in CONTINUATION_GOALS
+
+
 def _domain_of_document(document: list[str]) -> str | None:
     for kind in document:
         name = DOMAIN_BY_DOCUMENT.get(str(kind).strip().upper())
@@ -434,6 +445,29 @@ def apply(
         if dym is not None:
             return new_state, Plan(
                 domains=list(domains), fetch=[], ask=dym, denied=[], trace=trace
+            )
+
+    # A continuation pages the set the LAST answer described: same domain, same
+    # description, one page further on (AC-1317). It never re-narrows and never re-asks -
+    # the customer has already answered every question this set needed.
+    if _is_continuation(verdict) and focus.set_page:
+        carried = focus.set_page.get("set_key") or {}
+        domain = carried.get("domain")
+        if domain:
+            trace.rules_fired.append("set_page_continuation")
+            return new_state, Plan(
+                domains=[domain],
+                fetch=[
+                    FetchSpec(
+                        domain=domain,
+                        entities=[],
+                        filters={"set_page": dict(focus.set_page)},
+                        date_window=None,
+                    )
+                ],
+                ask=None,
+                denied=[],
+                trace=trace,
             )
 
     attributes = tuple(

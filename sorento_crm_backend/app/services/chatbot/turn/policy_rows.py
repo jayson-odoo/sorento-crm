@@ -5,6 +5,11 @@
 # `Base.metadata.create_all` alone.
 #
 # Data only. Nothing here reads a message, calls a database or imports a lane.
+#
+# FROZEN SEED DATA (captain ruling, 16 Sep 2026). Any change to the policy goes
+# through a NEW migration against the live tables, never by editing this file: these
+# rows are what a fresh database starts from, and an edit here would silently
+# disagree with every database that has already been seeded.
 from __future__ import annotations
 
 from typing import Any

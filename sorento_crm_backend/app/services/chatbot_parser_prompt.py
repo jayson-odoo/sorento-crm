@@ -161,3 +161,94 @@ SEMANTIC_PARSER_PROMPT ="You are the Sorento Semantic Parser. You are given:\n- 
 # describes is no longer published from here. Its exact text lives on, byte-identical,
 # in alembic/_legacy_prompt_bodies.py - imported only by the migrations that already
 # published labelled versions of it (475, 480, 487, 490, 513, 514, 517).
+
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover - a type-only import, never at runtime
+    from sqlalchemy.orm import Session
+
+# --------------------------------------------------------------------------- #
+# The generated blocks (chatbot turn re-architecture S4, AC-1550)
+#
+# `chatbot_domains` and `chatbot_entity_kinds` are the policy (AC-1501/AC-1502), and the
+# parser has to be TOLD what they say. Rendering the blocks from the rows means adding a
+# domain is a row plus a publish, not a prompt edit that can disagree with the table the
+# engine actually routes on - which is the whole point of moving the constant into a
+# table. Rendered at PUBLISH time, never per turn: the prompt a customer's turn runs on
+# is an immutable version, and a row saved this morning must not silently change the
+# words yesterday's version was graded against. AC-1552's staleness banner is what tells
+# the owner the two have diverged.
+# --------------------------------------------------------------------------- #
+
+BLOCKS_BEGIN = "<<<CHATBOT POLICY BLOCKS>>>"
+BLOCKS_END = "<<<END CHATBOT POLICY BLOCKS>>>"
+
+
+def render_prompt_blocks(db: "Session") -> str:
+    """The domain and entity-kind paragraphs, one per line, deterministic.
+
+    Domains in `(sort_order, name)` order, entity kinds in `kind` order, because the
+    rendered text is hashed and compared: any ordering that depends on how Postgres felt
+    would report the prompt stale on every other read.
+    """
+    from sqlalchemy import text as sql
+
+    lines: list[str] = []
+    domains = db.execute(
+        sql(
+            "SELECT name, label, intents, switch_words, narrowing, takes_date_filter, "
+            "escalation_team_code FROM chatbot_domains ORDER BY sort_order, name"
+        )
+    ).mappings().all()
+    for row in domains:
+        intents = ", ".join(row["intents"] or []) or "(none)"
+        words = ", ".join(row["switch_words"] or []) or "(none)"
+        parts = [f'Domain {row["name"]} ("{row["label"]}"): intents {intents}. Switch words: {words}.']
+        narrowing = row["narrowing"] or {}
+        if narrowing:
+            clauses = "; ".join(f"{kind} narrows {narrowing[kind]}" for kind in sorted(narrowing))
+            parts.append(f"{clauses}.")
+        if row["takes_date_filter"]:
+            parts.append("Takes a date window.")
+        if row["escalation_team_code"]:
+            parts.append(f'Escalates to {row["escalation_team_code"]}.')
+        lines.append(" ".join(parts))
+
+    lines.append("")
+
+    kinds = db.execute(
+        sql(
+            "SELECT kind, resolver_source, did_you_mean, default_narrowing "
+            "FROM chatbot_entity_kinds ORDER BY kind"
+        )
+    ).mappings().all()
+    for row in kinds:
+        lines.append(
+            f'Entity kind {row["kind"]}: resolver {row["resolver_source"]}. '
+            f'Did-you-mean {"on" if row["did_you_mean"] else "off"}. '
+            f'Default narrowing {row["default_narrowing"]}.'
+        )
+
+    return "\n".join(lines) + "\n"
+
+
+def prompt_blocks_hash(db: "Session") -> str:
+    """The sha256 of the rendered blocks - what a published version records so the
+    Prompts page can say whether the rows have moved since (AC-1552)."""
+    import hashlib
+
+    return hashlib.sha256(render_prompt_blocks(db).encode("utf-8")).hexdigest()
+
+
+def blocks_of(template: str | None) -> str:
+    """The blocks a published body carries, or the whole body when it is nothing else.
+
+    A published version wraps them in `BLOCKS_BEGIN`/`BLOCKS_END` so the rest of the
+    prompt can change without reading as a policy change. A body that is ONLY the blocks
+    (a hand-published one) carries no markers, and is its own answer.
+    """
+    body = template or ""
+    if BLOCKS_BEGIN in body and BLOCKS_END in body:
+        return body.split(BLOCKS_BEGIN, 1)[1].split(BLOCKS_END, 1)[0].strip("\n") + "\n"
+    return body

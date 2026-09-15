@@ -68,3 +68,27 @@ def default_tier_order() -> list[str]:
     from app.services.chatbot.lanes.business.tier_gate import TIER_ORDER
 
     return list(TIER_ORDER)
+
+
+# The Memory card's defaults (AC-1513, AC-1561). One declaration, read by
+# `SystemSetting.chatbot_memory`'s Python default and by the settings endpoint's own
+# null-reset table, through this doorway for the same AC-002 reason as the rest of this
+# module: core may not import `app/services/chatbot/`.
+CHATBOT_MEMORY_KEYS: tuple[str, ...] = (
+    "recall_default",
+    "episode_retention_days",
+    "profile_fields",
+    "focus_reset_events",
+)
+
+
+def default_chatbot_memory() -> dict:
+    """Recall off by default (D3: "global default off"), a six-month episode horizon,
+    the three profile slots the parser is told about, and the one event that resets the
+    focus besides an explicit topic reset."""
+    return {
+        "recall_default": False,
+        "episode_retention_days": 180,
+        "profile_fields": ["tier", "language", "default_ledgers"],
+        "focus_reset_events": ["topic_switch"],
+    }

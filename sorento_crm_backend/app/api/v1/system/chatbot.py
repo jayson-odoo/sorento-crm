@@ -31,10 +31,13 @@ console is the module's own dry-run entry point.
 from __future__ import annotations
 
 import base64
+import hashlib
 import binascii
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import desc, func
@@ -71,6 +74,14 @@ from app.services.chatbot.dispatch import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chatbot")
+
+
+def parser_prompt_key() -> str:
+    """The prompt registry key the parser publishes under - read from the parser itself
+    so this route and the engine can never name two different prompts."""
+    from app.services.chatbot.head.parser import PROMPT_KEY
+
+    return PROMPT_KEY
 
 VIEW = "system.chat_history.view"
 MANAGE = "system.chat_history.manage"
@@ -596,3 +607,85 @@ def console_prompt_versions(
         )
         for row in rows
     ]
+
+
+# --------------------------------------------------------------------------- #
+# Prompt blocks: are the published parser blocks still what the rows say? (AC-1552)
+# --------------------------------------------------------------------------- #
+
+
+class PromptBlocksStatus(BaseModel):
+    """What the Prompts page's "domain block out of date" banner reads.
+
+    Hash based, not timestamp based: an owner who saves a domain and undoes it has
+    changed nothing, and a banner that fired on `updated_at` would say otherwise. The
+    rendered blocks ARE the comparison, so the answer is exactly "would publishing now
+    change what the parser is told".
+    """
+
+    stale: bool
+    current_hash: str
+    published_hash: str | None
+    published_version: int | None
+    published_at: datetime | None
+
+
+@router.get("/prompt-blocks/status", response_model=PromptBlocksStatus)
+def prompt_blocks_status(
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Whether `chatbot_domains` / `chatbot_entity_kinds` have moved since the labelled
+    parser version was published (AC-1552).
+
+    The comparison is against `production` - the version a customer's turn actually runs
+    on. An unlabelled version carrying newer blocks is not what anybody is being answered
+    by, so it must not clear the banner.
+    """
+    _ = current_user
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+    from app.services.chatbot_parser_prompt import blocks_of, prompt_blocks_hash
+
+    current_hash = prompt_blocks_hash(db)
+
+    label = (
+        db.query(AIPromptLabel)
+        .filter(
+            AIPromptLabel.name == parser_prompt_key(),
+            AIPromptLabel.label == "production",
+        )
+        .first()
+    )
+    published = (
+        db.query(AIPromptVersion).filter(AIPromptVersion.id == label.version_id).first()
+        if label is not None
+        else None
+    )
+    if published is None:
+        # Nothing is published, so nothing is out of date - there is no version for the
+        # rows to disagree with. The banner stays quiet and the Prompts page's own empty
+        # state is what says there is no parser version yet.
+        return PromptBlocksStatus(
+            stale=False,
+            current_hash=current_hash,
+            published_hash=None,
+            published_version=None,
+            published_at=None,
+        )
+
+    published_hash = (published.config_json or {}).get("blocks_hash")
+    if not published_hash:
+        # Published before the blocks carried a hash of their own (or by hand, body
+        # only): hash what that body actually says, so an older version still answers
+        # the question instead of reading as permanently stale.
+        published_hash = hashlib.sha256(
+            blocks_of(published.template).encode("utf-8")
+        ).hexdigest()
+
+    return PromptBlocksStatus(
+        stale=published_hash != current_hash,
+        current_hash=current_hash,
+        published_hash=published_hash,
+        published_version=published.version,
+        published_at=published.created_at,
+    )

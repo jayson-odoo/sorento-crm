@@ -362,6 +362,11 @@ PERMISSION_REGISTRY.extend([
     {"slug": "system.chat_history.view", "name": "View Chat History", "description": "View stored WhatsApp/chat messages and round-trip latency. Message content is customer PII."},
     {"slug": "system.chat_history.export", "name": "Export Chat History", "description": "Export chat messages to CSV via My Downloads."},
     {"slug": "system.chat_history.manage", "name": "Manage chatbot turns", "description": "Retry a failed chatbot turn from the turn trace, which re-posts the customer's original message at the chatbot ingress."},
+    # Chatbot turn re-architecture (AC-1561). Separate from `chat_history.view`, which
+    # READS one customer's conversation: this one edits the policy every conversation
+    # is then answered by, so an operator who may read a turn is not thereby allowed to
+    # change what the next thousand turns do.
+    {"slug": "system.chatbot_config.manage", "name": "Manage Chatbot Configuration", "description": "Create, edit and delete chatbot domains and entity kinds - the policy the turn engine routes and narrows on."},
     {"slug": "system.email_event_configs.view", "name": "View Email Event Configs", "description": "View per-event email kill switches and rate overrides."},
     {"slug": "system.email_event_configs.manage", "name": "Manage Email Event Configs", "description": "Toggle per-event email kill switches and adjust rate overrides."},
 ])
