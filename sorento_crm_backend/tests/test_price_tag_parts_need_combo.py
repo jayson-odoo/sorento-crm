@@ -123,7 +123,11 @@ def test_create_request_with_parts_on_no_combo_product_returns_422(db):
     savepoint.rollback()
 
     assert exc.value.status_code == 422
-    assert exc.value.detail == "line:0"
+    # AppException.detail is the wire dict ({"message", "detail", "code"}),
+    # never the bare string - `detail=f"line:{index}"` lands in its own
+    # "detail" key, the same shape every other AppException raise in this
+    # service uses (see `_add_line_parts`'s sibling checks / `_part_uuid`).
+    assert exc.value.detail["detail"] == "line:0"
     # The request is unchanged: nothing from the failed create survives.
     assert db.query(PriceTagRequest).count() == 0
 
@@ -152,7 +156,11 @@ def test_replace_lines_with_parts_on_no_combo_product_returns_422(db):
     savepoint.rollback()
 
     assert exc.value.status_code == 422
-    assert exc.value.detail == "line:0"
+    # AppException.detail is the wire dict ({"message", "detail", "code"}),
+    # never the bare string - `detail=f"line:{index}"` lands in its own
+    # "detail" key, the same shape every other AppException raise in this
+    # service uses (see `_add_line_parts`'s sibling checks / `_part_uuid`).
+    assert exc.value.detail["detail"] == "line:0"
     # The draft's line set is unchanged (still empty, as before the replace).
     db.expire_all()
     assert (

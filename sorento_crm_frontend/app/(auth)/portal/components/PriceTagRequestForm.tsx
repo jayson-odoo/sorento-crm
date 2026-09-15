@@ -194,15 +194,21 @@ function partsFromCombo(combo: ProductComboOption): DraftPart[] {
     }
     if (seen.has(part.choice_group)) continue;
     seen.add(part.choice_group);
+    const candidates = combo.parts
+      .filter((p) => p.choice_group === part.choice_group)
+      .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name }));
+    // D17 (AC-S12-1): one candidate is not a choice - the group resolves on
+    // the spot, same as a fixed part. `candidates` is kept (not cleared) so
+    // the row still knows what it came from if it is ever removed and
+    // restored (D19), the same reason a genuinely open row keeps it.
+    const only = candidates.length === 1 ? candidates[0] : null;
     out.push({
       key: newPartKey(),
-      product_id: null,
-      code: '',
-      name: '',
+      product_id: only?.product_id ?? null,
+      code: only?.code ?? '',
+      name: only?.name ?? '',
       role: part.choice_group,
-      candidates: combo.parts
-        .filter((p) => p.choice_group === part.choice_group)
-        .map((p) => ({ product_id: p.product_id, code: p.code, name: p.name })),
+      candidates,
     });
   }
   return out;
@@ -766,39 +772,45 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     [],
   );
 
-  // ---- AI extract sales order lines (D7) ----
+  // ---- AI extract sales order lines (D7, D3 of the AI-extract-resolver
+  // plan) ----
   //
-  // Fires when the dialog moves to Review, so a row can already read "Not
-  // found" before Apply is clicked (AC-S6-2). Matches by exact code, trimmed
-  // and case-insensitive, against the SAME lookup the Item picker above
-  // uses - one call per code, which is fine for a sales order's page count.
+  // The extract already resolved each code through the shared entity
+  // resolver server-side (D1/D2) - `match` / `product_id` / `product_set_id`
+  // ride on the payload, so every row is read directly off it, no lookup, no
+  // 'loading' state (AC-S1-6, AC-S1-7). One matcher, on the server; the form
+  // keeps none of its own - a row with no exact match, or with `match`
+  // absent entirely, reads as "not_found".
   const handleAIExtracted = useCallback(
     (products: AIExtractedProductLine[]) => {
-      const codes = products.map((p) => normalizeAiCode(p.product_code));
-      setAiMatchStatuses(Object.fromEntries(codes.map((code) => [code, 'loading'])));
       aiMatchesRef.current = {};
+      const statuses: Record<string, AIMatchStatus> = {};
+
       products.forEach((p) => {
         const code = normalizeAiCode(p.product_code);
-        const lookup = code ? lookupTagItems(code) : Promise.resolve([]);
-        lookup
-          .then((items) => {
-            const match =
-              items.find((i) => i.code.trim().toLowerCase() === code) ?? null;
-            aiMatchesRef.current[code] = match;
-            setAiMatchStatuses((prev) => ({
-              ...prev,
-              [code]: match
-                ? match.kind === 'product_set'
-                  ? 'matched_set'
-                  : 'matched_product'
-                : 'not_found',
-            }));
-          })
-          .catch(() => {
-            aiMatchesRef.current[code] = null;
-            setAiMatchStatuses((prev) => ({ ...prev, [code]: 'not_found' }));
-          });
+        if (p.match === 'product' && p.product_id) {
+          aiMatchesRef.current[code] = {
+            kind: 'product',
+            id: p.product_id,
+            code: p.product_code ?? code,
+            name: p.product_name || p.product_code || code,
+          };
+          statuses[code] = 'matched_product';
+        } else if (p.match === 'product_set' && p.product_set_id) {
+          aiMatchesRef.current[code] = {
+            kind: 'product_set',
+            id: p.product_set_id,
+            code: p.product_code ?? code,
+            name: p.product_name || p.product_code || code,
+          };
+          statuses[code] = 'matched_set';
+        } else {
+          aiMatchesRef.current[code] = null;
+          statuses[code] = 'not_found';
+        }
       });
+
+      setAiMatchStatuses(statuses);
     },
     [],
   );
@@ -1003,6 +1015,26 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           ? { ...l, parts: l.parts.filter((part) => part.key !== partKeyToRemove) }
           : l,
       ),
+    );
+  }, []);
+
+  /** D19: put back exactly what a "Missing" warning names - the fixed parts
+   *  and choice groups the line's chosen combo has that it does not already
+   *  hold (resolved when the group has one candidate, open otherwise, same
+   *  as the initial pick). Rows the salesperson kept are untouched. */
+  const restoreParts = useCallback((key: string) => {
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.key !== key || !l.combo_id) return l;
+        const combo = l.combos.find((c) => c.combo_id === l.combo_id);
+        if (!combo) return l;
+        const missing = partsFromCombo(combo).filter((candidate) =>
+          candidate.role
+            ? !l.parts.some((row) => row.role === candidate.role)
+            : !l.parts.some((row) => row.product_id === candidate.product_id),
+        );
+        return missing.length > 0 ? { ...l, parts: [...l.parts, ...missing] } : l;
+      }),
     );
   }, []);
 
@@ -2213,6 +2245,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       onResolvePart={resolvePart}
                       onRemovePart={removePart}
                       onAddPart={addPart}
+                      onRestoreParts={restoreParts}
                     />
                   ))}
                 </tbody>
@@ -2480,32 +2513,28 @@ interface LineRowProps {
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
   onAddPart: (key: string, option: SearchableSelectOption | null) => void;
+  onRestoreParts: (key: string) => void;
 }
-
-/** The copy an open row carries, and the only sentence of explanation on this
- *  form (AC-S2-3, AC-X-3). */
-const OPEN_ROW_COPY = 'Marketing will prepare one tag per option';
 
 /** One part row under a line: a fixed or hand-added product, or an open group. */
 function PartRow({
   lineKey,
   lineIndex,
   part,
-  showOpenRowCopy,
   onResolvePart,
   onRemovePart,
 }: {
   lineKey: string;
   lineIndex: number;
   part: DraftPart;
-  /** The one sentence this form is allowed (AC-X-3), so it is rendered ONCE per
-   *  line - under the LAST open row - not once per open row. Three open groups
-   *  used to print it three times, which reads as three different instructions. */
-  showOpenRowCopy: boolean;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
-  const choosable = part.candidates.length > 0;
+  // D17: a group with exactly one candidate resolves on the spot
+  // (`partsFromCombo`) and reads like a fixed part - no select, even though
+  // `candidates` still carries the one entry. A genuinely open row always
+  // has two or more.
+  const choosable = part.candidates.length > 1;
   const label = part.role || part.code || part.name;
   return (
     <tr className="align-top">
@@ -2528,9 +2557,6 @@ function PartRow({
                   emptyMessage="No options."
                   size="sm"
                 />
-                {showOpenRowCopy ? (
-                  <p className="text-xs text-muted-foreground">{OPEN_ROW_COPY}</p>
-                ) : null}
               </div>
             ) : (
               <div className="min-w-0">
@@ -2580,17 +2606,18 @@ function LineRow({
   onResolvePart,
   onRemovePart,
   onAddPart,
+  onRestoreParts,
 }: LineRowProps) {
   const isSet = line.line_type === 'product_set';
   const warning = packageWarningFor(line);
   // Only when there is a choice to make: one combo is applied on pick, and none
   // leaves nothing to select.
   const showPackage = !isSet && line.combos.length > 1;
-  const showParts = !isSet && !!line.product_id;
-  // The last row still waiting on a choice: the one the sentence sits under.
-  const lastOpenPartKey =
-    [...line.parts].reverse().find((part) => !part.product_id && part.candidates.length > 0)
-      ?.key ?? null;
+  // D4 (AC-S2-1..S2-3): "Add part" only once the combos lookup answered AND
+  // the product actually has at least one package - nothing to add a part
+  // TO otherwise. Existing part rows (a reopened draft) still render with
+  // their Remove regardless; this only gates the search below.
+  const showParts = !isSet && !!line.product_id && line.combos_loaded && line.combos.length > 0;
   const picked = itemValue(line);
   const selectedItem: SearchableSelectOption | undefined = picked
     ? {
@@ -2693,7 +2720,6 @@ function LineRow({
           lineKey={line.key}
           lineIndex={index}
           part={part}
-          showOpenRowCopy={part.key === lastOpenPartKey}
           onResolvePart={onResolvePart}
           onRemovePart={onRemovePart}
         />
@@ -2730,6 +2756,19 @@ function LineRow({
                 Package warning
               </Badge>
               <span className="text-xs text-muted-foreground">{warning}</span>
+              {/* D19: put back exactly what is named missing above - only
+                  while there is a chosen package to restore it FROM. */}
+              {line.combo_id && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-2xs"
+                  onClick={() => onRestoreParts(line.key)}
+                >
+                  Restore
+                </Button>
+              )}
             </div>
           </td>
         </tr>

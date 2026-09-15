@@ -471,7 +471,13 @@ describe('change-request markers on the canvas (AC-S2-6)', () => {
       expect(screen.getByTestId('canvas-pin-1')).toHaveTextContent(/Done/),
     );
     expect(screen.getByTestId('canvas-pin-2')).toHaveTextContent('Still open');
-    expect(screen.getByTestId('canvas-pin-2')).not.toHaveTextContent(/Done/);
+    // D13 (PLAN-price-tag-ai-extract-resolver.md): every OPEN pin now offers
+    // its own "Done" button (AC-S9-1), so the whole row legitimately carries
+    // that word - what this pins is the CAPTION: an unresolved pin reads
+    // "Round 1", never "Round 1 / Done".
+    expect(screen.getByTestId('canvas-pin-2').textContent).not.toMatch(
+      /Round \d+ \/ Done/,
+    );
   });
 
   it('the LINES rail badges the tags that have open pins', async () => {

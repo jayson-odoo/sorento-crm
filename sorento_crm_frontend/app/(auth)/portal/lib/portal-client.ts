@@ -1034,6 +1034,12 @@ export interface AIExtractedProductLine {
   unit_price?: number | null;
   total?: number | null;
   notes?: string | null;
+  // D2 (PLAN-price-tag-ai-extract-resolver.md): already resolved through the
+  // entity resolver server-side - exactly one match, or none/ambiguous. When
+  // present, the form reads these instead of looking the code up itself.
+  match?: 'product' | 'product_set' | null;
+  product_id?: string | null;
+  product_set_id?: string | null;
 }
 
 export interface AIExtractTokenUsage {

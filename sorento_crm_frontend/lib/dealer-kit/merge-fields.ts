@@ -96,6 +96,10 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'set.name', label: 'Set name', group: 'Set' },
   { path: 'set.members', label: 'Members', group: 'Set' },
   { path: 'line.quantity', label: 'Quantity', group: 'Line' },
+  // D23: the resolved parts on this line's tag, joined with ", " (codes and
+  // names as two separate tokens, since a design might want either or both).
+  { path: 'line.parts', label: 'Parts (codes)', group: 'Line' },
+  { path: 'line.parts_names', label: 'Parts (names)', group: 'Line' },
 ];
 
 /** The specs the bound thing carries. A set has none of its own (D58). */
@@ -105,9 +109,14 @@ function specsOf(data: TagBindingData): TagSpecValue[] {
   return [];
 }
 
-/** `407 mm`, or `stainless steel` where the registry records no unit. */
+/**
+ * `407`, never `407 mm` (D20/AC-S15-1): the unit is the designer's to type,
+ * so a composed string like `L{{spec.dim_length}}XW{{spec.dim_width}}mm`
+ * does not print a doubled unit. `product.dimensions` (the composed slot
+ * string) is unchanged - this is only the bare `{{spec.*}}` token.
+ */
 function specText(spec: TagSpecValue): string {
-  return spec.unit ? `${spec.value} ${spec.unit}` : spec.value;
+  return spec.value;
 }
 
 /**
@@ -125,6 +134,16 @@ function resolvePath(path: string, data: TagBindingData): string | null {
 
   if (path === 'line.quantity') {
     return data.kind === 'line' ? String(data.line.quantity) : null;
+  }
+
+  if (path === 'line.parts' || path === 'line.parts_names') {
+    // D23: null when the binding is not a line at all (the token's
+    // unanswered form); an empty string when it is a line with no parts.
+    if (data.kind !== 'line') return null;
+    const parts = data.line.parts ?? [];
+    return parts
+      .map((part) => (path === 'line.parts' ? part.code : part.name))
+      .join(', ');
   }
 
   const slot = PATH_SLOTS[path];

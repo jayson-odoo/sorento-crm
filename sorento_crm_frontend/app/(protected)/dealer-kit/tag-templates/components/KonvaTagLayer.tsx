@@ -780,7 +780,10 @@ function PriceBadgeContent({
         textDecoration={badgeTextDecoration(typo)}
         lineHeight={typo.lineHeight ?? undefined}
         letterSpacing={typo.letterSpacing * scale * 0.1}
-        fill={parts.amountText ? '#000000' : '#999999'}
+        // D22 (AC-S17-1): an amount honours the layer's own Text colour, the
+        // same as the boxed branch below always has; the muted grey stays
+        // only for the empty "no price" placeholder.
+        fill={parts.amountText ? props.textColor : '#999999'}
       />
     );
   }

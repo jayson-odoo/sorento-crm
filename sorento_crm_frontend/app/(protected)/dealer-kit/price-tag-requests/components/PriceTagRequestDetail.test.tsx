@@ -256,7 +256,9 @@ describe('priceTagActions', () => {
     ['designing', 'user-1', 'Design tags'],
     ['changes_requested', 'user-1', 'Design tags'],
     ['proof_ready', 'user-1', 'View design'],
-    ['approved', 'user-1', 'Export PDF'],
+    // D14 (AC-S10-1, PLAN-price-tag-ai-extract-resolver.md): approved goes
+    // back to the designer to print and hand over - Open design leads.
+    ['approved', 'user-1', 'Open design'],
   ])('%s is led by %s', (status, assignee, label) => {
     expect(priceTagActions(status, assignee)[0].label).toBe(label);
   });
@@ -279,9 +281,12 @@ describe('priceTagActions', () => {
 
   it('never offers Void once a self print request is approved and therefore finished', () => {
     // r9 D8 retired `ready`: a self print request ENDS at `approved`, so the
-    // only thing left is the export. The office half of this matrix, and the
-    // `ready`-less status set, live in `priceTagRequestActions.test.ts`.
+    // only thing left is the design entry point and the export - no void.
+    // D14 (PLAN-price-tag-ai-extract-resolver.md) adds `design` leading it;
+    // the office half of this matrix, and the `ready`-less status set, live
+    // in `priceTagRequestActions.test.ts`.
     expect(priceTagActions('approved', 'user-1', 0, 'self').map((a) => a.action)).toEqual([
+      'design',
       'export',
     ]);
   });
@@ -589,10 +594,12 @@ describe('PriceTagRequestDetail - tabs', () => {
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
-    // Designed/No tag is a TAG fact since S3, so it is read off the tag row
-    // nested under each line, not off the line row.
-    const tag1Row = (await screen.findByText(tagLabelFor('line-1'))).closest('tr');
-    const tag2Row = screen.getByText(tagLabelFor('line-2')).closest('tr');
+    // Designed/No tag is a TAG fact since S3, so it is read off the tag's
+    // own row - here the folded line row itself (D7: one tag, no parts),
+    // found by the line's code rather than by the ordinal text a folded
+    // row no longer renders.
+    const tag1Row = (await screen.findByText('SRT-1')).closest('tr');
+    const tag2Row = screen.getByText('SRT-2').closest('tr');
     expect(tag1Row).not.toBeNull();
     expect(tag2Row).not.toBeNull();
     expect(within(tag1Row as HTMLElement).getByText('Designed')).toBeTruthy();
@@ -602,10 +609,13 @@ describe('PriceTagRequestDetail - tabs', () => {
   // Review: the row Design action was ungated - it rendered on every line
   // regardless of status, while the header CTA (and the deleted Proof-card
   // button) only ever offered Design when `priceTagActions` legalizes it.
-  // The row must use the exact same predicate.
+  // The row must use the exact same predicate. `collected` is the status to
+  // prove it with since D14 (PLAN-price-tag-ai-extract-resolver.md): design
+  // now leads at `approved` too, so that status no longer demonstrates the
+  // gate - `collected` still offers nothing but `export`.
   it('hides the Actions column entirely on a request Design is not legal for', async () => {
     mockGet.mockResolvedValue(
-      requestWith({ status: 'approved', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+      requestWith({ status: 'collected', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
     );
     renderDetail();
 
@@ -929,8 +939,11 @@ describe('PriceTagRequestDetail - Lines tab, parts and tags under the line (S3)'
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     switchTab('Lines');
 
+    // D7: one tag, no parts - the line folds to ONE row (no separate "1a"
+    // row, so no ordinal text), which by itself proves no part row either.
     expect(await screen.findByText('SRT-1')).toBeInTheDocument();
-    expect(screen.getByText(tagLabelFor('line-1'))).toBeInTheDocument();
+    expect(document.querySelectorAll('tbody tr')).toHaveLength(1);
+    expect(screen.queryByText(tagLabelFor('line-1'))).toBeNull();
     expect(screen.queryByText('Package warning')).toBeNull();
     expect(screen.queryByText(/Open:/)).toBeNull();
   });

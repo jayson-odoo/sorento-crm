@@ -184,8 +184,35 @@ describe('renderMergeFields - product paths', () => {
 });
 
 describe('renderMergeFields - spec paths', () => {
-  it('renders a spec value with its unit when the registry has one', () => {
-    expect(renderMergeFields('{{spec.diameter}}', product(), 'print')).toBe('407 mm');
+  // AC-S15-1 (PLAN-price-tag-ai-extract-resolver.md D20): the unit is the
+  // designer's to type - `specText` answers the bare value now, never
+  // "value unit" - so a composed string like `L{{spec.dim_length}}XW...mm`
+  // does not print a doubled unit.
+  it('renders a spec value alone, with no unit appended (AC-S15-1)', () => {
+    expect(renderMergeFields('{{spec.diameter}}', product(), 'print')).toBe('407');
+  });
+
+  it('composes several bare spec values inside one literal string (AC-S15-1)', () => {
+    const data = product({
+      specs: [
+        { key: 'dim_length', label: 'Length', value: '860', unit: 'mm' },
+        { key: 'dim_width', label: 'Width', value: '480', unit: 'mm' },
+        { key: 'dim_height', label: 'Height', value: '250', unit: 'mm' },
+      ],
+    });
+    expect(
+      renderMergeFields(
+        'L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm',
+        data,
+        'print',
+      ),
+    ).toBe('L860XW480XH250mm');
+  });
+
+  it('{{product.dimensions}} still renders the composed slot string unchanged (AC-S15-1)', () => {
+    expect(renderMergeFields('{{product.dimensions}}', product(), 'print')).toBe(
+      '800 x 500 x 220 mm',
+    );
   });
 
   it('renders a spec value with no unit as the value alone', () => {
@@ -240,6 +267,51 @@ describe('renderMergeFields - set and line paths', () => {
     expect(
       renderMergeFields('[{{product.sell_price}}]', line({ show_promo_price: false }), 'print'),
     ).toBe('[]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-S18-1/S18-2 (PLAN-price-tag-ai-extract-resolver.md D23): the parts on a
+// tag, as two Line-group merge fields.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - line.parts / line.parts_names paths (S18)', () => {
+  it('AC-S18-1: {{line.parts}} joins the resolved parts\' codes with ", "', () => {
+    const data = line({
+      parts: [
+        { product_id: 'p-mirror', code: 'SRTMR502-BL', name: 'ZZT Mirror', dimensions: '' },
+      ],
+    });
+    expect(renderMergeFields('{{line.parts}}', data, 'print')).toBe('SRTMR502-BL');
+  });
+
+  it('AC-S18-1: two parts join with ", " for both codes and names', () => {
+    const data = line({
+      parts: [
+        { product_id: 'p1', code: 'SRTKT71SS-BL', name: 'ZZT Kitchen Tap', dimensions: '' },
+        { product_id: 'p2', code: 'SRTMR502-BL', name: 'ZZT Mirror', dimensions: '' },
+      ],
+    });
+    expect(renderMergeFields('{{line.parts}}', data, 'print')).toBe(
+      'SRTKT71SS-BL, SRTMR502-BL',
+    );
+    expect(renderMergeFields('{{line.parts_names}}', data, 'print')).toBe(
+      'ZZT Kitchen Tap, ZZT Mirror',
+    );
+  });
+
+  it('AC-S18-2: on a line with no parts, both resolve to an empty string', () => {
+    expect(renderMergeFields('[{{line.parts}}]', line(), 'print')).toBe('[]');
+    expect(renderMergeFields('[{{line.parts_names}}]', line(), 'print')).toBe('[]');
+  });
+
+  it('AC-S18-2: on a product binding, both resolve to null - the token\'s unanswered form', () => {
+    expect(renderMergeFields('[{{line.parts}}]', product(), 'print')).toBe('[]');
+    expect(renderMergeFields('[{{line.parts_names}}]', product(), 'print')).toBe('[]');
+    // Unanswered on a BOUND (non-null) binding still draws nothing, even in
+    // editor mode - only a fully absent binding falls back to the raw token
+    // (mirrors {{line.quantity}} on a product binding, above).
+    expect(renderMergeFields('{{line.parts}}', product(), 'editor')).toBe('');
   });
 });
 
@@ -344,6 +416,14 @@ describe('mergeFieldCatalog', () => {
     const code = catalog.find((field) => field.path === 'product.code');
     expect(code?.label).toBe('Code');
     expect(code?.token).toBe('{{product.code}}');
+  });
+
+  it('AC-S18-1: lists "Parts (codes)" and "Parts (names)" in the Line group', () => {
+    const lineFields = catalog.filter((field) => field.group === 'Line');
+    const codes = lineFields.find((field) => field.path === 'line.parts');
+    const names = lineFields.find((field) => field.path === 'line.parts_names');
+    expect(codes).toMatchObject({ label: 'Parts (codes)', token: '{{line.parts}}' });
+    expect(names).toMatchObject({ label: 'Parts (names)', token: '{{line.parts_names}}' });
   });
 });
 

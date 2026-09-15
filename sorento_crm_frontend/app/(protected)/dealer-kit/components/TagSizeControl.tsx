@@ -26,12 +26,17 @@
  */
 
 import { useState } from 'react';
-import { X } from 'lucide-react';
+import { ChevronDown, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import {
   MIN_TAG_SIZE_MM,
@@ -59,6 +64,31 @@ const CUSTOM_SIZE_VALUE = '__custom__';
 
 function sizeKey(width_mm: number, height_mm: number): string {
   return `${width_mm}x${height_mm}`;
+}
+
+/** D9: the panel's open/closed state, remembered per browser - one key, no
+ *  server preference, no prop. Read/written inside try/catch so a browser
+ *  with localStorage disabled just stays collapsed rather than crashing. */
+const TAG_SIZE_OPEN_KEY = 'dealer-kit.tag-size.open';
+
+function readTagSizeOpen(): boolean {
+  try {
+    return window.localStorage.getItem(TAG_SIZE_OPEN_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeTagSizeOpen(open: boolean): void {
+  try {
+    if (open) {
+      window.localStorage.setItem(TAG_SIZE_OPEN_KEY, '1');
+    } else {
+      window.localStorage.removeItem(TAG_SIZE_OPEN_KEY);
+    }
+  } catch {
+    // Best effort - a failed write just means the next mount collapses.
+  }
 }
 
 export interface TagSizeControlProps {
@@ -99,6 +129,13 @@ export function TagSizeControl({
   const [wDraft, setWDraft] = useState<string | null>(null);
   const [hDraft, setHDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // D9: collapsed by default; a viewer who opens it once keeps it open on
+  // their next request, on this browser.
+  const [open, setOpen] = useState(() => readTagSizeOpen());
+  const handleOpenChange = (next: boolean) => {
+    setOpen(next);
+    writeTagSizeOpen(next);
+  };
 
   const commit = (axis: 'w' | 'h') => {
     const draft = axis === 'w' ? wDraft : hDraft;
@@ -148,7 +185,10 @@ export function TagSizeControl({
       group: 'Saved sizes',
     })),
   ];
-  const allSizes: { width_mm: number; height_mm: number }[] = [...presets, ...savedSizes];
+  const allSizes: { width_mm: number; height_mm: number }[] = [
+    ...presets,
+    ...savedSizes,
+  ];
   const matchingPreset = allSizes.find(
     (p) => p.width_mm === width_mm && p.height_mm === height_mm,
   );
@@ -164,108 +204,141 @@ export function TagSizeControl({
   };
 
   return (
-    <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
-      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        Tag Size
-      </span>
-      <SearchableSelect
-        value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
-        onChange={(value) => {
-          const found = allSizes.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
-          if (!found) return;
-          applySize(found.width_mm, found.height_mm);
-        }}
-        options={options}
-        placeholder="Custom"
-        renderOption={(opt) => {
-          const saved = savedByKey.get(opt.value);
-          return (
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-              <span className="truncate break-words">{opt.label}</span>
-              {saved && onDeleteSavedSize && (
-                (() => {
-                  const pending = deletingSavedSizeId === saved.id;
-                  return (
-                    <button
-                      type="button"
-                      aria-label={`Delete saved size ${saved.name}`}
-                      disabled={pending}
-                      className={cn(
-                        'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
-                        pending && 'pointer-events-none opacity-50',
-                      )}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDeleteSavedSize(saved.id, saved.name);
-                      }}
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  );
-                })()
+    <div className="flex shrink-0 flex-col border-b border-r">
+      <Collapsible open={open} onOpenChange={handleOpenChange}>
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex w-full items-center justify-between gap-2 p-3 text-left hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          >
+            <span className="flex items-center gap-1.5">
+              <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Tag Size
+              </span>
+              {!open && (
+                <span className="text-xs text-foreground">
+                  {width_mm} x {height_mm} mm
+                </span>
+              )}
+            </span>
+            <ChevronDown
+              className={cn(
+                'size-4 shrink-0 text-muted-foreground transition-transform',
+                open && 'rotate-180',
+              )}
+              aria-hidden
+            />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <div className="flex flex-col gap-2 p-3 pt-0">
+            <SearchableSelect
+              value={
+                matchingPreset
+                  ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm)
+                  : CUSTOM_SIZE_VALUE
+              }
+              onChange={(value) => {
+                const found = allSizes.find(
+                  (p) => sizeKey(p.width_mm, p.height_mm) === value,
+                );
+                if (!found) return;
+                applySize(found.width_mm, found.height_mm);
+              }}
+              options={options}
+              placeholder="Custom"
+              renderOption={(opt) => {
+                const saved = savedByKey.get(opt.value);
+                return (
+                  <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                    <span className="truncate break-words">{opt.label}</span>
+                    {saved &&
+                      onDeleteSavedSize &&
+                      (() => {
+                        const pending = deletingSavedSizeId === saved.id;
+                        return (
+                          <button
+                            type="button"
+                            aria-label={`Delete saved size ${saved.name}`}
+                            disabled={pending}
+                            className={cn(
+                              'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
+                              pending && 'pointer-events-none opacity-50',
+                            )}
+                            onPointerDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onDeleteSavedSize(saved.id, saved.name);
+                            }}
+                          >
+                            <X className="size-3.5" />
+                          </button>
+                        );
+                      })()}
+                  </div>
+                );
+              }}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs text-muted-foreground">W (mm)</Label>
+                <Input
+                  type="number"
+                  className="h-7 px-2 text-xs"
+                  aria-label="Tag width (mm)"
+                  value={wDraft ?? width_mm}
+                  step={0.5}
+                  onChange={(e) => setWDraft(e.target.value)}
+                  onBlur={() => commit('w')}
+                  onKeyDown={onEnter}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label className="text-xs text-muted-foreground">H (mm)</Label>
+                <Input
+                  type="number"
+                  className="h-7 px-2 text-xs"
+                  aria-label="Tag height (mm)"
+                  value={hDraft ?? height_mm}
+                  step={0.5}
+                  onChange={(e) => setHDraft(e.target.value)}
+                  onBlur={() => commit('h')}
+                  onKeyDown={onEnter}
+                />
+              </div>
+            </div>
+            {error && <p className="text-2xs text-destructive">{error}</p>}
+            <div className="flex gap-2">
+              {onResizeAll && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 flex-1 text-xs"
+                  onClick={() => onResizeAll(width_mm, height_mm)}
+                >
+                  Apply to all lines
+                </Button>
+              )}
+              {!matchingPreset && onSaveAsSize && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 flex-1 text-xs"
+                  onClick={onSaveAsSize}
+                >
+                  Save as size
+                </Button>
               )}
             </div>
-          );
-        }}
-      />
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">W (mm)</Label>
-          <Input
-            type="number"
-            className="h-7 px-2 text-xs"
-            aria-label="Tag width (mm)"
-            value={wDraft ?? width_mm}
-            step={0.5}
-            onChange={(e) => setWDraft(e.target.value)}
-            onBlur={() => commit('w')}
-            onKeyDown={onEnter}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">H (mm)</Label>
-          <Input
-            type="number"
-            className="h-7 px-2 text-xs"
-            aria-label="Tag height (mm)"
-            value={hDraft ?? height_mm}
-            step={0.5}
-            onChange={(e) => setHDraft(e.target.value)}
-            onBlur={() => commit('h')}
-            onKeyDown={onEnter}
-          />
-        </div>
-      </div>
-      {error && <p className="text-2xs text-destructive">{error}</p>}
-      <div className="flex gap-2">
-        {onResizeAll && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={() => onResizeAll(width_mm, height_mm)}
-          >
-            Apply to all lines
-          </Button>
-        )}
-        {!matchingPreset && onSaveAsSize && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={onSaveAsSize}
-          >
-            Save as size
-          </Button>
-        )}
-      </div>
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 }

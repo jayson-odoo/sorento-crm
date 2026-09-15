@@ -446,9 +446,12 @@ async function mountBothOnSameTemplate() {
   );
   await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
 
-  fireEvent.click(screen.getByText(tagLabelFor('line-b')));
+  // D8 (PLAN-price-tag-ai-extract-resolver.md): one tag, no parts - each
+  // line folds to ONE block, selected by its code rather than the ordinal
+  // text a folded row no longer renders.
+  fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
   await waitFor(() => expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument());
-  fireEvent.click(screen.getByText(tagLabelFor('line-a')));
+  fireEvent.click(screen.getByText('AAA-1').closest('button') as HTMLElement);
   await waitFor(() => expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument());
   return { onSave, onAutosave };
 }
@@ -711,7 +714,7 @@ describe('RequestTagDesigner - Update template sibling checkbox (S6, AC-S6-4/5)'
 
     // Switch to the sibling line - its tag now carries the 2-layer design,
     // not the template's original 1-layer clone.
-    fireEvent.click(screen.getByText(tagLabelFor('line-b')));
+    fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
     await waitFor(() =>
       expect(screen.getByText(/canvas: 2 layers/)).toBeInTheDocument(),
     );
@@ -736,7 +739,7 @@ describe('RequestTagDesigner - Update template sibling checkbox (S6, AC-S6-4/5)'
     );
 
     // The sibling line's own tag is UNCHANGED - still its own 1-layer clone.
-    fireEvent.click(screen.getByText(tagLabelFor('line-b')));
+    fireEvent.click(screen.getByText('BBB-2').closest('button') as HTMLElement);
     await waitFor(() =>
       expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument(),
     );

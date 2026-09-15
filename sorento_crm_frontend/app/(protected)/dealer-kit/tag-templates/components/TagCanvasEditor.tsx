@@ -132,6 +132,7 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpToLine,
+  Check,
   ChevronLeft,
   ChevronRight,
   ClipboardPaste,
@@ -148,6 +149,7 @@ import {
   Scissors,
   SquareDashed,
   Trash2,
+  Undo2,
   Ungroup,
   Unlock,
   X,
@@ -156,6 +158,7 @@ import type { ImperativePanelHandle } from 'react-resizable-panels';
 import { AssetPickerDialog } from './AssetPickerDialog';
 import { FontUploadDialog } from './FontUploadDialog';
 import { ProductPickDialog, type PickMode } from './ProductPickDialog';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
@@ -427,6 +430,15 @@ interface TagCanvasEditorProps {
    * The host owns the `Comments` toggle: hidden means an empty list.
    */
   reviewPins?: CanvasReviewPin[];
+  /**
+   * D13: how to resolve/reopen a pin from ITS OWN popover, same copy and
+   * icons as `RequestDesignSection`'s footer (Check "Done", Undo2 "Reopen").
+   * Rendered only when this is given - the template page and any other
+   * read-only surface pass no `reviewPins` at all, and even a surface that
+   * does but has nowhere to persist the decision simply omits this, and the
+   * popover renders with no Done button.
+   */
+  onReviewPinResolve?: (pinId: string, resolved: boolean) => void | Promise<void>;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -471,6 +483,7 @@ export function TagCanvasEditor({
   docId,
   toolbarTrailing,
   reviewPins,
+  onReviewPinResolve,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   /** Which change-request marker has its comment open (r9 S2/D6). */
@@ -4104,6 +4117,35 @@ export function TagCanvasEditor({
                           </button>
                         </div>
                         <p className="mt-1 whitespace-pre-wrap">{pin.body}</p>
+                        {/* D13 (AC-S9-1/S9-2): dismiss the comment from the
+                            pin that opened it, same copy/icons as
+                            `RequestDesignSection`'s footer - only when the
+                            host wired somewhere for the decision to go. */}
+                        {onReviewPinResolve && (
+                          <Button
+                            type="button"
+                            variant={pin.resolved ? 'ghost' : 'outline'}
+                            size="sm"
+                            className="mt-2 h-6 px-2 text-2xs"
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void onReviewPinResolve(pin.id, !pin.resolved);
+                            }}
+                          >
+                            {pin.resolved ? (
+                              <>
+                                <Undo2 className="mr-1 size-3" />
+                                Reopen
+                              </>
+                            ) : (
+                              <>
+                                <Check className="mr-1 size-3" />
+                                Done
+                              </>
+                            )}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>

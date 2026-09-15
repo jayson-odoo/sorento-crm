@@ -25,7 +25,7 @@ import os
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -42,6 +42,7 @@ from app.services.ai_extract.form_schema_registry import (
     ExtractFieldSpec,
     get_form_schema,
 )
+from app.services.entity_resolver import resolve_references
 from app.services.error_handler import AppException
 from app.services.llm_provider import (
     ChatResult,
@@ -112,6 +113,14 @@ class ExtractedProductLine(BaseModel):
     unit_price: float | None = None
     total: float | None = None
     notes: str | None = None
+    # D2: set when `product_code` resolved to exactly one company-scoped
+    # `product` or `product_set` row via `resolve_references` (exact tier
+    # only). `None` on no match AND on an ambiguous token - either way the
+    # caller has nothing to pin, and `product_code` keeps the raw extracted
+    # text so the dialog can show what was read.
+    match: Literal["product", "product_set"] | None = None
+    product_id: str | None = None
+    product_set_id: str | None = None
 
 
 class TokenUsage(BaseModel):
@@ -829,10 +838,10 @@ class AIExtractService:
                     )
             elif f.kind == "fk_product":
                 if isinstance(raw, list):
+                    raw_codes = [str(x).strip() for x in raw if str(x).strip()]
+                    resolved = self._resolve_product_codes(raw_codes)
                     codes = [
-                        self._canonical_product_code(str(x))
-                        for x in raw
-                        if str(x).strip()
+                        resolved[c][0] if c in resolved else c for c in raw_codes
                     ]
                     csv = ", ".join(c for c in codes if c)
                     if not csv:
@@ -842,12 +851,14 @@ class AIExtractService:
                         raw=raw, canonical=csv, source="product_master"
                     )
                 else:
-                    code = self._canonical_product_code(str(raw))
+                    raw_code = str(raw).strip()
+                    resolved = self._resolve_product_codes([raw_code]) if raw_code else {}
+                    code = resolved[raw_code][0] if raw_code in resolved else raw_code
                     values[f.name] = code
                     per_field[f.name] = ExtractFieldMeta(
                         raw=raw,
                         canonical=code,
-                        source="product_master" if code != str(raw).strip() else "llm",
+                        source="product_master" if code != raw_code else "llm",
                     )
             elif f.kind == "date":
                 s = str(raw).strip()
@@ -931,39 +942,66 @@ class AIExtractService:
             return [p for p in parts if p]
         return []
 
-    def _canonical_product_code(self, raw: str) -> str:
-        code = raw.strip()
-        if not code:
-            return code
-        try:
-            row = (
-                self.db.query(Product.product_code)
-                .filter(Product.product_code.ilike(code))
-                .first()
-            )
-        except Exception:  # noqa: BLE001
-            return code
-        return row[0] if row else code
+    def _resolve_product_codes(
+        self, codes: list[str]
+    ) -> dict[str, tuple[str, Literal["product", "product_set"] | None, str | None, str | None]]:
+        """codes -> (canonical_code, match, product_id, product_set_id), one
+        `resolve_references` call for the whole batch (D1), exact tier only
+        (`enable_prefix_fallback=False`, `enable_embedding_fallback=False`): a
+        prefix or semantic guess would print a tag for a product the sheet
+        never named. A code with no exact match, or an ambiguous one (more
+        than one scoped hit), is left out of the map so the caller keeps the
+        raw extracted text (D2). Company-scoped by whatever `company_scope`
+        the caller is already inside.
+        """
+        cleaned = [c for c in (codes or []) if c]
+        if not cleaned:
+            return {}
+        result = resolve_references(
+            self.db,
+            cleaned,
+            allowed_entity_types={"product", "product_set"},
+            enable_prefix_fallback=False,
+            enable_embedding_fallback=False,
+            max_candidates=len(cleaned),
+        )
+        out: dict[
+            str, tuple[str, Literal["product", "product_set"] | None, str | None, str | None]
+        ] = {}
+        for tr in result.resolutions:
+            if not tr.resolved or len(tr.matches) != 1:
+                continue
+            match = tr.matches[0]
+            if match.entity_type == "product":
+                out[tr.token] = (match.canonical_code, "product", match.uuid, None)
+            elif match.entity_type == "product_set":
+                out[tr.token] = (match.canonical_code, "product_set", None, match.uuid)
+        return out
 
     def _extract_products(self, parsed: dict[str, Any]) -> list[ExtractedProductLine]:
         raw = parsed.get("products")
         if not isinstance(raw, list):
             return []
-        out: list[ExtractedProductLine] = []
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            code = str(item.get("product_code") or "").strip() or None
-            if code:
-                code = self._canonical_product_code(code)
-            def _coerce_float(raw: Any) -> float | None:
-                if raw is None or raw == "":
-                    return None
-                try:
-                    return float(raw)
-                except (TypeError, ValueError):
-                    return None
+        items = [item for item in raw if isinstance(item, dict)]
+        raw_codes = [str(item.get("product_code") or "").strip() for item in items]
+        resolved = self._resolve_product_codes([c for c in raw_codes if c])
 
+        def _coerce_float(raw: Any) -> float | None:
+            if raw is None or raw == "":
+                return None
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return None
+
+        out: list[ExtractedProductLine] = []
+        for item, raw_code in zip(items, raw_codes):
+            code: str | None = raw_code or None
+            match: Literal["product", "product_set"] | None = None
+            product_id: str | None = None
+            product_set_id: str | None = None
+            if raw_code and raw_code in resolved:
+                code, match, product_id, product_set_id = resolved[raw_code]
             out.append(
                 ExtractedProductLine(
                     product_code=code,
@@ -972,6 +1010,9 @@ class AIExtractService:
                     unit_price=_coerce_float(item.get("unit_price")),
                     total=_coerce_float(item.get("total")),
                     notes=str(item.get("notes") or "").strip() or None,
+                    match=match,
+                    product_id=product_id,
+                    product_set_id=product_set_id,
                 )
             )
         return out

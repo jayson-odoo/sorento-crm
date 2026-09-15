@@ -543,15 +543,15 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
   // AC-S3-6 - a tag can be removed, never the line's last
   // -------------------------------------------------------------------------
 
-  it('a tag row offers Remove, disabled with a reason while the line has only one tag', async () => {
+  // D8 (PLAN-price-tag-ai-extract-resolver.md): a single-tag, no-parts line
+  // is now the folded block (S4), and its whole point is that Remove is not
+  // offered there at all - a line's last tag was never removable, and the
+  // folded block simply never shows the affordance instead of showing it
+  // disabled with a reason.
+  it('offers no Remove at all on the folded block, the line\'s only tag (D8)', async () => {
     await mount(request({ lines: [line({ tags: [tag()] })] }));
 
-    const remove = screen.getByRole('button', { name: 'Remove tag 1a' });
-    expect(remove).toBeDisabled();
-    // Disabled with no explanation reads as a broken button. The server answers
-    // this case with a named 422 (LAST_TAG); the UI says the same thing before
-    // the click rather than after it.
-    expect(remove).toHaveAttribute('title', expect.stringMatching(/only tag|last tag/i));
+    expect(screen.queryByRole('button', { name: 'Remove tag 1a' })).toBeNull();
     expect(deferredRun).not.toHaveBeenCalled();
   });
 
@@ -575,7 +575,10 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
     );
   });
 
-  it('shows the line\'s package warning on the LINE, not on its tags', async () => {
+  // D8 folds a single-tag, no-parts line into ONE block (S4), so the warning
+  // is no longer "on the line, not on the tag" as two separate rows - there
+  // is only the one row, and this pins that it shows there exactly once.
+  it('shows the line\'s package warning once, on the folded block (D8)', async () => {
     await mount(
       request({
         lines: [line({ package_warning: 'Missing: SRTMR502-BL', tags: [tag()] })],
@@ -584,11 +587,9 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
 
     const warning = screen.getByText('Missing: SRTMR502-BL');
     expect(warning).toBeInTheDocument();
-    // The warning is about what the salesperson asked for, so it belongs to the
-    // line; repeating it on every split tag would be four copies of one fact.
-    const tagRow = screen.getByText('1a').closest('button');
-    expect(tagRow).not.toBeNull();
-    expect(within(tagRow as HTMLElement).queryByText('Missing: SRTMR502-BL')).toBeNull();
+    const block = screen.getByText('SRTBF11834').closest('button');
+    expect(block).not.toBeNull();
+    expect(within(block as HTMLElement).getByText('Missing: SRTMR502-BL')).toBe(warning);
   });
 });
 

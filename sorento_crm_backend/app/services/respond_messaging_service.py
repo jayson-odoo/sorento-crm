@@ -772,6 +772,24 @@ def build_context_vars(
                 # Project lines) - same unambiguous row columns as complaint.
                 vars_out["customer"] = row.customer_name
                 vars_out["project"] = row.project_title
+        elif entity_use_case == "price_tag_update":
+            from app.models.price_tag import PriceTagRequest
+            from app.services.portal_service import PortalService
+
+            row = (
+                db.query(PriceTagRequest)
+                .filter(PriceTagRequest.id == business_id)
+                .first()
+            )
+            if row:
+                vars_out["entity_number"] = row.doc_number
+                vars_out["status"] = row.status
+                vars_out["portal_url"] = (
+                    PortalService(db).submission_link(
+                        row.contact_id, "price_tag_request", str(row.id)
+                    )
+                    or ""
+                )
     except Exception:
         logger.exception("build_context_vars: entity lookup failed (%s)", use_case)
 

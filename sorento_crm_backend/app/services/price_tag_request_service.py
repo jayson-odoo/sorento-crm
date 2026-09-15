@@ -371,6 +371,34 @@ class PriceTagRequestService:
         """
         from app.models.price_tag import PriceTagRequestLinePart
         from app.models.product import Product
+        from app.models.product_combo import ProductCombo
+
+        # D5: a part has nowhere to go without a package. A `product_set`
+        # line has no `product_id` and is already skipped by this check; a
+        # product line whose product carries zero `ProductCombo` rows must
+        # never accept a part, on save exactly like the FE hides "Add part"
+        # for it (D4) - the portal is not a trusted client.
+        if parts and line.product_id:
+            def _has_combo() -> bool:
+                return (
+                    db.query(ProductCombo.id)
+                    .filter(ProductCombo.host_product_id == line.product_id)
+                    .first()
+                    is not None
+                )
+
+            if company_id:
+                with company_scope(db, frozenset({company_id})):
+                    has_combo = _has_combo()
+            else:
+                has_combo = _has_combo()
+            if not has_combo:
+                raise AppException(
+                    status_code=422,
+                    message="This product has no package to add a part to.",
+                    detail=f"line:{index}",
+                    code="PARTS_NEED_COMBO",
+                )
 
         cleaned: list[dict] = []
         wanted: set[str] = set()

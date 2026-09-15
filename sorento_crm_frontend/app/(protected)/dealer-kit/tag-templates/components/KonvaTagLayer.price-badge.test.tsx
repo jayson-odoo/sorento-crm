@@ -336,3 +336,58 @@ describe('KonvaTagLayer price badge currency (S3c, AC-14/15)', () => {
     expect(screen.getByText('599')).toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// S17/D22: the unboxed badge's amount honours the layer's own Text colour.
+// ---------------------------------------------------------------------------
+
+describe('KonvaTagLayer unboxed price badge colour (S17, AC-S17-1/S17-2)', () => {
+  it('AC-S17-1: draws the amount with the layer textColor when a price resolves', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({ textColor: '#FFFFFF' })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    expect(figure(container).getAttribute('data-fill')).toBe('#FFFFFF');
+  });
+
+  it('AC-S17-1: the empty placeholder stays #999999 regardless of textColor', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({ textColor: '#FFFFFF' })}
+        scale={3}
+        display={{ price: { listPrice: null, offerPrice: null } }}
+      />,
+    );
+
+    const node = nodes(container, 'text')[0] as HTMLElement;
+    expect(node.getAttribute('data-fill')).toBe('#999999');
+  });
+
+  it('AC-S17-2: the boxed badge still draws label, amount and NETT with textColor (unchanged)', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({ variant: 'promo', textColor: '#FFFFFF' })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    const amount = nodes(container, 'text').find(
+      (n) => n.getAttribute('data-text') === 'RM 599',
+    ) as HTMLElement;
+    const sp = nodes(container, 'text').find(
+      (n) => n.getAttribute('data-text') === 'SP',
+    ) as HTMLElement;
+    const nett = nodes(container, 'text').find(
+      (n) => n.getAttribute('data-text') === 'NETT',
+    ) as HTMLElement;
+
+    expect(amount.getAttribute('data-fill')).toBe('#FFFFFF');
+    expect(sp.getAttribute('data-fill')).toBe('#FFFFFF');
+    expect(nett.getAttribute('data-fill')).toBe('#FFFFFF');
+  });
+});

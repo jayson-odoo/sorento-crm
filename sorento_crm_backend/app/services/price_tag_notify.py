@@ -110,7 +110,17 @@ def notify_salesperson(db: Session, request, event: str, **ctx) -> None:
     the transition itself rather than off a second vocabulary.
     """
     try:
-        identifier = (str(request.contact_id or "")).strip()
+        from app.services.respond_identifier import resolve_respond_io_id
+
+        # D11: addressed by the contact's `respond_io_id`, not the internal
+        # `RespondContact` uuid - the outbox resolves name/phone by
+        # `respond_io_id`, so sending the uuid left the Contact column
+        # unresolved everywhere it is read back. Falls back to the raw
+        # contact_id when the contact has no `respond_io_id` yet, so nothing
+        # that used to send now silently drops.
+        identifier = resolve_respond_io_id(db, request.contact_id) or (
+            str(request.contact_id or "")
+        ).strip()
         if not identifier:
             return
 

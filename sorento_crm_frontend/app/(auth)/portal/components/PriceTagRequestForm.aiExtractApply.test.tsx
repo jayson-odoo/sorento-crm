@@ -136,16 +136,34 @@ function openSalesOrderSection() {
   fireEvent.click(screen.getByRole('button', { name: /Sales Order & Lines/ }));
 }
 
-/** Runs the extraction resolve pass (per-code lookup) and waits for every
- *  code's match to settle before Apply reads them off the ref. */
+/**
+ * One matcher (D1/D3, PLAN-price-tag-ai-extract-resolver.md): the extract
+ * already resolved every code through the shared entity resolver
+ * server-side, so a fixture builds the SAME `match` / `product_id` /
+ * `product_set_id` fields the real payload always carries now, instead of
+ * leaving the form to look the code up itself - there is no lookup left to
+ * wait for.
+ */
+function withMatch(product: Record<string, unknown>): Record<string, unknown> {
+  const code = String(product.product_code ?? '');
+  if (code === MATCHED_PRODUCT.code) {
+    return { ...product, match: 'product', product_id: MATCHED_PRODUCT.id, product_set_id: null };
+  }
+  if (code === MATCHED_SET.code) {
+    return {
+      ...product,
+      match: 'product_set',
+      product_id: null,
+      product_set_id: MATCHED_SET.id,
+    };
+  }
+  return { ...product, match: null, product_id: null, product_set_id: null };
+}
+
+/** Runs the extraction resolve pass and flushes the state update it makes. */
 async function extractAndSettle(products: Record<string, unknown>[]) {
   await act(async () => {
     captured.onExtracted?.(products);
-  });
-  await waitFor(() => expect(lookupTagItems).toHaveBeenCalledTimes(products.length));
-  // Flush the resolved lookup promises' `.then` state updates.
-  await act(async () => {
-    await Promise.resolve();
   });
 }
 
@@ -163,7 +181,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
         unit_price: 199.5,
         notes: 'For the showroom display',
       },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -187,7 +205,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
         quantity: 3.7,
         notes: null,
       },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -202,7 +220,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
-    const products = [{ product_code: MATCHED_SET.code, quantity: 1, notes: 'set note' }];
+    const products = [{ product_code: MATCHED_SET.code, quantity: 1, notes: 'set note' }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
 
     await act(async () => {
@@ -217,7 +237,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    const products = [{ product_code: 'NOT-REAL-CODE', quantity: 2, notes: 'anything' }];
+    const products = [{ product_code: 'NOT-REAL-CODE', quantity: 2, notes: 'anything' }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
 
     await act(async () => {
@@ -241,7 +263,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first' },
       { product_code: 'GHOST-CODE', quantity: 1, notes: 'second' },
       { product_code: MATCHED_SET.code, quantity: 1, notes: 'third' },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
@@ -263,7 +285,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     await screen.findByLabelText('Customer');
     openSalesOrderSection();
 
-    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
+    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
     const file = new File(['zzt'], 'ZZT-so.pdf', { type: 'application/pdf' });
 
@@ -278,7 +302,9 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
+    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }].map(
+      withMatch,
+    );
     await extractAndSettle(products);
     const file = new File(['zzt'], 'ZZT-so.pdf', { type: 'application/pdf' });
 
@@ -311,7 +337,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
       { product_code: MATCHED_PRODUCT.code, quantity: 1, notes: 'first' },
       { product_code: 'GHOST-CODE', quantity: 1, notes: 'not found' },
       { product_code: MATCHED_SET.code, quantity: 5, notes: 'set of five' },
-    ];
+    ].map(withMatch);
     await extractAndSettle(extracted);
 
     // The dialog removes row 2 (GHOST-CODE, an "x" per D-P4) locally, then
@@ -338,7 +364,7 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     const products = [
       { product_code: MATCHED_PRODUCT.code, quantity: 2, notes: 'first mention' },
       { product_code: MATCHED_PRODUCT.code, quantity: 3, notes: 'second mention' },
-    ];
+    ].map(withMatch);
     await extractAndSettle(products);
 
     await act(async () => {
