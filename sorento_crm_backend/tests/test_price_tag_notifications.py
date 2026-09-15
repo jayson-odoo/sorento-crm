@@ -466,7 +466,7 @@ class TestTheTransitionNoteIsKept:
             .all()
         )
         assert len(rows) == 1
-        assert rows[0].line_id is None
+        assert rows[0].tag_id is None
         assert rows[0].body == "The dealer cancelled the order"
         assert rows[0].author_user_id == seed.MARKETER_ID
         assert rows[0].author_contact_id is None

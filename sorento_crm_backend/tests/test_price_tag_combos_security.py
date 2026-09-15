@@ -197,6 +197,9 @@ def _request_with_open_tag(db, *, company_id: str, candidates: int = 2):
         company_id=company_id,
         data={
             "debtor_name": "ZZT Dealer",
+            # r9 D7/AC-S3-1: a submitted request has answered Printing, and the
+            # revision path re-validates it.
+            "print_by": "office",
             "lines": [
                 {
                     "line_type": "product",
@@ -526,6 +529,9 @@ def test_a_combo_from_another_host_is_stored_as_null(db):
         _PORTAL,
         json={
             "debtor_name": "ZZT Dealer",
+            # r9 D7/AC-S3-1: Printing has no default and submit refuses without
+            # it, so a request that is meant to reach `submitted` answers it.
+            "print_by": "office",
             "lines": [
                 {
                     "line_type": "product",

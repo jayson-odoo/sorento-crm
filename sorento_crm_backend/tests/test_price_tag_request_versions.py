@@ -121,6 +121,19 @@ def _request_with_three_versions(db):
     return request, page, doc
 
 
+def _first_tag_id(db, request) -> str:
+    """The request's first TAG, which is what a pin and a placement key on."""
+    from app.models.price_tag import PriceTagRequestLine, PriceTagRequestTag
+
+    return (
+        db.query(PriceTagRequestTag.id)
+        .join(PriceTagRequestLine, PriceTagRequestLine.id == PriceTagRequestTag.line_id)
+        .filter(PriceTagRequestLine.request_id == request.id)
+        .order_by(PriceTagRequestLine.sort_order, PriceTagRequestTag.sort_order)
+        .scalar()
+    )
+
+
 class TestTheVersionList:
     def test_it_lists_newest_first_with_a_readable_author(self, crm):
         client, db = crm
@@ -178,7 +191,7 @@ class TestRestore:
     def test_it_writes_the_doc_and_the_pins_back_and_adds_a_version(self, crm):
         client, db = crm
         from app.models.dealer_kit import Page, PageVersion
-        from app.models.price_tag import PriceTagRequestLine
+        from app.models.price_tag import PriceTagRequestLine, PriceTagRequestTag
 
         request, page, _doc = _request_with_three_versions(db)
         # Version 1 is the one the pins were taken with; move the pin on since,
@@ -188,11 +201,14 @@ class TestRestore:
             .filter(PageVersion.page_id == page.id, PageVersion.version == 1)
             .first()
         )
+        # Keyed by TAG since the combos slice: that is what the document keys
+        # its placements on, so a restore puts each pin back under the tag that
+        # was drawn from it.
         version_one.pinned_line_data = {
-            request.lines[0].id: {"code": "ZZT-PINNED-V1", "list_price": 111.0}
+            _first_tag_id(db, request): {"code": "ZZT-PINNED-V1", "list_price": 111.0}
         }
-        db.query(PriceTagRequestLine).filter(
-            PriceTagRequestLine.request_id == request.id
+        db.query(PriceTagRequestTag).filter(
+            PriceTagRequestTag.id == _first_tag_id(db, request)
         ).update({"pinned_tag_data": {"code": "ZZT-MOVED-ON", "list_price": 999.0}})
         db.commit()
 
@@ -218,8 +234,8 @@ class TestRestore:
         assert drawn["sheets"][0]["id"] == "sheet-1"
 
         line = (
-            db.query(PriceTagRequestLine)
-            .filter(PriceTagRequestLine.request_id == request.id)
+            db.query(PriceTagRequestTag)
+            .filter(PriceTagRequestTag.id == _first_tag_id(db, request))
             .first()
         )
         assert line.pinned_tag_data["code"] == "ZZT-PINNED-V1", (
@@ -254,7 +270,7 @@ class TestAVersionDrawsItsOwnPinnedData:
         """A request whose v1 was snapshotted at RM 1,000 and whose live pin has
         since moved to RM 1,900. Returns ``(request, page)``."""
         from app.models.dealer_kit import PageVersion
-        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestTag
         from app.services.price_tag_request_service import PriceTagRequestService
 
         product = seed.seed_product(db, list_price=1000.00)
@@ -273,10 +289,10 @@ class TestAVersionDrawsItsOwnPinnedData:
         db.commit()
         page, doc = seed.attach_design(db, request)
 
-        line_id = request.lines[0].id
+        line_id = _first_tag_id(db, request)
         snapshot_pin = dict(
-            db.query(PriceTagRequestLine)
-            .filter(PriceTagRequestLine.id == line_id)
+            db.query(PriceTagRequestTag)
+            .filter(PriceTagRequestTag.id == line_id)
             .first()
             .pinned_tag_data
         )
@@ -286,8 +302,8 @@ class TestAVersionDrawsItsOwnPinnedData:
 
         # Marketing has since pressed Update: the LIVE pin now says 1,900.
         moved = {**snapshot_pin, "list_price": 1900.0, "name": "ZZT renamed since"}
-        db.query(PriceTagRequestLine).filter(
-            PriceTagRequestLine.id == line_id
+        db.query(PriceTagRequestTag).filter(
+            PriceTagRequestTag.id == line_id
         ).update({"pinned_tag_data": moved})
         db.commit()
         db.expire_all()

@@ -59,8 +59,20 @@ def _review_rows(db, request_id: str) -> list:
     )
 
 
-def _pin(line_id: str, body: str, *, x=0.25, y=0.5, w=0.0, h=0.0) -> dict:
-    return {"line_id": line_id, "x": x, "y": y, "w": w, "h": h, "body": body}
+def _pin(tag_id: str, body: str, *, x=0.25, y=0.5, w=0.0, h=0.0) -> dict:
+    return {"tag_id": tag_id, "x": x, "y": y, "w": w, "h": h, "body": body}
+
+
+def _first_tag_id(request) -> str:
+    """The request's first TAG.
+
+    A pin anchors on a tag, not a line, since the combos slice: a line prints
+    one tag per open option and two of them show different products, so a pin
+    is about the one that was clicked. Submit mints exactly one tag per line, so
+    this is the same single anchor these tests always had.
+    """
+    first_line = sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id))[0]
+    return sorted(first_line.tags or [], key=lambda t: (t.sort_order or 0, t.id))[0].id
 
 
 # ---------------------------------------------------------------------------
@@ -147,15 +159,15 @@ class TestSendCreatesTheRows:
     def test_pins_and_a_note_become_rows_and_the_status_moves(self, portal):
         client, db, contact_id = portal
         request, _page, _doc = _proof_ready_request(db, contact_id)
-        line_id = request.lines[0].id
+        tag_id = _first_tag_id(request)
         notes_before = request.notes
 
         response = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
             json={
                 "comments": [
-                    _pin(line_id, "Make the price bigger"),
-                    _pin(line_id, "Move the logo", x=0.1, y=0.1, w=0.3, h=0.2),
+                    _pin(tag_id, "Make the price bigger"),
+                    _pin(tag_id, "Move the logo", x=0.1, y=0.1, w=0.3, h=0.2),
                 ],
                 "note": "Overall it is too busy",
             },
@@ -166,17 +178,17 @@ class TestSendCreatesTheRows:
         # Two pins plus the general note = three rows (AC-S2-3's "N+1").
         assert len(rows) == 3, [row.body for row in rows]
 
-        pinned = [row for row in rows if row.line_id is not None]
+        pinned = [row for row in rows if row.tag_id is not None]
         assert len(pinned) == 2
         for row in pinned:
-            assert row.line_id == line_id
+            assert row.tag_id == tag_id
             assert 0 <= float(row.x) <= 1 and 0 <= float(row.y) <= 1
             assert 0 <= float(row.w) <= 1 and 0 <= float(row.h) <= 1
             assert row.author_contact_id == contact_id
             assert row.author_user_id is None
             assert row.resolved_at is None
 
-        general = [row for row in rows if row.line_id is None]
+        general = [row for row in rows if row.tag_id is None]
         assert len(general) == 1
         assert general[0].body == "Overall it is too busy"
         assert general[0].x is None and general[0].y is None
@@ -199,7 +211,7 @@ class TestSendCreatesTheRows:
 
         body = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Bigger price")]},
+            json={"comments": [_pin(_first_tag_id(request), "Bigger price")]},
         ).json()
 
         assert body["status"] == "changes_requested"
@@ -214,7 +226,7 @@ class TestSendCreatesTheRows:
 
         response = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Not mine")]},
+            json={"comments": [_pin(_first_tag_id(request), "Not mine")]},
         )
 
         assert response.status_code == 404, response.text
@@ -231,7 +243,7 @@ class TestSendCreatesTheRows:
 
         response = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Too early")]},
+            json={"comments": [_pin(_first_tag_id(request), "Too early")]},
         )
 
         assert response.status_code == 409, response.text
@@ -244,84 +256,87 @@ class TestSendCreatesTheRows:
 # ---------------------------------------------------------------------------
 
 
-class TestPinsCarryThePlacedTagId:
-    """A sheet prints one LINE several times (a quantity > 1, or "Apply to all
-    lines"), each as its own ``PlacedTag`` with its own id. A click anchors to
-    the ONE copy the salesperson pointed at, so the portal sends that copy's
-    id as ``placed_tag_id`` with the pin, and both surfaces list it back so
-    the design layer can draw the pin on that copy alone rather than on every
-    copy of the line (see ``DesignPinLayer.test.tsx`` for the render half).
+class TestAPinAnchorsOnItsTag:
+    """A pin must not appear on something it was never put on.
+
+    That used to be answered with a `placed_tag_id` naming one of the copies a
+    quantity > 1 mints. Since the combos slice, the thing that actually differs
+    between two boxes is a different TAG - a line split into one option per
+    basin prints two of them - and the copies of ONE tag all draw the same
+    artwork, so the anchor answers it on its own (see `DesignPinLayer.test.tsx`
+    for the render half).
     """
 
-    def test_create_comments_persists_the_placed_tag_id(self, portal):
+    def test_create_comments_persists_the_tag_id(self, portal):
         """Service level, direct: pins the column down before any route or
         schema has a chance to swallow it silently."""
         from app.services import price_tag_review_service
 
         client, db, contact_id = portal
         request, _page, _doc = _proof_ready_request(db, contact_id)
-        line_id = request.lines[0].id
+        tag_id = _first_tag_id(request)
 
         created = price_tag_review_service.create_comments(
             db,
             request,
             comments=[
                 {
-                    "line_id": line_id,
-                    "placed_tag_id": "tag-b",
+                    "tag_id": tag_id,
                     "x": 0.25,
                     "y": 0.5,
                     "w": 0.0,
                     "h": 0.0,
-                    "body": "Fix this copy",
+                    "body": "Fix this tag",
                 }
             ],
             author_contact_id=contact_id,
         )
 
-        assert created[0].placed_tag_id == "tag-b"
+        assert created[0].tag_id == tag_id
 
     def test_the_portal_send_and_both_lists_carry_it(self, portal):
         client, db, contact_id = portal
         request, _page, _doc = _proof_ready_request(db, contact_id)
-        line_id = request.lines[0].id
+        tag_id = _first_tag_id(request)
 
         response = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={
-                "comments": [
-                    {
-                        "line_id": line_id,
-                        "placed_tag_id": "tag-1",
-                        "x": 0.25,
-                        "y": 0.5,
-                        "w": 0,
-                        "h": 0,
-                        "body": "On this copy",
-                    }
-                ]
-            },
+            json={"comments": [_pin(tag_id, "On this tag")]},
         )
 
         assert response.status_code == 200, response.text
-        assert response.json()["comments"][0]["placed_tag_id"] == "tag-1"
+        assert response.json()["comments"][0]["tag_id"] == tag_id
 
         portal_list = client.get(
             f"{_PORTAL.format(id=request.id)}/review-comments"
         ).json()
-        assert portal_list[0]["placed_tag_id"] == "tag-1"
+        assert portal_list[0]["tag_id"] == tag_id
 
-    def test_a_pin_with_no_placed_tag_id_lists_it_as_null(self, portal):
+    def test_a_general_comment_lists_its_tag_id_as_null(self, portal):
         client, db, contact_id = portal
         request, _page, _doc = _proof_ready_request(db, contact_id)
 
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "No copy given")]},
+            json={"note": "The whole thing is too busy"},
         )
 
         rows = client.get(f"{_PORTAL.format(id=request.id)}/review-comments").json()
-        assert rows[0]["placed_tag_id"] is None
+        assert rows[0]["tag_id"] is None
+
+    def test_a_pin_naming_a_tag_of_another_request_is_refused(self, portal):
+        """The service checks the anchor belongs to THIS request rather than
+        letting it blow up on the foreign key at commit."""
+        client, db, contact_id = portal
+        request, _page, _doc = _proof_ready_request(db, contact_id)
+        other, _p, _d = _proof_ready_request(db, contact_id)
+
+        response = client.post(
+            f"{_PORTAL.format(id=request.id)}/request-changes",
+            json={"comments": [_pin(_first_tag_id(other), "Not mine to point at")]},
+        )
+
+        assert response.status_code == 422, response.text
 
 
 # ---------------------------------------------------------------------------
@@ -342,7 +357,7 @@ class TestTheLegacyNoteBodyStillWorks:
         assert response.status_code == 200, response.text
         rows = _review_rows(db, request.id)
         assert len(rows) == 1
-        assert rows[0].line_id is None
+        assert rows[0].tag_id is None
         assert rows[0].x is None
         assert rows[0].body == "Please redo the whole thing"
 
@@ -388,7 +403,7 @@ class TestRoundCountsTheProofsNotTheSends:
             assigned_to_id=seed.MARKETER_ID,
         )
         seed.attach_design(db, request)
-        line_id = request.lines[0].id
+        tag_id = _first_tag_id(request)
 
         def bells():
             return (
@@ -406,7 +421,7 @@ class TestRoundCountsTheProofsNotTheSends:
 
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(line_id, "First round")]},
+            json={"comments": [_pin(tag_id, "First round")]},
         )
 
         assert [row.round for row in _review_rows(db, request.id)] == [1]
@@ -421,7 +436,7 @@ class TestRoundCountsTheProofsNotTheSends:
 
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(line_id, "Second round")]},
+            json={"comments": [_pin(tag_id, "Second round")]},
         )
 
         assert sorted(row.round for row in _review_rows(db, request.id)) == [1, 2]
@@ -437,7 +452,7 @@ class TestRoundCountsTheProofsNotTheSends:
         seed.snapshot_proof_ready(db, page, doc, version=2)
         client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Round one")]},
+            json={"comments": [_pin(_first_tag_id(request), "Round one")]},
         )
 
         seed.snapshot_proof_ready(db, page, doc, version=3)
@@ -460,7 +475,7 @@ class TestDoneBelongsToMarketing:
         comment = PriceTagReviewComment(
             id=str(uuid.uuid4()),
             request_id=request.id,
-            line_id=request.lines[0].id,
+            tag_id=_first_tag_id(request),
             round=1,
             x=0.25,
             y=0.5,
@@ -553,7 +568,7 @@ class TestDoneBelongsToMarketing:
         assert listed.status_code == 200, listed.text
         rows = listed.json()
         assert [row["id"] for row in rows] == [comment.id]
-        assert rows[0]["line_id"] == request.lines[0].id
+        assert rows[0]["tag_id"] == _first_tag_id(request)
         assert rows[0]["x"] == pytest.approx(0.25)
         assert rows[0]["resolved_at"] is None
 
@@ -656,7 +671,7 @@ class TestTheReviewRoundIsCounted:
             assigned_to_id=seed.MARKETER_ID,
         )
         seed.attach_design(db, request)
-        line_id = request.lines[0].id
+        tag_id = _first_tag_id(request)
         url = f"{_PORTAL.format(id=request.id)}/request-changes"
 
         # Round one.
@@ -664,7 +679,7 @@ class TestTheReviewRoundIsCounted:
             db, request.id, "proof_ready", user_id=seed.MARKETER_ID
         )
         db.commit()
-        first = client.post(url, json={"comments": [_pin(line_id, "Round one")]})
+        first = client.post(url, json={"comments": [_pin(tag_id, "Round one")]})
         assert first.status_code == 200, first.text
         assert [row.round for row in _review_rows(db, request.id)] == [1]
         assert len(self._bells(db, request.id)) == 1
@@ -680,8 +695,8 @@ class TestTheReviewRoundIsCounted:
             url,
             json={
                 "comments": [
-                    _pin(line_id, "Bigger price"),
-                    _pin(line_id, "Move the logo"),
+                    _pin(tag_id, "Bigger price"),
+                    _pin(tag_id, "Move the logo"),
                 ]
             },
         )
@@ -733,7 +748,7 @@ class TestTheReviewRoundIsCounted:
 
         body = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(request.lines[0].id, "Round one, really")]},
+            json={"comments": [_pin(_first_tag_id(request), "Round one, really")]},
         ).json()
 
         assert body["round"] == 1, (
@@ -770,7 +785,7 @@ class TestTheReviewRoundIsCounted:
             assigned_to_id=seed.MARKETER_ID,
         )
         seed.attach_design(db, request)
-        line_id = request.lines[0].id
+        tag_id = _first_tag_id(request)
 
         def bells():
             return (
@@ -793,7 +808,7 @@ class TestTheReviewRoundIsCounted:
 
         first = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(line_id, "Round one")]},
+            json={"comments": [_pin(tag_id, "Round one")]},
         )
         assert first.status_code == 200, first.text
         assert first.json()["round"] == 1
@@ -812,7 +827,7 @@ class TestTheReviewRoundIsCounted:
 
         second = client.post(
             f"{_PORTAL.format(id=request.id)}/request-changes",
-            json={"comments": [_pin(line_id, "Round two")]},
+            json={"comments": [_pin(tag_id, "Round two")]},
         )
         assert second.status_code == 200, second.text
         assert second.json()["round"] == 2, (

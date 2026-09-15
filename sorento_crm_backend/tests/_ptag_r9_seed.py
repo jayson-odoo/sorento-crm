@@ -211,7 +211,7 @@ def seed_asset(db: Session, *, kind: str = "decorative"):
     return asset
 
 
-def tag_sheet_doc(*, line_id: str, asset_id: str | None = None) -> dict:
+def tag_sheet_doc(*, tag_id: str, asset_id: str | None = None) -> dict:
     """A one sheet, one tag document naming one library asset.
 
     The tag's box is deliberately not at the sheet origin: a pin's fractions
@@ -242,7 +242,7 @@ def tag_sheet_doc(*, line_id: str, asset_id: str | None = None) -> dict:
                 "tags": [
                     {
                         "id": "tag-1",
-                        "request_line_id": line_id,
+                        "request_tag_id": tag_id,
                         "x_mm": 20,
                         "y_mm": 30,
                         "width_mm": 80,
@@ -294,16 +294,37 @@ def seed_request(
     return request
 
 
+def tags_of(line):
+    """A line's tags in print order. One per line unless a Split made more."""
+    return sorted(line.tags or [], key=lambda t: (t.sort_order or 0, t.id))
+
+
+def first_tag(request):
+    """The request's FIRST tag: what submit mints for its first line.
+
+    The r9 gate and every pin hang off a TAG since the combos slice, so a test
+    that used to name `request.lines[0]` names this instead.
+    """
+    for line in sorted(request.lines, key=lambda l: (l.sort_order or 0, l.id)):
+        for tag in tags_of(line):
+            return tag
+    return None
+
+
 def attach_design(db: Session, request, *, asset_id: str | None = None, version: int = 1):
     """Give a request a tag sheet page carrying one saved version.
 
-    Returns ``(page, doc)``. The doc binds its single tag to the request's
-    FIRST line, which is what every pin and diff assertion points at.
+    Returns ``(page, doc)``. The doc binds its single placed tag to the
+    request's FIRST TAG, which is what every pin and diff assertion points at -
+    a document has keyed its placements by request tag since the combos slice.
     """
     from app.models.dealer_kit import Page, PageVersion
 
-    line_id = request.lines[0].id if request.lines else str(uuid.uuid4())
-    doc = tag_sheet_doc(line_id=line_id, asset_id=asset_id)
+    first = first_tag(request)
+    doc = tag_sheet_doc(
+        tag_id=first.id if first is not None else str(uuid.uuid4()),
+        asset_id=asset_id,
+    )
 
     page = Page(
         name=f"ZZT Tags {request.doc_number}",

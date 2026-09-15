@@ -238,6 +238,13 @@ def test_set_members_text_parts_and_open_group(db):
         PriceTagRequestTag.line_id == request.lines[0].id
     ).one()
     tag.choices = {"Basin": black.id}
+    # Answering a choice changes WHICH products the tag prints, so the pin taken
+    # on the read above describes a different tag (r9 D16). Both routes that
+    # write `choices` - PATCH and Split - drop the pin for exactly this reason;
+    # this test writes the column directly, so it drops it directly too.
+    tag.pinned_tag_data = None
+    tag.pinned_at = None
+    tag.data_change_ack_hash = None
     db.flush()
 
     resolved = _rows(db, request)[0]

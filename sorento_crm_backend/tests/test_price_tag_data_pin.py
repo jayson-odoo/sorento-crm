@@ -115,13 +115,22 @@ def crm():
             app.dependency_overrides.clear()
 
 
-def _lines(db, request_id):
-    from app.models.price_tag import PriceTagRequestLine
+def _tags(db, request_id):
+    """The request's TAGS in print order.
+
+    The pin, its timestamp and the ack hash moved onto the tag when a line
+    became able to print several of them (combos D3): two tags split off one
+    line resolve different products, so they are drawn from different data and
+    a Keep on one must not silence the other. One tag per line unless a Split
+    made more, so this is the same row count these assertions always had.
+    """
+    from app.models.price_tag import PriceTagRequestLine, PriceTagRequestTag
 
     return (
-        db.query(PriceTagRequestLine)
+        db.query(PriceTagRequestTag)
+        .join(PriceTagRequestLine, PriceTagRequestLine.id == PriceTagRequestTag.line_id)
         .filter(PriceTagRequestLine.request_id == request_id)
-        .order_by(PriceTagRequestLine.sort_order)
+        .order_by(PriceTagRequestLine.sort_order, PriceTagRequestTag.sort_order)
         .all()
     )
 
@@ -183,7 +192,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         request, product, _contact = _designing_request(db_only)
         db_only.expire_all()
 
-        line = _lines(db_only, request.id)[0]
+        line = _tags(db_only, request.id)[0]
         assert line.pinned_at is not None
         assert line.pinned_tag_data is not None
         assert line.pinned_tag_data["code"] == product.product_code
@@ -206,7 +215,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         db_only.commit()
         db_only.expire_all()
 
-        rows = _lines(db_only, request.id)
+        rows = _tags(db_only, request.id)
         assert len(rows) == 2
         assert all(row.pinned_tag_data is not None for row in rows), [
             (row.id, row.pinned_at) for row in rows
@@ -222,7 +231,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         from app.services.price_tag_request_service import PriceTagRequestService
 
         request, product, _contact = _designing_request(db_only)
-        original = _lines(db_only, request.id)[0].pinned_tag_data
+        original = _tags(db_only, request.id)[0].pinned_tag_data
         db_only.query(PriceTagRequest).filter(
             PriceTagRequest.id == request.id
         ).update({"status": "changes_requested"})
@@ -236,7 +245,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         db_only.commit()
         db_only.expire_all()
 
-        assert _lines(db_only, request.id)[0].pinned_tag_data == original
+        assert _tags(db_only, request.id)[0].pinned_tag_data == original
 
     def test_the_migration_backfills_non_terminal_requests_only(self, db_only):
         """The migration exposes ``backfill_pins(bind) -> int``.
@@ -264,8 +273,8 @@ class TestThePinIsWrittenWhenDesigningStarts:
         module.backfill_pins(db_only.get_bind())
         db_only.expire_all()
 
-        assert _lines(db_only, live.id)[0].pinned_tag_data is not None
-        assert _lines(db_only, finished.id)[0].pinned_tag_data is None, (
+        assert _tags(db_only, live.id)[0].pinned_tag_data is not None
+        assert _tags(db_only, finished.id)[0].pinned_tag_data is None, (
             "a finished request can decide nothing, so a pin on it is dead weight"
         )
 
@@ -307,7 +316,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         module.backfill_pins(db_only.get_bind())
         db_only.expire_all()
 
-        row = _lines(db_only, request.id)[0]
+        row = _tags(db_only, request.id)[0]
         assert (row.pinned_tag_data is not None) is pinned, (
             f"{status!r} should {'' if pinned else 'NOT '}be pinned by the backfill"
         )
@@ -353,7 +362,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         module.backfill_pins(db_only.get_bind())
         db_only.expire_all()
 
-        pin = _lines(db_only, request.id)[0].pinned_tag_data
+        pin = _tags(db_only, request.id)[0].pinned_tag_data
         assert pin["code"] == live["code"]
         assert pin["name"] == live["name"]
         assert pin["dimensions"] == live["dimensions"]
@@ -404,7 +413,7 @@ class TestThePinIsWrittenWhenDesigningStarts:
         module.backfill_pins(db_only.get_bind())
         db_only.expire_all()
 
-        pin = _lines(db_only, request.id)[0].pinned_tag_data
+        pin = _tags(db_only, request.id)[0].pinned_tag_data
         assert pin["code"] == live["code"] == product_set.set_code
         assert pin["name"] == live["name"]
         assert pin["list_price"] is not None
@@ -428,7 +437,7 @@ class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
         product = seed.seed_product(db, list_price=1000.00)
         request, _product, _contact = _designing_request(db, product=product)
         seed.attach_design(db, request)
-        line = _lines(db, request.id)[0]
+        line = _tags(db, request.id)[0]
         # Simulate a row from before pins existed: claimed, designing, never
         # pinned - the raw update a pre-pin backend would have left behind.
         line.pinned_tag_data = None
@@ -438,12 +447,12 @@ class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
         first = client.get(f"{_CRM.format(id=request.id)}/design")
         assert first.status_code == 200, first.text
         first_row = next(
-            row for row in first.json()["lines"] if row["line_id"] == line.id
+            row for row in first.json()["lines"] if row["tag_id"] == line.id
         )
         assert first_row["list_price"] == 1000.00
 
         db.expire_all()
-        fresh_line = _lines(db, request.id)[0]
+        fresh_line = _tags(db, request.id)[0]
         assert fresh_line.pinned_tag_data is not None, (
             "the first read must pin the line, or it stays exposed to master "
             "data forever - reading it again and again is not a decision"
@@ -460,7 +469,7 @@ class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
         second = client.get(f"{_CRM.format(id=request.id)}/design")
         assert second.status_code == 200, second.text
         second_row = next(
-            row for row in second.json()["lines"] if row["line_id"] == line.id
+            row for row in second.json()["lines"] if row["tag_id"] == line.id
         )
         assert second_row["list_price"] == 1000.00, (
             "the line is pinned now - a later master data edit must not move it"
@@ -473,7 +482,7 @@ class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
         # resolve-prices answers the same pinned figure, not a re-derived live
         # one - it is the SAME resolver, not a second one that forgot the pin.
         resolved = client.post(f"{_CRM.format(id=request.id)}/resolve-prices").json()
-        resolved_row = next(row for row in resolved if row["line_id"] == line.id)
+        resolved_row = next(row for row in resolved if row["tag_id"] == line.id)
         assert resolved_row["list_price"] == 1000.00
 
     def test_a_terminal_requests_unpinned_line_is_not_pinned_by_a_read(
@@ -484,12 +493,12 @@ class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
         pin nobody asked for and nobody can act on - the same reasoning
         `TestATerminalRequestNeverRunsTheLiveResolve` holds the resolver to.
         """
-        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestTag
         from app.services.dealer_kit import tag_data_service
 
         product = seed.seed_product(db_only, list_price=1000.00)
         request, _product, _contact = _designing_request(db_only, product=product)
-        line = _lines(db_only, request.id)[0]
+        line = _tags(db_only, request.id)[0]
         line.pinned_tag_data = None
         line.pinned_at = None
         db_only.query(PriceTagRequest).filter(
@@ -506,8 +515,8 @@ class TestAnUnpinnedInFlightLinePinsItselfOnFirstRead:
         db_only.expire_all()
 
         fresh_line = (
-            db_only.query(PriceTagRequestLine)
-            .filter(PriceTagRequestLine.id == line.id)
+            db_only.query(PriceTagRequestTag)
+            .filter(PriceTagRequestTag.id == line.id)
             .first()
         )
         assert fresh_line.pinned_tag_data is None
@@ -553,8 +562,8 @@ class TestEveryReadPathAnswersThePin:
                 "page": page,
             },
         )
-        line_id = request.lines[0].id
-        assert printed["resolvedData"][line_id]["list_price"] == 1000.00
+        tag_id = _tags(db, request.id)[0].id
+        assert printed["resolvedData"][tag_id]["list_price"] == 1000.00
 
     def test_a_barcode_edit_is_equally_invisible_until_a_person_decides(self, db_only):
         from app.services.dealer_kit import tag_data_service
@@ -578,7 +587,7 @@ class TestEveryReadPathAnswersThePin:
         from app.services.dealer_kit import tag_data_service
 
         request, _product, _contact = _designing_request(db_only)
-        line = _lines(db_only, request.id)[0]
+        line = _tags(db_only, request.id)[0]
         line.marketing_price_override = Decimal("123.45")
         db_only.commit()
 
@@ -715,7 +724,7 @@ class TestTheDiff:
         db_only.commit()
 
         # The pin has to have caught the offer, or "it disappeared" is vacuous.
-        pinned = _lines(db_only, request.id)[0].pinned_tag_data
+        pinned = _tags(db_only, request.id)[0].pinned_tag_data
         assert float(pinned["sell_price"]) == 799.00, pinned
 
         promotion.is_active = False
@@ -758,7 +767,7 @@ class TestTheDiff:
         request, _product, _contact = _designing_request(db_only, product=product)
         assert self._changes(db_only, request) == []
 
-        line = _lines(db_only, request.id)[0]
+        line = _tags(db_only, request.id)[0]
         line.marketing_price_override = Decimal("123.45")
         db_only.commit()
         db_only.expire_all()
@@ -780,7 +789,7 @@ class TestTheDiff:
         product = seed.seed_product(db, list_price=1000.00)
         request, _product, _contact = _designing_request(db, product=product)
         seed.attach_design(db, request)
-        line = _lines(db, request.id)[0]
+        line = _tags(db, request.id)[0]
         line.marketing_price_override = Decimal("123.45")
         db.commit()
 
@@ -853,9 +862,9 @@ class TestTheDiff:
         # Re-pin now the promotion is on the request, so the pin holds the offer.
         from app.services.dealer_kit import tag_data_service
 
-        tag_data_service.pin_lines(db_only, request, only_unpinned=False)
+        tag_data_service.pin_tags(db_only, request, only_unpinned=False)
         db_only.commit()
-        assert float(_lines(db_only, request.id)[0].pinned_tag_data["sell_price"]) == 799.0
+        assert float(_tags(db_only, request.id)[0].pinned_tag_data["sell_price"]) == 799.0
 
         promotion.is_active = False
         db_only.commit()
@@ -898,7 +907,7 @@ class TestTheDiff:
         request = db_only.query(PriceTagRequest).filter(
             PriceTagRequest.id == request.id
         ).first()
-        tag_data_service.pin_lines(db_only, request, only_unpinned=False)
+        tag_data_service.pin_tags(db_only, request, only_unpinned=False)
         db_only.commit()
 
         # Still `is_active`, but its window closed yesterday.
@@ -967,10 +976,10 @@ class TestUpdateAndKeep:
         page, _doc = seed.attach_design(db, request)
         product.list_price = 1200.00
         db.commit()
-        line_id = request.lines[0].id
+        tag_id = _tags(db, request.id)[0].id
 
         response = client.post(
-            f"{_CRM.format(id=request.id)}/lines/{line_id}/pin",
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
             json={"action": "update"},
         )
 
@@ -997,7 +1006,7 @@ class TestUpdateAndKeep:
             "puts the doc back over the wrong data"
         )
 
-        line = _lines(db, request.id)[0]
+        line = _tags(db, request.id)[0]
         assert float(line.pinned_tag_data["list_price"]) == 1200.00
         assert line.data_change_ack_hash is None
 
@@ -1010,16 +1019,16 @@ class TestUpdateAndKeep:
         seed.attach_design(db, request)
         product.list_price = 1200.00
         db.commit()
-        line_id = request.lines[0].id
+        tag_id = _tags(db, request.id)[0].id
 
         response = client.post(
-            f"{_CRM.format(id=request.id)}/lines/{line_id}/pin",
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
             json={"action": "keep"},
         )
 
         assert response.status_code == 200, response.text
         db.expire_all()
-        line = _lines(db, request.id)[0]
+        line = _tags(db, request.id)[0]
         assert line.data_change_ack_hash is not None
         assert float(line.pinned_tag_data["list_price"]) == 1000.00, (
             "Keep keeps the TAG as it is - it does not adopt the new value"
@@ -1039,7 +1048,7 @@ class TestUpdateAndKeep:
         product.list_price = 1200.00
         db.commit()
         client.post(
-            f"{_CRM.format(id=request.id)}/lines/{line_id_of(db, request)}/pin",
+            f"{_CRM.format(id=request.id)}/tags/{tag_id_of(db, request)}/pin",
             json={"action": "keep"},
         )
 
@@ -1057,15 +1066,15 @@ class TestUpdateAndKeep:
         request_b, _pb, _cb = _designing_request(db)
 
         response = client.post(
-            f"{_CRM.format(id=request_a.id)}/lines/{request_b.lines[0].id}/pin",
+            f"{_CRM.format(id=request_a.id)}/tags/{tag_id_of(db, request_b)}/pin",
             json={"action": "keep"},
         )
 
         assert response.status_code == 404, response.text
 
 
-def line_id_of(db, request) -> str:
-    return _lines(db, request.id)[0].id
+def tag_id_of(db, request) -> str:
+    return _tags(db, request.id)[0].id
 
 
 # ---------------------------------------------------------------------------
@@ -1099,10 +1108,10 @@ class TestUpdateOnARequestWithNoPageBuildsAnOpenableDocument:
             "the fixture must not have claimed a page yet, or Update tag is "
             "not the thing creating one"
         )
-        line_id = request.lines[0].id
+        tag_id = _tags(db, request.id)[0].id
 
         response = client.post(
-            f"{_CRM.format(id=request.id)}/lines/{line_id}/pin",
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
             json={"action": "update"},
         )
         assert response.status_code == 200, response.text
@@ -1140,13 +1149,13 @@ class TestRecheckProductData:
         product = seed.seed_product(db, list_price=1000.00)
         request, _product, _contact = _designing_request(db, product=product)
         seed.attach_design(db, request)
-        line_id = request.lines[0].id
+        tag_id = _tags(db, request.id)[0].id
 
         product.list_price = 1200.00
         db.commit()
 
         keep = client.post(
-            f"{_CRM.format(id=request.id)}/lines/{line_id}/pin",
+            f"{_CRM.format(id=request.id)}/tags/{tag_id}/pin",
             json={"action": "keep"},
         )
         assert keep.status_code == 200, keep.text
@@ -1155,7 +1164,7 @@ class TestRecheckProductData:
         silenced = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
         assert silenced == [], silenced
 
-        line = _lines(db, request.id)[0]
+        line = _tags(db, request.id)[0]
         assert line.data_change_ack_hash is not None, (
             "Keep must have recorded an ack, or this test proves nothing"
         )
@@ -1164,7 +1173,7 @@ class TestRecheckProductData:
         assert response.status_code == 200, response.text
         body = response.json()
         changed_row = next(
-            (row for row in body if row["line_id"] == line_id), None
+            (row for row in body if row["tag_id"] == tag_id), None
         )
         assert changed_row is not None, body
         assert any(
@@ -1172,7 +1181,7 @@ class TestRecheckProductData:
         ), changed_row
 
         db.expire_all()
-        line = _lines(db, request.id)[0]
+        line = _tags(db, request.id)[0]
         assert line.data_change_ack_hash is None, (
             "recheck must clear the ack, not just answer a fresh diff once"
         )
@@ -1180,7 +1189,7 @@ class TestRecheckProductData:
         # The ordinary GET agrees - the clear was PERSISTED, not returned once
         # and thrown away.
         after = client.get(f"{_CRM.format(id=request.id)}/data-changes").json()
-        assert any(row["line_id"] == line_id for row in after), after
+        assert any(row["tag_id"] == tag_id for row in after), after
 
     def test_recheck_404s_for_another_companys_request(self, crm):
         client, db = crm
