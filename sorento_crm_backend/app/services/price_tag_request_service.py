@@ -160,18 +160,11 @@ class PriceTagRequestService:
 
         ``data`` keys: debtor_code, debtor_name, needed_by_date, notes, lines
         (list of line dicts, each of which may carry its own ``promotion_id``
-        / ``manual_sell_price`` - D1, the promotion is a LINE fact since S6).
-        EVERY one of them is optional (D48a): Save Draft validates nothing, so
-        a form with one line and no dealer is a request this has to be able
-        to store. Completeness is checked on submit by
-        ``validate_submittable``.
-
-        A bare top-level ``data["promotion_id"]`` is NOT part of the wire
-        contract - both Pydantic request schemas ``extra="forbid"`` it
-        (AC-S6-3) - but is honoured here as the default for any line that
-        does not carry its own, so an internal caller building a single-line
-        request (a script, a test) can say the promotion once rather than
-        repeating it per line.
+        / ``manual_sell_price`` - D1, the promotion is a LINE fact since S6,
+        and the ONLY place it lives - no request-level default). EVERY one of
+        them is optional (D48a): Save Draft validates nothing, so a form with
+        one line and no dealer is a request this has to be able to store.
+        Completeness is checked on submit by ``validate_submittable``.
 
         Sets ``portal_draft_at`` on creation (the request starts as a draft).
 
@@ -202,11 +195,7 @@ class PriceTagRequestService:
         )
 
         PriceTagRequestService._add_lines(
-            db,
-            request,
-            data.get("lines") or [],
-            viewer=viewer,
-            default_promotion_id=data.get("promotion_id"),
+            db, request, data.get("lines") or [], viewer=viewer
         )
         db.flush()
         return request
@@ -255,7 +244,6 @@ class PriceTagRequestService:
         *,
         carry_tags: dict[tuple, list[dict]] | None = None,
         viewer=None,
-        default_promotion_id: str | None = None,
     ) -> None:
         """Append lines in the order given, which is the order the form shows.
 
@@ -337,8 +325,7 @@ class PriceTagRequestService:
                     code="INVALID_PART",
                 )
 
-            explicit_promotion = "promotion_id" in line_data
-            promotion_id = line_data.get("promotion_id", default_promotion_id)
+            promotion_id = line_data.get("promotion_id")
             manual_sell_price = line_data.get("manual_sell_price")
             # D1/D3/AC-S7-5: a product line's price basis, resolved through
             # the SAME engine the portal's and the CRM's own line-pricing
@@ -349,11 +336,21 @@ class PriceTagRequestService:
             basis = "list"
             if product_id:
                 parts_data = line_data.get("parts") or []
+                # Security review finding (this round): a malformed part or
+                # candidate id used to reach `line_pricing`'s
+                # `Product.id.in_(...)` BEFORE `_add_line_parts` below ever
+                # got a chance to validate it, so a junk candidate 500'd
+                # (Postgres `DataError`) instead of the named 422
+                # `_add_line_parts` already gives it. Same gate
+                # (`_part_uuid`), run here FIRST - every id a pricing lookup
+                # is about to use is validated before any query touches it.
                 resolved_part_ids = [
-                    p["product_id"] for p in parts_data if p.get("product_id")
+                    PriceTagRequestService._part_uuid(p["product_id"], idx)
+                    for p in parts_data
+                    if p.get("product_id")
                 ]
                 candidate_ids = [
-                    c
+                    PriceTagRequestService._part_uuid(c, idx)
                     for p in parts_data
                     if not p.get("product_id")
                     for c in (p.get("candidates") or [])
@@ -375,40 +372,19 @@ class PriceTagRequestService:
                 if promotion_id and promotion_id not in {
                     option["id"] for option in pricing_row["promotion_options"]
                 }:
-                    if explicit_promotion:
-                        # AC-S6-5: a line's promotion must be active, visible
-                        # to this viewer, and cover at least one product on
-                        # the line (the parent, a resolved part, or any
-                        # candidate) - answered by whether it shows up in the
-                        # SAME covering list `line_pricing` just computed, so
-                        # validation and pricing can never disagree about
-                        # what "covers this line" means.
-                        raise AppException(
-                            status_code=422,
-                            message="This promotion does not apply to this line.",
-                            detail=f"line:{idx}",
-                            code="PROMOTION_NOT_AVAILABLE",
-                        )
-                    # The request-level DEFAULT is best-effort sugar, not a
-                    # command (see create_request's docstring) - a line it
-                    # does not cover just prints at list, same as a line with
-                    # no promotion at all, rather than refusing a save nobody
-                    # asked to be refused.
-                    promotion_id = None
-                    pricing_row = line_pricing(
-                        db,
-                        lines=[
-                            {
-                                "key": "_p",
-                                "product_id": product_id,
-                                "part_product_ids": resolved_part_ids,
-                                "candidate_product_ids": candidate_ids,
-                                "promotion_id": None,
-                                "manual_sell_price": manual_sell_price,
-                            }
-                        ],
-                        viewer=viewer,
-                    )[0]
+                    # AC-S6-5: a line's promotion must be active, visible to
+                    # this viewer, and cover at least one product on the line
+                    # (the parent, a resolved part, or any candidate) -
+                    # answered by whether it shows up in the SAME covering
+                    # list `line_pricing` just computed, so validation and
+                    # pricing can never disagree about what "covers this
+                    # line" means.
+                    raise AppException(
+                        status_code=422,
+                        message="This promotion does not apply to this line.",
+                        detail=f"line:{idx}",
+                        code="PROMOTION_NOT_AVAILABLE",
+                    )
                 basis = pricing_row["sell_price_basis"]
 
             line = (
@@ -1869,6 +1845,28 @@ Marketing's own work is not part of the form's payload, so it is captured
             # is serialised as a JSON STRING and the page's `.toFixed(2)` throws.
             line.list_price = None if row["list_price"] is None else float(row["list_price"])
             line.sell_price = None if row["sell_price"] is None else float(row["sell_price"])
+            # D1 (S6): `promotion_name` is resolved, not stored (a bare id is
+            # never shown, AC-X-2); `sell_price_basis` is the resolver's own
+            # answer (D3/AC-S9-3) - both were declared on the schema and
+            # silently dropped by `response_model` until copied here too.
+            line.sell_price_basis = row.get("sell_price_basis")
+
+        promotion_ids = {
+            line.promotion_id for line in request.lines if line.promotion_id
+        }
+        promotion_names: dict[str, str] = {}
+        if promotion_ids:
+            from app.models.marketing import Promotion
+
+            promotion_names = {
+                promo.id: promo.description or ""
+                for promo in db.query(Promotion.id, Promotion.description)
+                .filter(Promotion.id.in_(promotion_ids))
+                .all()
+            }
+        for line in response.lines:
+            if line.promotion_id:
+                line.promotion_name = promotion_names.get(line.promotion_id)
 
         PriceTagRequestService._fill_line_parts(db, request, response)
 

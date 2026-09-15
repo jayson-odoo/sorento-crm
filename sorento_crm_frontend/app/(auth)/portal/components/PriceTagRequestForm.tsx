@@ -481,12 +481,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- Form state ----
   const [debtorCode, setDebtorCode] = useState('');
-  // D1 (PLAN-price-tag-line-promo-combo-subject.md): the request-level
-  // promotion is retired from the UI - a promotion now lives per LINE (see
-  // `DraftLine.promotion_id`). This still rides the existing request payload
-  // field so a request created under the old flow keeps whatever it already
-  // had, but nothing on the form sets it anymore.
-  const [promotionId, setPromotionId] = useState<string>('');
   // Header price mode (D5): replaces the per-line "Promo price" switch.
   // Selling requires a promotion, so clearing the promotion while Selling is
   // chosen flips the control back to List price.
@@ -691,7 +685,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // round trip and Save + re-`getRequest` needs no separate mapping.
   const applyRequestFieldsFrom = useCallback((data: PriceTagRequestDetail) => {
     setDebtorCode(data.debtor_code ?? '');
-    setPromotionId(data.promotion_id ?? '');
     setPriceMode(data.price_mode ?? 'list');
     setPriceModeChosen(true);
     setNeededByDate(data.needed_by_date ?? '');
@@ -837,10 +830,9 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // already fires this whenever a pricing-relevant field changes.
   }, [priceMode, pricingSignature]);
 
-  // ---- Line pricing, read-only view (AC-S1-10) - same mock, fed the
-  // submitted request's own lines the moment it loads. No per-line
-  // promotion is stored server-side yet (Phase 2), so every line auto-picks
-  // the way a brand new line does. ----
+  // ---- Line pricing, read-only view (AC-S1-10) - fed the submitted
+  // request's own lines (each already carrying its own `promotion_id`, S7)
+  // the moment it loads, through the real `lookupLinePricing` (S12). ----
   const [readLinePricing, setReadLinePricing] = useState<
     Record<string, LinePricingResult>
   >({});
@@ -891,7 +883,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           return;
         }
         setDebtorCode(data.debtor_code ?? '');
-        setPromotionId(data.promotion_id ?? '');
         setPriceMode(data.price_mode ?? 'list');
         setPriceModeChosen(true);
         setNeededByDate(data.needed_by_date ?? '');
@@ -1404,7 +1395,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
    *  is the only way to give it one. */
   const hasSomethingToSave =
     !!debtorCode ||
-    !!promotionId ||
     !!neededByDate ||
     notes.trim().length > 0 ||
     lines.length > 0 ||
@@ -1430,6 +1420,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           ? []
           : part.candidates.map((candidate) => candidate.product_id),
       })),
+      // D1/D2 (S6): the line's own price basis - built here for create,
+      // update AND revise, the one function all three send through, so the
+      // server never sees a line missing what `choosePromotion`/
+      // `setManualSellPrice` already set on it.
+      promotion_id: l.promotion_id,
+      manual_sell_price: l.manual_sell_price,
     }));
 
   // AC-P10: a failed Submit opens the first offending section, top to bottom,
@@ -1579,7 +1575,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       const payload = {
         debtor_code: debtorCode || null,
         debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
-        promotion_id: promotionId || null,
         needed_by_date: neededByDate || null,
         notes: notes || null,
         price_mode: priceMode,
@@ -1617,7 +1612,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
+  }, [effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug, applyFieldErrors]);
 
   // ---- Revise (R3-1): sent through the portal revision engine, never the
   // retired post-submit PUT. A reason is required; the same zero-line/
@@ -1639,7 +1634,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         fields: {
           debtor_code: debtorCode || null,
           debtor_name: debtorCode ? (debtor?.name ?? debtorCode) : null,
-          promotion_id: promotionId || null,
           needed_by_date: neededByDate || null,
           notes: notes || null,
           price_mode: priceMode,
@@ -1673,7 +1667,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       toast.error(e instanceof Error ? e.message : 'Failed to send revision');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, reviseReason, revise, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
+  }, [effectiveId, reviseReason, revise, debtorCode, debtors, priceMode, neededByDate, notes, request, applyRequestFieldsFrom, flushPendingFiles, revisionHistory]);
 
   const handleCancelRevise = useCallback(async () => {
     setReviseMode(false);
@@ -1735,7 +1729,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       const payload = {
         debtor_code: debtorCode,
         debtor_name: debtor?.name ?? debtorCode,
-        promotion_id: promotionId || null,
         // Review round 2: an empty date input is '', not omitted - sent as
         // null, same as the other two payload builders here, never as ''.
         needed_by_date: neededByDate || null,
@@ -1776,7 +1769,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [collectProblems, applyFieldErrors, openSectionForProblems, effectiveId, debtorCode, debtors, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {

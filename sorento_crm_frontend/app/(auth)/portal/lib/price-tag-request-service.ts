@@ -336,6 +336,11 @@ export type PriceTagRequestLineInput = {
   remarks: string | null;
   product_class: string | null;
   parts: LinePartIn[];
+  // D1/D2 (S6): the line's own price basis - mutually exclusive
+  // (AC-S6-4, picking a promotion clears manual and vice versa). Sent on
+  // create, update AND revise (the same `payloadLines()` builds all three).
+  promotion_id?: string | null;
+  manual_sell_price?: number | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -591,7 +596,9 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
 export interface CreatePriceTagRequestInput {
   debtor_code: string | null;
   debtor_name: string | null;
-  promotion_id: string | null;
+  // D1 (S6): no request-level `promotion_id` any more - both `PriceTagRequestCreate`
+  // and `...Update` `extra="forbid"` it now; the promotion is a LINE fact
+  // (`PriceTagRequestLineInput.promotion_id`).
   needed_by_date: string | null;
   notes: string | null;
   price_mode: PriceMode;
