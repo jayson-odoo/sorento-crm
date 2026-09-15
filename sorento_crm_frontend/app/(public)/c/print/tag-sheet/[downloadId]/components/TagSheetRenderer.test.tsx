@@ -20,6 +20,7 @@ const LINE_ID = 'line-1';
 function resolved(overrides: Partial<ResolvedLineData> = {}): ResolvedLineData {
   return {
     tag_id: TAG_ID,
+    tag_label: '1a',
     line_id: LINE_ID,
     code: 'SK-1234',
     name: 'Kitchen Sink',

@@ -1,23 +1,11 @@
 """Migration ptag_0011 - promotion and manual price move to the LINE (D1, S6).
 
-UAC: AC-S6-1, AC-S6-2, AC-S8-5. Written test-FIRST (PRINCIPLES.md Phase 2):
-`alembic/versions/ptag_0011_line_promotion.py` does not exist, so
-`_load_migration` raises `FileNotFoundError` the moment any test here calls
-`_run_upgrade`/`_run_downgrade` - the whole file is red for that one reason.
-
-Why this is tested by RUNNING the migration rather than asserting on the live
-database: CI's database has no data, and the local one is a prod copy already
-past this revision's lineage (`test_migration_ptag_0009_combos_tags.py`
-explains the same thing at more length).
-
-Today's models (`app/models/price_tag.py`) predate this migration - the line
-has no `promotion_id`/`manual_sell_price` columns and the request still carries
-its own - so `blank_session`'s `create_all` schema already IS the pre-migration
-state and `_rewind_to_pre_migration` below is a no-op right now. It stops being
-one the moment S6 edits the models, which is exactly when this file needs it:
-without it `create_all` would hand every test a schema the migration's own DDL
-never touched, and `upgrade()` would be asserting against a database that
-already agrees with it.
+UAC: AC-S6-1, AC-S6-2, AC-S8-5. `blank_session()`'s `create_all` now builds the
+POST-migration model (the coder's S6-S9 slice landed), so - exactly like
+`test_migration_ptag_0009_combos_tags.py` - the pre-migration state has to be
+rebuilt by hand: raw SQL, since the ORM no longer carries
+`PriceTagRequest.promotion_id` or has ever carried the line's own two columns
+before this revision ran.
 """
 from __future__ import annotations
 
@@ -43,7 +31,6 @@ MIGRATION = (
 
 
 def _load_migration():
-    # THE red line: the file does not exist until S6 lands.
     spec = importlib.util.spec_from_file_location("ptag0011", MIGRATION)
     if spec is None or spec.loader is None:
         raise FileNotFoundError(MIGRATION)
@@ -79,7 +66,13 @@ def _uid() -> str:
 
 
 def _rewind_to_pre_migration(db) -> None:
-    """See module docstring: a no-op today, load-bearing once S6 edits the models."""
+    """Put the scratch schema back to how production looks before ptag_0011.
+
+    `create_all` gives us the POST state - the line already has its own
+    `promotion_id`/`manual_sell_price` and the header has neither - so the
+    migration's own DDL is put back under test the same way ptag_0009's test
+    does: drop what the migration adds, restore what it removes.
+    """
     db.execute(
         text(
             "ALTER TABLE price_tag_request_lines "
@@ -94,95 +87,114 @@ def _rewind_to_pre_migration(db) -> None:
             "REFERENCES promotions(id) ON DELETE SET NULL"
         )
     )
+    db.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_price_tag_requests_promotion_id "
+            "ON price_tag_requests (promotion_id)"
+        )
+    )
     db.flush()
 
 
 # ---------------------------------------------------------------------------
-# Seeding - every FK target created here, CI's database is empty.
+# Seeding - raw SQL throughout (the ORM has no header promotion_id and, before
+# upgrade() runs, no line promotion_id either). Mirrors
+# `test_migration_ptag_0009_combos_tags.py`'s `_product`/`_contact` shape.
 # ---------------------------------------------------------------------------
 
 
-def _product(db):
-    from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
-
-    stem = unique_code("PT11")
-    category = ProductCategory(
-        id=_uid(), category_code=stem, category_name=f"ZZT cat {stem}"
+def _product(db, stem: str) -> str:
+    code = unique_code(stem)
+    category_id, brand_id, uom_id, product_id = (_uid() for _ in range(4))
+    db.execute(
+        text(
+            "INSERT INTO product_categories (id, category_code, category_name) "
+            "VALUES (:i, :c, :n)"
+        ),
+        {"i": category_id, "c": code[:50], "n": f"ZZT cat {code}"},
     )
-    brand = Brand(id=_uid(), brand_code=stem[:50], brand_name=f"ZZT {stem}")
-    uom = UnitOfMeasure(id=_uid(), uom_code=stem[:20], uom_name="Each")
-    db.add_all([category, brand, uom])
-    db.flush()
-    product = Product(
-        id=_uid(),
-        company_id=SORENTO,
-        product_code=stem,
-        product_name=f"ZZT product {stem}",
-        category_id=category.id,
-        brand_id=brand.id,
-        base_uom_id=uom.id,
-        list_price=100.00,
-        is_active=True,
+    db.execute(
+        text("INSERT INTO brands (id, brand_code, brand_name) VALUES (:i, :c, :n)"),
+        {"i": brand_id, "c": code[:50], "n": f"ZZT {code}"},
     )
-    db.add(product)
-    db.flush()
-    return product
-
-
-def _promotion(db):
-    from app.models.marketing import Promotion
-
-    promotion = Promotion(
-        id=_uid(),
-        description=unique_code("ZZT promo"),
-        is_active=True,
-        company_id=SORENTO,
+    db.execute(
+        text("INSERT INTO units_of_measure (id, uom_code, uom_name) VALUES (:i, :c, 'Each')"),
+        {"i": uom_id, "c": code[:20]},
     )
-    db.add(promotion)
-    db.flush()
-    return promotion
-
-
-def _contact(db):
-    from app.models.access import RespondContact
-
-    contact = RespondContact(
-        id=_uid(), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
+    db.execute(
+        text(
+            "INSERT INTO products "
+            "(id, company_id, product_code, product_name, category_id, brand_id, "
+            " base_uom_id, list_price) "
+            "VALUES (:i, :co, :c, :n, :cat, :br, :uom, 100.00)"
+        ),
+        {
+            "i": product_id,
+            "co": SORENTO,
+            "c": code,
+            "n": f"ZZT product {code}",
+            "cat": category_id,
+            "br": brand_id,
+            "uom": uom_id,
+        },
     )
-    db.add(contact)
     db.flush()
-    return contact
+    return product_id
 
 
-def _request_with_lines(db, *, promotion_id=None, line_count=3):
-    from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
-
-    contact = _contact(db)
-    request = PriceTagRequest(
-        id=_uid(),
-        company_id=SORENTO,
-        contact_id=contact.id,
-        doc_number=unique_code("PT")[:30],
-        status="designing",
-        promotion_id=promotion_id,
+def _promotion(db) -> str:
+    promotion_id = _uid()
+    db.execute(
+        text(
+            "INSERT INTO promotions (id, description, is_active, company_id) "
+            "VALUES (:i, :d, true, :co)"
+        ),
+        {"i": promotion_id, "d": unique_code("ZZT promo"), "co": SORENTO},
     )
-    db.add(request)
     db.flush()
+    return promotion_id
+
+
+def _contact(db) -> str:
+    contact_id = _uid()
+    db.execute(
+        text("INSERT INTO respond_contacts (id, phone_number, name) VALUES (:i, :p, :n)"),
+        {"i": contact_id, "p": f"+60{uuid.uuid4().hex[:9]}", "n": unique_code("contact")},
+    )
+    db.flush()
+    return contact_id
+
+
+def _request_with_lines(db, *, promotion_id=None, line_count=3) -> tuple[str, list[str]]:
+    request_id = _uid()
+    db.execute(
+        text(
+            "INSERT INTO price_tag_requests "
+            "(id, company_id, contact_id, doc_number, status, promotion_id) "
+            "VALUES (:i, :co, :ct, :d, 'designing', :p)"
+        ),
+        {
+            "i": request_id,
+            "co": SORENTO,
+            "ct": _contact(db),
+            "d": unique_code("PT11")[:40],
+            "p": promotion_id,
+        },
+    )
     line_ids: list[str] = []
     for index in range(line_count):
-        product = _product(db)
-        line = PriceTagRequestLine(
-            id=_uid(),
-            request_id=request.id,
-            line_type="product",
-            product_id=product.id,
-            sort_order=index,
+        line_id = _uid()
+        db.execute(
+            text(
+                "INSERT INTO price_tag_request_lines "
+                "(id, request_id, line_type, product_id, sort_order) "
+                "VALUES (:i, :r, 'product', :p, :s)"
+            ),
+            {"i": line_id, "r": request_id, "p": _product(db, "PT11"), "s": index},
         )
-        db.add(line)
-        db.flush()
-        line_ids.append(line.id)
-    db.commit()
-    return request.id, line_ids
+        line_ids.append(line_id)
+    db.flush()
+    return request_id, line_ids
 
 
 # --------------------------------------------------------------------------- AC-S6-1
@@ -190,8 +202,8 @@ def _request_with_lines(db, *, promotion_id=None, line_count=3):
 
 def test_upgrade_adds_line_columns_and_drops_header(db):
     _rewind_to_pre_migration(db)
-    promotion = _promotion(db)
-    _request_with_lines(db, promotion_id=promotion.id, line_count=1)
+    promotion_id = _promotion(db)
+    _request_with_lines(db, promotion_id=promotion_id, line_count=1)
 
     _run_upgrade(db)
 
@@ -221,9 +233,9 @@ def test_upgrade_adds_line_columns_and_drops_header(db):
 
 def test_backfill_copies_header_promotion_to_every_line(db):
     _rewind_to_pre_migration(db)
-    promotion = _promotion(db)
+    promotion_id = _promotion(db)
     request_id, line_ids = _request_with_lines(
-        db, promotion_id=promotion.id, line_count=3
+        db, promotion_id=promotion_id, line_count=3
     )
 
     _run_upgrade(db)
@@ -239,16 +251,16 @@ def test_backfill_copies_header_promotion_to_every_line(db):
         .all()
     )
     assert len(rows) == 3
-    assert all(str(promotion_id) == promotion.id for promotion_id in rows), (
+    assert all(str(promotion_id_seen) == promotion_id for promotion_id_seen in rows), (
         "no line loses its promotion in the backfill"
     )
 
 
 def test_downgrade_restores_header_from_first_line(db):
     _rewind_to_pre_migration(db)
-    promotion = _promotion(db)
+    promotion_id = _promotion(db)
     request_id, _line_ids = _request_with_lines(
-        db, promotion_id=promotion.id, line_count=2
+        db, promotion_id=promotion_id, line_count=2
     )
     _run_upgrade(db)
 
@@ -258,7 +270,7 @@ def test_downgrade_restores_header_from_first_line(db):
         text("SELECT promotion_id FROM price_tag_requests WHERE id = :r"),
         {"r": request_id},
     ).scalar()
-    assert str(stored) == promotion.id
+    assert str(stored) == promotion_id
 
 
 # --------------------------------------------------------------------------- AC-S8-5
@@ -267,31 +279,34 @@ def test_downgrade_restores_header_from_first_line(db):
 def test_upgrade_splits_existing_open_tags(db):
     """A migration-time data step: every open group is split by the D6 builder.
 
-    Seeds exactly what the combos slice leaves behind today - a line with one
+    Seeds exactly what the combos slice leaves behind pre-D6 - a line with one
     open choice group and ONE tag with empty `choices` - and expects the
     migration to leave TWO tags behind, each answering the group, so no "Open"
-    tag survives into the new world where the designer never splits one by hand.
+    tag survives into the new world where the designer never splits one by
+    hand.
     """
-    from app.models.price_tag import PriceTagRequestLinePart, PriceTagRequestTag
-
     _rewind_to_pre_migration(db)
     request_id, line_ids = _request_with_lines(db, line_count=1)
     line_id = line_ids[0]
-    white = _product(db)
-    black = _product(db)
-    db.add(
-        PriceTagRequestLinePart(
-            id=_uid(),
-            line_id=line_id,
-            role="Basin",
-            candidates=[white.id, black.id],
-            sort_order=0,
-        )
+    white_id = _product(db, "PT11WH")
+    black_id = _product(db, "PT11BK")
+
+    db.execute(
+        text(
+            "INSERT INTO price_tag_request_line_parts "
+            "(id, line_id, role, candidates, sort_order) "
+            "VALUES (:i, :l, 'Basin', CAST(:c AS jsonb), 0)"
+        ),
+        {"i": _uid(), "l": line_id, "c": f'["{white_id}", "{black_id}"]'},
     )
-    db.add(
-        PriceTagRequestTag(id=_uid(), line_id=line_id, sort_order=0, quantity=1, choices={})
+    db.execute(
+        text(
+            "INSERT INTO price_tag_request_tags (id, line_id, sort_order, quantity, choices) "
+            "VALUES (:i, :l, 0, 1, '{}'::jsonb)"
+        ),
+        {"i": _uid(), "l": line_id},
     )
-    db.commit()
+    db.flush()
 
     _run_upgrade(db)
 
@@ -304,8 +319,5 @@ def test_upgrade_splits_existing_open_tags(db):
     ).all()
     assert len(tags) == 2, "one tag per candidate, the open one gone"
     choice_maps = [dict(row.choices) for row in tags]
-    assert {choices.get("Basin") for choices in choice_maps} == {
-        str(white.id),
-        str(black.id),
-    }
+    assert {choices.get("Basin") for choices in choice_maps} == {white_id, black_id}
     assert all(choices for choices in choice_maps), "no tag is left with empty choices"

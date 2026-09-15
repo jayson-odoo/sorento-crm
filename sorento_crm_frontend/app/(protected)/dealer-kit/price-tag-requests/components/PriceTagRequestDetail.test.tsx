@@ -116,7 +116,7 @@ vi.mock('../../services/priceTagRequestService', async () => {
   // per-candidate/per-promotion figures instead of an empty stand-in, so a
   // control that reads a price off the resolved row (the part-row candidate
   // select's "CODE  RM x" label, e.g.) sees the price it will see in the app.
-  const { computeLinePricing } = await import('@/lib/dealer-kit/mock-line-pricing');
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
   return {
     getPriceTagRequest: vi.fn(),
     getTagSheetDoc: vi.fn(),

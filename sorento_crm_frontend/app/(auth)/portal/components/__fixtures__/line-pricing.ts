@@ -1,56 +1,44 @@
 /**
- * Line-level pricing - MOCK (Phase 1 only).
+ * Line-level pricing - TEST FIXTURE.
  *
  * ===========================================================================
  * PLAN-price-tag-line-promo-combo-subject.md D1-D4 - Phase 1 slices S1/S2/S5
  * ===========================================================================
- * A promotion (or a hand-typed price) now lives on the LINE, not the header
- * (D1); one pricing call answers every line on a request at once (D4). No
- * backend route exists yet (that is S7, Phase 2) - the portal's and the
- * CRM's own service files both call the pure functions here, which produce
- * the SAME shape the real route will, so swapping the mock for a real
- * `POST .../lookups/line-pricing` call at S12 touches only the one `fetch`
- * line in each service file, not this computation or any caller of it.
- *
- * Deterministic and product-id-keyed (no network, no state) so the same
- * product always prices the same across the portal form, the CRM detail
- * page and a re-render, without a real catalogue behind either yet.
+ * This is the Phase 1 mock computation (`computeLinePricing`) that stood in
+ * for `POST .../lookups/line-pricing` before S12 wired the real routes.
+ * Production no longer calls it - both service files now do a real `fetch`
+ * (`lookupLinePricing` in `app/(auth)/portal/lib/price-tag-request-service.ts`
+ * and `app/(protected)/dealer-kit/services/priceTagRequestService.ts`) - so
+ * this moved out of `lib/dealer-kit/` (a production directory) to live beside
+ * the one test that still uses it as a deterministic, product-id-keyed
+ * stand-in: `PriceTagRequestForm.linePricing.test.tsx` and its sibling
+ * `PriceTagRequestForm.*.test.tsx` / `PriceTagRequestDetail.test.tsx` files,
+ * which mock `lookupLinePricing`/`updatePriceTagLinePrice` by delegating to
+ * this SAME function rather than a static `[]`, so a control that reads a
+ * price off the resolved row (a part-row candidate's "CODE  RM x" label,
+ * e.g.) sees a real, internally-consistent price in every test - no network
+ * call, no state, the same product always prices the same across every
+ * caller and every re-render.
  * ===========================================================================
  */
 
+import type {
+  LinePricingCandidate,
+  LinePricingLineInput,
+  LinePricingPromotionOption,
+  LinePricingResult,
+  SellPriceBasis,
+} from '@/lib/dealer-kit/line-pricing-types';
+
 export type MockPriceMode = 'list' | 'selling';
-export type SellPriceBasis = 'manual' | 'promotion' | 'list';
 
-export interface LinePricingPromotionOption {
-  id: string;
-  description: string;
-  sell_price: number;
-}
-
-export interface LinePricingCandidate {
-  product_id: string;
-  list_price: number;
-  sell_price: number;
-}
-
-export interface LinePricingResult {
-  key: string;
-  list_price: number;
-  promotion_options: LinePricingPromotionOption[];
-  auto_promotion_id: string | null;
-  sell_price: number | null;
-  sell_price_basis: SellPriceBasis;
-  parts_at_list: string[];
-  candidates: LinePricingCandidate[];
-}
-
-export interface LinePricingLineInput {
-  key: string;
-  product_id: string | null;
-  part_product_ids: string[];
-  candidate_product_ids: string[];
-  promotion_id?: string | null;
-}
+export type {
+  LinePricingCandidate,
+  LinePricingLineInput,
+  LinePricingPromotionOption,
+  LinePricingResult,
+  SellPriceBasis,
+};
 
 /** The two mock promotions every mock line-pricing call covers products
  *  with. */
@@ -88,7 +76,7 @@ function mockOfferPrice(promotionId: string, productId: string): number {
 }
 
 /**
- * One pricing call for every line (D4). MOCK ONLY (Phase 1) - resolves
+ * One pricing call for every line (D4). TEST FIXTURE ONLY - resolves
  * synchronously, no network call, no persistence. `priceMode: 'list'`
  * still answers `list_price`/`candidates` (the List price column and part
  * row prices need them), just leaves `sell_price` null.

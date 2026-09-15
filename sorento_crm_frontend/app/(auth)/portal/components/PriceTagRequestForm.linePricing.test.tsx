@@ -3,8 +3,9 @@
  *
  * UAC: `documentation/plans/dealer-kit/price-tag-line-promo-combo-subject-acceptance-criteria.md`
  * AC-S1-1 to AC-S1-9, AC-S2-1/S2-2. Runs against the REAL
- * `computeLinePricing` (`lib/dealer-kit/mock-line-pricing.ts`) via the mocked
- * `lookupLinePricing` - deterministic and hash-based on product id, so every
+ * `computeLinePricing` (`__fixtures__/line-pricing.ts`, beside this file)
+ * via the mocked `lookupLinePricing` - deterministic and hash-based on
+ * product id, so every
  * price this file asserts is computed by hand once (see the comment beside
  * each fixture id) rather than read off a screenshot.
  */
@@ -20,7 +21,7 @@ const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
 
 vi.mock('../lib/price-tag-request-service', async () => {
-  const { computeLinePricing } = await import('@/lib/dealer-kit/mock-line-pricing');
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
   return {
     lookupLinePricing: vi.fn((mode: string, lines: unknown[]) =>
       Promise.resolve(computeLinePricing(mode as 'list' | 'selling', lines as never)),

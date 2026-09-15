@@ -580,6 +580,11 @@ def crm_client():
                 )
             )
             db.commit()
+            # RBAC contract: permissions are cached per user; a grant made mid-test
+            # is invisible to the next request until the cache is dropped.
+            from app.services.user_service import invalidate_rbac_cache
+
+            invalidate_rbac_cache(user_id)
 
         with TestClient(app) as client:
             yield client, db, _grant_process

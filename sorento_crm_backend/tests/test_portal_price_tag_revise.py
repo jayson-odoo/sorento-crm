@@ -698,96 +698,15 @@ def _revoke_grant(db, contact) -> None:
     db.commit()
 
 
-class TestRevisePromotionAudienceGate:
-    """Gap A: ``_apply_price_tag_lines`` never calls
-    ``PriceTagRequestService.validate_promotion_access`` - a revise payload
-    setattrs ``promotion_id`` straight onto the row (via the generic portal
-    field-whitelist writer), so a promotion this contact's audience cannot
-    see, or one belonging to another company, lands anyway."""
-
-    def test_revise_promotion_outside_audience_422(self, db):
-        from app.models.marketing import Promotion
-
-        contact, product_id, row = _setup(db)
-        token = _seed_token(contact)
-
-        outside_audience = Promotion(
-            id=str(uuid.uuid4()),
-            description="ZZT Dealer-Only Promo",
-            is_active=True,
-            access_levels=["some-other-access-code"],
-            company_id=_SORENTO_COMPANY_ID,
-        )
-        db.add(outside_audience)
-        db.commit()
-
-        with pytest.raises(HTTPException) as exc:
-            PortalRevisionService(db).revise(
-                token,
-                "price_tag_request",
-                str(row.id),
-                {"promotion_id": outside_audience.id},
-                "Reason",
-                0,
-            )
-        assert exc.value.status_code == 422
-        detail = exc.value.detail
-        code = detail.get("code") if isinstance(detail, dict) else None
-        assert code == "PROMOTION_NOT_AVAILABLE", detail
-
-        db.expire_all()
-        fresh = PriceTagRequestService.get_request(db, str(row.id))
-        assert fresh.promotion_id is None
-        assert fresh.revision_no == 0
-        from app.models.portal import PortalFormRevision
-
-        assert (
-            db.query(PortalFormRevision)
-            .filter(
-                PortalFormRevision.source_entity_type == "price_tag_request",
-                PortalFormRevision.source_entity_id == str(row.id),
-                PortalFormRevision.kind == "revision",
-            )
-            .count()
-            == 0
-        )
-
-    def test_revise_promotion_from_another_company_422(self, db):
-        from app.models.company import Company
-        from app.models.marketing import Promotion
-
-        contact, product_id, row = _setup(db)
-        token = _seed_token(contact)
-
-        other_company = Company(
-            id=str(uuid.uuid4()), name=unique_code("ZZT Other Co"), code=unique_code("co")[:20],
-        )
-        db.add(other_company)
-        db.flush()
-        other_company_promo = Promotion(
-            id=str(uuid.uuid4()),
-            description="ZZT Other Company Promo",
-            is_active=True,
-            access_levels=["dealer", "end_user"],
-            company_id=other_company.id,
-        )
-        db.add(other_company_promo)
-        db.commit()
-
-        with pytest.raises(HTTPException) as exc:
-            PortalRevisionService(db).revise(
-                token,
-                "price_tag_request",
-                str(row.id),
-                {"promotion_id": other_company_promo.id},
-                "Reason",
-                0,
-            )
-        assert exc.value.status_code == 422
-        db.expire_all()
-        assert PriceTagRequestService.get_request(db, str(row.id)).promotion_id is None
-
-
+# D1 (PLAN-price-tag-line-promo-combo-subject.md): `PriceTagRequest.promotion_id`
+# is DROPPED (ptag_0011) - the header column `TestRevisePromotionAudienceGate`
+# (security review Gap A) guarded against a bad audience landing on no longer
+# exists for a revise payload to set at all, so the old attack surface is closed
+# by the column's removal. The revise composer does not yet expose a per-LINE
+# promotion field (coder's own note in `_apply_price_tag_lines`, backlogged in
+# the plan) - there is no promotion write path on revise for an audience gate
+# to guard until that backlog item lands, so this class is retired rather than
+# rewritten against a payload shape the product does not accept yet.
 class TestRevisionRoutesRequireFormVisibility:
     """Gap B: ``_require_own_request`` (the ownership check the generic
     revision routes dispatch to for price_tag_request) checks ownership

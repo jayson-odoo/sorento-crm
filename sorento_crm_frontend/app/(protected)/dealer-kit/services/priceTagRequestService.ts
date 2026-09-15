@@ -57,9 +57,10 @@
  * ===========================================================================
  * D5: CRM staff can change a line's price basis (promotion or a hand-typed
  * price) from the detail page, same rules as the portal form (S1).
- * `lookupLinePricing` is the CRM side of the S1 mock - same computation
- * (`lib/dealer-kit/mock-line-pricing.ts`), so a product prices identically
- * whether the salesperson or marketing is looking at it.
+ * `lookupLinePricing` is the CRM side of the S1 mock - same computation as
+ * the portal's own (test fixture:
+ * `app/(auth)/portal/components/__fixtures__/line-pricing.ts`), so a product
+ * prices identically whether the salesperson or marketing is looking at it.
  *
  * ---- BACKEND CONTRACT (Phase 2, not built) --------------------------------
  *
@@ -86,7 +87,7 @@ import type {
   LinePricingLineInput,
   LinePricingResult,
   SellPriceBasis,
-} from '@/lib/dealer-kit/mock-line-pricing';
+} from '@/lib/dealer-kit/line-pricing-types';
 
 export type {
   LinePricingCandidate,
@@ -94,7 +95,7 @@ export type {
   LinePricingPromotionOption,
   LinePricingResult,
   SellPriceBasis,
-} from '@/lib/dealer-kit/mock-line-pricing';
+} from '@/lib/dealer-kit/line-pricing-types';
 
 // ---------------------------------------------------------------------------
 // Types

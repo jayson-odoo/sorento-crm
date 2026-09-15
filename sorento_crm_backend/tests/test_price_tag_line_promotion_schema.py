@@ -276,8 +276,9 @@ def test_crm_office_patch_rejects_a_promotion_id(crm_client):
 
 def test_line_carries_promotion_and_prices_in_response(portal_client):
     """`response_model` drops an undeclared field silently - assert each one."""
-    client, db, _contact_id = portal_client
+    client, db, contact_id = portal_client
     product = _product(db)
+    _grant_audience_code(db, contact_id, "dealer")
     promotion = _promotion(db, product)
 
     res = client.post(
@@ -386,10 +387,11 @@ def test_line_promotion_must_cover_the_line(portal_client):
 def test_line_promotion_covering_only_a_candidate_is_accepted(portal_client):
     from app.models.product_combo import ProductCombo, ProductComboPart
 
-    client, db, _contact_id = portal_client
+    client, db, contact_id = portal_client
     parent = _product(db)
     candidate_a = _product(db)
     candidate_b = _product(db)
+    _grant_audience_code(db, contact_id, "dealer")
     covers_candidate = _promotion(db, candidate_a)
     combo = ProductCombo(
         id=_uid(), host_product_id=parent.id, name="ZZT combo", sort_order=0

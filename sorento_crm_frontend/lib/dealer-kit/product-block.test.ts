@@ -9,13 +9,14 @@
 
 import { describe, expect, it } from 'vitest';
 
-import type {
-  LineTagData,
-  ProductSetTagData,
-  ProductTagData,
-  TagBindingData,
-  TagLayer,
-  TagPartData,
+import {
+  defaultTextProps,
+  type LineTagData,
+  type ProductSetTagData,
+  type ProductTagData,
+  type TagBindingData,
+  type TagLayer,
+  type TagPartData,
 } from './tag-template-types';
 import {
   bindTemplateLayers,
@@ -306,6 +307,10 @@ describe('resolveSlotText name slot (S2, AC-S2-2)', () => {
     const line = {
       kind: 'line' as const,
       line: {
+        tag_id: 't1',
+        tag_label: '1a',
+        open_groups: [],
+        parts: [],
         line_id: 'l1',
         code: 'SK-1234',
         name: 'SK-1234',
@@ -562,6 +567,10 @@ describe('layerDisplay', () => {
     const line = {
       kind: 'line' as const,
       line: {
+        tag_id: 't1',
+        tag_label: '1a',
+        open_groups: [],
+        parts: [],
         line_id: 'l1',
         code: 'SK-1234',
         name: 'Kitchen Sink',
@@ -780,7 +789,7 @@ function lineData(overrides: Partial<LineTagData> = {}): TagBindingData {
 describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
   it('a layer with no subjectPart reads the parent - an existing design renders unchanged', () => {
     const data = lineData();
-    const textLayer = { props: { kind: 'text' as const, subjectPart: undefined } };
+    const textLayer = { props: { ...defaultTextProps(), subjectPart: undefined } };
 
     expect(resolveSlotText({ slot_binding: 'code', ...textLayer }, data)).toBe('CAB-01');
     expect(
@@ -792,7 +801,7 @@ describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
     const data = lineData({
       parts: [part({ code: 'TAP-1', barcode: '4009999999991' }), part({ product_id: 'part-2', code: 'BASIN-1', barcode: '4009999999992', images: [{ attachment_id: 'att-part-2', url: 'https://cdn/part-2.jpg', is_primary: true }] })],
     });
-    const textLayer = { slot_binding: 'code' as const, props: { kind: 'text' as const, subjectPart: 1 } };
+    const textLayer = { slot_binding: 'code' as const, props: { ...defaultTextProps(), subjectPart: 1 } };
     const barcodeLayerRef = { text_override: null, props: { kind: 'barcode' as const, show_code: true, subjectPart: 1 } };
     const imageLayer = {
       slot_binding: 'product_image' as const,
@@ -839,7 +848,7 @@ describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
 
   it('an out-of-range subjectPart falls back to the parent, same as -1 (AC-S4-6)', () => {
     const data = lineData({ parts: [part()] });
-    const textLayer = { slot_binding: 'code' as const, props: { kind: 'text' as const, subjectPart: 7 } };
+    const textLayer = { slot_binding: 'code' as const, props: { ...defaultTextProps(), subjectPart: 7 } };
 
     expect(resolveSlotText(textLayer, data)).toBe('CAB-01');
   });
@@ -869,7 +878,7 @@ describe('subjectOf (D7, AC-S4-3/S4-4/S4-6)', () => {
 
   it('a single-product tag (no parts) has nothing for subjectOf to change', () => {
     const data: TagBindingData = { kind: 'product', product: product() };
-    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+    const layer = { props: { ...defaultTextProps(), subjectPart: 0 } };
 
     expect(subjectOf(data, layer)).toBe(data);
   });

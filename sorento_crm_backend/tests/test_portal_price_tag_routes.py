@@ -417,26 +417,36 @@ class TestPriceModeAndRemarks:
         assert res.json()["price_mode"] == "list"
 
     def test_create_accepts_price_mode_selling(self, client):
+        """D1: a promotion is a LINE fact - `promotion_id` at the header is
+        `extra="forbid"`-rejected (AC-S6-3), so this attaches it to the
+        line, covered (AC-S6-5)."""
         c, db, contact_id = client
         product_id = _seed_product(db)
-        # A create-time promotion_id must belong to the contact's audience
+        # A line-level promotion_id must belong to the contact's audience
         # (the audience check the portal routes now enforce on write, not
         # just on the lookup) - grant the code the default access_levels
         # (["dealer","end_user"]) already carry.
         _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
+        _cover_promotion(db, promotion_id, product_id)
 
         res = c.post(
             _BASE,
             json={
-                "promotion_id": promotion_id,
                 "price_mode": "selling",
-                "lines": [{"line_type": "product", "product_id": product_id}],
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "promotion_id": promotion_id,
+                    }
+                ],
             },
         )
 
         assert res.status_code == 201, res.text
         assert res.json()["price_mode"] == "selling"
+        assert res.json()["lines"][0]["promotion_id"] == promotion_id
 
     def test_create_rejects_an_unknown_price_mode_with_422(self, client):
         c, db, _ = client
@@ -453,11 +463,13 @@ class TestPriceModeAndRemarks:
         assert res.status_code == 422, res.text
 
     def test_update_accepts_price_mode(self, client):
+        """D1: an update-time promotion is a LINE fact, audience-gated the
+        same way create is (AC-S6-5)."""
         c, db, contact_id = client
         product_id = _seed_product(db)
-        # An update-time promotion_id is audience-gated the same way create is.
         _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
+        _cover_promotion(db, promotion_id, product_id)
         created = c.post(
             _BASE,
             json={"lines": [{"line_type": "product", "product_id": product_id}]},
@@ -466,11 +478,21 @@ class TestPriceModeAndRemarks:
 
         res = c.put(
             f"{_BASE}/{created['id']}",
-            json={"promotion_id": promotion_id, "price_mode": "selling"},
+            json={
+                "price_mode": "selling",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "promotion_id": promotion_id,
+                    }
+                ],
+            },
         )
 
         assert res.status_code == 200, res.text
         assert res.json()["price_mode"] == "selling"
+        assert res.json()["lines"][0]["promotion_id"] == promotion_id
 
     def test_update_rejects_an_unknown_price_mode_with_422(self, client):
         c, db, _ = client
@@ -567,10 +589,11 @@ class TestPriceModeAndRemarks:
 
     def test_submit_with_selling_and_no_promotion_succeeds(self, client):
         """D-P2 owner ruling: the r7 PRICE_MODE_NEEDS_PROMOTION submit guard
-        is retired - Selling with no promotion is a valid end state, and
-        every line still comes back with show_promo_price=True (D5's
-        header-derives-every-line rule does not depend on a promotion
-        actually being attached)."""
+        is retired - Selling with no promotion is a valid end state. D3
+        (this lane) retires the OLD defect this test used to pin (every
+        line printed SP even summed at plain list): a line with no covering
+        promotion and no manual price prints LP, `show_promo_price=False`,
+        even in Selling mode - AC-S7-5."""
         c, db, _ = client
         product_id = _seed_product(db)
         created = c.post(
@@ -585,7 +608,7 @@ class TestPriceModeAndRemarks:
             },
         ).json()
         assert created["price_mode"] == "selling"
-        assert created["promotion_id"] is None
+        assert created["lines"][0]["promotion_id"] is None
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
@@ -598,16 +621,21 @@ class TestPriceModeAndRemarks:
             .all()
         )
         assert len(rows) == 1
-        assert all(row.show_promo_price is True for row in rows)
+        assert all(row.show_promo_price is False for row in rows)
 
     def test_submit_with_selling_and_a_promotion_succeeds_and_shows_promo_price_on_every_line(
         self, client
     ):
+        """D1/D3: each line carries its OWN promotion; `show_promo_price`
+        follows AC-S7-5 (Selling AND basis != list) - true here because
+        both lines' promotions actually cover them."""
         c, db, contact_id = client
         first = _seed_product(db)
         second = _seed_product(db)
         _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
+        _cover_promotion(db, promotion_id, first)
+        _cover_promotion(db, promotion_id, second)
         created = c.post(
             _BASE,
             json={
@@ -615,23 +643,17 @@ class TestPriceModeAndRemarks:
                 # r9 D7: no default, and submit refuses without it.
                 "print_by": "office",
                 "needed_by_date": str(date.today() + timedelta(days=7)),
-                "promotion_id": promotion_id,
                 "price_mode": "selling",
                 "lines": [
-                    # `show_promo_price` explicitly FALSE on the way in - a
-                    # line schema default of True would make this pass for
-                    # the wrong reason (proving nothing about price_mode
-                    # derivation). The service must override it to True
-                    # because the HEADER says selling.
                     {
                         "line_type": "product",
                         "product_id": first,
-                        "show_promo_price": False,
+                        "promotion_id": promotion_id,
                     },
                     {
                         "line_type": "product",
                         "product_id": second,
-                        "show_promo_price": False,
+                        "promotion_id": promotion_id,
                     },
                 ],
             },
@@ -653,19 +675,29 @@ class TestPriceModeAndRemarks:
     def test_switching_the_header_back_to_list_sets_every_lines_show_promo_price_false(
         self, client
     ):
+        """D1: the promotion lives on each line, not the header."""
         c, db, contact_id = client
         first = _seed_product(db)
         second = _seed_product(db)
         _grant_promotion_audience_code(db, contact_id)
         promotion_id = _seed_promotion(db)
+        _cover_promotion(db, promotion_id, first)
+        _cover_promotion(db, promotion_id, second)
         created = c.post(
             _BASE,
             json={
-                "promotion_id": promotion_id,
                 "price_mode": "selling",
                 "lines": [
-                    {"line_type": "product", "product_id": first},
-                    {"line_type": "product", "product_id": second},
+                    {
+                        "line_type": "product",
+                        "product_id": first,
+                        "promotion_id": promotion_id,
+                    },
+                    {
+                        "line_type": "product",
+                        "product_id": second,
+                        "promotion_id": promotion_id,
+                    },
                 ],
             },
         ).json()
@@ -1105,6 +1137,29 @@ def _seed_promotion(
     return promo.id
 
 
+def _cover_promotion(db: Session, promotion_id: str, product_id: str) -> None:
+    """D1/AC-S6-5: a line's promotion is accepted only if it has a
+    ``PromotionProduct`` row for a product on that line - the request-level
+    header is gone, and per-line validation checks coverage strictly."""
+    from decimal import Decimal
+
+    from app.models.marketing import PromotionGroup, PromotionProduct
+
+    group = PromotionGroup(promotion_id=promotion_id, group_name="ZZT group", sort_order=0)
+    db.add(group)
+    db.flush()
+    db.add(
+        PromotionProduct(
+            id=str(uuid.uuid4()),
+            promotion_id=promotion_id,
+            promotion_group_id=str(group.id),
+            product_id=product_id,
+            promo_selling_price=Decimal("400.00"),
+        )
+    )
+    db.flush()
+
+
 def _grant_promotion_audience_code(db: Session, contact_id: str, code: str = "dealer") -> None:
     """Adds ONE more access code to the contact seeded by ``client``.
 
@@ -1127,240 +1182,11 @@ def _grant_promotion_audience_code(db: Session, contact_id: str, code: str = "de
     db.flush()
 
 
-class TestThePromotionsLookup:
-    """``GET /portal/lookups/promotions`` - active-window, audience-gated promotions.
-
-    The active-window half mirrors ``resolve_prices``' ``_offer_prices``:
-    ``is_active`` plus an inclusive ``[start_date, end_date]`` window with
-    either end open. Company scoping is the ordinary ORM scope filter the
-    portal's ``X-Portal-Token`` header primes.
-
-    The audience half mirrors ``pricing._may_see_offer``'s intersection rule -
-    a promotion reaches only the contacts whose access codes overlap its
-    ``access_levels``, and an empty ``access_levels`` reaches nobody. A first
-    cut of this endpoint shipped without that gate, so every contact's
-    dropdown carried every other audience's promotions too.
-    """
-
-    def test_an_active_promotion_is_returned(self, client):
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        promo_id = _seed_promotion(db, description="ZZT Spring Sale")
-
-        res = c.get("/api/v1/public/portal/lookups/promotions")
-
-        assert res.status_code == 200, res.text
-        rows = res.json()
-        assert {"id": promo_id, "name": "ZZT Spring Sale"} in rows
-
-    def test_an_expired_promotion_is_excluded(self, client):
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        _seed_promotion(
-            db, description="ZZT Last Year", end_date=date.today() - timedelta(days=1)
-        )
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert not any(r["name"] == "ZZT Last Year" for r in rows)
-
-    def test_a_not_yet_started_promotion_is_excluded(self, client):
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        _seed_promotion(
-            db, description="ZZT Not Yet", start_date=date.today() + timedelta(days=7)
-        )
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert not any(r["name"] == "ZZT Not Yet" for r in rows)
-
-    def test_a_switched_off_promotion_is_excluded(self, client):
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        _seed_promotion(db, description="ZZT Switched Off", is_active=False)
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert not any(r["name"] == "ZZT Switched Off" for r in rows)
-
-    def test_q_filters_by_name(self, client):
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        _seed_promotion(db, description="ZZT Kitchen Bash")
-        _seed_promotion(db, description="ZZT Bathroom Blitz")
-
-        rows = c.get(
-            "/api/v1/public/portal/lookups/promotions", params={"q": "kitchen"}
-        ).json()
-
-        names = {r["name"] for r in rows}
-        assert "ZZT Kitchen Bash" in names
-        assert "ZZT Bathroom Blitz" not in names
-
-    def test_the_end_date_is_included(self, client):
-        """The window is inclusive at both ends, same as `_offer_prices`."""
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        from app.services.dealer_kit.pricing import business_today
-
-        _seed_promotion(
-            db,
-            description="ZZT Last Day",
-            start_date=business_today() - timedelta(days=7),
-            end_date=business_today(),
-        )
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert any(r["name"] == "ZZT Last Day" for r in rows)
-
-    def test_the_start_date_is_included(self, client):
-        """The window is inclusive at both ends, same as `_offer_prices`."""
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id)
-        from app.services.dealer_kit.pricing import business_today
-
-        _seed_promotion(
-            db,
-            description="ZZT First Day",
-            start_date=business_today(),
-            end_date=business_today() + timedelta(days=7),
-        )
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert any(r["name"] == "ZZT First Day" for r in rows)
-
-    def test_a_promotion_for_another_audience_is_hidden(self, client):
-        """A dealer-coded contact does not see a mocha_dealer-only promotion."""
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id, code="dealer")
-        _seed_promotion(
-            db, description="ZZT Mocha Only", access_levels=["mocha_dealer"]
-        )
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert not any(r["name"] == "ZZT Mocha Only" for r in rows)
-
-    def test_a_promotion_for_an_overlapping_audience_is_shown(self, client):
-        """The same dealer-coded contact sees a promotion tagged for dealers too."""
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id, code="dealer")
-        _seed_promotion(
-            db, description="ZZT Dealer Overlap", access_levels=["mocha_dealer", "dealer"]
-        )
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert any(r["name"] == "ZZT Dealer Overlap" for r in rows)
-
-    def test_an_empty_access_levels_promotion_is_hidden_from_everyone(self, client):
-        """An empty ``access_levels`` reaches nobody, same as `_may_see_offer`."""
-        c, db, contact_id = client
-        _grant_promotion_audience_code(db, contact_id, code="dealer")
-        _seed_promotion(db, description="ZZT Nobody", access_levels=[])
-
-        rows = c.get("/api/v1/public/portal/lookups/promotions").json()
-
-        assert not any(r["name"] == "ZZT Nobody" for r in rows)
-
-    def test_a_contact_with_no_access_codes_sees_no_promotions(self):
-        """Fail closed rather than falling back to a default audience.
-
-        A ``ContactPortalFormOverride`` can grant a contact ``price_tag_request``
-        visibility with no access-type membership at all (``TestPortalFormVisibility
-        .test_override_enable_adds_type`` in ``test_price_tag_request.py`` proves the
-        override alone is enough). Such a contact passes the route's grant check but
-        carries zero access codes, and must not fall back to
-        ``pricing.PUBLIC_ACCESS_CODE`` the way an anonymous public-catalogue viewer
-        does - a portal contact is never anonymous, so no code means no promotions,
-        not "the public ones".
-        """
-        from app.api.v1.public.portal import get_portal_token
-        from app.database import get_db
-        from app.models.access import RespondContact
-        from app.models.portal import PortalToken
-        from app.models.price_tag import ContactPortalFormOverride
-
-        with blank_session() as db:
-            contact = RespondContact(
-                id=str(uuid.uuid4()),
-                phone_number=f"+60{uuid.uuid4().hex[:9]}",
-                name=unique_code("contact"),
-            )
-            db.add(contact)
-            db.add(
-                ContactPortalFormOverride(
-                    contact_id=contact.id,
-                    form_type="price_tag_request",
-                    is_enabled=True,
-                )
-            )
-            db.flush()
-            # Defaults to access_levels=["dealer","end_user"] - broadly visible to
-            # anyone WITH a code, and still hidden from a contact with none.
-            _seed_promotion(db, description="ZZT Anyones Guess")
-
-            def _override_get_db():
-                yield db
-
-            def _override_portal_token():
-                return PortalToken(
-                    id=str(uuid.uuid4()), contact_id=contact.id, space_id="zzt-space"
-                )
-
-            app.dependency_overrides[get_db] = _override_get_db
-            app.dependency_overrides[get_portal_token] = _override_portal_token
-            try:
-                with TestClient(app, headers={"X-Portal-Token": "zzt-token"}) as c:
-                    res = c.get("/api/v1/public/portal/lookups/promotions")
-            finally:
-                app.dependency_overrides.clear()
-
-        assert res.status_code == 200, res.text
-        assert res.json() == []
-
-    def test_the_grant_gates_this_lookup_too(self, client):
-        """The control: its sibling lookups are already gated the same way."""
-        c, db, contact_id = client
-        _revoke_the_grant(db, contact_id)
-
-        res = c.get("/api/v1/public/portal/lookups/promotions")
-
-        assert res.status_code == 403, res.text
-        assert res.json()["code"] == "FORM_TYPE_NOT_VISIBLE"
-
-    def test_a_missing_token_is_refused(self):
-        """Auth runs before the grant check and before any DB read."""
-        from app.database import get_db
-
-        with blank_session() as db:
-
-            def _override_get_db():
-                yield db
-
-            app.dependency_overrides[get_db] = _override_get_db
-            try:
-                with TestClient(app) as c:
-                    res = c.get("/api/v1/public/portal/lookups/promotions")
-            finally:
-                app.dependency_overrides.clear()
-
-        assert res.status_code == 401, res.text
-
-
-# ---------------------------------------------------------------------------
-# Picker company scope (#485): products are cloned per company (Sorento and a
-# second company can share the same product_code), and a contact who belongs
-# to BOTH companies gets a company scope covering both. Left unscoped, the two
-# pickers below would return the same code twice - and let a salesperson pick
-# the other company's row onto a request ``_resolve_company`` is about to stamp
-# with THIS company.
-# ---------------------------------------------------------------------------
-
-
+# D4 (PLAN-price-tag-line-promo-combo-subject.md): `GET /lookups/promotions`
+# is retired with the header Promotion select - `lookup_promotions` is gone,
+# replaced by the per-line `POST /lookups/line-pricing` route, covered in
+# `tests/test_price_tag_line_pricing.py`. `TestThePromotionsLookup` (391 lines)
+# tested the retired route and is removed rather than rewritten.
 def _seed_two_company_contact(db: Session):
     """A contact granted the form, mapped to Sorento AND a second company, with
     a REAL, persisted ``PortalToken`` row.
@@ -1476,23 +1302,6 @@ def _seed_product_in_company(
     return product.id
 
 
-def _seed_promotion_in_company(
-    db: Session, company_id: str, *, description: str, access_levels: list[str]
-) -> str:
-    from app.models.marketing import Promotion
-
-    promo = Promotion(
-        id=str(uuid.uuid4()),
-        company_id=company_id,
-        description=description,
-        is_active=True,
-        access_levels=access_levels,
-    )
-    db.add(promo)
-    db.flush()
-    return promo.id
-
-
 @contextmanager
 def _multi_company_client(db: Session, token_value: str):
     """A TestClient authenticated with a REAL, persisted portal token, so the
@@ -1557,44 +1366,9 @@ class TestPickerCompanyScope:
         assert rows[0]["id"] == product_a_id
         assert rows[0]["id"] != product_b_id
 
-    def test_promotions_lookup_returns_the_request_companys_row_only(self):
-        from app.api.v1.public.portal_price_tag import _resolve_company
-        from app.models.portal import PortalToken
-
-        with blank_session() as db:
-            _contact_id, access_code, second_company_id, token_value = (
-                _seed_two_company_contact(db)
-            )
-            token_row = db.query(PortalToken).filter(PortalToken.token == token_value).one()
-            expected_company_id = _resolve_company(db, token_row)
-            other_company_id = (
-                second_company_id
-                if expected_company_id != second_company_id
-                else _SORENTO_COMPANY_ID
-            )
-
-            same_name = unique_code("Shared Promo")
-            promo_a_id = _seed_promotion_in_company(
-                db,
-                expected_company_id,
-                description=same_name,
-                access_levels=[access_code],
-            )
-            promo_b_id = _seed_promotion_in_company(
-                db, other_company_id, description=same_name, access_levels=[access_code]
-            )
-
-            with _multi_company_client(db, token_value) as c:
-                res = c.get(
-                    "/api/v1/public/portal/lookups/promotions",
-                    params={"q": same_name},
-                )
-
-        assert res.status_code == 200, res.text
-        rows = [r for r in res.json() if r["name"] == same_name]
-        assert len(rows) == 1, rows
-        assert rows[0]["id"] == promo_a_id
-        assert rows[0]["id"] != promo_b_id
+    # D4: the `GET /lookups/promotions` company-scope guard is retired with
+    # the route itself - no replacement needed, `line-pricing` scopes by the
+    # ordinary company predicate the same as every other owned query.
 
 
 @pytest.fixture(autouse=True)

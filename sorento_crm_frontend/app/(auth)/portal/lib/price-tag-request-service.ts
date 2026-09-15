@@ -446,11 +446,11 @@ export type {
   LinePricingPromotionOption,
   LinePricingResult,
   SellPriceBasis,
-} from '@/lib/dealer-kit/mock-line-pricing';
+} from '@/lib/dealer-kit/line-pricing-types';
 import type {
   LinePricingLineInput as LinePricingLineInputT,
   LinePricingResult as LinePricingResultT,
-} from '@/lib/dealer-kit/mock-line-pricing';
+} from '@/lib/dealer-kit/line-pricing-types';
 
 /**
  * One pricing call for every line (D4, S7). Audience-scoped to THIS

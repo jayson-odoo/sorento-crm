@@ -53,7 +53,7 @@ vi.mock('@/lib/dealer-kit/fonts', async (importOriginal) => {
 });
 
 vi.mock('../lib/price-tag-request-service', async () => {
-  const { computeLinePricing } = await import('@/lib/dealer-kit/mock-line-pricing');
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
   return {
   lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
     computeLinePricing(mode as 'list' | 'selling', lines as never),

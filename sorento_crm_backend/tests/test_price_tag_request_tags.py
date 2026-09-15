@@ -309,67 +309,21 @@ def test_submit_creates_one_tag_per_line(api):
 # --------------------------------------------------------------------------- AC-S3-4
 
 
-def test_split_tag_resolves_first_and_adds_siblings(api):
-    """Split: the tag keeps its id and takes candidate 1; N-1 siblings follow it.
-
-    The original id surviving is what lets the tag keep its geometry and its
-    review pins - a split that minted four fresh tags would throw away the
-    design marketing had already drawn on the one that was there.
-    """
-    client, db = api
-    request, _cabinet, _mirror, basins = _open_basin_request(db, candidates=4)
-    line = request.lines[0]
-    original = _tags_of(db, line.id)[0]
-    original_id = original.id
-
-    response = client.post(
-        f"{_BASE}/{request.id}/tags/{original_id}/split", json={"role": "Basin"}
-    )
-    assert response.status_code == 200, response.text
-
-    rows = response.json()
-    assert len(rows) == 4, "4 candidates -> 4 tags"
-    assert [row["sort_order"] for row in rows] == [0, 1, 2, 3]
-    assert rows[0]["id"] == original_id, "the tag that was there keeps its id"
-
-    # Each tag resolved to a DIFFERENT candidate, in combo order.
-    chosen = [row["choices"]["Basin"] for row in rows]
-    assert chosen == [basin.id for basin in basins]
-    assert len(set(chosen)) == 4
-
-    # Nothing is open on any of them any more, and the labels are ordinals.
-    assert all(row["open_groups"] == [] for row in rows)
-    assert [row["label"] for row in rows] == ["1a", "1b", "1c", "1d"]
-
-    # The LINE is untouched: the request still shows what was asked for.
-    db.expire_all()
-    assert len(request.lines) == 1
-    assert (
-        db.query(PriceTagRequestLinePart)
-        .filter(PriceTagRequestLinePart.line_id == line.id)
-        .count()
-        == 2
-    )
-    assert len(_tags_of(db, line.id)) == 4
-
-
-def test_pick_one_resolves_the_group_on_that_tag_alone(api):
-    """"Pick one" is a PATCH of `choices`, and it adds no siblings."""
-    client, db = api
-    request, _cabinet, _mirror, basins = _open_basin_request(db, candidates=4)
-    line = request.lines[0]
-    tag = _tags_of(db, line.id)[0]
-
-    response = client.patch(
-        f"{_BASE}/{request.id}/tags/{tag.id}",
-        json={"choices": {"Basin": basins[2].id}},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["choices"] == {"Basin": basins[2].id}
-    assert response.json()["open_groups"] == []
-
-    db.expire_all()
-    assert len(_tags_of(db, line.id)) == 1, "picking one never mints a sibling"
+# D6 (PLAN-price-tag-line-promo-combo-subject.md, owner ruling): the rail's
+# Split and Pick one are retired outright - a line's open choice group
+# auto-splits into one tag per candidate at submit (`_add_line_tags`), so
+# there is no "one tag, still open" state left for either action to act on.
+# `test_split_tag_resolves_first_and_adds_siblings` (asserted
+# `POST .../tags/{id}/split` minted the siblings) and
+# `test_pick_one_resolves_the_group_on_that_tag_alone` (asserted
+# `PATCH .../tags/{id}` accepted a `choices` key) both tested routes/fields
+# this revision removes; `test_price_tag_auto_split.py::
+# test_split_route_gone_and_choices_rejected` is the replacement covering the
+# route is gone and `choices` is refused. What each proved about SHAPE (the
+# label ordinals, `open_groups` empty once resolved, one tag per candidate)
+# is re-proven directly off the auto-split tags in
+# `test_print_payload_one_row_per_tag` below and in
+# `test_price_tag_auto_split.py`.
 
 
 # --------------------------------------------------------------------------- AC-S3-5
@@ -431,22 +385,16 @@ def test_delete_last_tag_422(api):
     """A line always keeps at least one tag: removing the last one is refused.
 
     A line with no tags is a line that can never be printed and never be
-    designed, and nothing in the UI would say why.
+    designed, and nothing in the UI would say why. D6: the open Basin group
+    already auto-splits into 4 tags at submit - there is no Split route left
+    to mint the other three by hand, so this deletes down to the last
+    survivor directly instead.
     """
     client, db = api
     request, _cabinet, _mirror, _basins = _open_basin_request(db, candidates=4)
     line = request.lines[0]
-    first_tag = _tags_of(db, line.id)[0]
-
-    only = client.delete(f"{_BASE}/{request.id}/tags/{first_tag.id}")
-    assert only.status_code == 422, only.text
-    assert only.json()["code"] == "LAST_TAG"
-
-    # After a split there are four, so three of them can go.
-    client.post(f"{_BASE}/{request.id}/tags/{first_tag.id}/split", json={"role": "Basin"})
-    db.expire_all()
     tags = _tags_of(db, line.id)
-    assert len(tags) == 4
+    assert len(tags) == 4, "D6: auto-split off the one open Basin group"
 
     for tag in tags[1:]:
         removed = client.delete(f"{_BASE}/{request.id}/tags/{tag.id}")
@@ -455,7 +403,7 @@ def test_delete_last_tag_422(api):
     db.expire_all()
     assert len(_tags_of(db, line.id)) == 1
 
-    # And the last survivor is refused again.
+    # The last survivor is refused.
     last = client.delete(f"{_BASE}/{request.id}/tags/{_tags_of(db, line.id)[0].id}")
     assert last.status_code == 422
     assert last.json()["code"] == "LAST_TAG"
@@ -467,42 +415,36 @@ def test_delete_last_tag_422(api):
 def test_print_payload_one_row_per_tag(api):
     """The resolver answers one row per TAG, with that tag's own quantity.
 
-    One resolver feeds the designer, the portal, the detail body and the print
-    payload (D3), so this is the single place the per-tag shape has to be true
-    for the proof on screen and the PDF to agree. The sheet's tile count is
-    `quantity` copies of each row, laid out by `autoArrange` on the client -
-    pinned separately in `lib/dealer-kit/request-tags.test.ts`.
+    D6 (PLAN-price-tag-line-promo-combo-subject.md): the line's one open
+    Basin group auto-splits into 4 tags straight off `submit_request` - there
+    is no longer a "one row, then split, then four rows" progression to
+    observe, `_open_basin_request` already returns a line with all 4. One
+    resolver still feeds the designer, the portal, the detail body and the
+    print payload (D3), so this is the single place the per-tag shape has to
+    be true for the proof on screen and the PDF to agree. The sheet's tile
+    count is `quantity` copies of each row, laid out by `autoArrange` on the
+    client - pinned separately in `lib/dealer-kit/request-tags.test.ts`.
     """
-    _client, db = api
+    client, db = api
     from app.services.dealer_kit import tag_data_service
 
     request, cabinet, _mirror, basins = _open_basin_request(db, candidates=4)
     line = request.lines[0]
 
-    before = tag_data_service.resolve_request_line_data(db, request)
-    assert len(before) == 1
-    assert before[0]["tag_id"] == _tags_of(db, line.id)[0].id
-    assert before[0]["line_id"] == line.id
-    assert before[0]["tag_label"] == "1a"
-    assert before[0]["quantity"] == 3, "the TAG's quantity, seeded from the line's"
-    assert before[0]["code"] == cabinet.product_code
-    assert [group["role"] for group in before[0]["open_groups"]] == ["Basin"]
-
-    # Split, and the payload grows to four rows - one per tag, not one per line.
-    tag_id = _tags_of(db, line.id)[0].id
-    _client.post(f"{_BASE}/{request.id}/tags/{tag_id}/split", json={"role": "Basin"})
-    db.expire_all()
-
-    after = tag_data_service.resolve_request_line_data(db, request)
-    assert len(after) == 4
-    assert [row["tag_label"] for row in after] == ["1a", "1b", "1c", "1d"]
-    assert {row["line_id"] for row in after} == {line.id}
-    assert [row["tag_id"] for row in after] == [tag.id for tag in _tags_of(db, line.id)]
-    # The sheet prints 4 tags x 3 copies.
-    assert sum(row["quantity"] for row in after) == 12
+    rows = tag_data_service.resolve_request_line_data(db, request)
+    assert len(rows) == 4
+    assert [row["tag_label"] for row in rows] == ["1a", "1b", "1c", "1d"]
+    assert {row["line_id"] for row in rows} == {line.id}
+    assert [row["tag_id"] for row in rows] == [tag.id for tag in _tags_of(db, line.id)]
+    assert [row["open_groups"] for row in rows] == [[], [], [], []]
+    assert rows[0]["code"] == cabinet.product_code
+    # The sheet prints 4 tags x 3 copies (the LINE's own quantity, seeded
+    # onto every auto-split tag).
+    assert [row["quantity"] for row in rows] == [3, 3, 3, 3]
+    assert sum(row["quantity"] for row in rows) == 12
 
     # A per-tag quantity change is what the payload reports, not the line's.
-    _client.patch(f"{_BASE}/{request.id}/tags/{after[1]['tag_id']}", json={"quantity": 1})
+    client.patch(f"{_BASE}/{request.id}/tags/{rows[1]['tag_id']}", json={"quantity": 1})
     db.expire_all()
     requantified = tag_data_service.resolve_request_line_data(db, request)
     assert [row["quantity"] for row in requantified] == [3, 1, 3, 3]
