@@ -93,14 +93,17 @@ function payload(sheetCount = 1): TagSheetDesignPayload {
       imposition: { page_width_mm: 210, page_height_mm: 297 },
       sheets: Array.from({ length: sheetCount }, (_, index) => ({
         id: `sheet-${index + 1}`,
-        tags: [tag('line-1', `tag-${index + 1}`)],
+        tags: [tag('placed-tag-1', `tag-${index + 1}`)],
       })),
     } as unknown as TagSheetDesignPayload['doc'],
     resolvedData: {
-      // Keyed by REQUEST TAG since the combos slice; the everyday request has
-      // one tag per line and its id is the line's here.
-      'line-1': {
-        tag_id: 'line-1',
+      // Keyed by REQUEST TAG since the combos slice, and deliberately NOT
+      // equal to the line id: `placed-tag-1` != `line-1`, so a builder that
+      // regresses to keying by `line_id` (the "Price TBC" live defect,
+      // PT-202609-0015) fails every assertion in this file instead of
+      // passing by coincidence.
+      'placed-tag-1': {
+        tag_id: 'placed-tag-1',
         tag_label: '1a',
         open_groups: [],
         parts: [],

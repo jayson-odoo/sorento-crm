@@ -15,7 +15,7 @@
  * reaches the service.
  */
 import React from 'react';
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 // The designer mounts a react-query mutation (the deferred tag Remove), so a
 // bare `render` throws "No QueryClient set" before the component exists.
 import { renderWithQueryClient as render } from './testQueryClient';
@@ -157,11 +157,28 @@ const lightboxPayloads: unknown[] = [];
 
 vi.mock('@/components/dealer-kit/DesignLightbox', () => ({
   __esModule: true,
-  default: ({ title, payload }: { title: string; payload: { version: number } | null }) => {
+  default: ({
+    title,
+    payload,
+  }: {
+    title: string;
+    payload: {
+      version: number;
+      doc?: { sheets?: { tags?: { request_tag_id?: string }[] }[] } | null;
+      resolvedData?: Record<string, { list_price?: number | null }>;
+    } | null;
+  }) => {
     lightboxPayloads.push(payload);
+    // The same lookup `TagSheetRenderer` makes for real - `resolvedData` is
+    // keyed by the TAG, never the line (owner live finding, PT-202609-0015:
+    // History View showed "Price TBC" because the payload builder keyed it
+    // by `line_id`, so this exact lookup came back empty for every version).
+    const tagId = payload?.doc?.sheets?.[0]?.tags?.[0]?.request_tag_id;
+    const price = tagId ? payload?.resolvedData?.[tagId]?.list_price : undefined;
     return (
       <div data-testid="version-lightbox" data-version={payload?.version}>
         {title}
+        <span data-testid="version-price">{price ?? 'Price TBC'}</span>
       </div>
     );
   },
@@ -622,5 +639,47 @@ describe('History View draws the version, not the live doc (owner round finding 
     // from the live `doc` / `resolvedRows` (Phase 1's `designPayloadFromResponse`
     // call), which never calls the version service at all.
     expect(lightboxPayloads.at(-1)).toEqual(VERSION_PAYLOAD);
+  });
+
+  it('renders the version\'s own list price, keyed by its tag id, not "Price TBC" (owner live finding, PT-202609-0015)', async () => {
+    // Deliberately NOT one of the request's line ids (`line-1`/`line-2`): a
+    // resolvedData map still keyed by line_id would answer nothing at this
+    // key and the lightbox would draw "Price TBC" instead of RM 1,260.
+    mockListVersions.mockResolvedValue([
+      {
+        version: 1,
+        commit_message: 'First save',
+        created_by_name: 'Mei',
+        created_at: '2026-09-12T00:00:00Z',
+      },
+    ]);
+    mockGetVersion.mockResolvedValue({
+      page_id: 'page-1',
+      version: 1,
+      source: 'version',
+      doc: {
+        kind: 'tag_sheet',
+        imposition: { page_width_mm: 210, page_height_mm: 297 },
+        sheets: [
+          {
+            id: 'sheet-1',
+            tags: [{ id: 'placed-1', request_tag_id: 'tag-9', request_line_id: 'line-1' }],
+          },
+        ],
+      },
+      resolvedData: { 'tag-9': { list_price: 1260 } },
+      assets: {},
+      images: {},
+      fonts: [],
+    } as never);
+
+    await renderDesigner();
+
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    const viewButton = await screen.findByRole('button', { name: /View/ });
+    fireEvent.click(viewButton);
+
+    const lightbox = await screen.findByTestId('version-lightbox');
+    expect(within(lightbox).getByTestId('version-price')).toHaveTextContent('1260');
   });
 });

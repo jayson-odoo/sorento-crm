@@ -99,7 +99,15 @@ export function designPayloadFromResponse(
 ): TagSheetDesignPayload {
   const lines = body.lines ?? [];
   const resolvedData: Record<string, ResolvedLineData> = {};
-  for (const line of lines) resolvedData[line.line_id] = line;
+  // Keyed by the TAG, not the line: since the combos model, one line can
+  // carry more than one placed tag (`request_tag_id`), and `TagSheetRenderer`
+  // reads this map by that id. Keying it by `line_id` instead answered every
+  // sheet with the first tag's data on every OTHER tag of the same line, and
+  // "Price TBC" on any tag whose id never matched a line id at all (a version
+  // view's fixture, PT-202609-0015). `tag_id` is only absent on a row from a
+  // backend that predates the combos model, which still has exactly one tag
+  // per line, so `line_id` is the correct key for THAT row.
+  for (const line of lines) resolvedData[line.tag_id ?? line.line_id] = line;
 
   const images: Record<string, string> = { ...(body.images ?? {}) };
   for (const line of lines) {

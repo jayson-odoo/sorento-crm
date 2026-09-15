@@ -66,11 +66,27 @@ vi.mock('@/components/dealer-kit/DesignViewer', () => ({
 
 vi.mock('@/components/dealer-kit/DesignLightbox', () => ({
   __esModule: true,
-  default: (props: { title: string; payload: { version: number } }) => (
-    <div data-testid="version-lightbox" data-version={props.payload?.version}>
-      {props.title}
-    </div>
-  ),
+  default: (props: {
+    title: string;
+    payload: {
+      version: number;
+      doc?: { sheets?: { tags?: { request_tag_id?: string }[] }[] } | null;
+      resolvedData?: Record<string, { list_price?: number | null }>;
+    };
+  }) => {
+    // The same lookup `TagSheetRenderer` makes for real - `resolvedData` is
+    // keyed by the TAG, never the line (owner live finding, PT-202609-0015:
+    // History View showed "Price TBC" because the payload builder keyed it by
+    // `line_id`, so this exact lookup came back empty for every version).
+    const tagId = props.payload?.doc?.sheets?.[0]?.tags?.[0]?.request_tag_id;
+    const price = tagId ? props.payload?.resolvedData?.[tagId]?.list_price : undefined;
+    return (
+      <div data-testid="version-lightbox" data-version={props.payload?.version}>
+        {props.title}
+        <span data-testid="version-price">{price ?? 'Price TBC'}</span>
+      </div>
+    );
+  },
 }));
 
 import { getRequestDesignPayload } from '../../services/priceTagRequestService';
@@ -333,6 +349,49 @@ describe('History (AC-S5-6)', () => {
     // live design's (7). Drawing the live one would tell the reader that v1
     // looked like today's draft.
     expect(lightbox.getAttribute('data-version')).toBe('1');
+  });
+
+  it('View renders the version\'s own price, keyed by its tag id (owner live finding, PT-202609-0015)', async () => {
+    // The exact live defect: a version's row is keyed by `tag_id` (D3), and
+    // this fixture's tag id (`tag-9`) is deliberately NOT the live payload's
+    // line id (`tag-1`, see the module-level `payload()` factory) - a
+    // resolvedData map still keyed by line_id would answer nothing here and
+    // the lightbox would draw "Price TBC" instead of the pinned price.
+    mockVersions.mockResolvedValue([
+      {
+        version: 1,
+        commit_message: 'First save',
+        created_by_name: 'Mei',
+        created_at: '2026-09-12T00:00:00Z',
+      },
+    ]);
+    mockGetVersion.mockResolvedValue({
+      page_id: 'page-1',
+      version: 1,
+      source: 'version',
+      doc: {
+        kind: 'tag_sheet',
+        imposition: { page_width_mm: 210, page_height_mm: 297 },
+        sheets: [
+          {
+            id: 'sheet-1',
+            tags: [{ id: 'placed-1', request_tag_id: 'tag-9', request_line_id: 'line-1' }],
+          },
+        ],
+      },
+      resolvedData: { 'tag-9': { list_price: 1260 } },
+      assets: {},
+      images: {},
+      fonts: [],
+    } as never);
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: /History/ }));
+    const row = await screen.findByTestId('request-version-1');
+
+    fireEvent.click(within(row).getByRole('button', { name: /View/ }));
+
+    const lightbox = await screen.findByTestId('version-lightbox');
+    expect(within(lightbox).getByTestId('version-price')).toHaveTextContent('1260');
   });
 
   it('a version that will not load says so rather than opening a blank sheet', async () => {
