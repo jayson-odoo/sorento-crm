@@ -140,6 +140,28 @@ def _spo_number() -> str:
     return f"SPO-2026/08-{_n():04d}"
 
 
+#: The shape AutoCount writes into `sales_order_lines.source_ref` (issue #915, plan section
+#: 8: the remark is retired as a link source, so a test that wants a link states it through
+#: this instead). Minted in the same family `tests/test_oi_sheet_pairing_repair.py::_ref`
+#: uses, so nothing in the importer can special-case a test-looking value.
+def _ref() -> str:
+    return f"AED_SORENTO:{41576559 + _n()}:{41604391 + _n()}"
+
+
+def _with_ref(w: World, line: SalesOrderLine, ref: str) -> SalesOrderLine:
+    """The ref AutoCount stamped on this sales order line."""
+    line.source_ref = ref
+    w.db.flush()
+    return line
+
+
+def _names(w: World, target, ref: str):
+    """This purchase-order line / allocation states it is for that sales order line."""
+    target.from_so_line_ref = ref
+    w.db.flush()
+    return target
+
+
 # --------------------------------------------------------------------------- #
 # the workbook                                                                 #
 # --------------------------------------------------------------------------- #
@@ -825,8 +847,10 @@ def test_second_apply_is_a_noop():
 
 
 def test_cited_po_is_linked_in_full():
-    """AC-S1-12. The cited PO line has room for the whole row: one link, the uploader's
-    name on it, and the row reads `placed`."""
+    """AC-R-40 (`PLAN-scm-oi-sheet-pairing-repair.md` section 8, issue #915) - restated from
+    AC-S1-12. The remark no longer links, even where the cited purchase order line has room
+    for the whole row: the row is raised, unlinked, and the remark still ends the note
+    (AC-S1-28 kept). Replaces the citation-linking premise this test carried before #915."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -839,19 +863,18 @@ def test_cited_po_is_linked_in_full():
         result = w.apply(data)
 
         row = w.one_row()
-        links = w.links(row)
-        assert len(links) == 1, [link.document for link in links]
-        assert Decimal(str(links[0].qty)) == Decimal("30")
-        assert links[0].document == po.po_number
-        assert str(links[0].linked_by) == w.actor
-        assert row.state == INQUIRY_PLACED
-        assert result["links_written"] == 1
+        assert w.links(row) == [], "the remark linked the row"
+        assert row.state == INQUIRY_RAISED
+        assert result["links_written"] == 0
         assert result["links_partial"] == 0
+        assert result["documents_not_linkable"] == []
+        assert row.note.endswith(po.po_number), row.note
 
 
 def test_cited_spo_is_linked():
-    """AC-S1-13. A cited SPO lands on the ALLOCATION, and a plain `ORDER` row may hold one
-    (R5 of `PLAN-scm-oi-draft-links.md`)."""
+    """AC-R-40 variant (issue #915) - restated from AC-S1-13. A cited SPO does not link
+    either: the remark leaves both halves of the pairing, not just the purchase-order one,
+    and a plain `ORDER` row still raises with no link."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -864,24 +887,23 @@ def test_cited_spo_is_linked():
         result = w.apply(data)
 
         row = w.one_row()
-        links = w.links(row)
-        assert len(links) == 1, [link.document for link in links]
-        assert str(links[0].spo_allocation_id) == str(allocation.id)
-        assert links[0].po_line_id is None
+        assert w.links(row) == []
         assert row.verb == IV_ORDER
-        assert result["links_written"] == 1
+        assert result["links_written"] == 0
 
 
 def test_short_po_line_links_partial():
     """AC-S1-14. Capacity 10 against a need of 30: the link is written for the capacity and
-    the row reads `partly_linked`."""
+    the row reads `partly_linked`. Stated through the ref (issue #915 retired the remark as
+    a link source), not the citation."""
     with world() as w:
         order = w.order()
-        w.line(order, qty_ordered="50")
-        po, _line = w.po_line(qty_ordered="10")
+        line = _with_ref(w, w.line(order, qty_ordered="50"), _ref())
+        po, po_line = w.po_line(qty_ordered="10")
+        _names(w, po_line, line.source_ref)
         data = sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ])
 
         result = w.apply(data)
@@ -896,8 +918,11 @@ def test_short_po_line_links_partial():
 
 
 def test_unknown_document_leaves_row_unlinked():
-    """AC-S1-15. A document the CRM does not hold is reported, the row is still raised, and
-    the citation stays on it so the worklist shows where the sheet and the book disagree."""
+    """AC-S1-15, restated by AC-R-40 (issue #915). A document the CRM does not hold, named
+    only in the remark, simply leaves the row unlinked: the remark is no longer a source of
+    truth to disagree with the book, so nothing is tracked as a citation and nothing is
+    reported under `documents_not_linkable` (source 3, and the citation tracking behind it,
+    are both gone - 8.1 change 1)."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -911,14 +936,16 @@ def test_unknown_document_leaves_row_unlinked():
 
         row = w.one_row()
         assert w.links(row) == []
-        assert row.cited_document == absent
+        assert row.cited_document is None
         assert row.state == INQUIRY_RAISED
-        assert result["documents_not_linkable"] == [absent]
+        assert result["documents_not_linkable"] == []
         assert result["links_written"] == 0
 
 
 def test_two_cited_documents_in_order():
-    """AC-S1-16. `A & B`: A is tried first for the whole need, B takes what A left."""
+    """AC-R-40 variant (issue #915) - restated from AC-S1-16. `A & B` in the remark is
+    still parsed into two citations, but neither is a source of a link any more: the row is
+    raised once, unlinked."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -932,14 +959,10 @@ def test_two_cited_documents_in_order():
         result = w.apply(data)
 
         row = w.one_row()
-        links = w.links(row)
-        assert [link.document for link in links] == [
-            first_po.po_number,
-            second_po.po_number,
-        ]
-        assert [Decimal(str(link.qty)) for link in links] == [Decimal("10"), Decimal("15")]
-        assert row.state == INQUIRY_PLACED
-        assert result["links_written"] == 1, "one ROW gained links, not two"
+        assert w.links(row) == []
+        assert row.state == INQUIRY_RAISED
+        assert result["links_written"] == 0
+        assert result["documents_not_linkable"] == []
 
 
 def test_order_remark_raises_unlinked_no_cascade():
@@ -963,8 +986,10 @@ def test_order_remark_raises_unlinked_no_cascade():
 
 
 def test_dedicated_line_still_links_when_cited():
-    """AC-S1-18. Another sales order's claim dedicates the cited line; the sheet is a person
-    naming a document, so the link is written anyway (manual semantics)."""
+    """AC-R-40 variant (issue #915) - restated from AC-S1-18. A document the remark cites
+    no longer links even where nothing else claims it: another sales order's claim
+    dedicating the same purchase order line is no longer overridden by a person naming it,
+    because naming it now does nothing at all."""
     with world() as w:
         order = w.order()
         w.line(order, qty_ordered="50")
@@ -982,10 +1007,10 @@ def test_dedicated_line_still_links_when_cited():
 
         raised = [r for r in w.rows() if r.stock_location == w.warehouse.warehouse_code]
         assert len(raised) == 1, f"expected one raised row, got {len(raised)}"
-        links = w.links(raised[0])
-        assert len(links) == 1, "a claim from another SO refused a document the sheet names"
-        assert Decimal(str(links[0].qty)) == Decimal("30")
-        assert result["links_written"] == 1
+        assert w.links(raised[0]) == [], (
+            "the remark linked a document another sales order's claim dedicates"
+        )
+        assert result["links_written"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -1064,14 +1089,16 @@ def test_warehouse_id_untouched():
 
 def test_no_direct_claim_rows():
     """AC-S1-21. The importer opens no claim of its own; the only claims afterwards are the
-    ones `_write_link` wrote for its links (`source = 'order_inquiry'`)."""
+    ones `_write_link` wrote for its links (`source = 'order_inquiry'`). Stated through the
+    ref (issue #915 retired the remark as a link source)."""
     with world() as w:
         order = w.order()
-        w.line(order, qty_ordered="50")
-        po, _line = w.po_line(qty_ordered="50")
+        line = _with_ref(w, w.line(order, qty_ordered="50"), _ref())
+        po, po_line = w.po_line(qty_ordered="50")
+        _names(w, po_line, line.source_ref)
         data = sheet([
             (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ])
 
         w.apply(data)
@@ -1379,14 +1406,16 @@ def _mirror_count(w, project_sales_order_id: str) -> int:
 
 def test_closed_received_po_line_links():
     """AC-S1-27. Capacity is `qty_ordered` less OTHER LINKS, never the outstanding, so a
-    closed and fully received PO line links exactly like an open one."""
+    closed and fully received PO line links exactly like an open one. Stated through the
+    ref (issue #915 retired the remark as a link source)."""
     with world() as w:
         order = w.order()
-        w.line(order, qty_ordered="50")
-        po, _line = w.po_line(qty_ordered="20", qty_received="20", line_status="closed")
+        line = _with_ref(w, w.line(order, qty_ordered="50"), _ref())
+        po, po_line = w.po_line(qty_ordered="20", qty_received="20", line_status="closed")
+        _names(w, po_line, line.source_ref)
         data = sheet([
             (order.so_number, w.product.product_code, 20, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
+             w.warehouse.warehouse_code, ""),
         ])
 
         result = w.apply(data)
@@ -1638,8 +1667,10 @@ def test_autocount_claim_pairs_row_first():
 
 
 def test_autocount_first_then_citation_fills_rest():
-    """AC-S1-31. AutoCount covers 20 of 30; the remark's document takes the remaining 10,
-    and the AutoCount link is the FIRST one on the row."""
+    """AC-R-40 variant (issue #915) - restated from AC-S1-31. AutoCount covers 20 of 30;
+    the remark's own document no longer fills the rest, so the row is left PARTLY LINKED
+    rather than fully placed - the remark is a person's note now, not a second source of
+    truth."""
     with world() as w:
         order = w.order()
         line = w.line(order, qty_ordered="50")
@@ -1655,17 +1686,22 @@ def test_autocount_first_then_citation_fills_rest():
 
         row = w.one_row()
         links = w.links(row)
-        assert [link.document for link in links] == [stated.po_number, cited.po_number]
-        assert [Decimal(str(link.qty)) for link in links] == [Decimal("20"), Decimal("10")]
-        assert row.state == INQUIRY_PLACED
-        # `po_ref` is the FIRST link's document, so it is what says which source won.
-        assert row.po_ref == stated.po_number
+        assert [link.document for link in links] == [stated.po_number], (
+            "the remark's document still filled the need the book left"
+        )
+        assert [Decimal(str(link.qty)) for link in links] == [Decimal("20")]
+        assert row.state == INQUIRY_PARTLY_LINKED
+        assert result["links_partial"] == 1
         assert result["links_from_autocount"] == 1
+        assert result["documents_not_linkable"] == []
 
 
 def test_autocount_wins_over_remark():
-    """AC-S1-31b. AutoCount says A, the sheet says B, A covers the row: the link is to A and
-    B is kept on the row as the citation, so the worklist shows the disagreement."""
+    """AC-R-40 variant (issue #915) - restated from AC-S1-31b. AutoCount still states A over
+    anything the remark cites, and now the remark's document is not even recorded as a
+    citation any more - `_Match.cited` and the citation pre-pass are gone (8.1 change 1), so
+    the disagreement the worklist used to show is not tracked; the operator's own words
+    survive only in the note (AC-S1-28)."""
     with world() as w:
         order = w.order()
         line = w.line(order, qty_ordered="50")
@@ -1682,7 +1718,14 @@ def test_autocount_wins_over_remark():
         row = w.one_row()
         links = w.links(row)
         assert [link.document for link in links] == [stated.po_number]
-        assert row.cited_document == cited.po_number
+        assert row.cited_document is None, (
+            "the remark is still tracked as a citation, though nothing reads it for "
+            "matching any more"
+        )
+        # Not `endswith`: this row DOES get a book link, and `_write_link` appends
+        # "; Linked to ..." after the remark, so the remark's own text sits in the
+        # MIDDLE of the note, not at its end.
+        assert cited.po_number in (row.note or ""), row.note
 
 
 def test_autocount_spo_before_po():
@@ -1812,16 +1855,8 @@ def test_links_from_autocount_counted():
 
         assert w.apply(data)["links_from_autocount"] == 1
 
-    with world() as w:
-        order = w.order()
-        w.line(order, qty_ordered="50")
-        po, _line = w.po_line(qty_ordered="50")
-        data = sheet([
-            (order.so_number, w.product.product_code, 30, D_OCT,
-             w.warehouse.warehouse_code, po.po_number),
-        ])
-
-        result = w.apply(data)
-
-        assert result["links_written"] == 1
-        assert result["links_from_autocount"] == 0
+        # The second world this test carried before #915 ("the sheet's own citation links
+        # but does not count as from the book") is DELETED: source 3, the citation, no
+        # longer links anything at all (issue #915, plan section 8), so `links_from_autocount
+        # == links_written` always now (AC-R-45) and there is no longer a link that is NOT
+        # from the book to count differently. Nothing but the removed source was under test.
