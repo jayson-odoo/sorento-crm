@@ -105,11 +105,17 @@ def _rung_grant_missing(ctx: Any, rung: str) -> str | None:
 
 def run_fetch(plan: Plan, ctx: Any) -> list[dict[str, Any]]:
     envelopes: list[dict[str, Any]] = []
+    # Every domain this turn is ASKED about, whichever order they are fetched in. A
+    # ladder rung is the bot volunteering a domain nobody asked for, so a domain that IS
+    # on the plan is never a rung: "stock, incoming and PO" fetched all three, the
+    # incoming leg missed, and its ladder then fetched stock a SECOND time and printed
+    # the same row again under a second header (turn 12a6fff3, 16 Sep 2026).
+    planned = {spec.domain for spec in plan.fetch}
 
     for spec in plan.fetch:
         envelope = _fetch_one(ctx, spec.domain, spec)
         envelopes.append(envelope)
-        _climb(ctx, spec, envelope, envelopes)
+        _climb(ctx, spec, envelope, envelopes, planned)
 
     for domain in plan.denied:
         envelopes.append(_denied_envelope(domain))
@@ -118,7 +124,11 @@ def run_fetch(plan: Plan, ctx: Any) -> list[dict[str, Any]]:
 
 
 def _climb(
-    ctx: Any, spec: FetchSpec, primary: dict[str, Any], envelopes: list[dict[str, Any]]
+    ctx: Any,
+    spec: FetchSpec,
+    primary: dict[str, Any],
+    envelopes: list[dict[str, Any]],
+    planned: set[str] | None = None,
 ) -> None:
     """Contract 3 and 125: a domain that answered nothing asks the next one along.
 
@@ -136,7 +146,7 @@ def _climb(
     """
     if not envelope_missed(primary):
         return
-    rungs = _ladder_of(ctx, spec.domain)
+    rungs = [r for r in _ladder_of(ctx, spec.domain) if r not in (planned or set())]
     if not rungs:
         return
 
