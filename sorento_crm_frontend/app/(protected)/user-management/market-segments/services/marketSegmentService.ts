@@ -8,6 +8,20 @@ import { extractApiError } from '@/lib/api-client';
  *
  * Catalog CRUD + contact-assignment + member-assignment all live under the
  * user-management backend domain. See PLAN-cs-team-market-segment-routing.md.
+ *
+ * ---------------------------------------------------------------------------
+ * API CONTRACT - `portal_form_types`, written in Phase 1, built to in Phase 2
+ * ---------------------------------------------------------------------------
+ * PLAN-portal-forms-market-segment D1/D3/D4: the group source for a portal
+ * form grant moves from contact access types to market segments. Every
+ * contact already gets the four legacy kinds (`SUPPORTED_TYPES`) by default -
+ * a segment's `portal_form_types` can only grant MORE on top of that base
+ * (today: `price_tag_request`), never take a base kind away.
+ *
+ * `GET /api/v1/user-management/market-segments/` and the create/update routes
+ * carry `portal_form_types: string[]` in the same payload as the other
+ * fields (list, echo on create/update; omitted on update leaves it alone).
+ * 422 for a kind outside `GRANTABLE_PORTAL_FORM_TYPES` beyond the base four.
  */
 
 export interface MarketSegment {
@@ -23,6 +37,12 @@ export interface MarketSegment {
    * (UAC-requested-by-contact-routing group D).
    */
   is_requestor_selectable: boolean;
+  /**
+   * Portal forms this segment grants BEYOND the base four every contact
+   * already has (today: `price_tag_request`). Empty = this segment grants
+   * nothing extra (PLAN-portal-forms-market-segment D3/D4).
+   */
+  portal_form_types: string[];
 }
 
 export interface MarketSegmentCreate {
@@ -32,12 +52,18 @@ export interface MarketSegmentCreate {
   is_active?: boolean;
   sort_order?: number | null;
   is_requestor_selectable?: boolean;
+  portal_form_types?: string[];
 }
 
 export type MarketSegmentUpdate = Partial<
   Pick<
     MarketSegment,
-    'name' | 'description' | 'is_active' | 'sort_order' | 'is_requestor_selectable'
+    | 'name'
+    | 'description'
+    | 'is_active'
+    | 'sort_order'
+    | 'is_requestor_selectable'
+    | 'portal_form_types'
   >
 >;
 

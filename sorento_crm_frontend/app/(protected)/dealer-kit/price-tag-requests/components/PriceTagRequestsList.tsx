@@ -19,6 +19,7 @@ import {
 } from '@tanstack/react-table';
 import { ChevronRight, Search, UserPlus, X } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -294,6 +295,29 @@ export default function PriceTagRequestsList() {
         meta: {
           headerTitle: 'Assigned To',
           skeleton: <Skeleton className="h-4 w-24" />,
+        },
+      },
+      {
+        accessorKey: 'data_changed_tag_count',
+        // Stored, refreshed for a touched row only (AC-D4) - the query
+        // cannot order by a value that is not always current.
+        enableSorting: false,
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Product data" column={column} />
+        ),
+        size: 170,
+        cell: ({ row }) => {
+          const count = row.original.data_changed_tag_count ?? 0;
+          if (count <= 0) return null;
+          return (
+            <Badge size="sm" variant="warning" appearance="light">
+              Product data changed · {count}
+            </Badge>
+          );
+        },
+        meta: {
+          headerTitle: 'Product data',
+          skeleton: <Skeleton className="h-4 w-32" />,
         },
       },
       {

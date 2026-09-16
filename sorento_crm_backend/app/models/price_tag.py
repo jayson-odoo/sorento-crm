@@ -45,10 +45,12 @@ def _uuid_str():
 class ContactPortalFormOverride(Base):
     """Per-contact toggle for portal form type visibility.
 
-    ``is_enabled`` wins over the access-type-level ``portal_form_types`` default.
-    A row here saying ``is_enabled=False`` hides the type even if every access
-    type the contact holds includes it; ``is_enabled=True`` shows it even if none
-    of them do.
+    ``is_enabled`` wins over the base-plus-segment default
+    (PLAN-portal-forms-market-segment D1/D3: every contact holds the four
+    legacy kinds by default, plus whatever its market segments grant on top).
+    A row here saying ``is_enabled=False`` hides the type even if it is a base
+    kind or every segment the contact belongs to grants it; ``is_enabled=True``
+    shows it even if none of them do.
     """
 
     __tablename__ = "contact_portal_form_overrides"
@@ -157,6 +159,15 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # skipped whenever the designer saved first, so every round came back as 1.
     # 0 means it has never been sent - the first proof_ready makes it 1.
     review_round = Column(Integer, nullable=False, server_default="0", default=0)
+    # The list's stored product-data-change cache (ptag_0012,
+    # PLAN-price-tag-currency-token-extract-prompt.md section D). Written by
+    # `tag_data_service.store_data_change_count` wherever the diff already
+    # runs; the list route refreshes it only for a row
+    # `PriceTagRequestService.touched_request_ids` says was touched since
+    # `data_checked_at` - every other row is served from the column with no
+    # live resolve at all.
+    data_changed_tag_count = Column(Integer, nullable=False, server_default="0")
+    data_checked_at = Column(DateTime(timezone=False), nullable=True)
 
     lines = relationship(
         "PriceTagRequestLine",

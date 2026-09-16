@@ -41,6 +41,11 @@ export type MergeFieldMode = 'print' | 'editor';
 /** How the Insert field dialog sorts the catalogue into sections. */
 export type MergeFieldGroup = 'Product' | 'Specs' | 'Set' | 'Line';
 
+/** AC-A7: an older pinned/cached payload predating `currency` renders this,
+ *  never an empty string or the raw token - same default the backend column
+ *  carries (`products.currency`, `DEFAULT_CURRENCY` in `pricing.py`). */
+const DEFAULT_TAG_CURRENCY = 'MYR';
+
 export interface MergeField {
   /** `product.code`. What goes inside the braces. */
   path: string;
@@ -96,6 +101,7 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'product.spec_lines', label: 'Spec lines', group: 'Product' },
   { path: 'product.list_price', label: 'List price', group: 'Product' },
   { path: 'product.sell_price', label: 'Sell price', group: 'Product' },
+  { path: 'product.currency', label: 'Currency', group: 'Product' },
   { path: 'product.included_accessories', label: 'Accessories', group: 'Product' },
   { path: 'set.code', label: 'Set code', group: 'Set' },
   { path: 'set.name', label: 'Set name', group: 'Set' },
@@ -159,6 +165,22 @@ function resolvePath(path: string, data: TagBindingData, layer?: Pick<TagLayer, 
     return parts
       .map((part) => (path === 'line.parts' ? part.code : part.name))
       .join(', ');
+  }
+
+  // AC-A5/A6/A7: the SUBJECT's own currency, not a slot binding - a part
+  // subject (D7) reads that PART's currency, never the parent's. An older
+  // pinned/cached row predating this field falls back to MYR, never an
+  // empty string or the raw token.
+  if (path === 'product.currency') {
+    const subject = subjectOf(data, layer);
+    if (!subject) return DEFAULT_TAG_CURRENCY;
+    const source =
+      subject.kind === 'product'
+        ? subject.product
+        : subject.kind === 'set'
+          ? subject.set
+          : subject.line;
+    return source.currency ?? DEFAULT_TAG_CURRENCY;
   }
 
   const slot = PATH_SLOTS[path];

@@ -77,10 +77,6 @@ class ContactAccessType(Base):
     # ContactAccessTypeService.enforce_access_levels_for_contact to resolve free-text
     # AI / user phrasing against the canonical code.
     keywords = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
-    # Which portal form types a contact with this access type may see.
-    # Resolution: union of portal_form_types across all access types the contact
-    # holds, then per-contact overrides applied (ContactPortalFormOverride).
-    portal_form_types = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -147,6 +143,11 @@ class MarketSegment(Base):
     is_requestor_selectable = Column(
         Boolean, default=False, nullable=False, server_default="false"
     )
+    # Portal forms this segment grants BEYOND the base four every contact
+    # already sees (PLAN-portal-forms-market-segment D1/D3/D4). Empty = this
+    # segment grants nothing extra. Moved here from ContactAccessType -
+    # access types no longer carry any portal-form grant.
+    portal_form_types = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

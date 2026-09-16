@@ -360,6 +360,7 @@ def test_product_tag_data_keeps_every_field(api):
         "offer_price",
         "promotion_id",
         "barcode",
+        "currency",
     }
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
@@ -377,6 +378,9 @@ def test_product_tag_data_keeps_every_field(api):
     assert body["offer_price"] == 599.0
     assert body["promotion_id"] == promotion.id
     assert body["barcode"] == "1234567890123"
+    # AC-A12: `currency` rides the wire - `response_model` drops an
+    # undeclared field silently.
+    assert body["currency"] == "MYR"
 
 
 def test_unknown_product_is_404(api):
@@ -409,6 +413,7 @@ def test_product_set_tag_data_keeps_every_field(api):
         "list_price",
         "offer_price",
         "promotion_id",
+        "currency",
     }
     assert set(body["members"][0]) == {
         "product_id",
@@ -422,6 +427,8 @@ def test_product_set_tag_data_keeps_every_field(api):
         second.product_code,
     ]
     assert body["list_price"] == 1200.0
+    # AC-A12: the set row carries `currency` too (the first member's).
+    assert body["currency"] == "MYR"
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +525,23 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
             ],
         },
     )
+    # AC-A12 (code review 16 Sep): a resolved PART on this line, so the
+    # response's `parts[]` is not just an empty list - `diff_pin_against_live`
+    # and the resolver both walk a part's own product, and its currency has
+    # to ride the wire the same way the host's does.
+    from app.models.price_tag import PriceTagRequestLinePart
+
+    # `list_price="0.00"` so this part does not change the line's own rolled-up
+    # totals asserted below - only `parts[]` and its currency are new here.
+    part_product = _product(db, list_price="0.00")
+    db.add(
+        PriceTagRequestLinePart(
+            id=str(uuid.uuid4()),
+            line_id=request.lines[0].id,
+            product_id=part_product.id,
+            role="accessory",
+        )
+    )
     db.commit()
     line_id = request.lines[0].id
     # The body is TAG ids since S3 (D3) - a line may print several tags, so a
@@ -545,6 +569,11 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     assert row["dimensions"] == "800 x 500 x 220 mm"
     assert row["spec_lines"] == "One line\nAnother line"
     assert row["barcode"] == "4567891234567"
+    # AC-A12: a line tag row carries `currency` too (response_model gate).
+    assert row["currency"] == "MYR"
+    # AC-A12: and so does each of the row's own `parts[]` entries.
+    assert len(row["parts"]) == 1
+    assert row["parts"][0]["currency"] == "MYR"
 
 
 # ---------------------------------------------------------------------------

@@ -37,9 +37,10 @@ After verifying you land on the dashboard. It shows:
   * **Complaint**
   * **Purchase Request**
   * **Sponsorship Form**
-  * **Price Tag Request** (only shown if your account has been granted it - see [Submit via portal](submit-via-portal.md#price-tag-request))
+  * **Price Tag Request** (only shown if it's been granted to your account - see [Submit via portal](submit-via-portal.md#price-tag-request))
 
-  The tab marked with a star is the one the dashboard opens on. Use the **"{Type} is your default tab"** button to set the current tab as your default.
+  Every tab, including the four you'd normally always see, can be switched off for your account specifically by an admin; the combobox only lists the ones you can currently use. The tab marked with a star is the one the dashboard opens on. Use the **"{Type} is your default tab"** button to set the current tab as your default.
+* **No forms at all?** If every tab has been switched off for your account, the dashboard shows a single message - *"No forms are available for your account."* - with a **Chat with us on WhatsApp** button instead of the usual toolbar and list. Ask your admin to re-enable at least one form.
 * A toolbar row above your list of submissions, left to right:
   * **Filter** - opens a popover with one field per thing the current tab's cards carry (for example Status, Customer, Product, Project, Need by, Created). Status and text fields (Customer, Product, Project...) are dropdown selects listing the values actually present; **Created** and **Need by** are two date fields side by side instead (From / To). Picking a value narrows the list; the Filter button shows a count badge while any filter is active, and **Clear all** resets it.
   * **Sort** (Cards view only) - opens a menu listing each field once. The field you're sorted by shows an up or down arrow; tap it again to flip direction; tap a different field to sort by that one instead (dates start newest first, text starts A to Z). In List view, sorting is done by tapping a column header instead, so the Sort button isn't shown.

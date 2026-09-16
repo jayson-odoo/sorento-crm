@@ -7,12 +7,11 @@
  * before the columns existed. Phase 2 swaps each body for the real call and no
  * caller changes, so what is asserted here is the wire: path, method, body.
  *
- * `updateAllTagPins` matters more than it looks. "Update all" is one press by
- * a person who has read one dialog, so it has to reach EVERY changed line - a
- * loop that stops at the first failure leaves half the sheet on old data with
- * no sign that it did.
- *
- * RED before the coder starts: none of these five functions touches `apiFetch`.
+ * `updateAllTagPins` (AC-S5-4) is retired (AC-C4, PLAN-price-tag-currency-token-
+ * extract-prompt.md section C): "Update all" is gone from the header, so a
+ * salesperson clicks into the record to see what changed instead of firing one
+ * loop over every changed tag. The grep gate at the end of this file is what
+ * stops the function or the button that called it drifting back in.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -24,7 +23,6 @@ import {
   listRequestVersions,
   resolveTagPin,
   restoreRequestVersion,
-  updateAllTagPins,
 } from './priceTagDataService';
 
 const mockFetch = vi.mocked(apiFetch);
@@ -106,32 +104,17 @@ describe('resolveTagPin (AC-S5-5)', () => {
   });
 });
 
-describe('updateAllTagPins (AC-S5-4)', () => {
-  it('reaches every changed line', async () => {
-    mockFetch.mockResolvedValue(ok({}));
+// ---------------------------------------------------------------------------
+// AC-C4 (PLAN-price-tag-currency-token-extract-prompt.md section C): "Update
+// all" is gone - a salesperson clicks into the record to see what changed
+// instead. `updateAllTagPins` above (AC-S5-4) is retired along with it; this
+// grep gate is what stops it, or the button that called it, drifting back in.
+// ---------------------------------------------------------------------------
 
-    await updateAllTagPins('req-1', ['tag-1', 'tag-2', 'tag-3']);
-
-    expect(mockFetch.mock.calls.map((call) => call[0])).toEqual([
-      `${BASE}/req-1/tags/tag-1/pin`,
-      `${BASE}/req-1/tags/tag-2/pin`,
-      `${BASE}/req-1/tags/tag-3/pin`,
-    ]);
-    for (const call of mockFetch.mock.calls) {
-      expect(JSON.parse((call[1] as RequestInit).body as string)).toEqual({
-        action: 'update',
-      });
-    }
-  });
-
-  it('surfaces a failure rather than reporting a partial run as done', async () => {
-    mockFetch
-      .mockResolvedValueOnce(ok({}))
-      .mockResolvedValueOnce(fail(500, 'Could not update the tag'));
-
-    await expect(updateAllTagPins('req-1', ['tag-1', 'tag-2'])).rejects.toThrow(
-      'Could not update the tag',
-    );
+describe('priceTagDataService - updateAllTagPins retired (AC-C4)', () => {
+  it('the module no longer exports updateAllTagPins', async () => {
+    const mod: Record<string, unknown> = await import('./priceTagDataService');
+    expect('updateAllTagPins' in mod).toBe(false);
   });
 });
 

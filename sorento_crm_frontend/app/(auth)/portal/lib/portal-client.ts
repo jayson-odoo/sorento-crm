@@ -30,18 +30,16 @@ const TOKEN_KEY = 'sorento.portalToken';
 // every existing `from '.../portal-client'` import keeps working.
 export {
   SUBMISSION_KINDS,
-  GATED_LANDING_KINDS,
   LANDING_KINDS,
+  ADDITIONAL_LANDING_KINDS,
   SUBMISSION_LABELS,
   LANDING_LABELS,
   isSubmissionKind,
-  isGatedLandingKind,
   isLandingKind,
   portalFormKindLabel,
 } from '@/lib/portal-form-kinds';
 export type {
   PortalSubmissionKind,
-  PortalGatedKind,
   PortalLandingKind,
 } from '@/lib/portal-form-kinds';
 

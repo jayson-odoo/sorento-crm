@@ -9,6 +9,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
   Copy,
@@ -32,6 +33,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
@@ -101,6 +103,7 @@ import type { AIExtractedProductLine } from '../lib/portal-client';
 import {
   uploadAttachment,
   getPriceTagDesign,
+  fetchMe,
   fetchSubmissionNeighbours,
   type PortalAttachment,
   type PortalSubmissionNeighbours,
@@ -520,6 +523,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
   // ---- Data fetching state ----
   const [loading, setLoading] = useState(!isNew);
+  // AC-L4: a deep link this contact cannot see 403s the load below
+  // (`FORM_TYPE_NOT_VISIBLE`) - held separately from the field-level toasts
+  // the save/submit actions already use, so it can suppress the form itself.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [request, setRequest] = useState<PriceTagRequestDetail | null>(null);
@@ -771,6 +778,30 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // below).
   }, []);
 
+  // D7 r3 (PLAN-portal-forms-market-segment): a `/new` page makes no request
+  // of its own to check visibility - it reads `visible_form_types` off the
+  // same `/me` payload every other portal page already fetches, and renders
+  // the same inline blocked message the edit page's real 403 uses below.
+  // The server remains the enforcement; this only avoids an empty form.
+  useEffect(() => {
+    if (!isNew) return;
+    let cancelled = false;
+    fetchMe()
+      .then((c) => {
+        if (cancelled) return;
+        if (
+          Array.isArray(c.visible_form_types) &&
+          !c.visible_form_types.includes('price_tag_request')
+        ) {
+          setLoadError('Price Tag Request is not available for your account.');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew]);
+
   // ---- Load existing request ----
   useEffect(() => {
     if (!requestId) return;
@@ -796,8 +827,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         if (data.lines.length > 0) openSectionOnce('price');
         openSectionOnce('need_by');
       })
-      .catch(() => {
-        if (!cancelled) toast.error('Failed to load request');
+      .catch((e) => {
+        if (!cancelled) {
+          setLoadError(e instanceof Error ? e.message : 'Failed to load request');
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -1873,6 +1906,24 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-40 w-full" />
         <Skeleton className="h-40 w-full" />
+      </div>
+    );
+  }
+
+  // AC-L4: show the server's message and a way back - no crash, no empty
+  // form rendered underneath it.
+  if (loadError) {
+    return (
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
+        <Alert variant="destructive">
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>{loadError}</AlertTitle>
+        </Alert>
+        <Button variant="outline" onClick={() => router.push(portalBase(slug))}>
+          Back to your forms
+        </Button>
       </div>
     );
   }
