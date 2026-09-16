@@ -1881,11 +1881,17 @@ def _outstanding_do_block(
     return "\n".join(lines)
 
 
-def _outstanding_report(report: dict) -> str:
-    """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
-    reply (contract for Phase 1)"). See the module-level note above for the
-    `report` shape."""
-    lines = [
+def _outstanding_header_lines(report: dict) -> list[str]:
+    """The four lines that say WHAT WAS SEARCHED - the report's own scope, always all
+    four, `all` where the filter was not given (R13/R19).
+
+    One writer, three readers: the report, the detail list (owner hand pass 3, row 6 -
+    "the detail list starts at 1. DO Number with no Product / Customer / Location / Order
+    date header", so the reader of a list could not tell what it was a list OF), and the
+    chatbot lane's own copy of the rule for the scope question it asks before either
+    exists.
+    """
+    return [
         # R13: `all` when no product was named, the same word the other header lines use
         # for "every one of them" - a customer-subject report is about all their products.
         f"Product: {report.get('product_code') if _filled(report.get('product_code')) else 'all'}",
@@ -1893,6 +1899,13 @@ def _outstanding_report(report: dict) -> str:
         f"Location: {_outstanding_location_header(report.get('location_token'), report.get('warehouse_codes'))}",
         f"Order date: {_outstanding_date_range(report.get('order_date_from'), report.get('order_date_to'))}",
     ]
+
+
+def _outstanding_report(report: dict) -> str:
+    """The SO backlog / DO pending reply (PLAN-chatbot-outstanding-report.md, "The
+    reply (contract for Phase 1)"). See the module-level note above for the
+    `report` shape."""
+    lines = _outstanding_header_lines(report)
 
     blocks: list[str] = []
     offer: list[str] = []
@@ -1993,9 +2006,15 @@ def _outstanding_envelope(report: dict) -> dict:
             if detail == "both"
             else bool(report.get(f"{detail}_rows"))
         )
+        # Row 6 (owner hand pass 3): the list carries the SAME scope header the summary
+        # prints. The list itself is unchanged - `_outstanding_detail` renders the rows
+        # and nothing else, which is what its own goldens pin - and the header is added
+        # here, where the summary's is, so the two cannot drift.
         return {
             "result_type": "outstanding_detail",
-            "response": _outstanding_detail(report, detail),
+            "response": "\n".join(_outstanding_header_lines(report))
+            + "\n\n"
+            + _outstanding_detail(report, detail),
             "has_result": rows_present,
         }
     so = report.get("so")
