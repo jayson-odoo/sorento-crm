@@ -48,6 +48,12 @@ own Reset semantics (`ConsoleTurnRequest.session_vars` is read by MEMBERSHIP: `n
 step after the first carries forward the PREVIOUS step's own `session_vars` response, which
 is how a picker/roster sequence is checked without touching the database.
 
+A case may set its own `contact` (overriding `--contact` for that case only) when its
+precondition needs a specific grant profile the default contact does not have. A case that
+sets `skip_unless_contact: true` and leaves `contact` unset is SKIPPED (not scored pass or
+fail, not printed in the table) rather than silently run against the wrong contact; its
+`_note` (free text) explains what contact it needs, printed once at skip time.
+
 Matchers, all optional, combined with AND inside one step's `expect`:
 
 * `branch_kind` - the reply's `branch_kind` must equal this string.
@@ -241,6 +247,14 @@ def _run_case(
 ) -> tuple[list[dict[str, Any]], int]:
     """One case's steps, run in order. Returns (step rows, failed step count)."""
     name = str(case.get("name") or "case")
+    if case.get("skip_unless_contact") and not case.get("contact"):
+        # This case needs a SPECIFIC contact this chain does not carry (e.g. one holding
+        # a grant the default contact lacks) - falling back to `default_contact` would
+        # silently test the wrong precondition rather than the one the case names. Skipped
+        # cases score neither pass nor fail; they print once and are absent from the table.
+        note = case.get("_note") or "needs an explicit 'contact' this chain does not set"
+        print(f"    SKIP {name}: {note}")
+        return [], 0
     contact = str(case.get("contact") or default_contact)
     cold = case.get("cold", True)
     session_vars: Any = {} if cold else None
