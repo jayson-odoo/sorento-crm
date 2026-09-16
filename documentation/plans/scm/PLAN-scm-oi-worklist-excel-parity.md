@@ -1,6 +1,6 @@
 # PLAN: order inquiries worklist, Excel parity batch (16 Sep 2026)
 
-Status: DRAFT, rulings taken in Lavish 16 Sep 2026 ("okay all good"). No lane opened. Awaiting the owner's go to build.
+Status: BUILDING. Owner go 16 Sep 2026 08:15 MYT. Lane `feat/oi-worklist-excel-parity`, stack :3086/:8086 on the shared 0907 dev DB (no migration in this lane), pytest DB `sorento_oiwp_ci`. Phase 1 mock committed (`a1c51ca68`, `e8bab3916`); Phase 2 red tests in progress.
 
 The purchasing team keeps its order book in `JAN - DEC ORDER 2027.xlsx` (12 sheets, one per
 delivery month, columns SO DATE / S/O NO / ITEM CODE / QTY / TOTAL QTY / DELIVERY DATE /
@@ -21,9 +21,16 @@ UAC: `scm-oi-worklist-excel-parity-acceptance-criteria.md`.
 
 - `spo_allocations.po_line_id` is populated on 0 of 77,278 rows; `from_po_number` on 64,048.
   A derived SPO therefore matches on `from_po_number = purchase_orders.po_number` AND
-  `spo_allocations.product_id = purchase_order_lines.product_id`. A PO with two lines of the
-  same product is ambiguous; the coder measures that count on 0915 before choosing the
-  tie-break (proposal: show every matching SPO, the lightbox lists them).
+  `spo_allocations.product_id = purchase_order_lines.product_id`.
+- Measured 16 Sep with the real openness rule (`open_incoming_clauses`: line open, receipt not
+  received, shipment not landed, plus `retired_at IS NULL` and `allocated > received`): only
+  **37** PO-linked rows have an open SPO on their PO (29 with one SPO number, 8 with two). The
+  227 first quoted counted allocations that had already landed. So: derive OPEN allocations
+  only (what the planner counts as supply); a landed shipment is not "incoming". Rows with two
+  open SPOs show both (the `+1` pill the column already has); no tie-break needed.
+- 919 PO-linked rows sit on a PO that has two or more lines of the same product; the match is
+  by PO number + product, so a derived SPO can belong to a sibling line of the same PO. Accepted:
+  AutoCount does not say which line a container serves either.
 - 5,250 rows are `actioned`; `enableRowSelection` blocks them, so bulk Unlink never reaches a
   fully linked row today.
 - Delivery months 2026-01 to 2026-12 hold 418 to 782 rows each; 2027 holds 429; 2030-01 holds
@@ -130,8 +137,9 @@ Backend: none. `auto_place_for_products(row_ids=...)` already skips rows with no
 
 Backend:
 - `links_for_rows` gains derived entries: for each PO link, the SPO allocations matching
-  `from_po_number = po_number AND product_id = line.product_id` and open per
-  `spo_supply.open_incoming_clauses`, emitted as `{kind: 'spo', derived: true, document,
+  `from_po_number = po_number AND product_id = line.product_id`, open per
+  `spo_supply.open_incoming_clauses` AND `retired_at IS NULL` AND
+  `allocated_quantity > quantity_received`, emitted as `{kind: 'spo', derived: true, document,
   qty: allocation open qty, location, expected_date, ...}`. The existing SPO link's
   `source_po_number` is the mirror; the serializer marks it `derived_po: true` so the PO
   column can print "via SPO".
