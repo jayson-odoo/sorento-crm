@@ -1481,3 +1481,170 @@ def test_template_prints_blank_not_none_and_inline_borders():
             assert "background" in style, f"header cell carries no background colour: {tag}"
 
         assert " - None" not in text, "the SO summary line must not print a dash then None"
+
+
+# --------------------------------------------------------------------------- #
+# AC-H26: one email for the whole dispatch, the actor last (Cc)               #
+# --------------------------------------------------------------------------- #
+
+
+def test_handover_sends_one_email_with_actor_in_cc(monkeypatch):
+    """AC-H26.
+
+    A real send on the production copy: one confirm produced FIVE `email_outbox` rows,
+    one per recipient with a single address each. `_send_per_match` calls
+    `_enqueue_email` - which always stamps `single_email_to_all: True`, the flag the
+    downstream To/Cc split (`notification_tasks.py:252-268`) reads - ONCE PER
+    RECIPIENT with `recipient_emails=[one]`, defeating the flag's own point. R5's
+    requirement is the manual mail's shape: ONE email, purchasing in To/Cc, the raiser
+    on Cc, so reply-all threads across everyone. `notification_tasks.py:252-268` puts
+    the FIRST address in To and the rest in Cc, so the actor has to be LAST in
+    `recipient_emails` for `include_actor` to land them on Cc rather than displacing
+    purchasing from To.
+
+    Drives `AutomationService.dispatch_event` for REAL against a genuinely seeded
+    `order_inquiry_handover` automation - not mocked, unlike this file's other tests,
+    because the bug lives inside `_send_per_match` / `_enqueue_email` itself, and
+    reuses `test_automation_service.py`'s own assertion shape (query
+    `Notification`/`NotificationDelivery` by `source_entity_type` /
+    `source_entity_id`, read `data.recipient_emails` off the `Notification` row).
+    """
+    import uuid as _uuid
+
+    from app.models.automation import Automation
+    from app.models.email_template import EmailTemplate
+    from app.models.notification import Notification, NotificationDelivery
+    from app.models.user import User
+    from app.services import notification_email
+    from app.services.automation_service import AutomationService
+
+    monkeypatch.setattr(notification_email, "send_notification_email", lambda *a, **kw: None)
+    monkeypatch.setattr(notification_email, "send_notification_email_multi", lambda *a, **kw: None)
+
+    with blank_session() as db:
+        creator = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-creator-{_uuid.uuid4().hex[:6]}@test.local",
+            name="ZZT OIHE Creator",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        buyer_a = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-a-{_uuid.uuid4().hex[:6]}@test.local",
+            name="Purchasing A",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        buyer_b = User(
+            id=str(_uuid.uuid4()),
+            email=f"zzt-oihe-b-{_uuid.uuid4().hex[:6]}@test.local",
+            name="Purchasing B",
+            status="ACTIVE",
+            is_trashed=False,
+        )
+        db.add_all([creator, buyer_a, buyer_b])
+        db.flush()
+
+        template = EmailTemplate(
+            id=str(_uuid.uuid4()),
+            code=f"zzt-oihe-tpl-{_uuid.uuid4().hex[:6]}",
+            name="ZZT OIHE test template",
+            subject="OI: {{ handover.subject_scope }}",
+            body_html="<p>Hi {{ recipient.name }}</p>",
+            body_text=None,
+            is_active=True,
+        )
+        db.add(template)
+        db.flush()
+
+        automation = Automation(
+            id=str(_uuid.uuid4()),
+            name="ZZT OIHE handover",
+            enabled=True,
+            trigger_type="order_inquiry_handover",
+            trigger_config={},
+            action_type="send_email",
+            email_template_id=str(template.id),
+            recipient_config={
+                "user_ids": [str(buyer_a.id), str(buyer_b.id)],
+                "role_ids": [],
+                "extra_emails": [],
+                "include_actor": True,
+            },
+            group_matches=False,
+            schedule_type="manual",
+            timezone="Asia/Kuala_Lumpur",
+            created_by_user_id=str(creator.id),
+        )
+        db.add(automation)
+        db.commit()
+
+        actor_email = f"zzt-oihe-actor-{_uuid.uuid4().hex[:6]}@test.local"
+        context = {
+            "handover": {
+                "subject_scope": "SO397450",
+                "verbs": ["ORDER"],
+                "headline": "ORDER",
+                "orders": [],
+                "lines": [],
+                "line_count": 0,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO397450",
+            },
+            "actor": {"name": "Raiser", "email": actor_email},
+            "today": "2026-09-16",
+        }
+
+        result = AutomationService(db).dispatch_event(
+            "order_inquiry_handover",
+            context=context,
+            source_kind="order_inquiry_handover",
+            source_id=str(_uuid.uuid4()),
+        )
+        assert result["fired"] == 1, result
+
+        run_id = result["results"][0]["run_id"]
+        assert result["results"][0]["recipients_attempted"] == 3, (
+            "purchasing x2 + the actor, deduped, is what resolve_recipients names"
+        )
+
+        notifs = (
+            db.query(Notification)
+            .filter(
+                Notification.source_entity_type == "automation_run",
+                Notification.source_entity_id == run_id,
+            )
+            .all()
+        )
+        assert len(notifs) == 1, (
+            f"expected exactly one email for the whole dispatch (R5), got {len(notifs)}"
+        )
+
+        deliveries = (
+            db.query(NotificationDelivery)
+            .join(Notification, Notification.id == NotificationDelivery.notification_id)
+            .filter(
+                Notification.source_entity_type == "automation_run",
+                Notification.source_entity_id == run_id,
+            )
+            .all()
+        )
+        assert len(deliveries) == 1, (
+            f"expected exactly one delivery row, no per-recipient copies, got {len(deliveries)}"
+        )
+
+        data = dict(notifs[0].data or {})
+        assert data.get("single_email_to_all") is True
+        recipient_emails = data.get("recipient_emails") or []
+        assert len(recipient_emails) == 3, (
+            f"expected purchasing x2 + the actor in one list, got {recipient_emails}"
+        )
+        assert {e.lower() for e in recipient_emails} == {
+            buyer_a.email.lower(),
+            buyer_b.email.lower(),
+            actor_email.lower(),
+        }
+        assert recipient_emails[-1].lower() == actor_email.lower(), (
+            "the actor must be LAST (notification_tasks.py puts the first address in "
+            f"To and the rest in Cc), got {recipient_emails}"
+        )
