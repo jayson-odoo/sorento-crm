@@ -977,6 +977,10 @@ def make_tool_runner(
             fragment,
             spec,
             entities,
+            # AC-1534: a counted set is described by a CLASS word, or it is the next
+            # page of one that was. Anything else is an ordinary answer about the codes
+            # it names.
+            counted_set=page_predicate is not None or bool(class_scope_terms(verdict)),
             denial_text=(
                 domain_denial_text(db, domain)
                 if fragment.get("outcome") == "access_denied"
@@ -987,6 +991,32 @@ def make_tool_runner(
         )
 
     return runner
+
+
+#: The entity hints that name a CLASS of product rather than one of them. A counted set
+#: is described by a class word and by nothing else (AC-1534, attribute-first): "which
+#: taps have stock" is a set, "7445" is five products.
+CLASS_HINTS = ("product_type", "category")
+
+
+def class_scope_terms(verdict: dict[str, Any]) -> list[str]:
+    """The class words the PARSER named this turn, in order, deduped.
+
+    The ONE reading of "is this turn about a class of products?" - the resolve body
+    forwards the same entities as `scope_terms` (`resolve_gate.resolve_entity_body`),
+    and `set_page_carry` stores them as the set's own description. Read off the
+    verdict's entity hints, never the message words (D1/AC-1520).
+    """
+    terms: list[str] = []
+    for entity in verdict.get("entities") or []:
+        if not isinstance(entity, dict):
+            continue
+        if jsc.nullish_str(entity.get("hint")).strip().lower() not in CLASS_HINTS:
+            continue
+        raw = jsc.nullish_str(entity.get("raw")).strip()
+        if raw and raw not in terms:
+            terms.append(raw)
+    return terms
 
 
 SET_PAGE_SIZE = 5
@@ -1000,6 +1030,10 @@ def set_page_carry(
     `{set_key, offset}` and nothing more: the set is RE-DESCRIBED next turn from
     `set_key` rather than carried as a list of ids, so a session never holds two hundred
     uuids and a "more" three turns later still answers over live data.
+
+    Called only for a turn whose verdict described a CLASS (`class_scope_terms`): a
+    counted set is the attribute-first answer's own shape, and an ordinary list answer
+    leaves no page behind (engine, AC-1317 / AC-1534).
     """
     if not predicate:
         return None
@@ -1246,7 +1280,24 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     subject was settled on an earlier one, so the plan's own rows are the only evidence
     there is about it, and they are the same rows this function has always fallen back to
     when the resolver answered nothing at all.
+
+    Both halves are KIND-SCOPED to the domain, by the kept lane's own matrix
+    (`gate.ALLOWED`, never a second copy). The gate already scopes what it hands back,
+    but it scopes by the ONE `domain_hint` the verdict carries, and a bare positional
+    ("1") carries none - so on those turns every kind the resolver matched passed through
+    to every domain the plan fetched. Measured on the owner's 17 Sep turns: a
+    `resource_attachment` ask three minutes earlier left two container-status
+    spreadsheets on `focus.extra["attachment"]`, and the "1" that answered a product
+    roster fetched incoming AND stock under the header "*incoming stock* for 14.09.2026
+    Container Status 2026.xlsx, 11.09.2026 Container Status 2026 MOCHA.xlsx, cb2805q"
+    (turns 725e39fd / 543b9a02). The plan knows the domain per fetch, which is what the
+    gate could not - so the same matrix is applied here, per spec.
     """
+    from app.services.chatbot.lanes.business.gate import ALLOWED
+
+    allowed = ALLOWED.get(spec.domain)
+    if allowed is not None:
+        compatible = [e for e in compatible if e.get("entity_type") in allowed]
     kinds = {e.get("hint") for e in spec.entities if e.get("hint")}
     codes = {_code_of(e) for e in spec.entities}
     picked = [
@@ -1315,6 +1366,7 @@ def envelope_of(
     denial_text: str | None = None,
     ran_with: dict[str, Any] | None = None,
     unplaced: dict[str, str] | None = None,
+    counted_set: bool = True,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
 
@@ -1369,7 +1421,17 @@ def envelope_of(
         # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
         # per-row grammar, only the domain-generic header line is replaced.
-        "header_override": fetched.get("set_header"),
+        #
+        # ONLY when this turn described a class (`counted_set`). The `require` leg is
+        # derived from the INTENT (`predicate.derive_require`: check_stock ->
+        # {"stock": true}), so a predicate rides every stock / incoming / promotion
+        # turn there is, and its `class_labels` are unioned from whatever the qualifying
+        # candidates happen to belong to - not from anything the customer said. "7445"
+        # was answered "5 taps have stock." (turn 92d565a5) and a three-domain fan-out
+        # over a carried code printed "0 products have incoming stock." over all three
+        # sections, stock rows included (turn d5128c67). A code is not a class, so its
+        # answer keeps the domain's own header.
+        "header_override": fetched.get("set_header") if counted_set else None,
         # The lane's OWN question, when the fetch asked one instead of (or beside)
         # answering: contract 38's "which document?" and contract 39's detail offer both
         # come back as `outstanding_ask` = `{kind, last_result_set, filters}`. The

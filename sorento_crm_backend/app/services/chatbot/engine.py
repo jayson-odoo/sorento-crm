@@ -1501,7 +1501,12 @@ def _run_stages(  # noqa: PLR0915
                 # into APPLY, so the narrower asks about things that exist and a
                 # reconciled kind lands before anything is fetched.
                 state_out, plan = turn_apply(
-                    state_in, verdict, policy, resolved_kinds, resolved_candidates
+                    state_in,
+                    verdict,
+                    policy,
+                    resolved_kinds,
+                    resolved_candidates,
+                    frozenset(unplaced_tokens),
                 )
 
         # D ROUTE. Two facts outrank the plan and neither is IN one: a refused access
@@ -1639,17 +1644,19 @@ def _run_stages(  # noqa: PLR0915
             else:
                 # AC-1317: where the counted set got to, so "more" pages the SAME set
                 # next turn instead of counting it again from nothing.
-                if predicate is not None and plan.fetch:
+                #
+                # Gated on the PARSER's own class entity (AC-1534: the described set is
+                # scoped by the class word the parser named, forwarded as `scope_terms`).
+                # The `require` leg is derived from the INTENT, so a predicate rides
+                # every stock / incoming / promotion turn there is - and a turn that
+                # named a product CODE answers a LIST, which leaves no page behind. The
+                # owner's "7445" stored `{require: {stock: true}, scope_terms: []}` and
+                # the two codes typed after it were both served page 2 of "5,783 taps
+                # have stock" (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
+                class_terms = turn_runtime.class_scope_terms(verdict)
+                if predicate is not None and plan.fetch and class_terms:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
-                        predicate,
-                        plan.fetch[0],
-                        [
-                            jsc.nullish_str(e.get("raw"))
-                            for e in (verdict.get("entities") or [])
-                            if isinstance(e, dict)
-                            and jsc.nullish_str(e.get("hint")).strip().lower()
-                            in ("product_type", "category")
-                        ],
+                        predicate, plan.fetch[0], class_terms
                     )
                 elif not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
                     # An answer that is not a counted set closes the page: the customer
