@@ -91,11 +91,26 @@ SHARED_AXIS_BY_DOMAIN: dict[str, frozenset[str]] = {
 
 
 def _is_continuation(verdict: dict[str, Any]) -> bool:
-    """AC-1317: "show me the next page of the set you just counted". The parser's own
-    `continuation` schema key (bool), read as-is - matching free-text `user_goal`
-    against a word list was still a text rule wearing the parser's clothes; a
-    dedicated boolean is the deterministic signal (captain ruling, 16 Sep 2026)."""
-    return verdict.get("continuation") is True
+    """AC-1317: "show me the next page of the set you just counted".
+
+    The parser's own `continuation` boolean, read as-is - matching free-text `user_goal`
+    against a word list was still a text rule wearing the parser's clothes (captain
+    ruling, 16 Sep 2026) - AND a message that named no entity of its own. Measured: the
+    paging turn's own shape is `{message_type: "clarification", user_goal: "more",
+    continuation: true}` with an empty `entities`
+    (`test_rearch_s3_attribute_first.py::TestPagingByFive`), while the parser sets the
+    same boolean on any ordinary follow-up: "wc287" and "srtwc287", each a product entity
+    of its own typed after a counted answer, were both served the NEXT PAGE of it
+    ("5,783 taps have stock. Showing 6 to 10.", turns b383d402 / 2e7ca929, 17 Sep 2026).
+    A turn that names a new entity re-runs the ladder from the code tier, so it reads no
+    cursor and leaves none behind.
+    """
+    if verdict.get("continuation") is not True:
+        return False
+    return not any(
+        isinstance(e, dict) and e.get("current_message") is not False
+        for e in (verdict.get("entities") or [])
+    )
 
 
 def _domain_of_document(document: list[str]) -> str | None:

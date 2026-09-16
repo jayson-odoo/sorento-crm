@@ -530,12 +530,16 @@ def resolve_kinds(
     dict[str, Any] | None,
     dict[str, list[dict[str, Any]]],
     dict[str, str],
+    bool,
 ]:
     """Ask the resolver what each named token actually IS (AC-1527).
 
     Returns `({raw: {kind: hits}}, compatible_entities, predicate, candidates_by_kind,
-    unplaced_tokens)`, where the last is `{folded token: the word the customer typed}`
-    for every token this message named that the resolver could not place.
+    unplaced_tokens, spec_tier)`, where `unplaced_tokens` is `{folded token: the word the
+    customer typed}` for every token this message named that the resolver could not
+    place, and `spec_tier` is `spec_tier_matched(resolved)` - which tier of the ONE
+    product ladder answered, and therefore whether this turn renders as a counted set or
+    as a list.
     The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
     which `turn/narrow.py` now decides from the policy instead.
@@ -560,7 +564,7 @@ def resolve_kinds(
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
-        return {}, [], None, {}, {}
+        return {}, [], None, {}, {}, False
     services = business_services.production_services(db)
     try:
         payload = resolve_gate.run(
@@ -574,7 +578,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return {}, [], None, {}, {}
+        return {}, [], None, {}, {}, False
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -674,6 +678,7 @@ def resolve_kinds(
         predicate,
         candidates_by_kind(stamps_from, compatible, customer_bases, product_stamp),
         unplaced,
+        spec_tier_matched(resolved),
     )
 
 
@@ -906,6 +911,7 @@ def make_tool_runner(
     space_id: str | None,
     dry_run: bool,
     turn_trace: Any,
+    counted_set: bool = False,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -977,10 +983,10 @@ def make_tool_runner(
             fragment,
             spec,
             entities,
-            # AC-1534: a counted set is described by a CLASS word, or it is the next
-            # page of one that was. Anything else is an ordinary answer about the codes
-            # it names.
-            counted_set=page_predicate is not None or bool(class_scope_terms(verdict)),
+            # The render follows the TIER that matched (AC-1534): a SPEC-tier answer is
+            # the counted set, a code-tier answer is the list, and a carried page is a
+            # set by construction.
+            counted_set=page_predicate is not None or counted_set,
             denial_text=(
                 domain_denial_text(db, domain)
                 if fragment.get("outcome") == "access_denied"
@@ -993,19 +999,22 @@ def make_tool_runner(
     return runner
 
 
-#: The entity hints that name a CLASS of product rather than one of them. A counted set
-#: is described by a class word and by nothing else (AC-1534, attribute-first): "which
-#: taps have stock" is a set, "7445" is five products.
+#: The entity hints that name a CLASS of product rather than one of them. They are what
+#: the resolve body forwards as `scope_terms` (`resolve_gate.resolve_entity_body`), which
+#: is what a described set is scoped BY (AC-1534).
 CLASS_HINTS = ("product_type", "category")
+
+#: The resolver's own name for its last tier: the SPEC/class search it falls back to when
+#: the code tiers matched nothing (`api/v1/system/references._emit_spec_matches`). Every
+#: other tier - exact, prefix, substring, and, scope - matched a CODE.
+SPEC_TIER = "spec_search"
 
 
 def class_scope_terms(verdict: dict[str, Any]) -> list[str]:
     """The class words the PARSER named this turn, in order, deduped.
 
-    The ONE reading of "is this turn about a class of products?" - the resolve body
-    forwards the same entities as `scope_terms` (`resolve_gate.resolve_entity_body`),
-    and `set_page_carry` stores them as the set's own description. Read off the
-    verdict's entity hints, never the message words (D1/AC-1520).
+    What the described set is scoped BY, read off the verdict's entity hints and never
+    off the message words (D1/AC-1520).
     """
     terms: list[str] = []
     for entity in verdict.get("entities") or []:
@@ -1017,6 +1026,38 @@ def class_scope_terms(verdict: dict[str, Any]) -> list[str]:
         if raw and raw not in terms:
             terms.append(raw)
     return terms
+
+
+def spec_tier_matched(resolved: Any) -> bool:
+    """Did this turn's products come from the SPEC tier rather than from a code?
+
+    ONE product lane, one ladder: the resolver tries the code tiers and falls back to the
+    spec/class search only when they matched nothing, so "SRTWC286 got stock" and "which
+    water closet got stock" walk the same path and only the second reaches the fallback.
+    The counted-set answer ("N water closets have stock. Showing 5." plus the page
+    cursor) is simply how a SPEC-tier match RENDERS; a code-tier match renders as the
+    list. The render had been following the `require` predicate instead, which
+    `predicate.derive_require` builds from the INTENT alone (`check_stock` ->
+    `{"stock": true}`) - so it rides every stock, incoming and promotion turn there is,
+    and "7445" (matched by code, five real variants) was answered "5 taps have stock."
+    with a page describing every product that has stock (turns 92d565a5 / b383d402 /
+    2e7ca929, 17 Sep 2026).
+
+    "All of them, and at least one" is the same reading the GATE already earned for the
+    same tier (`gate.run_gate`'s C4 branch, AC-1326) and `_strip_word_token_product_
+    matches` (AC-1327): a group whose product matches are not ALL `spec_search` is an
+    ordinary code answer. Non-product matches are not part of the question.
+    """
+    products: list[Any] = []
+    rows = jsc.get(resolved, "intersection")
+    if isinstance(rows, list):
+        products = [m for m in rows if isinstance(m, dict) and m.get("entity_type") == "product"]
+    else:
+        for resolution in jsc.array(jsc.get(resolved, "resolutions")):
+            for match in jsc.array(jsc.get(resolution, "matches")):
+                if isinstance(match, dict) and match.get("entity_type") == "product":
+                    products.append(match)
+    return bool(products) and all(m.get("match_tier") == SPEC_TIER for m in products)
 
 
 SET_PAGE_SIZE = 5
@@ -1031,11 +1072,13 @@ def set_page_carry(
     `set_key` rather than carried as a list of ids, so a session never holds two hundred
     uuids and a "more" three turns later still answers over live data.
 
-    Called only for a turn whose verdict described a CLASS (`class_scope_terms`): a
-    counted set is the attribute-first answer's own shape, and an ordinary list answer
-    leaves no page behind (engine, AC-1317 / AC-1534).
+    Called only for a SPEC-tier answer (`spec_tier_matched`), and never without a scope
+    term: `set_key` describes the population by its `require` leg and its class words, so
+    an empty `scope_terms` describes "every product that has stock" and the next "more"
+    pages the whole catalogue. A spec tier reached with nothing to scope by is a miss, not
+    a set.
     """
-    if not predicate:
+    if not predicate or not scope_terms:
         return None
     total = int(predicate.get("qualifying_total") or 0)
     if total <= 0:

@@ -1431,6 +1431,7 @@ def _run_stages(  # noqa: PLR0915
         predicate: dict[str, Any] | None = None
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
         unplaced_tokens: dict[str, str] = {}
+        spec_tier = False
         if plan.fetch or plan.ask is not None:
             # The RESOLVER's own ctx: a roster has to list things that exist, with the
             # stamps the picker probe measures ("SRTWC286-SH-NEW-P - has incoming"), and
@@ -1457,7 +1458,14 @@ def _run_stages(  # noqa: PLR0915
                     ),
                 },
             }
-            resolved_kinds, compatible_entities, predicate, resolved_candidates, unplaced_tokens = (
+            (
+                resolved_kinds,
+                compatible_entities,
+                predicate,
+                resolved_candidates,
+                unplaced_tokens,
+                spec_tier,
+            ) = (
                 turn_runtime.resolve_kinds(
                     db,
                     ctx=resolver_ctx,
@@ -1621,6 +1629,7 @@ def _run_stages(  # noqa: PLR0915
                     space_id=space_id_for_turn,
                     dry_run=dry_run,
                     turn_trace=turn_trace,
+                    counted_set=spec_tier and bool(turn_runtime.class_scope_terms(verdict)),
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
@@ -1645,16 +1654,13 @@ def _run_stages(  # noqa: PLR0915
                 # AC-1317: where the counted set got to, so "more" pages the SAME set
                 # next turn instead of counting it again from nothing.
                 #
-                # Gated on the PARSER's own class entity (AC-1534: the described set is
-                # scoped by the class word the parser named, forwarded as `scope_terms`).
-                # The `require` leg is derived from the INTENT, so a predicate rides
-                # every stock / incoming / promotion turn there is - and a turn that
-                # named a product CODE answers a LIST, which leaves no page behind. The
-                # owner's "7445" stored `{require: {stock: true}, scope_terms: []}` and
-                # the two codes typed after it were both served page 2 of "5,783 taps
-                # have stock" (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
+                # Written only for a SPEC-tier answer: the counted set is how that tier
+                # of the ONE product ladder renders, and a code-tier answer is a list,
+                # which leaves no page behind. `set_page_carry` refuses a set with no
+                # scope term of its own on top of that, so a "more" can never page the
+                # whole catalogue (turns 92d565a5 / b383d402 / 2e7ca929, 17 Sep 2026).
                 class_terms = turn_runtime.class_scope_terms(verdict)
-                if predicate is not None and plan.fetch and class_terms:
+                if predicate is not None and plan.fetch and spec_tier:
                     state_out.focus.set_page = turn_runtime.set_page_carry(
                         predicate, plan.fetch[0], class_terms
                     )
