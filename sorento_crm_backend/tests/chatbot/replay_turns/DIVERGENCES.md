@@ -658,3 +658,26 @@ than duplicated; those specific files stay red on `entity_ids` alone after this 
 - prod_sample/out-of-scope-423755030-chain-001-no-run-id.json: step 3: pending: a one-option domain pending (S3 ruling: a settled carry is never re-asked) now settles silently instead of arming a roster the customer would only ever answer one way (signed JT 2026-09-17, cluster-a-ladder-fanout-plus-settled-carry)
 - prod_sample/out-of-scope-445239384-chain-001-no-run-id.json: step 1: tools: the fetch now climbs the whole stock/incoming ladder in one turn (contract 3) instead of the recording's single-rung fetch - the SAME tool the recording called is still called, plus the next rung up (signed JT 2026-09-17, cluster-a-ladder-fanout-plus-settled-carry)
 - prod_sample/out-of-scope-445239384-chain-001-no-run-id.json: step 1: pending: a one-option domain pending (S3 ruling: a settled carry is never re-asked) now settles silently instead of arming a roster the customer would only ever answer one way (signed JT 2026-09-17, cluster-a-ladder-fanout-plus-settled-carry)
+
+## case-046 signed, 17 Sep 2026 (tester 22, item 4/5 typed-token roster retirement)
+
+The case's own title claims "offers its real siblings", but its recorded resolutions
+stub is `{"matches": [], "resolved": false, "unresolved_tokens": ["SRTWC8610-SH"]}` -
+zero real matches, despite the `expected.text` narrating three sibling codes
+(SRTWC8611/8613/8614) the resolutions never actually carry. The recorded
+`expected.pending` (`product_pick`, one option, labelled with the typed word itself)
+is exactly the ONE-OPTION typed-token roster item 4/5 of coder 20's landed change
+(`3c19a8533`, PLAN-chatbot-turn-rearch.md) retires - a roster never offers an
+unresolved raw token back at the customer (17 Sep 2026 ruling). With zero real
+candidates, the current engine correctly arms no pending at all and instead runs a
+real `crm_incoming_stock_list` fetch that resolves to a not-found line - measured
+this session: `*incoming stock* for SRTWC8610-SH:\nI could not fetch incoming stock
+just now, please try again.\nI could not find SRTWC8610-SH.` (the "please try again"
+sentence is this replay's own stubbed-tool-call artifact, not a live-system message;
+the customer-facing "I could not find SRTWC8610-SH." line is the real not-found
+outcome the ruling calls for). Not re-recorded (needs a live stack with real sibling
+candidates in the source DB to reproduce the case's own title honestly, which this
+session did not run) - signed instead, per the ruling, measured against this head.
+
+- console/case-046-d10-a-product-set-only-code-on-an-incoming-ask-offers-its-real-siblings.json: tools: zero resolver matches (the case's own resolutions stub) means no roster can be armed from real candidates; the engine now runs a real incoming-stock fetch instead of the recording's no-tool-call miss, resolving to a not-found line (signed JT 2026-09-17, item-4-typed-token-roster-retirement)
+- console/case-046-d10-a-product-set-only-code-on-an-incoming-ask-offers-its-real-siblings.json: pending: the ONE-OPTION typed-token `product_pick` roster (labelled with the raw unresolved word itself) is retired by the 17 Sep 2026 ruling - a roster never offers an unresolved raw token; with zero real candidates the engine now arms no pending at all (signed JT 2026-09-17, item-4-typed-token-roster-retirement)
