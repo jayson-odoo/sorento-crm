@@ -172,8 +172,21 @@ class TestJourneyChain:
             f"(D6, contract 38): {text!r}"
         )
         sv = _session_vars(session_factory)
-        assert sv.get("open_question") is not None, (
-            "customer must_narrow_one -> a customer_pick question is expected"
+        # Re-pinned 17 Sep 2026 (tester): superseded by the captain's 16 Sep 2026 ruling
+        # in `turn/narrow.py::_narrow` ("the narrower must never re-ask for an entity
+        # the conversation already settled... a SINGLE bare name with nothing else to
+        # compare it against is handed to the RESOLVER this turn instead of guessed at
+        # here... reaching HERE with one un-uuid'd candidate means there was no resolver
+        # answer for it at all this turn, so it passes through, deferred, rather than an
+        # ask manufactured from a name alone"). No real "chin chun" customer row is
+        # seeded in this file, so the real resolver (Tier 1/2 DB lookup, measured to run
+        # here) finds zero candidates for it - exactly the single-bare-name case the
+        # ruling says passes through undecided, not the several-distinct-names case that
+        # still asks. `must_narrow_one` no longer arms a customer_pick from an unresolved
+        # name alone.
+        assert sv.get("open_question") is None, (
+            f"a single unresolved customer name passes through deferred, per the 16 Sep "
+            f"2026 ruling - it must not manufacture a customer_pick ask: {sv.get('open_question')!r}"
         )
 
     def test_step_5_pick_1_family_becomes_customer_detail_question_open(

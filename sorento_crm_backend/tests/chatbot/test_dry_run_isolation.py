@@ -762,15 +762,31 @@ class TestWordsComposedAreWordsSent:
     # that somebody had written a name down, which is bookkeeping, not a guardrail
     # (reviewer, #705).
     COVERED_BY: dict[str, tuple[str, str]] = {
-        # One parametrised test over all eight canned kinds; it asserts the action list
-        # EQUALS one `send_message` carrying the reply text.
+        # `access_denied` is refused before anything is stubbed; its own test (session-
+        # write is the interesting property there) rather than the parametrised table.
+        # Re-pinned 17 Sep 2026 (tester): was the same shared entry as the seven below
+        # until `TestCannedBranchesFinishInTurn` was retired at `c830e002a` (16 Sep);
+        # `TestAccessDeniedNoSessionWrite` already asserted the strict `actions == [...]`
+        # shape independently and needed no change, only this dict entry did.
+        "access_denied": (
+            "tests.chatbot.test_s3_canned_and_ideate",
+            "TestAccessDeniedNoSessionWrite.test_access_denied_sends_without_session_write",
+        ),
+        # One parametrised test over the other seven canned kinds; it asserts the action
+        # list EQUALS one `send_message` carrying the reply text. Re-pinned 17 Sep 2026
+        # (tester): `TestCannedBranchesFinishInTurn` was retired at `c830e002a` (16 Sep,
+        # "engine investigation, not a mechanical port") and restored here after
+        # re-measuring each kind directly - 4 of 7 now pass outright (the engine moved
+        # since 16 Sep morning), the other 3 (`escalate_offer`, `demand_qty`,
+        # `offer_hold`) are `xfail(strict=True)` there with the measured branch_kind, so
+        # this guardrail still has a live, honest home for every kind rather than a
+        # class that does not exist.
         **{
             kind: (
                 "tests.chatbot.test_s3_canned_and_ideate",
                 "TestCannedBranchesFinishInTurn.test_canned_branches_finish_in_turn",
             )
             for kind in (
-                "access_denied",
                 "escalate_offer",
                 "escalation_declined",
                 "clarify_menu",

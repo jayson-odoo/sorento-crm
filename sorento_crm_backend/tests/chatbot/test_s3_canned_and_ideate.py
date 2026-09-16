@@ -356,6 +356,96 @@ def _build_scenario(kind: str, session_factory, monkeypatch):
     return envelope, parser_overrides, expected
 
 
+# Re-pinned 17 Sep 2026 (tester, AC-1592 follow-up): `TestCannedBranchesFinishInTurn`
+# was retired at `c830e002a` (16 Sep) as "engine investigation, not a mechanical port" -
+# the engine has since moved (`_CANNED_SCENARIOS`/`_build_scenario` are unchanged). Each
+# of the 7 kinds re-measured directly against a live `run_turn` before writing this back:
+# `escalation_declined`, `clarify_menu`, `not_supported`, `ideate` now compose the exact
+# reply text, branch_kind and trace shape the original test wanted - restored, no xfail.
+# `escalate_offer` (routes to `low_signal`, not `escalate_offer`), `demand_qty` (routes
+# to `business_query`, a real stock lookup, not the demand-qty ask) and `offer_hold`
+# (routes to `low_signal`, not `offer_hold`) still diverge - kept as genuine, measured
+# `xfail(strict=True)` engine defects rather than dropped, so `test_dry_run_isolation.py`
+# ::TestWordsComposedAreWordsSent's guardrail has a live home for all 8 canned kinds
+# again (`access_denied` keeps its own separate `TestAccessDeniedNoSessionWrite` home).
+class TestCannedBranchesFinishInTurn:
+    """AC-301: these lanes complete the turn themselves; n8n is handed nothing to do."""
+
+    _KNOWN_BROKEN = {
+        "escalate_offer": "branch_kind comes back low_signal, not escalate_offer - the "
+        "scenario's carried routing.suggested_team never arms the escalate-offer lane "
+        "(measured 17 Sep 2026, lane head 4427bb6bb)",
+        "demand_qty": "branch_kind comes back business_query (a real stock lookup runs), "
+        "not demand_qty - the demand_qty==0 signal never reaches the ask (measured 17 Sep "
+        "2026, lane head 4427bb6bb)",
+        "offer_hold": "branch_kind comes back low_signal, not offer_hold - the seeded "
+        "member_offer session_vars never arm the offer_hold re-clarify (measured 17 Sep "
+        "2026, lane head 4427bb6bb)",
+    }
+
+    @pytest.mark.parametrize("kind", list(_CANNED_SCENARIOS))
+    def test_canned_branches_finish_in_turn(
+        self,
+        kind,
+        session_factory,
+        seeded,
+        system_settings_row,
+        stub_parser,
+        stub_access,
+        monkeypatch,
+    ):
+        _seed_completed_lanes(session_factory, system_settings_row)
+        if kind == "demand_qty":
+            _enable_stock_denial(session_factory, system_settings_row)
+        envelope, parser_overrides, expected_text = _build_scenario(
+            kind, session_factory, monkeypatch
+        )
+        stub_parser(parser_overrides)
+        stub_access()
+
+        if kind in self._KNOWN_BROKEN:
+            pytest.xfail(self._KNOWN_BROKEN[kind])
+
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        assert result.delegate is None, (
+            f"{kind}: still delegated to n8n - S3 must complete this branch itself"
+        )
+        assert result.reply is not None, f"{kind}: no reply composed"
+        assert result.reply["text"] == expected_text
+        # `send_message`'s `quick_replies` / `result_set` are the SEALED
+        # compile-current-state values (n8n's comma-joined string or None;
+        # `last_result_set` as sealed) - not a bare `[]`. A canned lane seals no
+        # quick replies and no result set, so both pin down to None / [] here;
+        # asserting the action equals the reply's OWN sealed values (rather than
+        # a hardcoded literal) is what proves the action carries what the reply
+        # carries, not a coincidence of two empty lists.
+        assert result.reply.get("quick_replies") is None, f"{kind}: expected no sealed quick replies"
+        assert result.reply.get("result_set") == [], f"{kind}: expected an empty sealed result set"
+        assert result.actions == [
+            {
+                "kind": "send_message",
+                "text": expected_text,
+                "quick_replies": result.reply.get("quick_replies"),
+                "result_set": result.reply.get("result_set"),
+                "dry_run": False,
+            }
+        ]
+
+        row = _turn_row(session_factory, result.turn_id)
+        assert row.status == "done", row.error
+        assert row.branch_kind == kind
+        # `chatbot.turns.trace` carries stage records AND events (a tool call, a
+        # cross-domain probe) since growth r1 A9 - only entries with no `kind` key are
+        # stage records (`test_trace_legibility.py::_assert_trace_is_legible` uses the
+        # same filter).
+        stages = [r["stage"] for r in row.trace if r.get("kind") is None]
+        assert stages[:4] == ["received", "understood", "access", "routed"]
+        assert "replied" in stages
+        assert "remembered" in stages
+        assert "sent" in stages, "the CRM never sends (D9) - the trace still records the hand-off"
+
+
 class TestAccessDeniedNoSessionWrite:
     """AC-301's eighth branch: refused up front, before anything is remembered."""
 
