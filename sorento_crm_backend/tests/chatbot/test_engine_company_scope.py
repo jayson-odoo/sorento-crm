@@ -478,12 +478,22 @@ class TestUnknownContactFailsClosed:
         )
 
         assert result.status == "done", result.error
-        # AC-1592 port: the composer's own miss wording for this shape changed (measured
-        # directly: a bare "*product information*:" section header, nothing under it,
-        # not the old "Couldn't find: CODE (product)" sentence) - the security property
-        # this test exists for is "no product surfaced", not the exact old sentence, and
-        # that still holds: no figures, no rows, nothing naming the seeded product.
-        assert result.reply["text"] == "*product information*:\n", result.reply["text"]
+        # Item 2 (coder 16 addendum, `3cdf6ba21`): the composer now gives this shape a
+        # sentence - "*product information*:\n\nI could not find ZZTSCOPEORPHAN1." -
+        # instead of the earlier bare header with nothing under it. The security property
+        # this test exists for is "no product surfaced" (never the exact wording), so this
+        # re-pins to that property rather than the literal reply text: the header still
+        # opens the reply, SOME not-found sentence follows (accepted whatever its exact
+        # words), and no stock-row vocabulary leaks in - a resolved product's stock answer
+        # would use one of these words and the not-found sentence never does.
+        text = result.reply["text"]
+        assert text.startswith("*product information*:"), text
+        lowered = text.lower()
+        assert "could not find" in lowered or "couldn't find" in lowered, text
+        for stock_word in ("in stock", "available", "qty", "quantity"):
+            assert stock_word not in lowered, (
+                f"a resolved-product stock row leaked into a not-found reply: {text!r}"
+            )
 
         assert resolve_calls, "the resolver was never called this turn"
         product_matches = resolve_calls[-1]
