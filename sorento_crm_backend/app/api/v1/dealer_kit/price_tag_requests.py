@@ -70,6 +70,12 @@ router = APIRouter(prefix="/price-tag-requests", tags=["price-tag-requests"])
 _VIEW = require_permission_with_api_key("dealer_kit.price_tag_requests.view")
 _PROCESS = require_permission("dealer_kit.price_tag_requests.process")
 
+# Security review 16 Sep: a live resolve costs 16-414ms measured (PLAN
+# price-tag-currency-token-extract-prompt.md section D) - unbounded, a page
+# with every row touched (a bulk product edit) turns one list load into
+# dozens of resolves. Capped per call; the rest keep their stored count.
+_DATA_CHANGE_REFRESH_CAP = 10
+
 def _default_tag_sheet_doc() -> dict:
     """A tag sheet nobody has drawn on yet, but one the designer can OPEN.
 
@@ -152,6 +158,35 @@ def list_price_tag_requests(
         sort=sort,
         direction=dir,
     )
+    # AC-D4 (PLAN price-tag-currency-token-extract-prompt.md section D):
+    # refresh the stored product-data-change count for the touched rows on
+    # THIS page only - a full per-row resolve would add up to 50 x 60ms to
+    # every load; an untouched row is served straight from the column.
+    #
+    # Security review 16 Sep: capped at `_DATA_CHANGE_REFRESH_CAP` per call, in
+    # page order - unbounded, a page where every row was touched (e.g. a bulk
+    # product price edit) turns one list load into dozens of live resolves.
+    # The rows past the cap keep their stored count (and a NULL/stale
+    # `data_checked_at`) until a later load picks them up.
+    touched = PriceTagRequestService.touched_request_ids(db, rows)
+    if touched:
+        refreshed = 0
+        for row in rows:
+            if refreshed >= _DATA_CHANGE_REFRESH_CAP:
+                break
+            if row.id not in touched:
+                continue
+            # The horizon is captured BEFORE the resolve, never after - see
+            # `store_data_change_count`'s own docstring.
+            checked_at = datetime.utcnow()
+            change_rows = tag_data_service.resolve_request_line_data(db, row)
+            tag_data_service.store_data_change_count(db, row, change_rows, checked_at)
+            refreshed += 1
+        # Derived-cache write on a read route: stores what the resolve
+        # already computed so the list can show it without resolving.
+        # Deliberate; `_VIEW` stays because the value is read-only data the
+        # caller could compute anyway.
+        db.commit()
     return PriceTagRequestPage(
         data=PriceTagRequestService.list_items(db, rows),
         pagination={"total": total, "page": page, "limit": limit},
@@ -434,8 +469,16 @@ def _change_sets(db: Session, req) -> list[TagDataChangeSet]:
     them resolve different products, so rolling them up here would ask one
     question about two different changes. The Lines tab rolls its own pill up
     from these.
+
+    AC-D2: also refreshes the request's stored change count/timestamp - every
+    caller of this helper already runs the diff, so this is where all three
+    (GET, recheck, pin) pick it up with no second resolve.
     """
-    return [
+    # Security review 16 Sep: the horizon is captured BEFORE the resolve,
+    # never after - see `store_data_change_count`'s own docstring.
+    checked_at = datetime.utcnow()
+    rows = tag_data_service.resolve_request_line_data(db, req)
+    sets = [
         TagDataChangeSet(
             tag_id=row["tag_id"],
             tag_label=row.get("tag_label") or "",
@@ -444,9 +487,11 @@ def _change_sets(db: Session, req) -> list[TagDataChangeSet]:
             name=row.get("name") or "",
             changes=row.get("data_changes") or [],
         )
-        for row in tag_data_service.resolve_request_line_data(db, req)
+        for row in rows
         if row.get("data_changes")
     ]
+    tag_data_service.store_data_change_count(db, req, rows, checked_at)
+    return sets
 
 
 @router.get("/{request_id}/data-changes", response_model=list[TagDataChangeSet])
@@ -468,7 +513,16 @@ def list_tag_data_changes(
         raise AppException(
             status_code=404, message="Price tag request not found.", code="NOT_FOUND"
         )
-    return _change_sets(db, req)
+    result = _change_sets(db, req)
+    # AC-D2: this route was read-only before the stored cache existed - the
+    # commit is new, for the count/timestamp `_change_sets` just wrote.
+    #
+    # Derived-cache write on a read route: stores what the resolve already
+    # computed so the list can show it without resolving. Deliberate; `_VIEW`
+    # stays because the value is read-only data the caller could compute
+    # anyway.
+    db.commit()
+    return result
 
 
 @router.post(
@@ -499,7 +553,9 @@ def recheck_tag_data_changes(
             if tag.data_change_ack_hash is not None:
                 tag.data_change_ack_hash = None
     db.commit()
-    return _change_sets(db, req)
+    result = _change_sets(db, req)
+    db.commit()
+    return result
 
 
 @router.post("/{request_id}/tags/{tag_id}/pin", response_model=TagPinResponse)
@@ -614,6 +670,10 @@ def resolve_tag_pin(
         tag.data_change_ack_hash = tag_data_service.data_hash(live)
 
     db.flush()
+    # AC-D2: this decision moved the pin/ack, so the stored count has to
+    # reflect it before the response goes out - `_change_sets` re-runs the
+    # diff over the whole request and writes the refreshed count/timestamp.
+    _change_sets(db, req)
     db.commit()
     return TagPinResponse(tag_id=tag.id, pinned_at=tag.pinned_at)
 

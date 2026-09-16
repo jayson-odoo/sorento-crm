@@ -144,14 +144,29 @@ vi.mock('../../../../services/priceTagReviewService', () => ({
   setReviewCommentResolved: vi.fn(),
 }));
 
+// AC-C2: the live red-dot poll. Unmocked before this feature, the module's
+// real `listTagDataChanges` ran a real `apiFetch` every other test here
+// silently swallowed (`.catch(() => {})` in `RequestTagDesigner.tsx`) - a
+// resolved `[]` default is strictly more deterministic for them too.
+vi.mock('../../../../services/priceTagDataService', () => ({
+  listTagDataChanges: vi.fn(async () => []),
+  recheckTagDataChanges: vi.fn(async () => []),
+  resolveTagPin: vi.fn(async () => {}),
+  listRequestVersions: vi.fn(async () => []),
+  getRequestVersion: vi.fn(),
+  restoreRequestVersion: vi.fn(),
+}));
+
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { listReviewComments } from '../../../../services/priceTagReviewService';
+import { listTagDataChanges } from '../../../../services/priceTagDataService';
 import {
   getPriceTagRequest,
   resolveRequestTags,
   updateRequestTag,
 } from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
+import { tagDataChangesKey } from '../../../hooks/useTagDataChanges';
 import type {
   PriceTagRequestDetail,
   PriceTagRequestLine,
@@ -163,6 +178,7 @@ const mockResolve = vi.mocked(resolveRequestTags);
 const mockComments = vi.mocked(listReviewComments);
 const mockGetRequest = vi.mocked(getPriceTagRequest);
 const mockUpdateTag = vi.mocked(updateRequestTag);
+const mockChanges = vi.mocked(listTagDataChanges);
 
 // ---------------------------------------------------------------------------
 // Fixtures - one line, one open Basin group, four candidates
@@ -318,6 +334,7 @@ beforeEach(() => {
   searchParams = new URLSearchParams();
   mockListTemplates.mockResolvedValue([]);
   mockResolve.mockResolvedValue([row()]);
+  mockChanges.mockResolvedValue([]);
 });
 
 async function mount(detail: PriceTagRequestDetail, initialDoc: TagSheetDoc | null = null) {
@@ -418,5 +435,40 @@ describe('RequestTagDesigner rail - no React key warning (F9)', () => {
     expect(keyWarning).toBeUndefined();
 
     errorSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-C2 - the live red-dot poll: the rail reflects a NEW poll result with no
+// remount and no reload, because the designer now reads `useTagDataChanges`
+// (react-query) instead of a one-shot `useEffect` + local state.
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner rail - live red-dot poll (AC-C2)', () => {
+  it('shows the red dot for the changed tag once the polled query refetches, without a remount', async () => {
+    mockChanges.mockResolvedValueOnce([]);
+    const { queryClient } = await mount(request());
+
+    expect(screen.queryByTitle('Product data changed - review')).toBeNull();
+
+    mockChanges.mockResolvedValueOnce([
+      {
+        tag_id: 'tag-1a',
+        tag_label: '1a',
+        line_id: 'line-1',
+        code: 'SRTBF11834',
+        name: 'ZZT Cabinet',
+        changes: [
+          { field: 'list_price', label: 'List price', old: '1599.00', new: '1699.00' },
+        ],
+      },
+    ]);
+    // Simulates the 30s poll firing again - no unmount, no re-render trigger
+    // from the test other than the cache itself gaining new data.
+    await queryClient.invalidateQueries({ queryKey: tagDataChangesKey('req-1') });
+
+    await waitFor(() =>
+      expect(screen.getByTitle('Product data changed - review')).toBeInTheDocument(),
+    );
   });
 });

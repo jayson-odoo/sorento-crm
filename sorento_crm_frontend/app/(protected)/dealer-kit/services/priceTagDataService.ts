@@ -108,16 +108,6 @@ export async function resolveTagPin(
   await unwrap<unknown>(response, 'Failed to apply that decision');
 }
 
-/** "Update all" (D18): the same call per changed tag, in order. */
-export async function updateAllTagPins(
-  requestId: string,
-  tagIds: string[],
-): Promise<void> {
-  for (const tagId of tagIds) {
-    await resolveTagPin(requestId, tagId, 'update');
-  }
-}
-
 /** `GET .../versions` - newest first. */
 export async function listRequestVersions(
   requestId: string,

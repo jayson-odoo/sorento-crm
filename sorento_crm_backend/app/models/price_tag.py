@@ -159,6 +159,15 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # skipped whenever the designer saved first, so every round came back as 1.
     # 0 means it has never been sent - the first proof_ready makes it 1.
     review_round = Column(Integer, nullable=False, server_default="0", default=0)
+    # The list's stored product-data-change cache (ptag_0012,
+    # PLAN-price-tag-currency-token-extract-prompt.md section D). Written by
+    # `tag_data_service.store_data_change_count` wherever the diff already
+    # runs; the list route refreshes it only for a row
+    # `PriceTagRequestService.touched_request_ids` says was touched since
+    # `data_checked_at` - every other row is served from the column with no
+    # live resolve at all.
+    data_changed_tag_count = Column(Integer, nullable=False, server_default="0")
+    data_checked_at = Column(DateTime(timezone=False), nullable=True)
 
     lines = relationship(
         "PriceTagRequestLine",

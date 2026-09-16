@@ -103,6 +103,11 @@ export interface PromptVersionsResponse {
   variables: string[];
   labels: { production: number | null; staging: number | null };
   versions: PromptVersionRow[];
+  /** Slice E: the code fallback the backend always sends - optional here
+   *  only so a fixture literal built before this field existed still
+   *  type-checks; the editor seeds its draft from it when `versions` is
+   *  empty (no saved version yet). */
+  fallback_text?: string;
 }
 
 export interface PromptVersionDetail {
