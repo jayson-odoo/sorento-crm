@@ -17,6 +17,7 @@ import type {
   ImpositionConfig,
   LayerPadding,
   PlacedTag,
+  SlotBinding,
   TagBindingData,
   TagImage,
   TagLayer,
@@ -28,10 +29,13 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import {
+  imagesOf,
   layerText,
+  priceBadgeInput,
   resolveBarcodeValue,
   resolveSlotText,
   slotImageAttachmentId,
+  subjectOf,
 } from '@/lib/dealer-kit/product-block';
 import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import {
@@ -274,6 +278,9 @@ function renderShapeLayer(layer: TagLayer) {
  *
  * `slotImageAttachmentId` is the SAME rule the canvas resolves a product photo
  * by (D42), so the proof on screen and the PDF cannot pick different pictures.
+ * D7: resolved against the layer's own subject first, exactly as
+ * `boundImageUrl` does on the canvas - a part subject prints THAT part's
+ * photo, and a part with none prints the empty placeholder (AC-S4-5).
  */
 function imageUrlFor(
   layer: TagLayer,
@@ -287,7 +294,8 @@ function imageUrlFor(
   } else if (props.kind !== 'product_slot') {
     return null;
   }
-  const attachmentId = slotImageAttachmentId(layer, resolved?.images ?? []);
+  const images = imagesOf(subjectOf(bindingOf(resolved), layer));
+  const attachmentId = slotImageAttachmentId(layer, images);
   return attachmentId ? media.images?.[attachmentId] ?? null : null;
 }
 
@@ -459,17 +467,17 @@ function CroppedImage({
  *
  * That shared call is the whole point of the layer type: the proof a
  * salesperson approves on screen and the PDF that reaches the printer state the
- * same price in the same shape (AC-L.1).
+ * same price in the same shape (AC-L.1). D7: `priceBadgeInput` reads the
+ * badge's own subject (Tag total by default, else a single product's own
+ * price) exactly as the canvas does - the two figures were computed inline
+ * here before this, which is exactly the second copy the shared helper
+ * exists to avoid.
  */
 function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
   const props = layer.props;
   if (props.kind !== 'price_badge') return null;
 
-  const parts = priceBadgeParts(props, {
-    listPrice: resolved?.list_price ?? null,
-    offerPrice:
-      resolved && resolved.show_promo_price ? resolved.sell_price ?? null : null,
-  });
+  const parts = priceBadgeParts(props, priceBadgeInput(bindingOf(resolved), layer));
   const typo = priceBadgeTypography(props);
 
   // The un-padded box, at the layer's own position and rotation - unchanged
@@ -672,16 +680,18 @@ function renderProductSlotLayer(
   if (resolved) {
     switch (props.fieldKey) {
       case 'code':
-        content = resolved.code;
-        break;
       case 'name':
-        content = resolved.name;
-        break;
       case 'dimensions':
-        content = resolved.dimensions;
-        break;
       case 'spec_lines':
-        content = resolved.spec_lines;
+        // D7: through the same resolver the canvas uses, so a part subject
+        // (AC-S4-3) prints here exactly as it draws on screen - this used to
+        // read `resolved.*` directly, which is the parent ALWAYS, subject or
+        // not.
+        content =
+          resolveSlotText(
+            { slot_binding: props.fieldKey as SlotBinding, props },
+            bindingOf(resolved),
+          ) ?? '';
         break;
       case 'product_image': {
         // The product's photo, by the same rule the canvas draws it with (D42).
@@ -828,7 +838,9 @@ function BarcodeLayer({
 
   const binding = bindingOf(resolved);
   const value = isBarcode ? resolveBarcodeValue(layer, binding) : null;
-  const code = isBarcode ? resolveSlotText({ slot_binding: 'code' }, binding) : null;
+  const code = isBarcode
+    ? resolveSlotText({ slot_binding: 'code', props }, binding)
+    : null;
   const symbology = barcodeSymbologyFor(value);
 
   const barsUrl = useMemo(() => {

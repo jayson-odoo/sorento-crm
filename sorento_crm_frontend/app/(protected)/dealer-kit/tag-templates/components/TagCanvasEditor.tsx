@@ -3105,6 +3105,23 @@ export function TagCanvasEditor({
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
   /**
+   * D7/AC-S4-1/S4-7: the CANVAS's own tag parts and parent code - `boundData`
+   * rather than `selectedData`, so the Layers panel's suffix still shows with
+   * nothing selected. Every layer on this canvas is on the same tag, so one
+   * binding serves the Inspector's picker AND every row's suffix. Empty/null
+   * on a bare product or set block, or in the template editor (no
+   * `boundData` at all) - neither carries parts, so the picker never shows
+   * (AC-S4-2).
+   */
+  const subjectParts = boundData?.kind === 'line' ? boundData.line.parts : undefined;
+  const subjectParentCode =
+    boundData?.kind === 'line'
+      ? boundData.line.code
+      : boundData?.kind === 'product'
+        ? boundData.product.code
+        : null;
+
+  /**
    * What the inspector's Content box falls back to when nothing was typed,
    * AND what its "Copy rendered text" preview shows (D21/S16 code review).
    *
@@ -3452,11 +3469,10 @@ export function TagCanvasEditor({
                   onResize={handleRailResize}
                   className="flex flex-col"
                 >
-                  {/* The Panel itself clips at its own bounds (overflow:hidden
-                      from the primitive) - this inner div is what actually
-                      scrolls once the divider drags the pane below the rail's
-                      natural content height. */}
-                  <div className="flex h-full flex-col overflow-y-auto">{leftRail}</div>
+                  {/* D9: no scroll on this wrapper any more - LINES (the
+                      rail's own `flex-1` child) scrolls itself, and TAG SIZE
+                      sits below it, both always in view. */}
+                  <div className="flex h-full flex-col">{leftRail}</div>
                 </ResizablePanel>
                 <ResizableHandle
                   withHandle
@@ -3472,6 +3488,7 @@ export function TagCanvasEditor({
                     onToggleLock={handleToggleLock}
                     onMoveLayer={handleMoveLayer}
                     overflowingIds={overflowingIds}
+                    subjectParts={subjectParts}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -3485,6 +3502,7 @@ export function TagCanvasEditor({
                   onToggleLock={handleToggleLock}
                   onMoveLayer={handleMoveLayer}
                   overflowingIds={overflowingIds}
+                  subjectParts={subjectParts}
                 />
               </div>
             )}
@@ -4379,6 +4397,8 @@ export function TagCanvasEditor({
               onToggleEditPoints={(layerId) =>
                 setEditingPointsId((prev) => (prev === layerId ? null : layerId))
               }
+              subjectParts={subjectParts}
+              subjectParentCode={subjectParentCode}
             />
           </ResizablePanel>
         </ResizablePanelGroup>

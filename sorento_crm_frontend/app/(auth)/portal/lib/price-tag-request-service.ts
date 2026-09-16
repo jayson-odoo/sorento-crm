@@ -46,6 +46,37 @@
  *    way a line already resolves its own product's code and name, because the
  *    portal shows codes and never ids.
  * ===========================================================================
+ *
+ * ===========================================================================
+ * LINE-LEVEL PROMOTION (PLAN-price-tag-line-promo-combo-subject.md D1-D4, S7)
+ * ===========================================================================
+ * D1: the request-level `promotion_id` header select is retired; a promotion
+ * (or a hand-typed price) now lives on the LINE. `price_mode` stays on the
+ * header. D4: one pricing call answers every line at once.
+ *
+ * ---- BACKEND CONTRACT (built) ---------------------------------------------
+ *
+ *  POST /api/v1/public/portal/lookups/line-pricing
+ *    body  { lines: [{ key, product_id, part_product_ids: string[],
+ *            candidate_product_ids: string[], promotion_id?: string | null }] }
+ *    ->    LinePricingResult[]  (one per input `key`, same order)
+ *
+ *    `list_price` = sum of list price over the parent + every RESOLVED part
+ *    (an unresolved candidate group contributes nothing). `promotion_options`
+ *    is every active promotion covering at least one product on the line,
+ *    sorted lowest tag total first; `auto_promotion_id` is that first id (or
+ *    null with none covering). `sell_price` is the total under `promotion_id`
+ *    when given, else under `auto_promotion_id`, else null. `parts_at_list`
+ *    names which part product ids print at list under that promotion (D3: a
+ *    promotion may cover the parent but not every part). `candidates` prices
+ *    every id in `candidate_product_ids` the same way, for the part row's
+ *    "CODE  RM x" copy (S2).
+ *
+ *  Line create/update/response gains `promotion_id`, `promotion_name`,
+ *  `manual_sell_price`, `list_price`, `sell_price`, `sell_price_basis`
+ *  (`manual` | `promotion` | `list`); the request-level `promotion_id` /
+ *  `promotion_name` are dropped (backfilled into lines first).
+ * ===========================================================================
  */
 
 import { extractApiError } from '@/lib/api-client';
@@ -137,6 +168,15 @@ export interface PriceTagRequestLine {
   parts?: PriceTagRequestLinePart[];
   /** What actually prints for this line: one tag by default, N after a split. */
   tags?: PriceTagRequestTag[];
+  // ---- D1: the line's own promotion / manual price, resolved server-side.
+  // Optional so a server row that predates the migration keeps validating;
+  // the form falls back to `lookupLinePricing` while these are absent.
+  promotion_id?: string | null;
+  promotion_name?: string | null;
+  manual_sell_price?: number | null;
+  list_price?: number | null;
+  sell_price?: number | null;
+  sell_price_basis?: 'manual' | 'promotion' | 'list' | null;
 }
 
 /** Header-level price mode (D5): replaces the per-line "Promo price" switch.
@@ -149,8 +189,6 @@ export interface PriceTagRequestSummary {
   debtor_code: string | null;
   /** Null on a draft: Save Draft validates nothing (D48a). */
   debtor_name: string | null;
-  promotion_id: string | null;
-  promotion_name: string | null;
   /** Null on a draft, for the same reason as `debtor_name`. */
   needed_by_date: string | null;
   notes: string | null;
@@ -294,6 +332,11 @@ export type PriceTagRequestLineInput = {
   remarks: string | null;
   product_class: string | null;
   parts: LinePartIn[];
+  // D1/D2 (S6): the line's own price basis - mutually exclusive
+  // (AC-S6-4, picking a promotion clears manual and vice versa). Sent on
+  // create, update AND revise (the same `payloadLines()` builds all three).
+  promotion_id?: string | null;
+  manual_sell_price?: number | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -391,6 +434,43 @@ export async function lookupProductCombos(
     `${LOOKUPS}/product-combos/${encodeURIComponent(productId)}`,
   );
   return unwrap<ProductCombosLookup>(res, 'Failed to load the packages for this product');
+}
+
+// ---------------------------------------------------------------------------
+// Line pricing (D1-D4, S7 - see the contract block at the top of this file)
+// ---------------------------------------------------------------------------
+
+export type {
+  LinePricingCandidate,
+  LinePricingLineInput,
+  LinePricingPromotionOption,
+  LinePricingResult,
+  SellPriceBasis,
+} from '@/lib/dealer-kit/line-pricing-types';
+import type {
+  LinePricingLineInput as LinePricingLineInputT,
+  LinePricingResult as LinePricingResultT,
+} from '@/lib/dealer-kit/line-pricing-types';
+
+/**
+ * One pricing call for every line (D4, S7). Audience-scoped to THIS
+ * contact - the portal route reads it off the portal token, not a param
+ * this call sends.
+ *
+ * `_priceMode` is not sent either: the route's body has no `price_mode`
+ * field (`LinePricingRequest`, S7) - `sell_price` is a real number in List
+ * mode too, and the mode only decides what the FORM does with the answer.
+ */
+export async function lookupLinePricing(
+  _priceMode: PriceMode,
+  lines: LinePricingLineInputT[],
+): Promise<LinePricingResultT[]> {
+  const res = await portalFetch(`${LOOKUPS}/line-pricing`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lines }),
+  });
+  return unwrap<LinePricingResultT[]>(res, 'Failed to price these lines');
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +595,9 @@ export async function getRequest(id: string): Promise<PriceTagRequestDetail | nu
 export interface CreatePriceTagRequestInput {
   debtor_code: string | null;
   debtor_name: string | null;
-  promotion_id: string | null;
+  // D1 (S6): no request-level `promotion_id` any more - both `PriceTagRequestCreate`
+  // and `...Update` `extra="forbid"` it now; the promotion is a LINE fact
+  // (`PriceTagRequestLineInput.promotion_id`).
   needed_by_date: string | null;
   notes: string | null;
   price_mode: PriceMode;

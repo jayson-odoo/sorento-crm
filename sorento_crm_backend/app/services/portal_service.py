@@ -1489,10 +1489,14 @@ class PortalService:
             # branch exists ONLY so the revision engine's `build_snapshot` /
             # `revise()._apply_payload` (both keyed on this ONE list, UAC J2)
             # know the header fields for this type too.
+            # D1 (S6): `promotion_id` is gone - the promotion is a LINE fact,
+            # carried through `products[].promotion_id` in `_apply_price_tag_lines`
+            # (`portal_revision_service.py`), never this header whitelist. A
+            # stray header `promotion_id` here used to `setattr` onto a column
+            # the model no longer has - a silent no-op, not a write.
             return (
                 "debtor_code",
                 "debtor_name",
-                "promotion_id",
                 "needed_by_date",
                 "notes",
                 "price_mode",

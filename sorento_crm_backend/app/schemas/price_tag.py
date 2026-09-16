@@ -1,6 +1,7 @@
 """Pydantic schemas for price tag requests and tag templates."""
 from __future__ import annotations
 
+import uuid as _uuid
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal, Optional, Union
@@ -18,6 +19,14 @@ from pydantic import (
 # ---------------------------------------------------------------------------
 # Price tag request line schemas
 # ---------------------------------------------------------------------------
+
+#: A hand-typed line price (D2, R6/security review) - matches the column's
+#: own `Numeric(12, 2)`. `gt=0`: a manual price is an agreed FIGURE, not a
+#: giveaway (0) or a typo with a stray minus sign (-5); an absurd
+#: `1E+400`-shaped value is refused by `max_digits` before it ever reaches
+#: storage. Every arm that accepts a hand-typed price (create, update, the
+#: CRM line PATCH, and revise's own line model below) shares this ONE bound.
+ManualSellPrice = Annotated[Decimal, Field(gt=0, max_digits=12, decimal_places=2)]
 
 
 class LinePartIn(BaseModel):
@@ -53,22 +62,59 @@ class PriceTagRequestLineCreate(BaseModel):
     # `order_by(sort_order)` returned them in whatever order Postgres liked. The
     # row a refusal names (`line:<index>`) has to be the row the salesperson sees.
     sort_order: Optional[int] = None
+    # D1/D2 (S6): the line's OWN price basis - a request-level promotion broke
+    # the moment two lines sat on two promotions. Mutually exclusive
+    # (AC-S6-4, checked on the whole request below, since that needs the
+    # header's `price_mode` too); `promotion_id` must cover this line
+    # (AC-S6-5), checked in the service where the line's resolved parts and
+    # candidates are known.
+    promotion_id: Optional[str] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
+
+
+class PriceTagReviseLineIn(BaseModel):
+    """One ``products[]`` entry in a revise payload (D1/D5, R6/security
+    review) - the revise composer sends every field
+    ``PriceTagRequestLineInput`` (create/update) does, but the raw dict
+    never ran through pydantic at all: unlike create/update, where a
+    ``Decimal`` field type at least rejects a non-numeric string, a bad
+    ``manual_sell_price`` here reached ``_as_decimal`` completely
+    unvalidated (``-5``/``0`` converted cleanly, ``"abc"`` raised
+    ``decimal.InvalidOperation`` uncaught). Same bound every other arm
+    (create, update, the CRM line PATCH) uses.
+
+    ``extra="ignore"``, not ``"forbid"``: the composer's payload carries
+    ``combo_id`` / ``parts`` / ``included_accessories`` / ``product_class`` /
+    ``line_type`` too - ``_convert_ptag_revise_line`` already reads only the
+    fields declared here and drops the rest by design (they are carried over
+    from the OLD line instead, Gap D), so this model is not the composer's
+    full contract, only the two fields that never had one.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+    quantity: int = Field(default=1, ge=1)
+    remarks: Optional[str] = None
+    promotion_id: Optional[str] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
 
 
 class PriceTagRequestTagUpdate(BaseModel):
-    """PATCH one tag (D3). Replaces the retired line-level update.
+    """PATCH one tag (D3).
 
-    `choices` is `{role: product_id}` - what "Pick one" writes.
+    ``choices`` is gone with Split / Pick one (D6, AC-S8-4): every choice
+    group is resolved into its own tag at submit now, so there is nothing
+    left on a tag for a PATCH to answer - `extra="forbid"` turns a stray
+    `choices` key into a 422 naming it, rather than silently doing nothing.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     quantity: Optional[int] = Field(default=None, ge=1)
     marketing_price_override: Optional[Decimal] = None
     marketing_override_reason: Optional[str] = None
-    choices: Optional[dict[str, str]] = None
-
-
-class PriceTagRequestTagSplit(BaseModel):
-    role: str
 
 
 class PriceTagRequestTagResponse(BaseModel):
@@ -169,6 +215,15 @@ class PriceTagRequestLineResponse(BaseModel):
     name: str = ""
     list_price: Optional[float] = None
     sell_price: Optional[float] = None
+    # D1/D2 (S6): the line's own promotion / manual price, real columns now.
+    # ``promotion_name`` is resolved, not stored, for the same reason
+    # ``code``/``name`` are - a bare id is never shown (AC-X-2).
+    promotion_id: Optional[str] = None
+    promotion_name: Optional[str] = None
+    manual_sell_price: Optional[Decimal] = None
+    # D3 (S7): why `sell_price` is what it is - `manual` | `promotion` |
+    # `list`. Resolved alongside `list_price`/`sell_price`, same reason.
+    sell_price_basis: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -184,11 +239,25 @@ class PriceTagRequestCreate(BaseModel):
     ``PriceTagRequestService.validate_submittable``, which can name what is
     missing. Both nullable fields match columns that are nullable for the same
     reason.
+
+    ``extra="forbid"`` (D1, S6): the promotion moved to the LINE - a
+    request-level ``promotion_id`` is now an unknown field, 422, rather than
+    a value this schema quietly accepted and nothing ever read.
+
+    AC-S6-4 (a line's manual price and its promotion are mutually exclusive,
+    and manual only applies in Selling mode) is NOT re-validated here - it
+    used to be a ``@model_validator`` on this class, but revise's raw-dict
+    payload never runs through Pydantic at all, so the rule lived twice with
+    two different error shapes. Moved into
+    ``PriceTagRequestService._validate_line_price_basis``, the one seam
+    create, update, revise (``_add_lines``) and the CRM line PATCH
+    (``set_line_price``) all pass through (security review finding).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     debtor_code: Optional[str] = None
     debtor_name: Optional[str] = None
-    promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
     # Header price mode (D5, r7): 'selling' requires a promotion, enforced on
@@ -203,6 +272,7 @@ class PriceTagRequestCreate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+
     #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
     #: longer value 500s on the flush instead of being refused with a 422.
     print_by: Optional[Literal["office", "self"]] = None
@@ -210,11 +280,17 @@ class PriceTagRequestCreate(BaseModel):
 
 class PriceTagRequestUpdate(BaseModel):
     """A draft edit. ``lines`` omitted leaves the lines alone; ``lines`` given
-    replaces them, which is what the form does when it re-saves a draft."""
+    replaces them, which is what the form does when it re-saves a draft.
+
+    ``extra="forbid"`` for the same reason as ``PriceTagRequestCreate``.
+    AC-S6-4 is not re-validated here either, for the same reason - see that
+    class's own docstring.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     debtor_code: Optional[str] = None
     debtor_name: Optional[str] = None
-    promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
     # NOT Optional: the column is NOT NULL, and `price_mode: null` used to
@@ -231,6 +307,7 @@ class PriceTagRequestUpdate(BaseModel):
     @classmethod
     def _blank_needed_by_is_none(cls, v):
         return None if v == "" else v
+
     #: Who prints (r9 D7). A Literal, not a str: the column is String(8), so a
     #: longer value 500s on the flush instead of being refused with a 422.
     print_by: Optional[Literal["office", "self"]] = None
@@ -242,10 +319,30 @@ class PriceTagRequestOfficeUpdate(BaseModel):
     One field, deliberately: everything else belongs to the salesperson and
     goes through the revision engine. A separate model from
     ``PriceTagRequestUpdate`` so a draft edit and an office fix cannot drift
-    into each other's fields.
+    into each other's fields. ``extra="forbid"`` (D1, S6): a header
+    ``promotion_id`` is no longer a thing this route - or any route - accepts.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     print_by: Optional[Literal["office", "self"]] = None
+
+
+class PriceTagRequestLinePricePatch(BaseModel):
+    """D5/S11: the office changing ONE line's own price basis.
+
+    Both fields optional and independently settable - a promotion pick and a
+    manual figure are mutually exclusive (AC-S6-4), checked the same way the
+    create/update schemas check it, once ``price_mode`` (a REQUEST fact) is
+    known - the route reads it off the request row, not this body.
+    ``extra="forbid"`` for the same reason every other price tag schema
+    forbids it: an unknown key here would silently do nothing.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    promotion_id: Optional[str] = None
+    manual_sell_price: Optional[ManualSellPrice] = None
 
 
 class PriceTagRequestAttachment(BaseModel):
@@ -284,7 +381,6 @@ class PriceTagRequestResponse(BaseModel):
     # Optional since D48a: a draft may carry neither, and a non-optional field
     # refuses to serialise a None even though the schema declared it.
     debtor_name: Optional[str] = None
-    promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
     price_mode: str = "list"
@@ -320,12 +416,12 @@ class PriceTagRequestResponse(BaseModel):
 
     # Resolved, not stored. Filled by
     # ``PriceTagRequestService.response_with_resolved_lines``; a request holds a
-    # contact id, a user id and a promotion id, and every one of those is a UUID
-    # the screen may not show. Declared here because ``response_model`` removes
-    # what it does not know about without a word.
+    # contact id and a user id, and both are UUIDs the screen may not show.
+    # Declared here because ``response_model`` removes what it does not know
+    # about without a word. D1 (S6): the promotion moved to the LINE - there is
+    # no single request-level promotion to name here any more.
     assigned_to_name: Optional[str] = None
     contact_name: Optional[str] = None
-    promotion_name: Optional[str] = None
     line_count: int = 0
 
     # The PO files the salesperson attached, in
@@ -364,15 +460,15 @@ class PriceTagRequestListItem(BaseModel):
     doc_number: str
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
-    promotion_id: Optional[str] = None
     created_at: datetime
     # The four things the queue actually draws in its columns, and the four it
     # drew blank: the request row holds ids, and a listing may not show a UUID.
     # Resolved for the whole page in two set-based queries, never per row.
+    # D1 (S6): a promotion is a LINE fact now, so there is no header
+    # `promotion_id`/`promotion_name` to carry here any more.
     assigned_to_id: Optional[str] = None
     assigned_to_name: Optional[str] = None
     contact_name: Optional[str] = None
-    promotion_name: Optional[str] = None
     line_count: int = 0
     # A request that was saved and never submitted still carries status "new",
     # so this is the only thing that tells a draft from a submitted request. The
@@ -913,17 +1009,99 @@ class TagItemLookupItem(BaseModel):
     name: str
 
 
-class PromotionLookupItem(BaseModel):
-    """One row of the portal promotion dropdown (S4, #477).
+def _uuid_or_none(value: Optional[str]) -> Optional[str]:
+    """A caller-supplied id, or a pydantic `ValueError` (422) naming the
+    field (R8/R8b, security review): every id on this lookup line reaches a
+    UUID column somewhere downstream (`Product.id.in_(...)`,
+    `PromotionProduct.promotion_id == ...`), where a non-UUID string is a
+    Postgres `DataError` (500), not an empty result.
+    """
+    if value is None:
+        return None
+    try:
+        return str(_uuid.UUID(str(value)))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("must be a valid UUID") from None
 
-    ``name`` is ``promotions.description`` - the column the rest of the price
-    tag request already reads it off (``PriceTagRequestSummary.promotion_name``,
-    ``resolved_labels``), so the portal and the CRM never disagree about what a
-    promotion is called.
+
+class LinePricingLineIn(BaseModel):
+    """One line to price (D4, S7). ``manual_sell_price`` is deliberately NOT
+    here - a line has no manual figure until it is SAVED, so neither lookup
+    route's caller ever has one to send; ``line_pricing`` the service
+    function still accepts it as a plain dict key, for ``resolve_tags_live``
+    (S9) to reuse the one engine with a persisted line's own figure.
+
+    R7/R8 (security review): each id list is capped at 50, and every id -
+    ``product_id``, each ``part_product_ids`` / ``candidate_product_ids``
+    entry, ``promotion_id`` - is UUID-shape checked here rather than
+    reaching a Postgres `DataError` further down.
     """
 
+    key: str
+    product_id: Optional[str] = None
+    part_product_ids: list[str] = Field(default_factory=list, max_length=50)
+    candidate_product_ids: list[str] = Field(default_factory=list, max_length=50)
+    promotion_id: Optional[str] = None
+
+    @field_validator("product_id", "promotion_id", mode="after")
+    @classmethod
+    def _validate_id(cls, value):
+        return _uuid_or_none(value)
+
+    @field_validator("part_product_ids", "candidate_product_ids", mode="after")
+    @classmethod
+    def _validate_id_list(cls, values):
+        return [_uuid_or_none(v) for v in values]
+
+
+class LinePricingRequest(BaseModel):
+    """R7 (security review): `lines` is capped at 200 - the lookup route had
+    no body ceiling at all, unlike every other list-shaped payload in this
+    module.
+
+    `price_mode` is gone (it rode along from an earlier draft of this
+    contract): neither the portal nor the CRM route ever reads
+    `payload.price_mode`, `line_pricing` itself takes no such parameter, and
+    `sell_price` is a real number in List mode too - AC-S7-1 never gave it a
+    job, so dropping it removes dead API surface rather than wiring a
+    behaviour nothing asks for.
+    """
+
+    lines: list[LinePricingLineIn] = Field(default_factory=list, max_length=200)
+
+
+class LinePricingPromotionOption(BaseModel):
     id: str
-    name: str
+    description: str
+    sell_price: float
+
+
+class LinePricingCandidateOut(BaseModel):
+    product_id: str
+    list_price: Optional[float] = None
+    sell_price: Optional[float] = None
+
+
+class LinePricingRow(BaseModel):
+    """One line's answer (D4's API contract shape).
+
+    R10 (security review): every money field is a plain ``float``, the same
+    as ``ResolvedLineData`` - unlike ``manual_sell_price`` on the request/
+    line schemas (a documented exception that stays a ``Decimal``, so it
+    keeps serialising as a JSON string, per ``test_patch_line_manual_price``),
+    this is a LOOKUP row the plan's own contract (AC-S7-1) gives no such
+    carve-out, so a caller must be able to do arithmetic on it without a
+    ``parseFloat``.
+    """
+
+    key: str
+    list_price: float
+    promotion_options: list[LinePricingPromotionOption] = []
+    auto_promotion_id: Optional[str] = None
+    sell_price: Optional[float] = None
+    sell_price_basis: str
+    parts_at_list: list[str] = []
+    candidates: list[LinePricingCandidateOut] = []
 
 
 class TagImage(BaseModel):
@@ -1055,12 +1233,26 @@ class TagOpenGroup(BaseModel):
 
 
 class TagPartData(BaseModel):
+    """One resolved part on a tag, D7's "full product data" (AC-S9-1) - a
+    layer may pick ANY part as its subject, so a part needs everything the
+    host already carries.
+    """
+
     #: Carried so a caller can match a part back to the choice that produced it.
     #: Never rendered - the code is what a reader sees (AC-X-2).
     product_id: Optional[str] = None
     code: str
     name: str
     dimensions: str = ""
+    spec_lines: list[str] = []
+    specs: list[SpecValue] = []
+    images: list[TagImage] = []
+    barcode: Optional[str] = None
+    list_price: Optional[float] = None
+    #: Offer under the LINE's promotion, or None - never a fall back to list
+    #: (AC-S9-1): a part printing at list beside its own code is not "on
+    #: sale", the tag's box total is what decides that.
+    sell_price: Optional[float] = None
 
 
 class ResolvedLineData(BaseModel):
@@ -1085,6 +1277,13 @@ class ResolvedLineData(BaseModel):
     images: list[TagImage] = []
     list_price: Optional[float] = None
     sell_price: Optional[float] = None
+    # D7 (S9): the HOST alone, never the roll-up above - a price badge's
+    # `subjectPart: -1` reads THIS.
+    parent_list_price: Optional[float] = None
+    parent_sell_price: Optional[float] = None
+    # D3/AC-S9-3: why `sell_price` is what it is - `manual` | `promotion` |
+    # `list`.
+    sell_price_basis: Optional[str] = None
     show_promo_price: bool
     included_accessories: str = ""
     quantity: int

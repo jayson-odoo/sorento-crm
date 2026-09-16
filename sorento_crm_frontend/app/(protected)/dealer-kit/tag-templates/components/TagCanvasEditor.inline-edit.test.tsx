@@ -175,6 +175,10 @@ describe('TagCanvasEditor inline edit - clicking a different layer (S1, AC-S2-2)
 
 function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
   return {
+    tag_id: 'tag-1',
+    tag_label: '1a',
+    open_groups: [],
+    parts: [],
     line_id: 'line-1',
     code: 'SRTWT8267-GM',
     name: 'Kitchen Sink',
