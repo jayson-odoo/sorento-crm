@@ -99,7 +99,14 @@ def focus_from_wire(raw: Any) -> Focus:
     # a contact mid-conversation at deploy keeps the customer they already named.
     if not focus.customers and isinstance(raw.get("customer"), dict):
         focus.customers = [raw["customer"]]
+    # `order_status` is what the pre-rearch wire shape called this axis (contract 34;
+    # `conversation_variables_service` maps the same name forward on its own read path).
+    # Read forward here too, or a contact whose focus was persisted by an older build
+    # loses its status filter the first time this build reads the slot back. The current
+    # name wins when both are present.
     status = raw.get("status")
+    if not isinstance(status, str):
+        status = raw.get("order_status")
     focus.status = status if isinstance(status, str) else None
     window = raw.get("date_window")
     focus.date_window = window if isinstance(window, dict) else None
