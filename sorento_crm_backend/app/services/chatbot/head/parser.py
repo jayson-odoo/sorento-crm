@@ -111,6 +111,13 @@ def _build_json_schema() -> dict[str, Any]:
             "continuation": {"type": ["boolean", "null"]},
             "access_levels": {"type": "array", "items": {"type": "string"}},
             "broaden_axis": string_or_null,
+            # HOW FAR that axis is widened (owner ruling, 17 Sep 2026): "family" widens
+            # the picked variant to every variant of its family, "all" drops the axis
+            # altogether, null is no widening asked. The axis alone could not tell "all
+            # variants of 286" from "for all products", and the engine read it as
+            # neither - "okay nvm for all products" was answered for the one variant the
+            # question already carried (turns 6095ce66 / d8ab659e).
+            "broaden_to": string_or_null,
             "date_mode": string_or_null,
             "date_filter_start": string_or_null,
             "date_filter_end": string_or_null,
@@ -287,6 +294,7 @@ def _build_json_schema() -> dict[str, Any]:
             "continuation",
             "access_levels",
             "broaden_axis",
+            "broaden_to",
             "date_mode",
             "date_filter_start",
             "date_filter_end",
@@ -322,6 +330,14 @@ PARSE_OUTPUT_SCHEMA_NAME = "chatbot_parse_output"
 # unknown kept" - unknown keys are IGNORED (the risk the plan names: a model that
 # occasionally adds one must not fail a turn), missing ones are REJECTED.
 DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
+
+#: Declared keys a RECORDED emission may lack. The live parser always emits every
+#: declared key (structured output with `additionalProperties: false` requires it), but
+#: the replay corpus and the console cases were captured BEFORE these keys existed, and
+#: a harness value is held to the same check a provider answer is (`assert_emission`).
+#: Absent reads as null everywhere, so an old recording behaves exactly as it did.
+#: A key leaves this set when the corpus has been re-recorded with it.
+TOLERATED_ABSENT: frozenset[str] = frozenset({"broaden_to"})
 
 
 def resolve_config(
@@ -516,7 +532,7 @@ def assert_emission(emission: dict) -> None:
     said nothing about what the model got wrong), so a bad mock or a prompt regression is
     fixed in one pass instead of one key per run.
     """
-    missing = sorted(DECLARED_KEYS - set(emission))
+    missing = sorted(DECLARED_KEYS - TOLERATED_ABSENT - set(emission))
     if missing:
         raise ParserError(
             "parser emission missing " + ", ".join(repr(key) for key in missing)
