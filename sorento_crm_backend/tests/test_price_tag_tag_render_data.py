@@ -690,4 +690,9 @@ def test_a_saved_lines_basis_never_auto_picks_a_promotion_it_was_not_given(db):
         "no promo + no manual = LP, even though a promotion covers the product"
     )
     assert row["show_promo_price"] is False
-    assert row["sell_price"] == row["list_price"] == 899.0
+    # `sell_price` None means "no offer" on a resolved row - the pin diff's
+    # "Promotion ended" signal and `test_dealer_kit_tag_data_routes`'
+    # set-line test both read it that way - and the tag prints LP from
+    # `basis == 'list'` + `show_promo_price == False` alone, not from
+    # `sell_price` echoing `list_price`.
+    assert row["sell_price"] is None
