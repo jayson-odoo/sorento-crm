@@ -9,12 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import StringChipInput from '@/components/common/StringChipInput';
 import OrderableList from '@/components/common/OrderableList';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { listMcpToolsCatalog } from '@/app/(protected)/system-management/mcp-tools/services/mcpAdminService';
+import { getChatbotDomainPromptBlock } from '../services/chatbotDomainService';
 import { useChatbotEntityKindsQuery } from '@/app/(protected)/system-management/chatbot-entity-kinds/hooks/useChatbotEntityKinds';
 import {
   useChatbotDomainDeletion,
@@ -127,7 +129,15 @@ export default function ChatbotDomainModal({
     onOpenChange(false);
   };
 
-  const promptBlock = useMemo(() => buildPromptBlockPreview(draft), [draft]);
+  // The block comes from the backend, which renders it with the same function the
+  // publish uses - so what this tab shows and what the parser is told are one sentence,
+  // not two that drift. It reads the SAVED row: an unsaved edit has not reached the
+  // prompt yet, and a domain that does not exist has no paragraph at all.
+  const { data: promptBlock, isLoading: promptBlockLoading } = useQuery({
+    queryKey: ['chatbot-domain-prompt-block', domainId],
+    queryFn: () => getChatbotDomainPromptBlock(domainId as string),
+    enabled: open && tab === 'prompt' && Boolean(domainId),
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -256,10 +266,6 @@ export default function ChatbotDomainModal({
             </TabsContent>
 
             <TabsContent value="narrowing" className="mt-4 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Per entity kind present under this domain: what the reader must narrow before
-                the answer can fetch.
-              </p>
               {(entityKinds ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No entity kind is defined yet.</p>
               ) : (
@@ -294,9 +300,6 @@ export default function ChatbotDomainModal({
             </TabsContent>
 
             <TabsContent value="ladder" className="mt-4 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                When this domain&apos;s answer is zero or short, climb in this order.
-              </p>
               <OrderableList
                 items={draft.ladder}
                 labelFor={(name) => domainLabelByName.get(name) ?? name}
@@ -317,15 +320,19 @@ export default function ChatbotDomainModal({
 
             <TabsContent value="prompt" className="mt-4 space-y-2">
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Prompt block (preview, read-only)
+                Prompt block
               </p>
-              <pre className="whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-3 font-mono text-xs">
-                {promptBlock}
-              </pre>
-              <p className="text-xs text-muted-foreground">
-                Rendered into the parser prompt on the next publish, from the Prompts page.
-                Saving this modal does not touch the live prompt.
-              </p>
+              {promptBlockLoading ? (
+                <Skeleton className="h-16 w-full" />
+              ) : promptBlock ? (
+                <pre className="whitespace-pre-wrap rounded-md border border-border bg-muted/40 p-3 font-mono text-xs">
+                  {promptBlock}
+                </pre>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  {isNew ? 'Save the domain to see its block.' : 'No block rendered yet.'}
+                </p>
+              )}
             </TabsContent>
           </Tabs>
           </fieldset>
@@ -358,20 +365,4 @@ export default function ChatbotDomainModal({
       </DialogContent>
     </Dialog>
   );
-}
-
-function buildPromptBlockPreview(draft: ChatbotDomainInput): string {
-  const narrowedKinds = Object.entries(draft.narrowing)
-    .filter(([, policy]) => policy !== 'not_applicable')
-    .map(([kind]) => kind);
-  const lines = [
-    `domain "${draft.name || '(unnamed)'}" (label ${draft.label || '(unlabelled)'}):` +
-      ` intents ${draft.intents.join(', ') || '(none)'}.`,
-    `  switch words: ${draft.switch_words.join(', ') || '(none)'}.` +
-      ` entity kinds: ${narrowedKinds.join(', ') || '(none)'}.`,
-  ];
-  if (draft.takes_date_filter) lines.push('  takes a date window.');
-  if (draft.reveal_key) lines.push(`  requires the "${draft.reveal_key}" field reveal.`);
-  lines.push(draft.supported ? '  supported.' : '  NOT supported - the bot refuses this domain.');
-  return lines.join('\n');
 }

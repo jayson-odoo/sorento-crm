@@ -770,7 +770,7 @@ def run_fetch(
         }
 
     # ── tool selection ───────────────────────────────────────────────────────
-    # ONE candidate, read off `DOMAIN_SPEC` - no embedding call, no database read, so
+    # ONE candidate, read off the domain row - no embedding call, no database read, so
     # nothing here can fail and there is nothing to catch. Measured over the 740 business
     # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
     # first-listed tool on every one of them.

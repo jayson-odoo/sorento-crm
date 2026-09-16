@@ -13,7 +13,7 @@ makes the 254-fixture replay a pure function over JSON (AC-602).
 | `MCP Client1` (mcpClient, raw IP) | `mcp_call` | `MCPRuntimeClient` at `settings.ai_assistant_mcp_url` (H52) |
 
 `Execute 'sub-get-rag'` (executeWorkflow -> an embedding call plus pgvector SQL) has NO
-seam: the tool is read off `contracts.DOMAIN_SPEC[domain].tools[0]` in `fetch.select_tool`,
+seam: the tool is read off the domain row's own first tool in `fetch.select_tool`,
 which touches neither a provider nor the database (H53). Measured over the 740 business
 turns in the 7 Sep 2026 prod copy, the search picked that first-listed tool every time,
 and its seeding chain cannot run in the deployed backend image at all - so the seam was
@@ -93,7 +93,7 @@ class FetchServices:
 
     It was three. `embed` and `tool_search` were the two halves of `sub-get-rag` (embed the
     prompt, then search the tool pool) and both are gone: `fetch.select_tool` reads the
-    domain's tool off `contracts.DOMAIN_SPEC`, so the only I/O the fetch step still does is
+    domain's tool off `turn.policy.default_policy()`, so the only I/O the fetch step still does is
     the MCP call. A bundle with one field is kept as a dataclass rather than collapsed to a
     bare callable because every lane takes a bundle and the next seam this step grows
     belongs in it.
@@ -227,7 +227,7 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         three, the did-you-mean probe) and go nowhere near the ported call node. This is
         the single choke point where a tool name becomes an MCP request, so it is where the
         rule has to hold. The probes name read tools and are unaffected, and so is the
-        fetch step, whose tool is `DOMAIN_SPEC`'s own and therefore on the list by
+        fetch step, whose tool is the domain row's own and therefore on the list by
         construction.
 
         **The PARSE is here too, for the same reason the read-only check is.**

@@ -2208,8 +2208,8 @@ _SCOPE_WORD = {
 def _domain_takes_a_date_filter(domain: Any) -> bool:
     """Does any tool this domain can call accept a date range?
 
-    `Policy.domain(domain).takes_date_filter` now (AC-1594: was derived here from
-    `DOMAIN_SPEC[domain].tools` against `fetch.DATE_PARAMS`); the S0 migration seeded that
+    `Policy.domain(domain).takes_date_filter` now (AC-1594: was derived here from the
+    retired hand-written tool list against `fetch.DATE_PARAMS`); the S0 migration seeded that
     column with the SAME derivation, off `turn/policy_rows.py::DATE_PARAM_TOOLS`, so
     reading the column is not a second copy. `spo_allocation`'s only tool
     (`crm_procurement_spo_allocations_last_receipt_list`) takes no date parameter, so the

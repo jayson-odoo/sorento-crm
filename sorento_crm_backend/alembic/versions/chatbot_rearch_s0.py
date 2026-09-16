@@ -30,25 +30,28 @@ branch_labels = None
 depends_on = None
 
 
-# The seeded rows live in ONE place, `app/services/chatbot/turn/policy_rows.py`, so the
-# migration that writes them and the `Policy` loader that falls back to them when the
-# tables are absent (every blank-schema test fixture) can never disagree.
-from app.services.chatbot.turn.policy_rows import (  # noqa: E402
-    DATE_PARAM_TOOLS as _DATE_PARAM_TOOLS,
-    DEFAULT_DOMAIN_ROWS as _DOMAINS,
-    DEFAULT_KIND_ROWS as _ENTITY_KINDS,
-)
-# The tier order default is ONE literal, `app/modules/chatbot/lane_vocabulary.
-# default_tier_order()` (AC-1594, S6) - the same function `SystemSetting.
-# chatbot_tier_order`'s own Python default and `turn.policy.load_policy`'s blank-schema
-# fallback read, so this column's `server_default` can never disagree with either.
-from app.modules.chatbot.lane_vocabulary import default_tier_order as _default_tier_order  # noqa: E402
-
-_TIER_ORDER = _default_tier_order()
+# The rows this migration seeds are FROZEN beside it, in
+# `alembic/_chatbot_policy_seed.py` - never read from `app/services/chatbot/turn/
+# policy_rows.py` or `app/modules/chatbot/lane_vocabulary.py`. A migration has to produce
+# the same database whenever it runs, and importing live application code at module scope
+# means an `alembic upgrade head` replayed from genesis a year from now seeds whatever
+# those files say THEN, or fails outright if the import has moved. Same precedent as
+# `alembic/_legacy_prompt_bodies.py`. The two copies are identical at this revision, and
+# the one that may move afterwards is the app's: a policy change is a NEW migration
+# against `chatbot_domains` / `chatbot_entity_kinds`, never an edit to either file.
 
 
 
 def upgrade() -> None:
+    # Imported HERE, by bare module name, the same way `475_chatbot_parser_prompt_slim`
+    # reads `_legacy_prompt_bodies` (alembic puts its own directory on `sys.path`).
+    from _chatbot_policy_seed import (
+        DATE_PARAM_TOOLS as _DATE_PARAM_TOOLS,
+        DEFAULT_DOMAIN_ROWS as _DOMAINS,
+        DEFAULT_KIND_ROWS as _ENTITY_KINDS,
+        DEFAULT_TIER_ORDER as _TIER_ORDER,
+    )
+
     bind = op.get_bind()
 
     # ---- chatbot_domains -------------------------------------------------- #

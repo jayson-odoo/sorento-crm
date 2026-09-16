@@ -1,7 +1,20 @@
 # apply(): the pure core (PLAN-chatbot-turn-rearch.md "APPLY contract", AC-1520). One
-# function, six named steps called in order: answer_pending, focus_rules, exclusive,
-# reconcile, narrow, plan. No message text read anywhere below - every input is
-# already-structured (Verdict dict, Policy, State).
+# function; the order below is the order it runs, and the order IS the contract:
+#
+#   1. `_reconcile_step`  - an entity the resolver placed under one kind is rewritten to
+#                           it; two kinds arm a `kind_pick` and nothing else runs.
+#   2. `_answer_pending`  - the open question, resolved, re-printed or carried.
+#   3. `_exclusive`       - `scope_exclusive`, traced.
+#   4. `_focus_rules`     - topic reset, replace-same-axis, the domain, document/status,
+#                           the date window.
+#   5. domain resolution  - the locked pick, else `asks`, else `domain_hint`, else the
+#                           carried focus, else the document's own domain.
+#   6. `_did_you_mean`, then a `set_page` continuation - each returns its own Plan.
+#   7. `_narrow_and_plan` - the narrower and the fetch plan, folded into one per-domain
+#                           loop because they share it.
+#
+# No message text read anywhere below - every input is already-structured (Verdict dict,
+# Policy, State).
 from __future__ import annotations
 
 import copy
@@ -10,7 +23,7 @@ from typing import Any
 
 from app.services.chatbot import contracts
 from app.services.chatbot.turn.narrow import decide as narrow_decide
-from app.services.chatbot.turn.pending import ROSTER_KINDS, OFFER_KINDS, Pending, ask as pending_ask, with_answered_positions
+from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, ask as pending_ask, is_roster, with_answered_positions
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.reconcile import apply_reconciliation
@@ -74,24 +87,37 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             positions = []
 
         matched = [o for o in pending.options if o.get("position") in positions]
-        if matched:
-            built: list[dict[str, Any]] = []
-            for option in matched:
-                uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
-                for u in uuids:
-                    built.append(
-                        {
-                            "raw": option.get("label"),
-                            "hint": option.get("entity_type"),
-                            "canonical_code": u,
-                            "uuid": u,
-                            "current_message": True,
-                            "confident": True,
-                        }
-                    )
-            kind_for_focus = matched[0].get("entity_type")
-            if kind_for_focus:
-                _set_kind_field(focus, kind_for_focus, built)
+        if not matched:
+            # The parser said this WAS an answer, but nothing it picked is on the list -
+            # a position off the end, or a label the roster does not carry. Same outcome
+            # as `resolved: false` below: the SAME question is re-printed, state
+            # untouched. Clearing the pending here (which is what fell out of the
+            # `if matched:` guard before) dropped the question silently and left the
+            # customer's next message with nothing to answer.
+            trace.rules_fired.append("answer_pending_unresolved")
+            return (
+                state.focus,
+                pending,
+                Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace),
+                False,
+            )
+        built: list[dict[str, Any]] = []
+        for option in matched:
+            uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
+            for u in uuids:
+                built.append(
+                    {
+                        "raw": option.get("label"),
+                        "hint": option.get("entity_type"),
+                        "canonical_code": u,
+                        "uuid": u,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                )
+        kind_for_focus = matched[0].get("entity_type")
+        if kind_for_focus:
+            _set_kind_field(focus, kind_for_focus, built)
 
         trace.rules_fired.append("answer_pending")
         # Contract 121: a pick never re-domains the turn. The question recorded the
@@ -100,7 +126,7 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         asked_for = pending.payload.get("domain")
         if asked_for:
             focus.domains = [asked_for]
-        if pending.kind in ROSTER_KINDS:
+        if is_roster(pending.kind):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
 
@@ -513,7 +539,16 @@ def apply(
     )
 
     asks = verdict.get("asks") or []
-    if asks:
+    if domain_locked and focus.domains:
+        # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
+        # put the domain the question was ASKED under onto the focus and `_focus_rules`
+        # left it alone, and this is the second half of that: re-reading `asks` or
+        # `domain_hint` here would have undone it, because a bare "3" is parsed against
+        # the whole message history and its verdict still carries the PREVIOUS turn's
+        # domain hint. The answer belongs to the roster it was picked off.
+        domains = list(focus.domains)
+        trace.rules_fired.append("domain_locked_by_pick")
+    elif asks:
         domains = [a["domain"] for a in asks if a.get("domain")]
     elif verdict.get("domain_hint"):
         domains = [verdict["domain_hint"]]

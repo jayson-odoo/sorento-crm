@@ -75,6 +75,13 @@ def get_for_contact(db: Session, *, respond_io_id: str) -> dict[str, Any]:
 
     `focus.order_status`, if present, is migrated forward to `focus.document` /
     `focus.status` on the way out (AC-1504) - read-time only, never written back.
+
+    Both shapes are migrated. A contact who has been answered since the rearch carries
+    the five keys at the top level; a contact mid-conversation at deploy still carries
+    n8n's outer-loop nest, `{"variables": {...}}`, and that is where every LIVE row's
+    focus actually sits today. `session_state.five_keys` falls back to the nest on the
+    way in, so migrating only the top level would have left every real contact's
+    `order_status` unmapped - the one case AC-1504 exists for.
     """
     row = db.execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
@@ -90,6 +97,9 @@ def get_for_contact(db: Session, *, respond_io_id: str) -> dict[str, Any]:
     state = _coerce_to_dict(row.session_vars)
     if "focus" in state:
         state["focus"] = _migrate_legacy_focus(state["focus"])
+    nested = state.get("variables")
+    if isinstance(nested, dict) and "focus" in nested:
+        state["variables"] = {**nested, "focus": _migrate_legacy_focus(nested["focus"])}
     return state
 
 

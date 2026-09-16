@@ -22,6 +22,28 @@ PENDING_KINDS: tuple[str, ...] = (
 ROSTER_KINDS: frozenset[str] = frozenset({"product_pick", "customer_pick", "kind_pick"})
 
 
+def is_roster(kind: str) -> bool:
+    """Does this pending stay alive after its own pick (contract 36)?
+
+    Not a list lookup, because the list cannot be complete. `narrow.decide` mints the
+    ask's kind as `f"{entity_kind}_pick"` / `f"{entity_kind}_ask"` straight off
+    `chatbot_entity_kinds`, an OPERATOR-editable table: measured on the seeded rows,
+    twelve kinds exist and only `product`, `customer`, `tier` and `attachment_type` carry
+    a narrowing policy today, so the Chatbot Domains screen can mint `brand_pick`,
+    `warehouse_pick` or `order_pick` the moment somebody sets one. Those read as "not a
+    roster" against the nine literals and lost contract 36's sticky roster silently.
+
+    The nine named kinds keep their own classification (`tier_pick`, `team_pick` and
+    `company_pick` end in `_pick` and are one-off offers, not rosters); anything the
+    narrower minted outside them is a candidate list, and a candidate list is a roster.
+    """
+    if kind in ROSTER_KINDS:
+        return True
+    if kind in PENDING_KINDS:
+        return False
+    return kind.endswith("_pick") or kind.endswith("_ask")
+
+
 @dataclass(frozen=True)
 class Pending:
     kind: str

@@ -6,6 +6,7 @@
  *
  *   GET    /api/v1/system/chatbot/domains            list, `system.chat_history.view`
  *   GET    /api/v1/system/chatbot/domains/{id}        one row
+ *   GET    /api/v1/system/chatbot/domains/{id}/prompt-block  its parser paragraph
  *   POST   /api/v1/system/chatbot/domains             create, `system.chatbot_config.manage`
  *   PUT    /api/v1/system/chatbot/domains/{id}         update, `system.chatbot_config.manage`
  *   DELETE /api/v1/system/chatbot/domains/{id}         hard delete (D7), same grant
@@ -15,12 +16,11 @@
  * (`mcpAdminService.listMcpToolsCatalog`), so the modal's list-of-domains props and the
  * list's own client-side search/filter both keep working unchanged from S1.
  *
- * DELETE is an immediate hard delete on the server (no pending-action row) - the
- * countdown below is a CLIENT-ONLY grace window (D7's 10s), same as S1: `run()` starts
- * a toast countdown with Cancel, and only calls the real DELETE once the window lapses
- * uncancelled. A tab closed mid-countdown loses the delete (nothing was sent to the
- * server yet) rather than losing data silently - the same trade every mocked deferred
- * delete made before a real pending-action endpoint existed for it.
+ * DELETE is never called from here: `chatbot_domain.delete` is a registered
+ * `FormAction`, so the countdown is parked SERVER side through `/api/v1/pending-actions`
+ * and the server issues the DELETE itself when the window lapses, even if the tab was
+ * closed. `useChatbotDomainDeletion` runs it through `useDeferredRowAction`, the hook
+ * every other deferred-delete list uses.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -28,9 +28,6 @@ import { extractApiError } from '@/lib/api-client';
 import type { ChatbotDomain, ChatbotDomainInput } from '../types/chatbotDomain.types';
 
 const BASE = '/api/v1/system/chatbot/domains';
-
-/** D7's hard-delete grace window (10s). */
-export const DELETE_WINDOW_SECONDS = 10;
 
 interface ChatbotDomainRow extends ChatbotDomainInput {
   id: string;
@@ -87,9 +84,24 @@ export async function updateChatbotDomain(
   return response.json();
 }
 
-export async function deleteChatbotDomain(id: string): Promise<void> {
-  const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (!response.ok && response.status !== 404) {
-    throw new Error(await extractApiError(response, 'Failed to delete the domain'));
+// No `deleteChatbotDomain` here by design: the delete is a server-deferred pending
+// action (`chatbot_domain.delete`), so `/api/v1/pending-actions` parks it and the server
+// calls `DELETE /system/chatbot/domains/{id}` itself when the window lapses. A second
+// client-side delete path would be a way to bypass the grace window.
+
+/**
+ * The domain's paragraph as the published parser prompt carries it. Rendered by the
+ * backend (`chatbot_parser_prompt.domain_line`, the same function the publish uses), not
+ * rebuilt here: a preview that guesses the wording is a second copy of it.
+ */
+export async function getChatbotDomainPromptBlock(id: string): Promise<string> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(id)}/prompt-block`,
+    { method: 'GET' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the prompt block'));
   }
+  const body = (await response.json()) as { block: string };
+  return body.block ?? '';
 }

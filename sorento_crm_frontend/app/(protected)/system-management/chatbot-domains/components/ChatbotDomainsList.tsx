@@ -172,6 +172,7 @@ export default function ChatbotDomainsList() {
     columns,
     getRowId: (row) => row.id,
     getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
   });
 
   const openCreate = () => {

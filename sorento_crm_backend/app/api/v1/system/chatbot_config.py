@@ -9,7 +9,8 @@ grant an operator holds to look at a customer's conversation.
 **What is validated, and why only this much.** Three things are checked because getting
 them wrong is silent: a tool name that is not in `mcp_tools` (the lane would pick a tool
 that does not exist and the turn would answer nothing), a team code outside
-`SUGGESTED_TEAMS` (the escalation lane would route to a team the assigner cannot find),
+`lanes/escalation.ESCALATION_TEAMS` (the escalation lane would route to a team the
+assigner cannot find),
 and a narrowing policy outside the seven the narrower implements (the narrower would
 fall through its `optional_filter` default and quietly stop asking). Everything else -
 labels, switch words, intents - is free text the owner is entitled to get wrong and fix.
@@ -27,7 +28,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import Text, func
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, require_permission
@@ -244,7 +245,10 @@ def _find_domain(db: Session, domain_id: str) -> ChatbotDomain:
     have to look up a uuid to read the row it belongs to."""
     row = (
         db.query(ChatbotDomain)
-        .filter((ChatbotDomain.name == domain_id) | (func.cast(ChatbotDomain.id, __import__("sqlalchemy").Text) == domain_id))
+        .filter(
+            (ChatbotDomain.name == domain_id)
+            | (func.cast(ChatbotDomain.id, Text) == domain_id)
+        )
         .first()
     )
     if row is None:
@@ -295,6 +299,30 @@ def get_domain(
 ):
     _ = current_user
     return _domain_out(_find_domain(db, domain_id))
+
+
+class ChatbotDomainPromptBlock(BaseModel):
+    block: str
+
+
+@router.get("/domains/{domain_id}/prompt-block", response_model=ChatbotDomainPromptBlock)
+def get_domain_prompt_block(
+    domain_id: str,
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """This domain's paragraph, exactly as the published parser prompt carries it.
+
+    Rendered by `chatbot_parser_prompt.domain_line` - the SAME function
+    `render_prompt_blocks` calls for the published body - rather than by the modal
+    rebuilding the wording in TypeScript, which was a second copy of the sentence that
+    nothing kept in step with the first.
+    """
+    _ = current_user
+    from app.services.chatbot_parser_prompt import domain_block
+
+    row = _find_domain(db, domain_id)
+    return ChatbotDomainPromptBlock(block=domain_block(db, row.name) or "")
 
 
 @router.post("/domains", response_model=ChatbotDomainResponse, status_code=status.HTTP_201_CREATED)
@@ -425,6 +453,20 @@ def update_entity_kind(
     _ = current_user
     row = _find_kind(db, kind)
     _validate_kind(body)
+    if body.kind != kind:
+        # The PATH names the row. A body naming a different kind is either a renamed
+        # entity kind - which is a different row, since `kind` is the primary key and
+        # every domain's `narrowing` map keys on it - or a stale form posted at the wrong
+        # record. Silently taking the body would have renamed the primary key underneath
+        # every domain that referenced it and left those maps pointing at nothing.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This is entity kind {kind!r}; the body names {body.kind!r}. An entity "
+                f"kind's code cannot be changed - create the new kind and move the "
+                f"domains over."
+            ),
+        )
     values = body.model_dump()
     values["label"] = values.get("label") or row.label
     for field, value in values.items():

@@ -56,7 +56,6 @@ export default function TierOrderCard({
       </CardHeader>
       <CardContent className="space-y-3 py-5">
         <OrderableList items={draft} labelFor={(code) => TIER_LABELS[code] ?? code} onChange={onChange} />
-        <p className="text-xs text-muted-foreground">One list. Today three copies in code.</p>
       </CardContent>
     </Card>
   );

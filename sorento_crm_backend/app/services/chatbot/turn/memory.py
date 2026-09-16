@@ -82,28 +82,18 @@ def write_episode(
     return frame
 
 
-def recall(contact_respond_id: str, verdict: dict[str, Any], db: Session, *, k: int = 3) -> list[dict[str, Any]]:
-    """Top `k` closed frames of THIS contact only - never another contact's (AC-1547).
+def _frame_out(frame: ConversationFrame) -> dict[str, Any]:
+    return {
+        "id": frame.id,
+        "domain": frame.domain,
+        "intent": frame.intent,
+        "summary": frame.summary,
+        "entities": frame.entities,
+    }
 
-    Embeds a query text off the verdict's own hints to prove the embedding seam this
-    AC names (`app.services.embedding_worker._embed_text_chunks`); frame ranking
-    itself falls back to recency when the embedded query yields nothing to compare
-    against (no live worker has necessarily indexed these frames yet in the same
-    turn/test that just wrote them).
-    """
-    from app.services.embedding_worker import _embed_text_chunks
 
-    query_text = " ".join(
-        str(v)
-        for v in (verdict.get("domain_hint"), verdict.get("intent_hint"))
-        if v
-    ) or "recall"
-    try:
-        _embed_text_chunks([query_text])
-    except Exception:  # noqa: BLE001 - recall must never fail a turn
-        pass
-
-    frames = (
+def _by_recency(db: Session, contact_respond_id: str, k: int) -> list[ConversationFrame]:
+    return (
         db.query(ConversationFrame)
         .filter(
             ConversationFrame.contact_respond_id == contact_respond_id,
@@ -113,16 +103,94 @@ def recall(contact_respond_id: str, verdict: dict[str, Any], db: Session, *, k: 
         .limit(max(1, k))
         .all()
     )
-    return [
-        {
-            "id": f.id,
-            "domain": f.domain,
-            "intent": f.intent,
-            "summary": f.summary,
-            "entities": f.entities,
-        }
-        for f in frames
-    ]
+
+
+def _similarity_of_frame(vector: Any) -> Any:
+    """Best cosine similarity between `vector` and any CURRENT chunk of the frame.
+
+    A correlated scalar per frame rather than a join, for two reasons. A frame embeds as
+    several chunks, and a join would return the frame once per chunk. And a frame with NO
+    chunk at all has to survive: the worker indexes a frame after the turn that closed
+    it, so the frames worth recalling in the very next turn are exactly the ones an inner
+    join would drop. This yields NULL for them, which sorts last and leaves recency to
+    order them.
+    """
+    from sqlalchemy import String, cast, func, select
+
+    from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+
+    return (
+        select(func.max(1 - EmbeddingChunk.embedding.cosine_distance(vector)))
+        .select_from(EmbeddingChunk)
+        .join(EmbeddingDocument, EmbeddingDocument.id == EmbeddingChunk.document_id)
+        .where(
+            EmbeddingChunk.is_current.is_(True),
+            EmbeddingDocument.is_active.is_(True),
+            EmbeddingChunk.source_type == "conversation_frame",
+            EmbeddingChunk.source_id == cast(ConversationFrame.id, String),
+        )
+        .correlate(ConversationFrame)
+        .scalar_subquery()
+    )
+
+
+def recall(contact_respond_id: str, verdict: dict[str, Any], db: Session, *, k: int = 3) -> list[dict[str, Any]]:
+    """Top `k` closed frames of THIS contact only - never another contact's (AC-1547).
+
+    Ordered by vector similarity to the turn's own query, THEN by recency, which is what
+    the AC asks for and what makes recall worth doing: three frames picked by recency
+    alone are the last three topics, which is the same answer whatever the customer just
+    said. The query is embedded through `embedding_worker._embed_text_chunks`, the same
+    helper that indexed the frames, so the model and dimension match.
+
+    Recency is the fallback, not a second-class path: an embedding failure, a database
+    with no pgvector, or a frame the worker has not indexed yet all have to keep
+    answering. The first two fall back wholesale; the third sorts last within the same
+    query (see `_similarity_of_frame`).
+    """
+    from app.services.embedding_worker import _embed_text_chunks
+
+    query_words = " ".join(
+        str(v)
+        for v in (verdict.get("domain_hint"), verdict.get("intent_hint"))
+        if v
+    ) or "recall"
+    try:
+        vectors = _embed_text_chunks([query_words])
+    except Exception:  # noqa: BLE001 - recall must never fail a turn
+        vectors = []
+
+    frames: list[ConversationFrame] = []
+    if vectors:
+        from sqlalchemy import nulls_last
+
+        similarity = _similarity_of_frame(vectors[0]).label("similarity")
+        try:
+            # A SAVEPOINT, not a bare try: a failed statement aborts the whole Postgres
+            # transaction, so without one an install with no pgvector would take the
+            # recency fallback down with it AND lose whatever the turn had already
+            # written. `begin_nested` rolls back only this query.
+            with db.begin_nested():
+                rows = (
+                    db.query(ConversationFrame, similarity)
+                    .filter(
+                        ConversationFrame.contact_respond_id == contact_respond_id,
+                        ConversationFrame.status == "closed",
+                    )
+                    .order_by(
+                        nulls_last(similarity.desc()),
+                        ConversationFrame.closed_at.desc(),
+                        ConversationFrame.started_at.desc(),
+                    )
+                    .limit(max(1, k))
+                    .all()
+                )
+            frames = [row[0] for row in rows]
+        except Exception:  # noqa: BLE001 - recall must never fail a turn
+            frames = []
+    if not frames:
+        frames = _by_recency(db, contact_respond_id, k)
+    return [_frame_out(f) for f in frames]
 
 
 def episodes_block(frames: list[dict[str, Any]]) -> str:
