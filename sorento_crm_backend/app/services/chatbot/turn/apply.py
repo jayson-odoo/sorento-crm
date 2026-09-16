@@ -51,6 +51,29 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
 }
 
 
+#: Kinds that scope the SAME THING under one domain, so naming one REPLACES the others
+#: (hand pass 2 item 5, owner ruling 17 Sep 2026). The retired head carried this as
+#: `output_exchange.AXIS_BY_DOMAIN`; only the row with evidence today is rebuilt, and the
+#: evidence is turn c45e2929 - "Outstsnding DO for 7445" ran the report for HANLIM
+#: [A/C III], a customer named six turns earlier, because product and customer sit in
+#: different focus slots and the product named this turn replaced neither.
+#:
+#: Under an ORDER question there is one axis and it is WHICH ORDER: a product code, a
+#: customer, a transporter and an order number all say which orders are meant, so the one
+#: the customer just typed is the scope and the rest are last question's.
+#:
+#: A literal rather than a `chatbot_domains` column: one domain has this today, and the
+#: trigger for promoting it is a SECOND domain whose kinds collapse differently (the old
+#: table had `promotion` and `master_products` rows too, both of which the narrowing
+#: policy now covers). Every other domain keeps one slot per kind, which is what
+#: `KIND_FIELD_MAP` already gives it.
+SHARED_AXIS_BY_DOMAIN: dict[str, frozenset[str]] = {
+    "order": frozenset(
+        {"product", "customer", "transporter", "order", "order_number", "customer_order"}
+    ),
+}
+
+
 def _is_continuation(verdict: dict[str, Any]) -> bool:
     """AC-1317: "show me the next page of the set you just counted". The parser's own
     `continuation` schema key (bool), read as-is - matching free-text `user_goal`
@@ -476,6 +499,31 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
     return focus, pending, None, False
 
 
+def _domain_of_turn(
+    focus: Focus,
+    verdict: dict[str, Any],
+    asks: list[dict[str, Any]],
+    domain_override: str | None,
+    *,
+    domain_locked: bool,
+) -> str | None:
+    """Which domain this turn is ABOUT, read the same order `_focus_rules` resolves it.
+
+    Needed one step earlier than that assignment, because whether two entities share an
+    axis is a fact about the DOMAIN they are named under.
+    """
+    if domain_locked:
+        return focus.domains[0] if focus.domains else None
+    if domain_override:
+        return domain_override
+    for ask in asks:
+        if ask.get("domain"):
+            return str(ask["domain"])
+    if verdict.get("domain_hint"):
+        return str(verdict["domain_hint"])
+    return focus.domains[0] if focus.domains else None
+
+
 def _focus_rules(
     focus: Focus,
     verdict: dict[str, Any],
@@ -511,8 +559,26 @@ def _focus_rules(
     else:
         trace.rules_fired.append("reuse_alive")
 
+    asks = verdict.get("asks") or []
+    if by_kind:
+        about = _domain_of_turn(focus, verdict, asks, domain_override, domain_locked=domain_locked)
+        shared = SHARED_AXIS_BY_DOMAIN.get(about or "", frozenset())
+        if verdict.get("entity_op") == "replace":
+            # The retired head's own rule: `replace` means this turn's entities ARE the
+            # whole scope, on every axis. It is only ever stamped by a pick that has
+            # already folded in whatever it means to keep. `scope_exclusive` is NOT the
+            # same thing here and stays a trace marker (`_exclusive`): the narrower
+            # already restricts the axis a new entity named, and
+            # `test_rearch_s2_exclusive.py` pins that "only BRW" keeps the product and
+            # the customer it is narrowing.
+            shared = frozenset(KIND_FIELD_MAP)
+        for kind in shared - set(by_kind):
+            attr = KIND_FIELD_MAP.get(kind)
+            if attr and getattr(focus, attr, None):
+                setattr(focus, attr, [])
+                trace.rules_fired.append(f"same_axis_evicts_{kind}")
+
     if not domain_locked:
-        asks = verdict.get("asks") or []
         if domain_override:
             focus.domains = [domain_override]
             trace.rules_fired.append("domains_from_reconciliation")
