@@ -125,16 +125,32 @@ describe('PriceTagRequestForm - read-only view renders the saved manual price (F
     await waitFor(() => {
       expect(screen.getByText('RM 175')).toBeInTheDocument();
     });
-    // The bug renders the list total here instead - assert it is gone, so a
-    // future accidental "it just happens to also say 150 somewhere else"
-    // does not make this pass for the wrong reason once the real fix lands.
-    //
-    // Scoped to the Lines table: the read-only "Price" section above it also
-    // reads "Selling price" (it mirrors the price-mode radio's own label),
-    // so an unscoped `getByText` now matches both.
+
+    // Owner ruling after #948: the read-only submitted view gets the SAME
+    // column shape as the edit table - List price / Promotion / Selling
+    // price are `<th>`/`<td>` columns, not a sub-row under the item. Assert
+    // the header carries the columns, and the line's own row (found by the
+    // product name, a fixed per-line anchor) carries the values in cells of
+    // THAT row - the bug this file guards against (F2: the read-only view's
+    // own `lookupLinePricing` recompute never sees `manual_sell_price`, so it
+    // would print the recomputed list total here instead of the saved 175).
     const linesTable = screen.getByRole('table');
-    const sellingPriceLabel = within(linesTable).getByText('Selling price');
-    const sellingPriceValue = sellingPriceLabel.nextElementSibling;
-    expect(sellingPriceValue?.textContent).toBe('RM 175');
+    const headers = within(linesTable)
+      .getAllByRole('columnheader')
+      .map((h) => h.textContent?.trim());
+    expect(headers).toContain('List price');
+    expect(headers).toContain('Promotion');
+    expect(headers).toContain('Selling price');
+
+    const rows = within(linesTable).getAllByRole('row');
+    const lineRow = rows.find((row) =>
+      within(row).queryByText('ZZT Manual-priced product'),
+    );
+    expect(lineRow).toBeTruthy();
+    expect(within(lineRow!).getByText('RM 150')).toBeInTheDocument();
+    // No promotion saved on this line, and its basis is 'manual' - the
+    // Promotion cell reads "Manual price", not a covering promotion's name.
+    expect(within(lineRow!).getByText('Manual price')).toBeInTheDocument();
+    expect(within(lineRow!).getByText('RM 175')).toBeInTheDocument();
   });
 });

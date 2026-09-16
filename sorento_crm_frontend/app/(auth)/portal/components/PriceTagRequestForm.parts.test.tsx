@@ -470,8 +470,12 @@ describe('PriceTagRequestForm - parts under a line (S2)', () => {
     const wrapper = packageSelect.closest('td');
     expect(wrapper).not.toBeNull();
     // The part and package rows span the whole line table rather than squeezing
-    // into one column, which is what makes them readable at 375px.
-    expect(wrapper).toHaveAttribute('colspan', '5');
+    // into one column, which is what makes them readable at 375px. The desktop
+    // table now always carries a List price column (and Promotion/Selling
+    // price in Selling mode), so the column count is read off the header
+    // rather than pinned to a literal that drifts with it.
+    const headerCount = screen.getAllByRole('columnheader').length;
+    expect(wrapper).toHaveAttribute('colspan', String(headerCount));
   });
 });
 
