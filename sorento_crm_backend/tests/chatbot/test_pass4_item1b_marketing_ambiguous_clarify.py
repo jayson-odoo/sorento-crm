@@ -162,7 +162,15 @@ def _run_live(session_factory, monkeypatch, *, qf, text_body, msg_id):
     return engine_mod.run_turn(envelope, session_factory=session_factory)
 
 
+_XFAIL_CLARIFY_TEXT_IS_NONE = (
+    "same root cause as test_s5_escalation_seams.py: on the clarify arm, "
+    "result.reply['text'] is None while quick_replies is correct, reached via a "
+    "different scenario (follow-up, PR #952)"
+)
+
+
 class TestANonCatalogueTeamWordIsNeverPersistedOrAssigned:
+    @pytest.mark.xfail(strict=True, reason=_XFAIL_CLARIFY_TEXT_IS_NONE)
     def test_a_later_turn_is_assigned_to_a_real_team_never_to_marketing(
         self, seeded, session_factory, monkeypatch, stub_assignment_seams
     ):

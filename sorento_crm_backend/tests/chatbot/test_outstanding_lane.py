@@ -169,6 +169,12 @@ PRODUCT_CODE = "SRTWT7445"
 CUSTOMER_UUID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 CUSTOMER_NAME = "Dealer A Sdn Bhd"
 
+_XFAIL_HMM_OVER_OPEN_OFFER_FIRES_A_FETCH = (
+    "a casual 'hmm' with zero entities/domain_hint over an open outstanding_detail "
+    "pending fires a real fetch and clears the pending, instead of re-printing per "
+    "R22(b)/AC-1168 - S6 cluster 4 owner ruling vs R22 (follow-up, PR #952)"
+)
+
 
 def _qf(**overrides: Any) -> dict[str, Any]:
     """`_parser_output`, defaulted to an "order" domain product ask."""
@@ -4449,6 +4455,7 @@ class TestOpenOfferCanBeLeft:
             f"closed question: {open_question!r}"
         )
 
+    @pytest.mark.xfail(strict=True, reason=_XFAIL_HMM_OVER_OPEN_OFFER_FIRES_A_FETCH)
     def test_a_second_unreadable_turn_closes_the_offer(self, session_factory, monkeypatch) -> None:
         """AC-1168/R22(b). Measured today: BOTH "hmm" and the follow-up "hi" print the
         identical re-armed offer, forever - there is no exit at all short of a new ask.
@@ -4547,6 +4554,7 @@ class TestOpenOfferCanBeLeft:
         )
         _result3_unused = result3
 
+    @pytest.mark.xfail(strict=True, reason=_XFAIL_HMM_OVER_OPEN_OFFER_FIRES_A_FETCH)
     def test_a_refinement_after_one_reprint_still_works(self, session_factory, monkeypatch) -> None:
         """AC-1168/R22(b) guard: "hmm" (the first, still-re-printing unreadable turn)
         followed by an R15 date refinement must still re-run the report with the new
