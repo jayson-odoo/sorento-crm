@@ -1240,6 +1240,13 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     superseded_at = Column(DateTime(timezone=False), nullable=True)
     superseded_reason = Column(Text, nullable=True)
 
+    #: What THIS revision's own Confirm wrote, for `undo_last_confirm` to replay
+    #: backwards (`PLAN-board-undo-last-confirm.md`, migration `undo_0001`). NULL means
+    #: unjournalled - minted outside the two board confirm routes (`uncover_lines`, a
+    #: pre-lane revision) - and therefore not undoable. `app.services.
+    #: project_supply_undo_service.UndoJournal` writes it; nothing else does.
+    undo_journal = Column(JSONB, nullable=True)
+
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
