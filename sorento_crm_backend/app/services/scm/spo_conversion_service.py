@@ -2344,8 +2344,9 @@ def _link_ticked_demand(
     Written through `ProjectOrderInquiryService.place_on_po_allocations`, the ONE writer of
     `projects.order_inquiry_links` (part 2 I), rather than inserting the row here: that
     service holds the rules a link has to obey - the row is never split, the target must
-    still be open for that product, an SPO answers only an ORDER BACK row - and a second
-    writer would be a second, quietly different set of them.
+    still be open for that product, the row's verb must be a linkable one (every one of
+    them may name either book since R5, 27 Aug: SPO first, then PO) - and a second writer
+    would be a second, quietly different set of them.
 
     **A RETAIL tick writes no link, by design.** `order_inquiry_links.row_id` is NOT NULL:
     the table hangs off an order-inquiry row, and a retail sales-order line has none. Making

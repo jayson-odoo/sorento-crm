@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -128,6 +128,18 @@ const DEBTORS = [{ code: 'ZZTD01', name: 'ZZT Dealer Sdn Bhd' }];
 const COVERED = { kind: 'product' as const, id: 'prod-cov-e', code: 'CV-E', name: 'ZZT Covered E' };
 const NOT_COVERED = { kind: 'product' as const, id: 'prod-nocov-a', code: 'NC-A', name: 'ZZT Not Covered A' };
 const ITEMS = [COVERED, NOT_COVERED];
+
+// A combo with one fixed part, so picking COVERED fills a part row in under
+// the line (AC-S2-1) - the kill-test target: `subRowSpan` (the sub-row
+// colSpan for guard error/package/parts/warning rows) is a hard-coded
+// `isMobile ? 5 : priceMode === 'selling' ? 8 : 6` arithmetic that a header
+// column change can silently drift from.
+const COMBO_PART = { product_id: 'prod-combo-part', code: 'CP-1', name: 'ZZT Combo Part' };
+const COMBO_WITH_PART = {
+  combo_id: 'combo-1',
+  name: 'ZZT Combo',
+  parts: [{ ...COMBO_PART, choice_group: null }],
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -247,5 +259,97 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
     const restored = await screen.findByLabelText('Selling price for line 1');
     expect((restored as HTMLInputElement).value).toBe('480');
+  });
+
+  // ------------------------------------------------------- AC-S1-1/AC-S1-3 (columns)
+
+  // Owner ruling after #948: List price / Promotion / Selling price are real
+  // table columns on the desktop table (992px and up, `useIsMobile`'s
+  // `MOBILE_BREAKPOINT`), not a `colSpan` sub-row under the Item cell. Below
+  // 992px they still stack under the item, which - since jsdom has no CSS
+  // breakpoints - is asserted only via a `data-testid="line-pricing-stack"`
+  // element's presence, never its visibility.
+  it('List mode: the header has a List price column between Qty (tags) and Remarks, no Promotion/Selling price columns, and no colSpan pricing row (AC-S1-1)', async () => {
+    await startWithALine(COVERED);
+    openPriceSection();
+    await waitFor(() => expect(screen.getByText('RM 850')).toBeInTheDocument());
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    const qtyIndex = headers.indexOf('Qty (tags)');
+    const remarksIndex = headers.indexOf('Remarks');
+    expect(qtyIndex).toBeGreaterThanOrEqual(0);
+    expect(remarksIndex).toBeGreaterThan(qtyIndex);
+    expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual(['List price']);
+    expect(headers).not.toContain('Promotion');
+    expect(headers).not.toContain('Selling price');
+
+    // The line's own row (found via the Quantity input, which is a fixed
+    // per-line anchor) carries the List price value in a `<td>` of THAT row.
+    const rows = screen.getAllByRole('row');
+    const lineRow = rows.find((row) =>
+      within(row).queryByLabelText('Quantity for line 1'),
+    );
+    expect(lineRow).toBeTruthy();
+    expect(within(lineRow!).getByText('RM 850')).toBeInTheDocument();
+
+    expect(document.querySelector('td[colspan]')).toBeNull();
+  });
+
+  it('Selling mode: the header has List price, Promotion, Selling price columns in order between Qty (tags) and Remarks, and the line row (not a colSpan sub-row) holds the select and value (AC-S1-3)', async () => {
+    await startWithALine(COVERED);
+    chooseSelling();
+    await waitFor(() => expect(screen.getByText('RM 723')).toBeInTheDocument());
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    const qtyIndex = headers.indexOf('Qty (tags)');
+    const remarksIndex = headers.indexOf('Remarks');
+    expect(qtyIndex).toBeGreaterThanOrEqual(0);
+    expect(remarksIndex).toBeGreaterThan(qtyIndex);
+    expect(headers.slice(qtyIndex + 1, remarksIndex)).toEqual([
+      'List price',
+      'Promotion',
+      'Selling price',
+    ]);
+
+    const rows = screen.getAllByRole('row');
+    const lineRow = rows.find((row) =>
+      within(row).queryByLabelText('Quantity for line 1'),
+    );
+    expect(lineRow).toBeTruthy();
+    // The Promotion select and the Selling price value both live in `<td>`
+    // cells of the SAME row as Qty/Remarks - not a following `colSpan` row.
+    expect(within(lineRow!).getByText('RM 850')).toBeInTheDocument();
+    expect(lineRow!.querySelector('select[id^="promotion-"]')).toBeTruthy();
+    expect(within(lineRow!).getByText('RM 723')).toBeInTheDocument();
+
+    expect(document.querySelector('td[colspan]')).toBeNull();
+  });
+
+  // ----------------------------------------------------------- kill: subRowSpan
+
+  it('Selling mode with a combo line that has parts: every sub-row colspan (guard/package/parts/warning) equals the header column count', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: false, combos: [COMBO_WITH_PART] } as ProductCombosLookup);
+    await startWithALine(COVERED);
+    chooseSelling();
+    // The fixed part fills in as its own sub-row (AC-S2-1) - a `td[colspan]`
+    // this line would not otherwise have. Once a part is attached, the
+    // combo's own product id joins the pricing resolve, so the line's total
+    // is no longer the bare COVERED figure other cases in this file pin -
+    // this case only needs the part row (and the "Add part" search row) to
+    // exist, not a specific RM total.
+    await waitFor(() => expect(screen.getByText(COMBO_PART.code)).toBeInTheDocument());
+    // The native `<select>` stand-in has no real `placeholder` attribute -
+    // this mock exposes it as the accessible name instead.
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Add part' })).toBeInTheDocument(),
+    );
+
+    const headerCount = screen.getAllByRole('columnheader').length;
+    const colSpanCells = Array.from(document.querySelectorAll('td[colspan]'));
+    // At least the part row and the "Add part" search row.
+    expect(colSpanCells.length).toBeGreaterThan(0);
+    for (const cell of colSpanCells) {
+      expect(Number(cell.getAttribute('colspan'))).toBe(headerCount);
+    }
   });
 });

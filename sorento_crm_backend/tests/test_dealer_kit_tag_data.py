@@ -69,7 +69,7 @@ def db():
 # ---------------------------------------------------------------------------
 
 
-def _product(db, *, list_price="1599.00", description=None, code=None):
+def _product(db, *, list_price="1599.00", description=None, code=None, currency="MYR"):
     from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 
     stem = unique_code("ZZTD")
@@ -94,7 +94,7 @@ def _product(db, *, list_price="1599.00", description=None, code=None):
         brand_id=brand.id,
         base_uom_id=uom.id,
         list_price=Decimal(list_price),
-        currency="MYR",
+        currency=currency,
         dimensions_length=Decimal("800"),
         dimensions_width=Decimal("500"),
         dimensions_height=Decimal("220"),
@@ -386,6 +386,30 @@ class TestProductTagData:
         assert data["offer_price"] is None
         assert data["promotion_id"] is None
 
+    def test_ac_a10_product_tag_data_carries_currency_default_myr(self, db):
+        """AC-A10: `currency` equals the product's own column, default MYR."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db)
+
+        data = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )
+
+        assert data["currency"] == "MYR"
+
+    def test_ac_a10_product_tag_data_carries_currency_sgd(self, db):
+        """AC-A10: a product with `currency='SGD'` returns SGD, not MYR."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db, currency="SGD")
+
+        data = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )
+
+        assert data["currency"] == "SGD"
+
 
 # ---------------------------------------------------------------------------
 # Product set tag data (AC-L.4)
@@ -521,6 +545,20 @@ class TestProductSetTagData:
         assert data["offer_price"] is None
         assert data["promotion_id"] is None
 
+    def test_ac_a11_set_data_carries_the_first_members_currency(self, db):
+        """AC-A11: set data returns `currency` (the first member's)."""
+        from app.services.dealer_kit import tag_data_service
+
+        first = _product(db, list_price="1000.00", currency="SGD")
+        second = _product(db, list_price="200.00", currency="MYR")
+        product_set = _product_set(db, [(first, 1, True), (second, 1, True)])
+
+        data = tag_data_service.product_set_tag_data(
+            db, product_set, tag_data_service.staff_viewer()
+        )
+
+        assert data["currency"] == "SGD"
+
 
 # ---------------------------------------------------------------------------
 # Request line resolution (AC-L.8) - the mock is gone
@@ -588,6 +626,31 @@ class TestResolveLines:
         assert row["list_price"] == Decimal("1599.00")
         assert row["sell_price"] == Decimal("599.00")
         assert row["show_promo_price"] is True
+
+    def test_ac_a11_line_tag_row_carries_currency(self, db):
+        """AC-A11: a line tag row returns `currency`, off the product it names."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db, list_price="1599.00", currency="SGD")
+        request = self._request_with_line(db, product)
+
+        rows = tag_data_service.resolve_request_line_data(db, request)
+
+        assert rows[0]["currency"] == "SGD"
+
+    def test_ac_a11_part_row_carries_its_own_products_currency(self, db):
+        """AC-A11: a part row returns its OWN product's currency, not the
+        host's - `_part_row` is the resolver every part on a combo tag goes
+        through (`resolve_tags_live`)."""
+        from app.services.dealer_kit import tag_data_service
+
+        part_product = _product(db, list_price="99.00", currency="SGD")
+
+        part = tag_data_service._part_row(
+            db, part_product, tag_data_service.staff_viewer(), None, {}
+        )
+
+        assert part["currency"] == "SGD"
 
     def test_marketing_override_wins_over_the_resolved_offer(self, db):
         """The override beats the promotion engine's offer - on the TAG since S3.

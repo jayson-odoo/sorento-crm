@@ -332,6 +332,27 @@ describe('resolveSlotText name slot (S2, AC-S2-2)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// resolveSlotText price slots print a bare figure, no `RM` (AC-A1, AC-A2).
+// The badge's own `showCurrency` toggle is untouched - this is only the TEXT
+// slot path, `price-badge.test.ts` covers the badge default staying `RM 760`.
+// ---------------------------------------------------------------------------
+
+describe('resolveSlotText price slots (AC-A1, AC-A2)', () => {
+  it('AC-A1: sell_price slot renders the bare offer figure, no RM prefix', () => {
+    const data = {
+      kind: 'product' as const,
+      product: product({ list_price: 1599, offer_price: 535 }),
+    };
+    expect(resolveSlotText({ slot_binding: 'sell_price' }, data)).toBe('535');
+  });
+
+  it('AC-A2: list_price slot renders the bare list figure, grouped, no RM prefix', () => {
+    const data = { kind: 'product' as const, product: product({ list_price: 1599 }) };
+    expect(resolveSlotText({ slot_binding: 'list_price' }, data)).toBe('1,599');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Presets (AC-L.5)
 // ---------------------------------------------------------------------------
 

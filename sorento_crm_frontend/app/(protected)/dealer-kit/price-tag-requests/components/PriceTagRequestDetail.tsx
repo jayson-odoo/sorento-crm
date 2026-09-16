@@ -28,7 +28,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import {
   Download,
@@ -63,6 +63,7 @@ import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
@@ -108,11 +109,10 @@ import {
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import {
-  listTagDataChanges,
   recheckTagDataChanges,
   resolveTagPin,
-  updateAllTagPins,
 } from '../../services/priceTagDataService';
+import { useTagDataChanges, tagDataChangesKey } from '../hooks/useTagDataChanges';
 import {
   changedTagCount,
   type TagDataChangeSet,
@@ -176,16 +176,17 @@ function seedLinePriceOverrides(
 
 export default function PriceTagRequestDetail({ requestId }: Props) {
   const router = useRouter();
+  // Owner ruling after #948: Promotion / Selling price are real table
+  // columns on desktop, not a `bg-muted/20` sub-row. Below the mobile
+  // breakpoint they stack under the line's Name cell instead.
+  const isMobile = useIsMobile();
   const [request, setRequest] = useState<PriceTagRequestDetailType | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [exportLoading, setExportLoading] = useState(false);
   /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
   const [editOpen, setEditOpen] = useState(false);
-  /** What master data has changed under the pinned tags (r9 S5/D18). */
-  const [dataChanges, setDataChanges] = useState<TagDataChangeSet[]>([]);
   const [reviewTagId, setReviewTagId] = useState<string | null>(null);
-  const [pinBusy, setPinBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [tab, setTab] = useState<DetailTab>('request');
@@ -250,33 +251,25 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     };
   }, [requestId]);
 
-  const loadDataChanges = useCallback(() => {
-    listTagDataChanges(requestId)
-      .then(setDataChanges)
-      .catch(() => {
-        // A diff that will not load leaves the page saying nothing changed,
-        // which is what it said before this feature existed.
-      });
-  }, [requestId]);
-
-  useEffect(() => {
-    loadDataChanges();
-  }, [loadDataChanges]);
+  // What master data has changed under the pinned tags (r9 S5/D18), polled
+  // every 30s (AC-C1/AC-C3) instead of loaded once on mount - a product
+  // edited in another tab reaches this pill with no reload.
+  const queryClient = useQueryClient();
+  const { data: dataChanges = [] } = useTagDataChanges(requestId, {
+    enabled: !!request && !isTerminalPriceTagStatus(request.status, request.print_by),
+  });
 
   const decideTagPin = useCallback(
     async (tagId: string, action: 'update' | 'keep') => {
-      setPinBusy(true);
       try {
         await resolveTagPin(requestId, tagId, action);
-        loadDataChanges();
+        await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(requestId) });
         toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
       } catch {
         toast.error('Could not apply that decision');
-      } finally {
-        setPinBusy(false);
       }
     },
-    [requestId, loadDataChanges],
+    [requestId, queryClient],
   );
 
   /**
@@ -288,7 +281,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const recheckDataChanges = useCallback(async () => {
     try {
       const rows = await recheckTagDataChanges(requestId);
-      setDataChanges(rows);
+      queryClient.setQueryData(tagDataChangesKey(requestId), rows);
       const changed = rows.filter((set) => set.changes.length > 0).length;
       toast.success(
         changed > 0
@@ -298,23 +291,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     } catch {
       toast.error('Could not check product data');
     }
-  }, [requestId]);
-
-  const updateAllPins = useCallback(async () => {
-    const ids = dataChanges
-      .filter((set) => set.changes.length > 0)
-      .map((set) => set.tag_id);
-    setPinBusy(true);
-    try {
-      await updateAllTagPins(requestId, ids);
-      loadDataChanges();
-      toast.success(`${ids.length} tags updated`);
-    } catch {
-      toast.error('Could not update the tags');
-    } finally {
-      setPinBusy(false);
-    }
-  }, [dataChanges, requestId, loadDataChanges]);
+  }, [requestId, queryClient]);
 
   const handleClaim = useCallback(async () => {
     setActionLoading(true);
@@ -584,7 +561,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         // makes after a write.
         const data = await getPriceTagRequest(request.id);
         setRequest(data);
-        loadDataChanges();
+        await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(request.id) });
         toast.success('Price basis updated');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to update the price');
@@ -592,7 +569,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         setSavingLinePrice(null);
       }
     },
-    [request, loadDataChanges],
+    [request, queryClient],
   );
 
   const choosePromotion = useCallback(
@@ -776,17 +753,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   >
                     Product data changed · {changedCount}
                   </span>
-                )}
-                {changedCount > 1 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pinBusy}
-                    onClick={() => void updateAllPins()}
-                  >
-                    <RefreshCw className="size-3.5 mr-1" />
-                    Update all
-                  </Button>
                 )}
               </div>
               {/* Read-only metadata lives in the header, never in a card body. */}
@@ -995,7 +961,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                 <p className="text-sm text-muted-foreground text-center py-4">
                   No lines in this request.
                 </p>
-              ) : (
+              ) : (() => {
+                // Owner ruling after #948: Promotion / Selling price are real
+                // columns (desktop) instead of a `bg-muted/20` sub-row -
+                // `sellingMode` gates both the two extra headers and each
+                // line row's two extra cells, and below the mobile
+                // breakpoint they move into the stack under Name instead
+                // (the two never render together, so nothing duplicates).
+                const sellingMode = (request.price_mode ?? 'list') === 'selling';
+                const showPriceColumns = sellingMode && !isMobile;
+                return (
                 <div className="overflow-x-auto">
                   {/* Line, then the parts it asked for, then the tags that get
                       printed for it (D3). One line is one row; a split line has
@@ -1013,6 +988,14 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         <th className="py-2 pr-3 font-medium text-right">
                           Sell Price
                         </th>
+                        {showPriceColumns && (
+                          <>
+                            <th className="py-2 pr-3 font-medium">Promotion</th>
+                            <th className="py-2 pr-3 font-medium text-right">
+                              Selling price
+                            </th>
+                          </>
+                        )}
                         <th className="py-2 pr-3 font-medium">Remarks</th>
                         <th className="py-2 pr-3 font-medium">Tag</th>
                         {(canDesign || changesByTag.size > 0) && (
@@ -1023,7 +1006,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                     <tbody>
                       {request.lines.map((line) => {
                         const showActions = canDesign || changesByTag.size > 0;
-                        const columns = showActions ? 9 : 8;
+                        const columns = (showActions ? 9 : 8) + (showPriceColumns ? 2 : 0);
                         const tags = line.tags ?? [];
                         const parts = line.parts ?? [];
                         const lineChanged = tags.some((tag) =>
@@ -1037,6 +1020,108 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                           tags.length === 1 && parts.length === 0
                             ? tags[0]
                             : null;
+                        // D5/S5: a line's own price basis, Selling mode only -
+                        // List price alone needs no promotion pick (AC-S5-1).
+                        // Editable only while the request is not terminal AND
+                        // the viewer holds `dealer_kit.price_tag_requests.process`
+                        // (AC-S5-3/S5-4); otherwise the same cells render read
+                        // only. Shared between the desktop `<td>` columns and
+                        // the mobile stack under Name - never both at once
+                        // (`showPriceColumns`/`isMobile` pick exactly one).
+                        const hasLinePricing =
+                          line.line_type === 'product' && !!line.product_id;
+                        // Owner polish after #948: the desktop `<td>` sits
+                        // under a "Promotion"/"Selling price" header, so its
+                        // cell holds only the value/control - the label
+                        // stays only on the mobile stack, which has no
+                        // header to read it off.
+                        const renderPromotionCell = (withLabel: boolean) => (
+                          <div className="min-w-[200px] flex-1 sm:max-w-[280px]">
+                            <Label
+                              htmlFor={`promotion-${line.id}`}
+                              className={
+                                withLabel
+                                  ? 'text-2xs uppercase tracking-wide text-muted-foreground'
+                                  : 'sr-only'
+                              }
+                            >
+                              Promotion
+                            </Label>
+                            {canEditLinePrice ? (
+                              <SearchableSelect
+                                id={`promotion-${line.id}`}
+                                clearable
+                                truncateTriggerLabel
+                                size="sm"
+                                value={effectivePromotionId(line.id) ?? ''}
+                                onChange={(value) => choosePromotion(line.id, value)}
+                                options={(linePricing[line.id]?.promotion_options ?? []).map(
+                                  (option) => ({
+                                    value: option.id,
+                                    label: `${option.description} - RM ${option.sell_price.toLocaleString('en-MY')}`,
+                                  }),
+                                )}
+                                placeholder="No covering promotion"
+                                emptyMessage="No promotion covers this line."
+                                disabled={savingLinePrice === line.id}
+                              />
+                            ) : (
+                              <p className="text-sm font-medium">
+                                {(() => {
+                                  const promoId = effectivePromotionId(line.id);
+                                  const option = linePricing[line.id]?.promotion_options.find(
+                                    (o) => o.id === promoId,
+                                  );
+                                  return option?.description ?? '-';
+                                })()}
+                              </p>
+                            )}
+                          </div>
+                        );
+                        const renderSellingPriceCell = (withLabel: boolean) => (
+                          <div className="min-w-[140px]">
+                            {withLabel && (
+                              <Label className="text-2xs uppercase tracking-wide text-muted-foreground">
+                                Selling price
+                              </Label>
+                            )}
+                            {effectivePromotionId(line.id) ? (
+                              <p className="text-sm font-medium whitespace-nowrap">
+                                RM{' '}
+                                {(
+                                  linePricing[line.id]?.sell_price ?? 0
+                                ).toLocaleString('en-MY')}
+                              </p>
+                            ) : canEditLinePrice ? (
+                              <Input
+                                type="number"
+                                inputMode="decimal"
+                                // `ManualSellPrice` is `gt=0` with 2 decimal
+                                // places, so 0 is a refusal, not a bound.
+                                min={0.01}
+                                step={0.01}
+                                variant="sm"
+                                className="w-28"
+                                value={
+                                  manualPriceDraft[line.id] ??
+                                  linePriceOverrides[line.id]?.manual_sell_price ??
+                                  ''
+                                }
+                                onChange={(e) => setManualLinePrice(line.id, e.target.value)}
+                                onBlur={() => commitManualLinePrice(line.id)}
+                                placeholder="Type a price"
+                                aria-label={`Selling price for ${line.code || line.name}`}
+                                disabled={savingLinePrice === line.id}
+                              />
+                            ) : (
+                              <p className="text-sm font-medium whitespace-nowrap">
+                                {linePriceOverrides[line.id]?.manual_sell_price != null
+                                  ? `RM ${linePriceOverrides[line.id]!.manual_sell_price!.toLocaleString('en-MY')}`
+                                  : '-'}
+                              </p>
+                            )}
+                          </div>
+                        );
                         return (
                           <Fragment key={line.id}>
                             <tr className="border-b last:border-b-0">
@@ -1081,6 +1166,19 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                     </span>
                                   </span>
                                 )}
+                                {/* AC-S1-11-equivalent: below the app's 992px
+                                    mobile breakpoint (useIsMobile), the same
+                                    Promotion/Selling price fields stack here
+                                    instead of living in their own columns. */}
+                                {isMobile && sellingMode && hasLinePricing && (
+                                  <div
+                                    data-testid="line-pricing-stack"
+                                    className="mt-2 flex flex-wrap items-center gap-4 border-l-2 border-border pl-3"
+                                  >
+                                    {renderPromotionCell(true)}
+                                    {renderSellingPriceCell(true)}
+                                  </div>
+                                )}
                               </td>
                               <td className="py-2 pr-3 text-right">{line.quantity}</td>
                               {foldedTag ? (
@@ -1116,6 +1214,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                       figure as if it were the line's. */}
                                   <td className="py-2 pr-3" />
                                   <td className="py-2 pr-3" />
+                                </>
+                              )}
+                              {showPriceColumns && (
+                                <>
+                                  <td className="py-2 pr-3 align-top">
+                                    {hasLinePricing ? renderPromotionCell(false) : null}
+                                  </td>
+                                  <td className="py-2 pr-3 text-right align-top">
+                                    {hasLinePricing ? renderSellingPriceCell(false) : null}
+                                  </td>
                                 </>
                               )}
                               <td
@@ -1177,102 +1285,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 </td>
                               )}
                             </tr>
-                            {/* D5/S5: a line's own price basis, Selling mode
-                                only - List price alone needs no promotion
-                                pick (AC-S5-1). Editable only while the
-                                request is not terminal AND the viewer holds
-                                `dealer_kit.price_tag_requests.process`
-                                (AC-S5-3/S5-4); otherwise the same cells
-                                render read only. */}
-                            {line.line_type === 'product' &&
-                              line.product_id &&
-                              (request.price_mode ?? 'list') === 'selling' && (
-                                <tr className="border-b last:border-b-0 bg-muted/20">
-                                  <td className="py-1.5 pr-3" />
-                                  <td colSpan={columns - 1} className="py-1.5 pr-3 pl-4">
-                                    <div className="flex flex-wrap items-center gap-4">
-                                      <div className="min-w-[200px] flex-1 sm:max-w-[280px]">
-                                        <Label
-                                          htmlFor={`promotion-${line.id}`}
-                                          className="text-2xs uppercase tracking-wide text-muted-foreground"
-                                        >
-                                          Promotion
-                                        </Label>
-                                        {canEditLinePrice ? (
-                                          <SearchableSelect
-                                            id={`promotion-${line.id}`}
-                                            clearable
-                                            truncateTriggerLabel
-                                            size="sm"
-                                            value={effectivePromotionId(line.id) ?? ''}
-                                            onChange={(value) => choosePromotion(line.id, value)}
-                                            options={(linePricing[line.id]?.promotion_options ?? []).map(
-                                              (option) => ({
-                                                value: option.id,
-                                                label: `${option.description} - RM ${option.sell_price.toLocaleString('en-MY')}`,
-                                              }),
-                                            )}
-                                            placeholder="No covering promotion"
-                                            emptyMessage="No promotion covers this line."
-                                            disabled={savingLinePrice === line.id}
-                                          />
-                                        ) : (
-                                          <p className="text-sm font-medium">
-                                            {(() => {
-                                              const promoId = effectivePromotionId(line.id);
-                                              const option = linePricing[line.id]?.promotion_options.find(
-                                                (o) => o.id === promoId,
-                                              );
-                                              return option?.description ?? '-';
-                                            })()}
-                                          </p>
-                                        )}
-                                      </div>
-                                      <div className="min-w-[140px]">
-                                        <Label className="text-2xs uppercase tracking-wide text-muted-foreground">
-                                          Selling price
-                                        </Label>
-                                        {effectivePromotionId(line.id) ? (
-                                          <p className="text-sm font-medium">
-                                            RM{' '}
-                                            {(
-                                              linePricing[line.id]?.sell_price ?? 0
-                                            ).toLocaleString('en-MY')}
-                                          </p>
-                                        ) : canEditLinePrice ? (
-                                          <Input
-                                            type="number"
-                                            inputMode="decimal"
-                                            // `ManualSellPrice` is `gt=0` with
-                                            // 2 decimal places, so 0 is a
-                                            // refusal, not a bound.
-                                            min={0.01}
-                                            step={0.01}
-                                            variant="sm"
-                                            className="w-28"
-                                            value={
-                                              manualPriceDraft[line.id] ??
-                                              linePriceOverrides[line.id]?.manual_sell_price ??
-                                              ''
-                                            }
-                                            onChange={(e) => setManualLinePrice(line.id, e.target.value)}
-                                            onBlur={() => commitManualLinePrice(line.id)}
-                                            placeholder="Type a price"
-                                            aria-label={`Selling price for ${line.code || line.name}`}
-                                            disabled={savingLinePrice === line.id}
-                                          />
-                                        ) : (
-                                          <p className="text-sm font-medium">
-                                            {linePriceOverrides[line.id]?.manual_sell_price != null
-                                              ? `RM ${linePriceOverrides[line.id]!.manual_sell_price!.toLocaleString('en-MY')}`
-                                              : '-'}
-                                          </p>
-                                        )}
-                                      </div>
-                                    </div>
-                                  </td>
-                                </tr>
-                              )}
                             {foldedTag ? null : (
                               <>
                             {/* What the salesperson asked to come with it (S2). */}
@@ -1331,6 +1343,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                     </span>
                                   )}
                                 </td>
+                                {/* The line's own Promotion/Selling price
+                                    columns sit on the LINE row above, not
+                                    here - a tag row keeps them empty so it
+                                    stays aligned under the same headers. */}
+                                {showPriceColumns && (
+                                  <>
+                                    <td className="py-1.5 pr-3" />
+                                    <td className="py-1.5 pr-3" />
+                                  </>
+                                )}
                                 <td className="py-1.5 pr-3" />
                                 <td className="py-1.5 pr-3">
                                   <div className="flex flex-wrap items-center gap-1.5">
@@ -1390,7 +1412,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                     </tbody>
                   </table>
                 </div>
-              )}
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>

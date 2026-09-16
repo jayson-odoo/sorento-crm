@@ -66,6 +66,7 @@ function renderView(
     onDecide?: (key: string, decision: BoardDecision | null) => void;
     onDecideMany?: (keys: string[]) => Promise<{ saved: number; failed: number }>;
     annotations?: Map<string, BoardChangeAnnotation[]>;
+    externalSearch?: string;
   } = {},
 ) {
   const rows = overrides.contributions ?? [contribution()];
@@ -92,6 +93,7 @@ function renderView(
       onDecide={onDecide}
       onDecideMany={onDecideMany}
       annotations={overrides.annotations}
+      externalSearch={overrides.externalSearch}
     />,
   );
   return { ...utils, onDecide, onDecideMany };
@@ -127,6 +129,59 @@ describe('FulfilmentBoardListView', () => {
     expect(screen.getByText('SO397451')).toBeInTheDocument();
     expect(screen.getByText('(Line 10)')).toBeInTheDocument();
     expect(screen.getByText('(Line 20)')).toBeInTheDocument();
+  });
+
+  // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J, AC-P2/AC-P3): the board's ONE search
+  // box, wired through as `externalSearch`, has to actually narrow this view's own rows -
+  // today it is threaded through unused by every existing test here, so deleting the prop
+  // entirely would still leave this whole file green.
+  describe('S6/AC-P2/AC-P3: the boards one search box narrows this view too', () => {
+    it('renders only the contributions matching externalSearch, by customer name', async () => {
+      renderView({
+        contributions: [
+          contribution({ key: 'so-1:line-10', so_number: 'SO397450', customer_name: 'Kee Lin Sdn Bhd' }),
+          contribution({ key: 'so-2:line-20', so_number: 'SO397451', customer_name: 'Optad Sdn Bhd' }),
+        ],
+        externalSearch: 'KEE LIN',
+      });
+
+      expect(await screen.findByText('SO397450')).toBeInTheDocument();
+      expect(screen.queryByText('SO397451')).not.toBeInTheDocument();
+    });
+
+    it('matches by SO number, agent code and item code too - the same fields the grid reads', async () => {
+      renderView({
+        contributions: [
+          contribution({ key: 'so-1:line-10', so_number: 'SO397450' }),
+          contribution({ key: 'so-2:line-20', so_number: 'SO999999' }),
+        ],
+        externalSearch: 'SO397450',
+      });
+
+      expect(await screen.findByText('SO397450')).toBeInTheDocument();
+      expect(screen.queryByText('SO999999')).not.toBeInTheDocument();
+    });
+
+    it('renders every row when externalSearch is empty or absent', async () => {
+      renderView({
+        contributions: [
+          contribution({ key: 'so-1:line-10', so_number: 'SO397450' }),
+          contribution({ key: 'so-2:line-20', so_number: 'SO397451' }),
+        ],
+        externalSearch: '',
+      });
+
+      expect(await screen.findByText('SO397450')).toBeInTheDocument();
+      expect(screen.getByText('SO397451')).toBeInTheDocument();
+    });
+
+    it('renders no search box of its own - "Every contributing line" has one search, the boards', async () => {
+      renderView();
+
+      await screen.findByText('SO397450');
+      expect(screen.queryByPlaceholderText(/search/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
+    });
   });
 
   /** No revision number on the pill (R6): "Confirmed", full stop. */

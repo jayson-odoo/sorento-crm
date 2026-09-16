@@ -84,6 +84,18 @@ export function PromptDetail({ name }: { name: string }) {
     }
   }, [baseQuery.data, name, loadedFor]);
 
+  // Slice E: a key with no saved version has no `baseQuery.data` to seed
+  // from at all - the effect above never fires, and the editor opened
+  // empty (browser finding on every `ai_extract_*` key the day they were
+  // registered). `meta.fallback_text` - the code default - is what seeds it
+  // instead, once, the same "one load per key" shape as the effect above.
+  useEffect(() => {
+    if (meta && meta.versions.length === 0 && loadedFor !== `${name}:fallback`) {
+      setDraft(meta.fallback_text ?? '');
+      setLoadedFor(`${name}:fallback`);
+    }
+  }, [meta, name, loadedFor]);
+
   const dirty = !!baseQuery.data && draft !== baseQuery.data.template;
 
   // Warn on navigate-away when there are unsaved edits (PLAN §9b Q4).
@@ -334,7 +346,11 @@ export function PromptDetail({ name }: { name: string }) {
               <CardTitle className="text-base">
                 Editor{' '}
                 <span className="text-xs font-normal text-muted-foreground">
-                  (base: v{baseVersion}
+                  {/* Slice E: no saved version means `baseVersion` never
+                      resolves, so "v{baseVersion}" would print "vnull" - the
+                      draft came off `fallback_text` instead, and the label
+                      says so. */}
+                  (base: {meta?.versions.length === 0 ? 'code default' : `v${baseVersion}`}
                   {dirty ? ' · unsaved changes' : ''})
                 </span>
               </CardTitle>

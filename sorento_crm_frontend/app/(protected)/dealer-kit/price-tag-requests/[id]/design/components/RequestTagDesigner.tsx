@@ -38,6 +38,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   ChevronLeft,
   Check,
@@ -119,13 +120,14 @@ import {
   setReviewCommentResolved,
 } from '../../../../services/priceTagReviewService';
 import {
-  listTagDataChanges,
   listRequestVersions,
   getRequestVersion,
   recheckTagDataChanges,
   resolveTagPin,
   restoreRequestVersion,
 } from '../../../../services/priceTagDataService';
+import { useTagDataChanges, tagDataChangesKey } from '../../../hooks/useTagDataChanges';
+import { isTerminalPriceTagStatus } from '@/lib/dealer-kit/print-collection';
 import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import RequestVersionsSheet from '@/components/dealer-kit/RequestVersionsSheet';
@@ -417,21 +419,15 @@ export function RequestTagDesigner({
   // the same change, shown, with Keep current and Update tag as the two ways
   // out of it.
 
-  // What master data has moved under the pinned tags (r9 S5/D18).
-  const [dataChanges, setDataChanges] = useState<TagDataChangeSet[]>([]);
+  // What master data has moved under the pinned tags (r9 S5/D18), polled
+  // every 30s (AC-C1/AC-C2) instead of loaded once on mount - a product
+  // edited in another tab now reaches this rail's red dot with no reload.
+  const queryClient = useQueryClient();
   const [reviewTagId, setReviewTagId] = useState<string | null>(null);
 
-  const loadDataChanges = useCallback(() => {
-    listTagDataChanges(request.id)
-      .then(setDataChanges)
-      .catch(() => {
-        // No diff is the same as no changes as far as this canvas is concerned.
-      });
-  }, [request.id]);
-
-  useEffect(() => {
-    loadDataChanges();
-  }, [loadDataChanges]);
+  const { data: dataChanges = [] } = useTagDataChanges(request.id, {
+    enabled: !isTerminalPriceTagStatus(request.status, request.print_by ?? null),
+  });
 
   const changesByTag = useMemo(() => {
     const map = new Map<string, TagDataChangeSet>();
@@ -450,7 +446,7 @@ export function RequestTagDesigner({
   const recheckDataChanges = useCallback(async () => {
     try {
       const rows = await recheckTagDataChanges(request.id);
-      setDataChanges(rows);
+      queryClient.setQueryData(tagDataChangesKey(request.id), rows);
       const changed = rows.filter((set) => set.changes.length > 0).length;
       toast.success(
         changed > 0
@@ -460,13 +456,13 @@ export function RequestTagDesigner({
     } catch {
       toast.error('Could not check product data');
     }
-  }, [request.id]);
+  }, [request.id, queryClient]);
 
   const decideTagPin = useCallback(
     async (tagId: string, action: 'update' | 'keep') => {
       try {
         await resolveTagPin(request.id, tagId, action);
-        loadDataChanges();
+        await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(request.id) });
         if (action === 'update') {
           // The pin moved, so the canvas has to redraw against the new values.
           const rows = await resolveRequestTags(request.id);
@@ -477,7 +473,7 @@ export function RequestTagDesigner({
         toast.error('Could not apply that decision');
       }
     },
-    [request.id, loadDataChanges],
+    [request.id, queryClient],
   );
 
   /** One resolved row per TAG, keyed by tag id (D3). */

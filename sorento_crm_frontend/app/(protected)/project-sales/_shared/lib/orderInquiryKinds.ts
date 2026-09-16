@@ -21,7 +21,7 @@
  *
  * A ROW IS THE UNIT AND IT IS NEVER SPLIT BETWEEN CELLS. A row linked 5 of 8 to a
  * purchase order carries BOTH `po` 5 and `buy` 3, which is what makes the bar a split
- * bar and the label read "PO 5 · Buy 3".
+ * bar and the label read "Purchased 5 · Buy 3".
  *
  * Everything is derived from the row's own `links[]` - never from `linked_qty` beside
  * them - so the bar, the label and the cards cannot disagree with the documents the
@@ -39,18 +39,15 @@ import type {
 // screen imports when it needs the vocabulary.
 export type { OrderInquiryKind };
 
-/** What a person reads on a card. Three words each, and no others. */
+/**
+ * What a person reads on a card (S5, PLAN-scm-oi-worklist-excel-parity.md R-F): the
+ * three STAGES a unit passes through, left to right - not owed on a document yet,
+ * bought but not yet on a shipment, already on its way.
+ */
 export const KIND_LABELS: Record<OrderInquiryKind, string> = {
-  spo: 'Use SPO',
-  po: 'Use PO',
   buy: 'Buy',
-};
-
-/** The same three, short enough for a matrix cell: "PO 5 · Buy 3". */
-export const KIND_SHORT_LABELS: Record<OrderInquiryKind, string> = {
-  spo: 'SPO',
-  po: 'PO',
-  buy: 'Buy',
+  po: 'Purchased',
+  spo: 'Incoming',
 };
 
 /** The board's own paint, not a second palette (see the file header). */
@@ -61,11 +58,11 @@ export const KIND_COLOURS: Record<OrderInquiryKind, { bar: string; text: string 
 };
 
 /**
- * The fixed reading order: what is already on its way, what is on a document, what is
- * still to buy. A card keeps its place whether it reads 300 or 0, because a strip is
- * read by glancing at a position.
+ * The fixed reading order (S5, R-F): Buy, Purchased, Incoming - the furthest stage a
+ * unit has reached, left to right. A card keeps its place whether it reads 300 or 0,
+ * because a strip is read by glancing at a position.
  */
-export const KIND_ORDER: OrderInquiryKind[] = ['spo', 'po', 'buy'];
+export const KIND_ORDER: OrderInquiryKind[] = ['buy', 'po', 'spo'];
 
 /** One kind's share of a row, a cell or a whole selection. */
 export interface OrderInquiryKindSegment {
@@ -126,7 +123,32 @@ export function segmentsOfRows(rows: OrderInquiryKindRow[]): OrderInquiryKindSeg
 }
 
 /**
- * A composition in the fewest words that still name it: "Buy 3", "PO 8", "PO 5 · Buy 3".
+ * The same segments, off totals the SERVER already summed (S3): a schedule matrix cell
+ * carries its own `buy`/`po`/`spo`, computed by the same GROUP BY the list reads, so
+ * there is nothing here to add up a second time - only to read in the fixed order and
+ * drop the zero kinds, exactly as `segmentsOfRows` does for a row list.
+ */
+export function segmentsOfTotals(
+  totals: Pick<OrderInquiryKindTotals, OrderInquiryKind>,
+): OrderInquiryKindSegment[] {
+  return KIND_ORDER.map((kind) => ({ kind, qty: totals[kind] ?? '0' })).filter(
+    (segment) => toMinor(segment.qty) !== 0,
+  );
+}
+
+/** Is every unit of these totals off the Buy stage? The matrix cell's own "solid bar". */
+export function fullyLinkedTotals(totals: Pick<OrderInquiryKindTotals, 'buy'>): boolean {
+  return toMinor(totals.buy ?? '0') === 0;
+}
+
+/**
+ * A composition in the fewest words that still name it: "Buy 3", "Purchased 8",
+ * "Purchased 5 · Buy 3".
+ *
+ * `KIND_LABELS`, the SAME words the cards and the bar's own legend carry (review round).
+ * The matrix cell used to abbreviate them to "PO" and "SPO" - the names of the DOCUMENTS
+ * rather than of the stages - so one screen taught a buyer two vocabularies for one
+ * fact, and "SPO 10" beside a card reading "Incoming" read as two different numbers.
  *
  * Every kind with a quantity, not just the largest one: a cell that is half bought and
  * half not is the cell somebody has to act on, and naming only its bigger half is how a
@@ -135,7 +157,7 @@ export function segmentsOfRows(rows: OrderInquiryKindRow[]): OrderInquiryKindSeg
  */
 export function kindText(segments: OrderInquiryKindSegment[]): string {
   return segments
-    .map((segment) => `${KIND_SHORT_LABELS[segment.kind]} ${segment.qty}`)
+    .map((segment) => `${KIND_LABELS[segment.kind]} ${segment.qty}`)
     .join(' · ');
 }
 

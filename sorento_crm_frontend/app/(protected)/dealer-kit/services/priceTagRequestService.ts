@@ -228,6 +228,10 @@ export interface PriceTagRequestSummary {
   collected_by_name?: string | null;
   /** True when the auto-collect sweep closed it rather than a person (D11). */
   collected_auto?: boolean;
+  /** The stored product-data-change count (AC-D5), refreshed by the list
+   *  route only for a row a cheap query says was touched since its last
+   *  check - never resolved per row on every page load. */
+  data_changed_tag_count?: number;
 }
 
 export interface PriceTagRequestDetail extends PriceTagRequestSummary {

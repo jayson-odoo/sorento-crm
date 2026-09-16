@@ -149,8 +149,8 @@ const GRID_IN_FLOATING_SURFACE_SITES = new Map<string, string>([
     'Pile queue in a dialog body. Already scrollerMaxHeight={false}',
   ],
   [
-    'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx:57',
-    'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}',
+    'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx:97',
+    'Drilldown dialog, rendered BEFORE the list grid in OrderInquiriesClient, not inside it. Already scrollerMaxHeight={false}. (Line moved 57 -> 97 when the cell drilldown gained its `axis`/`axis_key` filters; the census is keyed by line, so a site that moves is a one-line diff here rather than a silent pass)',
   ],
   [
     'app/(protected)/project-sales/stock-debt/components/StockDebtCellDialog.tsx:378',

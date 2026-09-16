@@ -105,6 +105,15 @@ vi.mock('../../_shared/services/orderInquiryService', () => ({
     unplaceOrderInquiryRow(...args),
 }));
 
+// S3: the Schedule view reads its own endpoint now, never the list. Defaulted empty so
+// no test here has to know the matrix's own fixture shape unless it is testing the
+// matrix itself; the one test that cares about an EMPTY schedule overrides this
+// directly rather than emptying the (unrelated) list mock.
+const getOrderInquiryMatrix = vi.fn();
+vi.mock('../../_shared/services/orderInquiryMatrixService', () => ({
+  getOrderInquiryMatrix: (...args: unknown[]) => getOrderInquiryMatrix(...args),
+}));
+
 // The upload dialog is its own suite's subject (`OutstandingUploadDialog` under
 // `scm/reorder`); what this file needs is only the `onQueued` seam that hands the queued
 // job over, so the real dialog is replaced with a button that fires it directly.
@@ -258,6 +267,9 @@ beforeEach(() => {
     product_name: null,
   });
   getOrderInquiryPoCandidates.mockResolvedValue([]);
+  // S3: an empty matrix by default - the Schedule view is not what most tests here are
+  // about, and this keeps them from depending on that endpoint's own fixture shape.
+  getOrderInquiryMatrix.mockResolvedValue({ data: [] });
 });
 
 describe('OrderInquiriesClient: reading the page', () => {
@@ -275,7 +287,7 @@ describe('OrderInquiriesClient: reading the page', () => {
     expect(screen.queryByText('35 of 35')).not.toBeInTheDocument();
   });
 
-  it("reads the columns in the sheet's own order, renamed (AC-D15)", async () => {
+  it("reads the columns in the Excel's own order, renamed (AC-D15, Phase 2 round 2)", async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -283,21 +295,25 @@ describe('OrderInquiriesClient: reading the page', () => {
       .getAllByRole('columnheader')
       .map((cell) => cell.textContent ?? '');
     const order = [
+      // The Excel's own column order (Phase 2 round 2): SO date through PO/SPO reads
+      // the way the purchasing team already reads their sheet - Order inquiry (a
+      // number the sheet never carried) moves to the end, beside the rest of the
+      // system's own columns rather than in front of Item code.
       'SO date',
       'S/O no',
-      'Order inquiry',
       'Item code',
       'Qty',
       'Delivery date',
       'Project / customer',
-      'Agent',
-      'Location',
       'Supplier',
       // Two columns since 14 Sep, side by side, where "Outstanding PO/SPO" used to be
       // (AC-R-31). The id behind the first is still `po_number`, so a saved layout keeps
       // its place.
       'PO',
       'SPO',
+      'Agent',
+      'Location',
+      'Order inquiry',
       'Taken by PO/SPO',
       'Remaining',
       'Instruction',
@@ -490,7 +506,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(screen.queryByRole('button', { name: /history/i })).toBeNull();
   });
 
-  it('Link selected is enabled ONLY with exactly one row ticked', async () => {
+  it('AC-T5: Choose document (1) is enabled ONLY with exactly one row ticked', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -498,14 +514,14 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
       screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
     );
     openActionsMenu();
-    let item = screen.getByRole('menuitem', { name: 'Link selected (1)' });
+    let item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
     await closeMenu();
 
     // A second tick drops it back to disabled - the manual dialog is a ONE-row override.
     fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
     openActionsMenu();
-    item = screen.getByRole('menuitem', { name: 'Link selected (0)' });
+    item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
     expect(item).toHaveAttribute('aria-disabled', 'true');
     expect(item).toHaveAttribute(
       'title',
@@ -513,7 +529,7 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     );
   });
 
-  it('opens the manual Link dialog for the one ticked row', async () => {
+  it('AC-T5: opens the manual Link dialog for the one ticked row', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -522,32 +538,106 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     );
     openActionsMenu();
     fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Link selected (1)' }),
+      screen.getByRole('menuitem', { name: 'Choose document (1)' }),
     );
 
     expect(await screen.findByText('Link to a document')).toBeInTheDocument();
     expect(getOrderInquiryPoCandidates).toHaveBeenCalledWith('row-2');
   });
 
+  it('AC-T4: Link selected posts auto-place with only the linkable ticked row ids', async () => {
+    autoPlaceOrderInquiryRows.mockResolvedValue({
+      placed_rows: 1,
+      after_horizon: 0,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    // row-2 (raised, unlinked) is linkable; row-1 (actioned, fully linked) is not.
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    fireEvent.click(screen.getByLabelText('Select SRTWB5400 on SO385126'));
+    openActionsMenu();
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }),
+    );
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ row_ids: ['row-2'] }),
+    );
+  });
+
+  it('SF-4: a fully bundled row is not linkable - not counted, not posted', async () => {
+    // Bundled entirely inside another row's own line (its whole unlinked remainder
+    // rides along): `isLinkable` today reads only `qty - linked_qty`, so a row with
+    // bundled_qty covering its whole unlinked remainder still counts as needing a
+    // document, and "Link selected" would post an id `auto_place_for_rows` refuses
+    // (nothing left FOR this row to place - it is not the row's own demand).
+    const bundled: OrderInquiryWorklistRow = {
+      ...MOCK_WORKLIST_ROWS[1],
+      id: 'row-bundled',
+      item_code: 'ZZT-BUNDLED',
+      so_number: 'SO-BUNDLED',
+      qty: '5',
+      linked_qty: '0',
+      bundled_qty: '5',
+      bundled_with: {
+        row_id: 'row-host',
+        item_code: 'ZZT-HOST',
+        item_codes: ['ZZT-HOST'],
+        anchor_headline: '5 of 5',
+      },
+    };
+    const plain: OrderInquiryWorklistRow = {
+      ...MOCK_WORKLIST_ROWS[1],
+      id: 'row-plain',
+      item_code: 'ZZT-PLAIN',
+      so_number: 'SO-PLAIN',
+      qty: '5',
+      linked_qty: '0',
+      bundled_qty: '0',
+      bundled_with: null,
+    };
+    listOrderInquiryWorklist.mockResolvedValue(envelope([bundled, plain]));
+    autoPlaceOrderInquiryRows.mockResolvedValue({ placed_rows: 1, after_horizon: 0 });
+    renderClient();
+    await screen.findByText('SO-BUNDLED');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-BUNDLED on SO-BUNDLED'));
+    fireEvent.click(screen.getByLabelText('Select ZZT-PLAIN on SO-PLAIN'));
+    openActionsMenu();
+    expect(
+      screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ row_ids: ['row-plain'] }),
+    );
+  });
+
   it('Unlink selected counts only linked ticked rows, and disables at 0', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    // row-2 is unlinked (raised, linked_qty 0); ticking it never enables Unlink.
+    // row-2 is unlinked (raised, linked_qty 0); ticking it never enables Unlink. With
+    // one row ticked and zero eligible, the label is "(0 of 1)" - `countLabel` only
+    // drops the "of n" half when eligible equals ticked.
     fireEvent.click(
       screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
     );
     openActionsMenu();
     expect(
-      screen.getByRole('menuitem', { name: 'Unlink selected (0)' }),
+      screen.getByRole('menuitem', { name: 'Unlink selected (0 of 1)' }),
     ).toHaveAttribute('aria-disabled', 'true');
     await closeMenu();
 
-    // row-5 IS linked (placed) - ticking it enables the count.
+    // row-5 IS linked (placed) - ticking it too takes it to "(1 of 2)", still disabled
+    // because the OTHER ticked row (row-2) is still not.
     fireEvent.click(screen.getByLabelText('Select SRTWCY7405-PJ on SO381895'));
     openActionsMenu();
-    const item = screen.getByRole('menuitem', { name: 'Unlink selected (1)' });
-    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    expect(
+      screen.getByRole('menuitem', { name: 'Unlink selected (1 of 2)' }),
+    ).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('Reject selected counts every OWED row - draft-linked ones included (plan section 1)', async () => {
@@ -561,18 +651,44 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(item).not.toHaveAttribute('aria-disabled', 'true');
   });
 
-  it('offers no tickable checkbox for a row nothing is left to act on', async () => {
+  it('AC-T1: every row selectable except cancelled, fully linked and actioned included', async () => {
+    // S4, R-A: "Every row except cancelled ticks." row-1 is `actioned` and fully
+    // linked and now ticks too (Unlink selected reaches it); row-4 is `cancelled` and
+    // is the only one that does not.
     renderClient();
     await screen.findByText('SO385126');
 
-    // row-1 is `actioned`, row-4 is `cancelled` - disabled rather than absent, since
-    // Reject is the only bulk action a tick still feeds (S1 retires Confirm).
     expect(
       screen.getByLabelText('Select SRTWB5400 on SO385126'),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
       screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'),
     ).toBeEnabled();
+    expect(
+      screen.getByLabelText('Select BT012-CR on PSO-000412'),
+    ).toBeDisabled();
+  });
+
+  it('AC-T2: three rows ticked - one fully linked, one partly linked, one unlinked - label the eligible count', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    // row-1 actioned/fully linked, row-3 partly_linked, row-2 raised/unlinked.
+    fireEvent.click(screen.getByLabelText('Select SRTWB5400 on SO385126'));
+    fireEvent.click(screen.getByLabelText('Select SRTWT107 on SO363150'));
+    fireEvent.click(screen.getByLabelText('Select SRTWC8605-SC-RL on SO386461'));
+    openActionsMenu();
+
+    // Link selected: row-3 (partly linked, remainder owed) and row-2 (raised) are
+    // linkable, row-1 (actioned) is not -> 2 of 3.
+    expect(
+      screen.getByRole('menuitem', { name: 'Link selected (2 of 3)' }),
+    ).toBeInTheDocument();
+    // Reject selected: row-1 (actioned) has nothing left to refuse - only row-2 and
+    // row-3 are still owed an answer -> 2 of 3.
+    expect(
+      screen.getByRole('menuitem', { name: 'Reject selected (2 of 3)' }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -659,8 +775,8 @@ describe('AC-D6: Reject selected', () => {
   });
 });
 
-describe('The plan horizon is stated in the header', () => {
-  it('reads Plan until off the latest completed reorder plan', async () => {
+describe('S2/R-H: the "Plan until" subtitle is retired from the page', () => {
+  it('renders no "Plan until" text anywhere, with or without a plan horizon in force', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       link_up_to_default: '2026-12-31',
@@ -668,26 +784,11 @@ describe('The plan horizon is stated in the header', () => {
     renderClient();
     await screen.findByText('SO385126');
 
-    await waitFor(() =>
-      expect(screen.getByTestId('oi-plan-until')).toHaveTextContent(
-        'Plan until 31/12/2026',
-      ),
-    );
-  });
-
-  it('says so when no Plan until is in force (no completed run, or a run that planned every open line)', async () => {
-    getOrderInquiryWorklistSummary.mockResolvedValue({
-      ...MOCK_WORKLIST_SUMMARY,
-      link_up_to_default: null,
-    });
-    renderClient();
-    await screen.findByText('SO385126');
-
-    await waitFor(() =>
-      expect(screen.getByTestId('oi-plan-until')).toHaveTextContent(
-        'No Plan until in force',
-      ),
-    );
+    // The date is not gone - it moved into the Auto link all dialog (item 12) - but the
+    // page-level subtitle and its testid are.
+    expect(screen.queryByTestId('oi-plan-until')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Plan until/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No Plan until in force/)).not.toBeInTheDocument();
   });
 });
 
@@ -854,7 +955,9 @@ describe('the schedule view (unaffected by the draft-links rework)', () => {
   });
 
   it('says nothing is in this view when the filtered schedule is empty', async () => {
-    listOrderInquiryWorklist.mockResolvedValue(envelope([]));
+    // S3: Schedule reads its own matrix endpoint now, never the list - emptying
+    // `listOrderInquiryWorklist` (as this test did before S3) no longer has any effect
+    // on it. `getOrderInquiryMatrix` defaults to `{ data: [] }` in `beforeEach` already.
     currentSearchParams = new URLSearchParams('view=schedule');
     renderClient();
 
@@ -925,5 +1028,56 @@ describe('exports the set the screen is showing, not the whole book', () => {
       ),
     );
     await waitFor(() => expect(saveBlobAs).toHaveBeenCalled());
+  });
+});
+
+describe('AC-F1: the five S1 filters travel in the URL', () => {
+  const FACETS = {
+    locations: [{ id: 'SRT-HQ', label: 'SRT-HQ', rows: 3 }],
+    agents: [{ id: 'agent-1', label: 'AG01', rows: 2 }],
+  };
+
+  it('choosing a Location writes location= to the URL', async () => {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      ...FACETS,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Every location'), {
+      target: { value: 'SRT-HQ' },
+    });
+
+    // The PARAM, parsed - not a substring of the whole URL. `stringContaining` would
+    // pass on `?relocation=SRT-HQ-2` and on a value that is merely a prefix of the one
+    // that was chosen.
+    await waitFor(() => expect(routerReplace).toHaveBeenCalled());
+    const written = new URLSearchParams(
+      String(routerReplace.mock.calls.at(-1)?.[0]).split('?')[1] ?? '',
+    );
+    expect(written.get('location')).toBe('SRT-HQ');
+  });
+
+  it('a URL carrying agent= seeds the Agent select and the request', async () => {
+    currentSearchParams = new URLSearchParams('agent=agent-1');
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      ...FACETS,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: 'agent-1' }),
+      ),
+    );
+    openFilters();
+    const select = (await screen.findByLabelText(
+      'Every agent',
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('agent-1');
   });
 });

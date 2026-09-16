@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
-from app.services.dealer_kit.pricing import resolve_prices
+from app.services.dealer_kit.pricing import DEFAULT_CURRENCY, resolve_prices
 from app.services.dealer_kit.product_images import gallery_images
 from app.services.dealer_kit.viewer import ViewerContext
 
@@ -359,6 +359,10 @@ def product_tag_data(
         # non-empty AutoCount sync. Null renders an editor placeholder and
         # nothing on print (S7).
         "barcode": product.barcode or None,
+        # AC-A10: the product's own currency column, defaulted the same way
+        # `resolve_prices` already defaults it - a text layer prints the bare
+        # figure now (Slice A), so the currency has to travel as its own field.
+        "currency": prices.currency if prices else DEFAULT_CURRENCY,
     }
 
 
@@ -394,6 +398,15 @@ def product_set_tag_data(
     )
 
     set_price = resolve_set_price(product_set)
+
+    # AC-A11: the first member's currency, off the SAME resolved prices this
+    # function already fetched - not a second read of the member's product row.
+    set_currency = DEFAULT_CURRENCY
+    for product in member_products:
+        view = prices.get(product.id)
+        if view is not None:
+            set_currency = view.currency
+            break
 
     offer_total = Decimal("0")
     any_offer = False
@@ -444,6 +457,7 @@ def product_set_tag_data(
             else None
         ),
         "promotion_id": promotion_id if (any_offer and every_member_priced) else None,
+        "currency": set_currency,
     }
 
 
@@ -628,6 +642,8 @@ def _part_row(
         "barcode": data["barcode"],
         "list_price": data["list_price"],
         "sell_price": data["offer_price"] if price_mode == "selling" else None,
+        # AC-A11: this part's OWN product's currency, not the host's.
+        "currency": data["currency"],
     }
 
 
@@ -838,6 +854,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 # marketing's to change afterwards.
                 "quantity": tag.quantity,
                 "barcode": barcode,
+                "currency": data["currency"],
             }
         )
 
@@ -914,6 +931,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "set_members": _set_member_text(data["members"]),
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
+            "currency": data["currency"],
         }
     if line.product_id:
         product = get_product(db, line.product_id)
@@ -931,6 +949,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "set_members": "",
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
+            "currency": data["currency"],
         }
     return None
 
@@ -1110,6 +1129,52 @@ def _plain(value):
     if isinstance(value, dict):
         return {key: _plain(item) for key, item in value.items()}
     return value
+
+
+def _row_change_count(row: dict) -> int:
+    """1 if this row carries any product-data change, else 0.
+
+    Code review 16 Sep: every real caller passes a raw resolver dict
+    (``resolve_request_line_data``'s own ``data_changes`` key) - the earlier
+    ``TagDataChangeSet``/attribute branch handled a shape no call site ever
+    produces (``_change_sets`` passes the raw rows, not the filtered pydantic
+    list). ``changes`` stays as a second key only because the unit tests in
+    ``test_price_tag_data_change_cache.py`` exercise this function directly
+    with that shorter, hand-written shape.
+    """
+    return 1 if (row.get("changes") or row.get("data_changes")) else 0
+
+
+def store_data_change_count(
+    db: Session, request, rows: Iterable, checked_at: datetime | None = None
+) -> None:
+    """AC-D2: cache how many of ``rows`` carry a change, and when this ran.
+
+    Every caller that already computed the diff calls this right after (the
+    data-changes GET, recheck, pin update/keep, the detail response route -
+    PLAN price-tag-currency-token-extract-prompt.md section D), then commits
+    the same way it already did for its own write. A terminal request stores
+    0 unconditionally: nothing on it can be updated, so a nonzero count would
+    be true but is a claim nobody can act on.
+
+    Security review 16 Sep: ``checked_at`` should be a HORIZON the caller
+    captures immediately before calling ``resolve_request_line_data``, not a
+    timestamp read after the resolve. Stamping post-resolve leaves a window: a
+    product edited WHILE the resolve ran (read the old value, then moved)
+    would stamp a `data_checked_at` after that edit and `touched_request_ids`
+    would then treat the row as already checked, silently swallowing a real
+    change. Every production call site now passes its own pre-resolve
+    horizon; the default (``datetime.utcnow()`` taken here) exists only for a
+    caller with no resolve of its own to time against.
+    """
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    request.data_changed_tag_count = (
+        0
+        if PriceTagRequestService.is_terminal(request)
+        else sum(_row_change_count(row) for row in rows)
+    )
+    request.data_checked_at = checked_at or datetime.utcnow()
 
 
 def pin_payload(row: dict) -> dict:

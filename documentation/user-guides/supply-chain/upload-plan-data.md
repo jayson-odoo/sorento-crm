@@ -62,14 +62,87 @@ a filtered export of one or the other.
   separately and file into the SPO allocations list rather than the purchase order book - see
   [Upload SPO allocations](../purchasing/upload-spo.md).
 
-## Order inquiries list search
+## The Order Inquiries page
 
-On the **Order Inquiries** page, the search box uses multi-word narrowing: typing several words
-splits them on spaces and finds rows matching ALL of them. For example, typing `SO366990 SRTWT6801`
-finds only rows on sales order SO366990 whose product or item code contains SRTWT6801. The order of
-words does not matter. Single words behave the same as before, matching any of the eleven searchable
-columns (sales order, item code, product name, customer, project, user name/email, and others). Up
-to ten words are used; extra spaces are ignored.
+Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. The page
+is what replaces the monthly order-book Excel; a **List** / **Schedule** toggle sits top right of
+the page. There is no "Plan until" line on the page any more - the cut-off date that used to show
+there now lives inside the **Auto link all...** dialog.
+
+### Stage cards
+
+Three cards sit above the grid: **Buy**, **Purchased**, **Incoming**. Every unit is counted in one
+card only, the furthest it has reached:
+
+* **Buy** - nothing bought yet.
+* **Purchased** - on a purchase order, its container not booked yet.
+* **Incoming** - on a shipping order, either linked to the row directly or found through the
+  purchase order the row is linked to.
+
+Click a card to filter the grid to that stage.
+
+### Month tabs
+
+A row of tabs sits above the grid, and above the Schedule matrix too: one tab per delivery month
+that has rows, with the row count in brackets, **All** first. Click a tab to narrow to that month.
+
+### Filters and search
+
+Click **Filters** to open the popover: **Location**, **Agent**, **SO month**, **PO number**,
+**SPO number**, **Linked**, **Confirmed**, **Supplier**, **Project**, **Raised by**, **Raised on**.
+**Clear filters** resets every one of them.
+
+The search box uses multi-word narrowing: typing several words splits them on spaces and finds
+rows matching ALL of them. For example, typing `SO366990 SRTWT6801` finds only rows on sales order
+SO366990 whose product or item code contains SRTWT6801. The order of words does not matter; up to
+ten words are used and extra spaces are ignored. Besides sales order, item code, product name,
+customer, project and raiser, the search box also matches a PO number, an SPO number, and an
+agent.
+
+### Columns
+
+The default column order mirrors the Excel order book: **SO date**, **S/O no**, **Item code**,
+**Qty**, **Delivery date**, **Project / customer**, **Supplier**, **PO**, **SPO**, **Agent**,
+**Location**, **Order inquiry**, then the rest. If you have already personalised your own column
+order, yours is kept.
+
+### The PO and SPO columns
+
+* A number in the **SPO** column tagged **via PO** means the shipment was found through the
+  purchase order the row is linked to, not linked to the row itself.
+* A number in the **PO** column tagged **via SPO** means the purchase order was read off the
+  shipping order the row is linked to.
+* **awaiting shipment** in the **SPO** column means the row is bought, on a purchase order, with
+  no container booked yet.
+* A row with neither link shows a hyphen in both columns.
+* Click the number to open **Backing documents**, listing every PO and SPO behind the row with its
+  quantity, location and expected date.
+
+### Ticking rows and Actions
+
+Every row can be ticked, except a cancelled one. Open **Actions** to see what the ticked rows can
+do; each item counts only the rows it applies to, for example **Link selected (2 of 3)**:
+
+* **Auto link all...** links every eligible row on the whole list, not only the ticked ones.
+* **Choose document (1)** needs exactly one ticked row; it opens **Link to a document** so you can
+  pick the PO or SPO by hand.
+* **Link selected** auto-links the ticked rows that still have something left to link.
+* **Unlink selected** takes a link off the ticked rows, including a row that is already fully
+  linked.
+* **Reject selected**, **Confirm selected**, **Unlink all...** and **Export Excel** round out the
+  menu.
+
+### Schedule view
+
+Switch to **Schedule** for the same search box, **Filters** and month tabs, above a matrix of
+**Rows** (Product, Sales order, Customer or Agent) by **By** (day, week, month or year). Every
+month shows, next year included. Click a cell to open the rows behind it.
+
+### Planning from here
+
+Ticking sales orders and running **Plan selected** from **Sales Orders** opens the Fulfilment
+Planning board on its **List** view. One search box, beside the title, filters both **List** and
+**Grid**; the panel's own search box is gone.
 
 ## Upload order inquiry sheet
 
@@ -218,3 +291,7 @@ and load by hand.
 * [Print the order summary](print-the-order-summary.md)
 * [Upload SPO allocations](../purchasing/upload-spo.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
+* [Plan a sales order nobody decided](plan-undecided-lines.md) (raises a Buy onto Order
+  Inquiries as an ORDER row)
+* [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md) (the board an
+  Order Inquiries row can be worked from)

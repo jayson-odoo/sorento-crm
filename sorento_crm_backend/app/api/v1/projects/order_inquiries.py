@@ -28,6 +28,7 @@ from app.schemas.project_order_inquiry import (
     LinkNowRequest,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
+    OrderInquiryMatrixResponse,
     OrderInquiryPoCandidate,
     OrderInquiryPoDetail,
     OrderInquiryRowOut,
@@ -49,7 +50,7 @@ from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-from app.services.uuid_path_param import validate_uuid_path
+from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,12 @@ WorklistSort = Literal[
 
 WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
+#: The vertical axis a Schedule matrix column can group by (S3, R-I second half).
+MatrixAxis = Literal["product", "sales_order", "customer", "agent"]
+#: The date cut a matrix row is bucketed by. Week is the default, matching the planning
+#: board's own.
+MatrixGranularity = Literal["day", "week", "month", "year"]
+
 
 def _worklist_filters(
     query: Optional[str],
@@ -99,12 +106,33 @@ def _worklist_filters(
     linked: Optional[str] = None,
     kind: Optional[str] = None,
     ack: Optional[str] = None,
+    # S1, R-K (`PLAN-scm-oi-worklist-excel-parity.md`).
+    location: Optional[str] = None,
+    agent: Optional[str] = None,
+    so_month: Optional[str] = None,
+    po_number: Optional[str] = None,
+    spo_number: Optional[str] = None,
+    delivery_from: Optional[str] = None,
+    delivery_to: Optional[str] = None,
+    # S3: a Schedule cell's own rows. The LIST's drilldown only - the matrix route names
+    # its axis as its own argument.
+    axis: Optional[str] = None,
+    axis_key: Optional[str] = None,
 ) -> dict:
     if project_id:
         validate_uuid_path(project_id, resource="Project")
     if supplier_id:
         validate_uuid_path(supplier_id, resource="Supplier")
-    return {
+    # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
+    # caller error, not a filter that silently matches nothing.
+    if agent:
+        validate_uuid_path(agent, resource="Sales agent")
+    # `axis_key` is NOT validated here: it is compared against a UUID column on every
+    # axis, so it needs the same guard, but a QUERY param has no "missing row" reading
+    # and `validate_uuid_path` answers 404 ("Schedule cell not found") - the lie
+    # `uuid_path_param`'s own note warns about. It carries `pattern=UUID_PATTERN` on the
+    # list route below instead, which FastAPI refuses with a 422 before this runs.
+    filters = {
         "query": query,
         "delivery_month": delivery_month,
         "raised_date": raised_date,
@@ -116,12 +144,29 @@ def _worklist_filters(
         "linked": linked,
         "kind": kind,
         "ack": ack,
+        "location": location,
+        "agent": agent,
+        "so_month": so_month,
+        "po_number": po_number,
+        "spo_number": spo_number,
+        "delivery_from": delivery_from,
+        "delivery_to": delivery_to,
     }
+    # Absent unless a cell asked for them: the matrix route takes `axis` as its own
+    # argument, and a key of the same name in this dict would collide with it.
+    if axis and axis_key:
+        filters["axis"] = axis
+        filters["axis_key"] = axis_key
+    return filters
 
 
 #: The longest search string the worklist routes accept. The service caps the number of
 #: WORDS it applies; this caps the string itself, before any of them are read.
 _MAX_QUERY_LENGTH = 200
+#: The same cap on every other free-text filter (location, PO number, SPO number, a
+#: matrix cell's key). They reach an `ilike` or an equality over a joined query, and a
+#: megabyte of "x" is not a search anybody typed.
+_MAX_FILTER_LENGTH = 200
 
 
 @router.get("/order-inquiries", response_model=ListResponse[OrderInquiryWorklistRow])
@@ -196,6 +241,52 @@ def list_order_inquiry_worklist(
     ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    location: Optional[str] = Query(
+        None,
+        max_length=_MAX_FILTER_LENGTH,
+        description="The row's Location column, equality (S1, R-K).",
+    ),
+    agent: Optional[str] = Query(
+        None, description="The row's Agent column, equality, by `sales_agents.id`."
+    ),
+    so_month: Optional[str] = Query(
+        None, description="`YYYY-MM` on the SO date, not the delivery date."
+    ),
+    po_number: Optional[str] = Query(
+        None,
+        max_length=_MAX_FILTER_LENGTH,
+        description=(
+            "Prefix, case-insensitive. Matches a PO link's own document, or an SPO "
+            "link's source purchase order (AC-F5b)."
+        ),
+    ),
+    spo_number: Optional[str] = Query(
+        None,
+        max_length=_MAX_FILTER_LENGTH,
+        description="Prefix, case-insensitive. Matches an SPO link's document.",
+    ),
+    delivery_from: Optional[str] = Query(
+        None, description="`YYYY-MM-DD`, inclusive. A schedule-matrix cell's own period."
+    ),
+    delivery_to: Optional[str] = Query(None, description="`YYYY-MM-DD`, inclusive."),
+    axis: Optional[MatrixAxis] = Query(
+        None,
+        description=(
+            "A Schedule cell's own drilldown (S3): the axis its `axis_key` is a key of. "
+            "Both are needed; either alone filters nothing."
+        ),
+    ),
+    axis_key: Optional[str] = Query(
+        None,
+        max_length=_MAX_FILTER_LENGTH,
+        pattern=UUID_PATTERN,
+        description=(
+            "Equality on the matrix's grouping column for `axis`. A UUID on every axis "
+            "(`products.id`, the sales order's own id, `customers.id`, "
+            "`sales_agents.id`) - a malformed one reached Postgres as `invalid input "
+            "syntax for type uuid`, a 500 carrying the statement."
+        ),
+    ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -226,6 +317,15 @@ def list_order_inquiry_worklist(
                 linked,
                 kind,
                 ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
+                axis=axis,
+                axis_key=axis_key,
             ),
         )
     except Exception as exc:
@@ -259,6 +359,13 @@ def order_inquiry_worklist_summary(
             "`state` and `linked`, and a closed set for the same reason both of those are."
         ),
     ),
+    location: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    agent: Optional[str] = Query(None),
+    so_month: Optional[str] = Query(None),
+    po_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    delivery_from: Optional[str] = Query(None),
+    delivery_to: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -276,6 +383,13 @@ def order_inquiry_worklist_summary(
                 linked,
                 kind,
                 ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
             ),
         )
     except Exception as exc:
@@ -294,6 +408,13 @@ def export_order_inquiry_worklist(
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
     ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
+    location: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    agent: Optional[str] = Query(None),
+    so_month: Optional[str] = Query(None),
+    po_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    delivery_from: Optional[str] = Query(None),
+    delivery_to: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -316,6 +437,13 @@ def export_order_inquiry_worklist(
                 linked,
                 kind,
                 ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
             )
         )
         return Response(
@@ -323,6 +451,69 @@ def export_order_inquiry_worklist(
             media_type=WORKLIST_XLSX,
             headers={"Content-Disposition": content_disposition(filename)},
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/order-inquiries/matrix", response_model=OrderInquiryMatrixResponse)
+def order_inquiry_worklist_matrix(
+    axis: MatrixAxis = Query(
+        ..., description="The vertical grouping - product, sales order, customer or agent."
+    ),
+    by: MatrixGranularity = Query("week", description="The date bucket's own width."),
+    query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
+    delivery_month: Optional[str] = Query(None),
+    raised_date: Optional[str] = Query(None),
+    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
+    linked: Optional[Literal["po", "spo", "none"]] = Query(None),
+    kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
+    location: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    agent: Optional[str] = Query(None),
+    so_month: Optional[str] = Query(None),
+    po_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    spo_number: Optional[str] = Query(None, max_length=_MAX_FILTER_LENGTH),
+    delivery_from: Optional[str] = Query(None),
+    delivery_to: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Schedule view's own read (S3): the SAME filters the list reads, one GROUP BY
+    over `axis` by `by`, no page and no cap.
+
+    Replaces the old client-side matrix, which asked the list once with `limit=1000` and
+    grouped the rows in the browser - a delivery-filtered worklist has already exceeded
+    that on prod (PLAN section 0). Same permission as the list: reading the schedule is
+    reading the worklist a second way, not a second grant.
+    """
+    try:
+        cells = OrderInquiryWorklistService(db).matrix(
+            axis=axis,
+            by=by,
+            **_worklist_filters(
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
+                linked,
+                kind,
+                ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
+            ),
+        )
+        return {"data": cells}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -678,8 +869,8 @@ async def place_order_inquiry_row_on_po(
     The PATH is deliberately unchanged - the plan renames the verb, not the URLs - so this
     is "Link PO" / "Link SPO" on every screen. `po_line_id` links one purchase order line
     for the row's whole unlinked remainder; `allocations` links across several, each naming
-    a `po_line_id` OR an `spo_allocation_id` (an SPO only on an ORDER BACK row, part 2
-    section 4b). The row is NEVER split (AC-I6): it keeps its full quantity and gains one
+    a `po_line_id` OR an `spo_allocation_id` (either book answers any linkable verb since
+    R5, 27 Aug). The row is NEVER split (AC-I6): it keeps its full quantity and gains one
     link per allocation, so the response is that same row with its links on it."""
     try:
         validate_uuid_path(row_id, resource="Order inquiry row")

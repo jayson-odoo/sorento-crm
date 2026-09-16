@@ -137,6 +137,18 @@ vi.mock('../../services/priceTagRequestService', async () => {
   };
 });
 
+// AC-C3/AC-C4: the product-data gate pill/button. Unmocked before this
+// feature, the real `listTagDataChanges` ran a genuine `apiFetch` every other
+// test here silently absorbed - a resolved `[]` default is strictly more
+// deterministic for them too, and no existing test here ever clicks
+// "Update all".
+vi.mock('../../services/priceTagDataService', () => ({
+  listTagDataChanges: vi.fn(async () => []),
+  recheckTagDataChanges: vi.fn(async () => []),
+  resolveTagPin: vi.fn(async () => {}),
+  updateAllTagPins: vi.fn(async () => {}),
+}));
+
 import {
   getPriceTagRequest,
   getTagSheetDoc,
@@ -149,10 +161,25 @@ import {
 import PriceTagRequestDetail from './PriceTagRequestDetail';
 import { priceTagActions } from './priceTagRequestActions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
+import { listTagDataChanges } from '../../services/priceTagDataService';
+import type { TagDataChangeSet } from '@/lib/dealer-kit/product-data-changes';
 
 const mockGet = vi.mocked(getPriceTagRequest);
 const mockList = vi.mocked(listPriceTagRequests);
 const mockGetDoc = vi.mocked(getTagSheetDoc);
+const mockChanges = vi.mocked(listTagDataChanges);
+
+function changeSet(tagId: string, overrides: Partial<TagDataChangeSet> = {}): TagDataChangeSet {
+  return {
+    tag_id: tagId,
+    tag_label: '1a',
+    line_id: 'line-1',
+    code: 'SRT-1',
+    name: 'ZZT Product',
+    changes: [{ field: 'list_price', label: 'List price', old: '100.00', new: '150.00' }],
+    ...overrides,
+  };
+}
 
 /** Radix activates a tab on mousedown, which jsdom does not synthesize from a click. */
 function switchTab(name: string) {
@@ -265,6 +292,8 @@ beforeEach(() => {
   });
   // No design yet unless a test says otherwise.
   mockGetDoc.mockResolvedValue(null);
+  // No product-data drift unless a test says otherwise (AC-C3/AC-C4).
+  mockChanges.mockResolvedValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -1132,5 +1161,55 @@ describe('PriceTagRequestDetail - approved goes back to the designer (AC-S10-2)'
     expect(
       await screen.findByRole('button', { name: `Design tag ${tagLabelFor('line-1')}` }),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-C3/AC-C4 (PLAN-price-tag-currency-token-extract-prompt.md section C):
+// the pill follows the polled data; there is no "Update all" button at any
+// count - a salesperson clicks into the record to see what changed instead.
+// ---------------------------------------------------------------------------
+
+describe('PriceTagRequestDetail - product-data-changed pill, no Update all (AC-C3/AC-C4)', () => {
+  it('AC-C3: shows "Product data changed · 2" for two changed tags', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ status: 'designing', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    mockChanges.mockResolvedValue([
+      changeSet('tag-1'),
+      changeSet('tag-2', { line_id: 'line-2' }),
+    ]);
+    renderDetail();
+
+    const pill = await screen.findByTestId('product-data-changed-pill');
+    expect(pill.textContent).toContain('Product data changed · 2');
+  });
+
+  it('AC-C4: renders no "Update all" button at count 2', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ status: 'designing', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    mockChanges.mockResolvedValue([
+      changeSet('tag-1'),
+      changeSet('tag-2', { line_id: 'line-2' }),
+    ]);
+    renderDetail();
+
+    await screen.findByTestId('product-data-changed-pill');
+    expect(screen.queryByRole('button', { name: /update all/i })).toBeNull();
+  });
+
+  it('AC-C4: renders no "Update all" button at count 5', async () => {
+    mockGet.mockResolvedValue(
+      requestWith({ status: 'designing', lines: [lineWith({ id: 'line-1', code: 'SRT-1' })] }),
+    );
+    mockChanges.mockResolvedValue(
+      Array.from({ length: 5 }, (_, i) => changeSet(`tag-${i}`, { line_id: `line-${i}` })),
+    );
+    renderDetail();
+
+    const pill = await screen.findByTestId('product-data-changed-pill');
+    expect(pill.textContent).toContain('Product data changed · 5');
+    expect(screen.queryByRole('button', { name: /update all/i })).toBeNull();
   });
 });

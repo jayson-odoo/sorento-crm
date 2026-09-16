@@ -213,11 +213,14 @@ describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slic
 });
 
 describe('AC-A7: a row nothing can cover', () => {
-  it('reads "Not found (new order)" - never "Not linked", which read as an oversight - and shows no icon', () => {
+  it('reads a plain dash - never "Not found (new order)" or "Not linked" - and shows no icon', () => {
+    // S5, AC-D4: "Not found (new order)" read as a caption nobody asked for, and this
+    // list has no on-screen explanations - a dash is the whole answer.
     renderRows([worklistRow({ id: 'row-unlinked', qty: '85', linked_qty: '0', links: [] })]);
 
     const row = screen.getByTestId('row-row-unlinked');
-    expect(within(row).getByText('Not found (new order)')).toBeInTheDocument();
+    expect(row.textContent?.trim()).toBe('-');
+    expect(within(row).queryByText('Not found (new order)')).not.toBeInTheDocument();
     expect(within(row).queryByText('Not linked')).not.toBeInTheDocument();
     expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
     expect(
@@ -235,7 +238,7 @@ describe('AC-A7: a row nothing can cover', () => {
 });
 
 describe('a cancelled row (coverage restored after the old SupplyBar-only case was deleted)', () => {
-  it('an unlinked cancelled row reads "Not found (new order)", the same as any other unlinked row', () => {
+  it('an unlinked cancelled row reads a plain dash, the same as any other unlinked row', () => {
     // The old bar test proved a cancelled row "owes nothing" by checking the BAR drew
     // nothing - moot now the bar is gone from this column entirely (AC-A2). This is the
     // replacement: the cell itself never special-cases `state`, so a cancelled row with
@@ -251,7 +254,8 @@ describe('a cancelled row (coverage restored after the old SupplyBar-only case w
     ]);
 
     const row = screen.getByTestId('row-row-cancelled-unlinked');
-    expect(within(row).getByText('Not found (new order)')).toBeInTheDocument();
+    expect(row.textContent?.trim()).toBe('-');
+    expect(within(row).queryByText('Not found (new order)')).not.toBeInTheDocument();
     expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
     expect(
       within(row).queryByTestId('backing-documents-trigger-row-cancelled-unlinked'),
@@ -633,7 +637,7 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
     expect(within(row).getByTestId('backing-documents-trigger-companion-row')).toBeInTheDocument();
   });
 
-  it('D2: fully bundled, host not found reads "Included with <host> · Not found (new order)"', () => {
+  it('D2: fully bundled, host not found reads "Included with <host> · Nothing linked yet"', () => {
     renderRows([
       worklistRow({ id: 'host-row-2', item_code: 'CKS1050', qty: '1', linked_qty: '0', links: [] }),
       worklistRow({
@@ -654,7 +658,7 @@ describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)
 
     const row = screen.getByTestId('row-companion-row-2');
     expect(
-      within(row).getByTitle('Included with CKS1050 · Not found (new order)'),
+      within(row).getByTitle('Included with CKS1050 · Nothing linked yet'),
     ).toBeInTheDocument();
   });
 
@@ -784,7 +788,7 @@ function columnDefs() {
 }
 
 describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
-  it('AC-R-26: one PO link prints that number as the trigger, with no pill and no headline, and the SPO cell reads a dash', () => {
+  it('AC-R-26/AC-D4: one PO link prints that number as the trigger, with no pill and no headline, and the SPO cell reads "awaiting shipment"', () => {
     const row = worklistRow({
       id: 'row-one-po',
       qty: '5',
@@ -805,9 +809,11 @@ describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
     expect(within(poCell).queryByText(/^\+\d+$/)).not.toBeInTheDocument();
     po.unmount();
 
+    // S5, AC-D4: bought but not yet on a shipment reads "awaiting shipment", distinct
+    // from the plain dash a row with no link at all gets.
     renderRows([row], 'spo_number');
     const spoCell = screen.getByTestId('row-row-one-po');
-    expect(spoCell.textContent?.trim()).toBe(MUTED_DASH);
+    expect(within(spoCell).getByText('awaiting shipment')).toBeInTheDocument();
     expect(
       within(spoCell).queryByTestId('backing-documents-trigger-spo-row-one-po'),
     ).not.toBeInTheDocument();
@@ -880,12 +886,13 @@ describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
     expect(within(fromPill).getByText('SPO-2026/09-0040')).toBeInTheDocument();
   });
 
-  it('AC-R-29: a row with no links reads "Not found (new order)" in PO and a dash in SPO, and nothing is clickable', () => {
+  it('AC-D4/AC-R-29: a row with no links reads a dash in BOTH the PO and the SPO column, and nothing is clickable', () => {
     const row = worklistRow({ id: 'row-none', qty: '85', linked_qty: '0', links: [] });
 
     const po = renderRows([row]);
     const poCell = screen.getByTestId('row-row-none');
-    expect(within(poCell).getByText('Not found (new order)')).toBeInTheDocument();
+    expect(poCell.textContent?.trim()).toBe(MUTED_DASH);
+    expect(within(poCell).queryByText('Not found (new order)')).not.toBeInTheDocument();
     expect(within(poCell).queryByRole('button')).not.toBeInTheDocument();
     po.unmount();
 
@@ -893,6 +900,77 @@ describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
     const spoCell = screen.getByTestId('row-row-none');
     expect(spoCell.textContent?.trim()).toBe(MUTED_DASH);
     expect(within(spoCell).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('AC-D4: a row on a PO with no shipment yet reads "awaiting shipment" in the SPO column', () => {
+    const row = worklistRow({
+      id: 'row-po-only',
+      qty: '10',
+      linked_qty: '10',
+      links: [{ id: 'l1', kind: 'po', document: '202605-S0009', qty: '10' }],
+    });
+
+    renderRows([row], 'spo_number');
+
+    const spoCell = screen.getByTestId('row-row-po-only');
+    expect(within(spoCell).getByText('awaiting shipment')).toBeInTheDocument();
+    expect(within(spoCell).queryByRole('button')).not.toBeInTheDocument();
+  });
+
+  it('AC-D1/R-E: a PO link whose PO also carries a derived SPO reads that SPO number tagged "via PO"', () => {
+    const row = worklistRow({
+      id: 'row-derived-spo',
+      qty: '10',
+      linked_qty: '10',
+      links: [
+        { id: 'l1', kind: 'po', document: '202605-S0009', qty: '10' },
+        {
+          id: 'l2',
+          kind: 'spo',
+          document: 'SPO-2026/07-0005',
+          qty: '5',
+          derived: true,
+        },
+      ],
+    });
+
+    renderRows([row], 'spo_number');
+
+    const spoCell = screen.getByTestId('row-row-derived-spo');
+    expect(
+      within(spoCell).getByTestId('backing-documents-trigger-spo-row-derived-spo'),
+    ).toHaveTextContent('SPO-2026/07-0005');
+    expect(
+      within(spoCell).getByTestId('backing-documents-via-spo-row-derived-spo'),
+    ).toHaveTextContent('via PO');
+  });
+
+  it('AC-D3/R-E: an SPO link carrying source_po_number reads that PO number tagged "via SPO"', () => {
+    const row = worklistRow({
+      id: 'row-spo-with-source',
+      qty: '6',
+      linked_qty: '6',
+      links: [
+        {
+          id: 'l1',
+          kind: 'spo',
+          document: 'SPO-2026/07-0006',
+          qty: '6',
+          source_po_number: 'ZZT-SOURCE-PO-0099',
+          derived_po: true,
+        },
+      ],
+    });
+
+    renderRows([row]);
+
+    const poCell = screen.getByTestId('row-row-spo-with-source');
+    expect(
+      within(poCell).getByTestId('backing-documents-trigger-row-spo-with-source'),
+    ).toHaveTextContent('ZZT-SOURCE-PO-0099');
+    expect(
+      within(poCell).getByTestId('backing-documents-via-row-spo-with-source'),
+    ).toHaveTextContent('via SPO');
   });
 
   it('AC-R-30: a bundled row keeps the PO cell it reads today, and its SPO cell is a dash', () => {

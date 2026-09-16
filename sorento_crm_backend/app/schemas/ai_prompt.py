@@ -53,6 +53,11 @@ class PromptVersionsResponse(BaseModel):
     variables: list[str] = Field(default_factory=list)
     labels: dict[str, Optional[int]] = Field(default_factory=dict)
     versions: list[PromptVersionRow] = Field(default_factory=list)
+    # Slice E: the code fallback, always present - a key with no saved
+    # version yet (`versions == []`) leaves the editor nothing else to seed
+    # the draft from, which opened it EMPTY (browser finding on every
+    # ai_extract_* key the day they were registered).
+    fallback_text: str = ""
 
 
 class PromptVersionDetail(BaseModel):

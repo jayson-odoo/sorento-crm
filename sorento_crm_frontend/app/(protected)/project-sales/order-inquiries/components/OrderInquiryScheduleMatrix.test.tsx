@@ -1,33 +1,39 @@
 /**
- * The schedule's own cell (AC-I12): a `SupplyBar` under the quantity, and its label
- * naming what the cell still needs. Same three kinds and the same bar the list's
- * "Linked to" column draws (AC-I14), off `orderInquiryKinds`.
+ * The schedule's own cell (AC-X1/AC-X4, S3 - PLAN-scm-oi-worklist-excel-parity.md).
+ *
+ * Rewritten for the SERVER cell contract: `{ axis_key, axis_label, period, qty, buy,
+ * po, spo, rows }`, `rows` a COUNT (never the rows themselves - S3, "the drilldown
+ * keeps calling the list"). The old shape this replaces (`buildOrderInquiryMatrix(rows,
+ * axis, by)` grouping raw worklist rows client-side into `{ row_key, bucket_key, qty,
+ * rows: WorklistRow[] }`) is what the client-side matrix WAS before S3 moved the GROUP
+ * BY server-side; the new `buildOrderInquiryMatrix(cells, granularity)` only ever
+ * builds display headers off cells the server already computed.
  */
 import React from 'react';
 import { render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
-import type {
-  OrderInquiryMatrixCell,
-  OrderInquiryWorklistRow,
-} from '../../_shared/types/orderInquiry.types';
+import type { OrderInquiryMatrixCell } from '../../_shared/types/orderInquiry.types';
 
-function worklistRow(over: Partial<OrderInquiryWorklistRow> = {}): OrderInquiryWorklistRow {
+function cell(over: Partial<OrderInquiryMatrixCell> = {}): OrderInquiryMatrixCell {
   return {
-    id: 'row-1',
-    qty: '10',
-    state: 'raised',
-    verb: 'ORDER',
-    links: [],
+    axis_key: 'product-1',
+    axis_label: 'SRTWC8605-SC-RL',
+    period: '2026-01-01',
+    qty: '0',
+    buy: '0',
+    po: '0',
+    spo: '0',
+    rows: 1,
     ...over,
-  } as OrderInquiryWorklistRow;
+  };
 }
 
-/** The whole way through: rows in, matrix built, matrix rendered - which is what pins
- *  the headline figure and the bar under it to the SAME arithmetic. */
-function renderBuilt(rows: OrderInquiryWorklistRow[]) {
-  const matrix = buildOrderInquiryMatrix(rows, 'product', 'month');
+/** The whole way through: server cells in, headers built, matrix rendered - which is
+ * what pins the headline figure and the bar under it to the SAME server arithmetic. */
+function renderBuilt(cells: OrderInquiryMatrixCell[]) {
+  const matrix = buildOrderInquiryMatrix(cells, 'month');
   return render(
     <OrderInquiryScheduleMatrix
       buckets={matrix.buckets}
@@ -39,22 +45,9 @@ function renderBuilt(rows: OrderInquiryWorklistRow[]) {
   );
 }
 
-function renderMatrix(rows: OrderInquiryWorklistRow[], qty: string) {
-  const cell: OrderInquiryMatrixCell = { row_key: 'r', bucket_key: 'b', qty, rows };
-  return render(
-    <OrderInquiryScheduleMatrix
-      buckets={[{ key: 'b', kind: 'dated', label: 'Jan 2026', start: '2026-01-01' }]}
-      rows={[{ key: 'r', label: 'SRTWC8605-SC-RL' }]}
-      rowHeader="Product"
-      cells={[cell]}
-      onOpenCell={vi.fn()}
-    />,
-  );
-}
-
-describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
-  it('draws one solid rose segment and reads "Buy N" for a cell whose rows are all unlinked', () => {
-    renderMatrix([worklistRow({ qty: '85', links: [] })], '85');
+describe('OrderInquiryScheduleMatrix cell, server contract (AC-X1, AC-X4)', () => {
+  it('draws one solid rose segment and reads "Buy N" for a cell that is all Buy', () => {
+    renderBuilt([cell({ qty: '85', buy: '85', po: '0', spo: '0', rows: 1 })]);
 
     const button = screen.getByRole('button', { name: '85 owed, 1 row, Buy 85' });
     const bar = within(button).getByTestId('supply-bar');
@@ -65,61 +58,41 @@ describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
     expect(segments[0].getAttribute('data-kind')).toBe('buy');
   });
 
-  it('draws sky 5 / rose 3 and reads "PO 5 · Buy 3" for a row linked 5 of 8 to a PO', () => {
-    renderMatrix(
-      [
-        worklistRow({
-          qty: '8',
-          links: [{ id: 'l1', kind: 'po', document: '202601-S0044', qty: '5' }],
-        }),
-      ],
-      '8',
-    );
+  it('draws rose 3 / sky 5 and reads "Buy 3 · Purchased 5" off the server stage sums, in stage order', () => {
+    renderBuilt([cell({ qty: '8', buy: '3', po: '5', spo: '0', rows: 1 })]);
 
-    const button = screen.getByRole('button', { name: '8 owed, 1 row, PO 5 · Buy 3' });
+    const button = screen.getByRole('button', {
+      name: '8 owed, 1 row, Buy 3 · Purchased 5',
+    });
     const bar = within(button).getByTestId('supply-bar');
     expect(bar).toHaveAttribute('data-decided', 'false');
     const kinds = [...bar.querySelectorAll('span[data-kind]')].map((el) =>
       el.getAttribute('data-kind'),
     );
-    expect(kinds).toEqual(['po', 'buy']);
+    expect(kinds).toEqual(['buy', 'po']);
   });
 
-  it('draws a solid violet segment for a row wholly linked to an SPO allocation', () => {
-    renderMatrix(
-      [
-        worklistRow({
-          qty: '10',
-          links: [{ id: 'l1', kind: 'spo', document: 'SPO-2026/08-0061', qty: '10' }],
-        }),
-      ],
-      '10',
-    );
+  it('draws a solid violet segment for a cell wholly on SPO allocations (incoming)', () => {
+    renderBuilt([cell({ qty: '10', buy: '0', po: '0', spo: '10', rows: 1 })]);
 
-    const button = screen.getByRole('button', { name: '10 owed, 1 row, SPO 10' });
+    const button = screen.getByRole('button', { name: '10 owed, 1 row, Incoming 10' });
     const bar = within(button).getByTestId('supply-bar');
-    // Solid: wholly covered by a document.
+    // Solid: wholly covered by a document, per the server's `buy` sum of zero.
     expect(bar).toHaveAttribute('data-decided', 'true');
     const segments = [...bar.querySelectorAll('span[data-kind]')];
     expect(segments).toHaveLength(1);
     expect(segments[0].getAttribute('data-kind')).toBe('spo');
   });
 
-  it('a cancelled row contributes no bar and no supply words at all', () => {
-    renderBuilt([worklistRow({ qty: '6', links: [], state: 'cancelled' })]);
+  it('a cell with nothing owed and no stage sums draws no bar, just the row count', () => {
+    renderBuilt([cell({ qty: '0', buy: '0', po: '0', spo: '0', rows: 1 })]);
 
-    // Nothing is owed here any more, so the cell says nothing is.
     const button = screen.getByRole('button', { name: '0 owed, 1 row' });
     expect(within(button).queryByTestId('supply-bar')).not.toBeInTheDocument();
   });
 
-  it('the headline counts only what is still owed, so it cannot outrun its own bar', () => {
-    // The reported defect: 91 over a bar reading "Buy 85", because the cancelled six were
-    // in the headline and in nothing else.
-    renderBuilt([
-      worklistRow({ id: 'live', qty: '85', links: [] }),
-      worklistRow({ id: 'called-off', qty: '6', links: [], state: 'cancelled' }),
-    ]);
+  it('the headline and the bar both read off the same server totals for a multi-row cell', () => {
+    renderBuilt([cell({ qty: '85', buy: '85', po: '0', spo: '0', rows: 2 })]);
 
     const button = screen.getByRole('button', { name: '85 owed, 2 rows, Buy 85' });
     const bar = within(button).getByTestId('supply-bar');
@@ -128,7 +101,20 @@ describe('OrderInquiryScheduleMatrix cell (AC-I12)', () => {
       qty: el.getAttribute('data-qty'),
     }));
     expect(segments).toEqual([{ kind: 'buy', qty: '85' }]);
-    // The cancelled row is still IN the cell - its name says "2 rows" - because the
-    // drilldown is where a person goes to see what happened to it.
+  });
+
+  it('builds one row per distinct axis_key/axis_label and one bucket per distinct period', () => {
+    renderBuilt([
+      cell({ axis_key: 'p1', axis_label: 'Product One', period: '2026-01-01', qty: '5', buy: '5' }),
+      cell({ axis_key: 'p1', axis_label: 'Product One', period: '2026-02-01', qty: '3', buy: '3' }),
+      cell({ axis_key: 'p2', axis_label: 'Product Two', period: '2026-01-01', qty: '7', buy: '7' }),
+    ]);
+
+    expect(screen.getByText('Product One')).toBeInTheDocument();
+    expect(screen.getByText('Product Two')).toBeInTheDocument();
+    // Two distinct periods -> two bucket columns, "Jan 2026" and "Feb 2026" at month
+    // granularity - the label is derived client-side off the ISO `period`, never sent.
+    expect(screen.getByText('Jan 2026')).toBeInTheDocument();
+    expect(screen.getByText('Feb 2026')).toBeInTheDocument();
   });
 });

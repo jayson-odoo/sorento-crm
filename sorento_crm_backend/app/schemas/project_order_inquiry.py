@@ -51,7 +51,9 @@ class OrderInquiryLinkOut(BaseModel):
     """
 
     id: str
-    #: `po` or `spo`. Only an ORDER BACK row ever carries an `spo` link (part 2 4b).
+    #: `po` or `spo`. EITHER on any linkable row since R5 (27 Aug,
+    #: `PLAN-scm-oi-draft-links.md`): SPO first, then PO. It was the order back alone
+    #: under the 25 Aug rule, which no longer holds.
     kind: str
     document: Optional[str] = None
     line_label: Optional[str] = None
@@ -84,6 +86,14 @@ class OrderInquiryLinkOut(BaseModel):
     #: source for. Never `from_po_line_ref` - that is a resolver key, not a thing a buyer
     #: reads, and it is deliberately never sent.
     source_po_number: Optional[str] = None
+    #: S5 (R-E, `PLAN-scm-oi-worklist-excel-parity.md`): a SYNTHETIC `spo`-kind entry -
+    #: never written, never addressable - for a PO link whose PO has an open SPO
+    #: allocation for the same product. The SPO column shows it marked "via PO".
+    derived: bool = False
+    #: The mirror: this `po`-kind entry's `source_po_number` is itself read off an SPO
+    #: link (never a link this system made independently), so the PO column marks it
+    #: "via SPO".
+    derived_po: bool = False
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -134,10 +144,11 @@ class OrderInquiryRowOut(BaseModel):
     bundled_with: Optional[OrderInquiryBundledWithOut] = None
     # Whether this row has anywhere to link to at all (the captain, 20 Aug: a "Link PO"
     # offer with nothing behind it reads as a bug, not an empty state). Verb AND product,
-    # not product alone: an ORDER BACK row may link to an `spo_allocations` row as well as
-    # to a purchase order line, so a flag that only looked at purchase orders hid the Link
-    # action on the one row the feature was built for. Computed with the SAME predicate
-    # `po-candidates` answers, so the flag and the dialog can never disagree.
+    # not product alone: EVERY linkable verb may link to an `spo_allocations` row as well
+    # as to a purchase order line (R5, 27 Aug - SPO first, then PO), so a flag that only
+    # looked at purchase orders hid the Link action on rows that had open incoming stock
+    # waiting for them. Computed with the SAME predicate `po-candidates` answers, so the
+    # flag and the dialog can never disagree.
     has_link_candidate: bool = False
 
     state: str
@@ -332,6 +343,35 @@ class OrderInquiryFacet(BaseModel):
     rows: int = 0
 
 
+class OrderInquiryMatrixCell(BaseModel):
+    """One cell of the Schedule matrix (S3, R-I second half): this axis value, by this
+    date bucket, over every row the list itself would show for the same filters.
+
+    `axis_key` is never rendered (no UUIDs in the UI); `axis_label` is. `period` is the
+    ISO date the bucket STARTS on (week buckets start Monday, month/year on the first).
+    `rows` is the row COUNT summed into the cell, not the rows themselves - a click drills
+    down by asking the list for this cell's own axis + period, never by reading rows back
+    out of this response.
+    """
+
+    axis_key: str
+    axis_label: str
+    period: date
+    qty: str = "0"
+    buy: str = "0"
+    po: str = "0"
+    spo: str = "0"
+    rows: int = 0
+
+
+class OrderInquiryMatrixResponse(BaseModel):
+    """`{data: [...]}`, never paginated - the matrix's own contract has no page to ask
+    for, and the old `ListResponse` shape's mandatory `pagination` would say so of a
+    response that has none."""
+
+    data: List[OrderInquiryMatrixCell] = []
+
+
 class OrderInquiryStateCounts(BaseModel):
     raised: int = 0
     #: Some of the quantity is on documents and the rest is still demand (section 3.I).
@@ -404,6 +444,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: revision) - the "Raised by" filter's own list. Never every user in the company: a
     #: picker whose entries mostly return nothing is a picker nobody uses twice.
     raised_by: List[OrderInquiryFacet] = []
+    #: S1, R-K: the Location and Agent filters' own lists, same shape as `suppliers`,
+    #: each computed with its own filter dropped.
+    locations: List[OrderInquiryFacet] = []
+    agents: List[OrderInquiryFacet] = []
     #: What the rows in view still need, per kind (AC-I11) - the cards' own figures.
     #: Computed with the `kind` filter dropped, like every other control here, so
     #: pressing one card leaves the other two readable.

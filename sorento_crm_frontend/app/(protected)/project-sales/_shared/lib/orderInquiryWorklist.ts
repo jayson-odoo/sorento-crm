@@ -120,7 +120,7 @@ export function lateDaysOf(
 /**
  * "Outstanding PO/SPO"'s coverage headline: `8 of 8`.
  *
- * A row with no links returns `null`, and the cell reads "Not found (new order)" rather
+ * A row with no links returns `null`, and the cell reads a plain dash (S5, AC-D4) rather
  * than printing "0 of 8" at somebody.
  *
  * Slice A (8 Sep 2026, nit S7 on review of `PLAN-scm-oi-reserving-feedback-8sep.md`):
@@ -185,7 +185,8 @@ export function bundledHeadline(
   const qty = Number(row.qty ?? '0');
   const remainder = qty - bundledQty;
   if (remainder <= 0) {
-    const tail = bundled.anchor_headline ?? 'Not found (new order)';
+    // S5, AC-D4: "Not found (new order)" renders nowhere any more.
+    const tail = bundled.anchor_headline ?? 'Nothing linked yet';
     return `Included with ${label} · ${tail}`;
   }
   const ownLinked = formatInquiryQty(row.linked_qty ?? '0');
