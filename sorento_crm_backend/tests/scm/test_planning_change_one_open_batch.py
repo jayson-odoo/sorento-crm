@@ -770,9 +770,13 @@ def test_a_line_has_at_most_one_live_pending_row_across_every_open_batch(api):
         .all()
     )
     assert len(rows_for_line4) == 2, [r.applied_state for r in rows_for_line4]
-    assert rows_for_line4[0].applied_state == "superseded", rows_for_line4[0].applied_state
-    assert rows_for_line4[0].applied_reason == "Replaced by a later change"
-    assert rows_for_line4[1].applied_state == "pending", rows_for_line4[1].applied_state
+    # Both rows share one transaction's `created_at` (`server_default=func.now()` under
+    # the `_pg_fixture` outer transaction), so `created_at` cannot order them - a
+    # positional assertion on `rows_for_line4[0]`/`[1]` is arbitrary and CI's fresh DB
+    # returns the other one. Assert the pair set-wise instead.
+    assert {r.applied_state for r in rows_for_line4} == {"superseded", "pending"}
+    superseded_row = next(r for r in rows_for_line4 if r.applied_state == "superseded")
+    assert superseded_row.applied_reason == "Replaced by a later change"
 
     open_batches = _open_batches_for_order(db, order.id)
     assert len(open_batches) == 1, [str(b.id) for b in open_batches]
