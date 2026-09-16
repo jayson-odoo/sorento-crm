@@ -293,13 +293,27 @@ export function InspectorPanel({
   // the four kinds that always do, a text layer with a `{{product.*}}` /
   // `{{spec.*}}` token, OR ANY layer whose own `slot_binding` names a
   // product field.
-  const isSubjectAwareKind =
+  //
+  // Review round 2: `slot_binding != null` on its own let a SHAPE, a plain
+  // `badge` or a `group` offer the picker - none of those three carry
+  // `subjectPart` in `tag-template-types.ts`, so the pick was written onto
+  // props no resolver ever reads and the layer drew the parent regardless.
+  // Both halves have to hold: a kind that can carry the subject, AND a
+  // layer that actually reads product data.
+  const carriesSubjectPart =
+    layer.props.kind === 'product_slot' ||
+    layer.props.kind === 'price_badge' ||
+    layer.props.kind === 'barcode' ||
+    layer.props.kind === 'text' ||
+    layer.props.kind === 'image';
+  const readsProductData =
     layer.props.kind === 'product_slot' ||
     layer.props.kind === 'price_badge' ||
     layer.props.kind === 'barcode' ||
     (layer.props.kind === 'text' &&
       hasSubjectAwareToken(layer.text_override ?? layer.props.text)) ||
     layer.slot_binding != null;
+  const isSubjectAwareKind = carriesSubjectPart && readsProductData;
   const showSubjectPicker = isSubjectAwareKind && (subjectParts?.length ?? 0) > 0;
 
   // The same eligibility r4b's `cornerHandleLayer` already checks on the
@@ -1385,6 +1399,10 @@ function SubjectInspector({
   onChange: (changes: Partial<TagLayerProps>) => void;
 }) {
   const isPriceBadge = props.kind === 'price_badge';
+  // Two inspectors can be mounted at once (a template editor beside the
+  // request designer), and a hard-coded id makes the second `<label>` point
+  // at the first one's select.
+  const selectId = useId();
   const subjectPart =
     'subjectPart' in props && typeof props.subjectPart === 'number'
       ? props.subjectPart
@@ -1408,11 +1426,11 @@ function SubjectInspector({
        *  (unlike the `<h4>` heading above, a section title every sibling
        *  inspector section uses) - `sr-only` since the heading already
        *  says "Product" visually, one word away. */}
-      <Label htmlFor="layer-subject-part" className="sr-only">
+      <Label htmlFor={selectId} className="sr-only">
         Product
       </Label>
       <SearchableSelect
-        id="layer-subject-part"
+        id={selectId}
         size="sm"
         value={value}
         onChange={(v: string) =>

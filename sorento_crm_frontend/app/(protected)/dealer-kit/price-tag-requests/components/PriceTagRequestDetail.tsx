@@ -1243,7 +1243,11 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                           <Input
                                             type="number"
                                             inputMode="decimal"
-                                            min={0}
+                                            // `ManualSellPrice` is `gt=0` with
+                                            // 2 decimal places, so 0 is a
+                                            // refusal, not a bound.
+                                            min={0.01}
+                                            step={0.01}
                                             variant="sm"
                                             className="w-28"
                                             value={

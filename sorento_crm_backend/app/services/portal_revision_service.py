@@ -374,9 +374,24 @@ def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
     try:
         validated = PriceTagReviseLineIn(**raw)
     except ValidationError as exc:
+        # Review round 2: every refusal here read "this line's price could
+        # not be saved", including a quantity of 0 - the composer put the
+        # message on a line whose price was fine and the salesperson had
+        # nothing to act on. Named from the field that actually failed.
+        labels = {
+            "quantity": "quantity",
+            "manual_sell_price": "price",
+            "promotion_id": "promotion",
+        }
+        failed = [
+            labels[str(error["loc"][0])]
+            for error in exc.errors()
+            if error.get("loc") and str(error["loc"][0]) in labels
+        ]
+        field = failed[0] if failed else "details"
         raise AppException(
             status_code=422,
-            message="This line's price could not be saved.",
+            message=f"This line's {field} could not be saved.",
             detail=f"line:{idx}",
             code="VALIDATION_ERROR",
         ) from exc

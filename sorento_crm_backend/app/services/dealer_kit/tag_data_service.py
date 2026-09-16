@@ -698,6 +698,10 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
 
     line_data: dict = {}
     parts_cache_by_line: dict = {}
+    # One `line_pricing` round trip per DISTINCT (line, resolved set), not
+    # per tag: two split siblings that resolved the same candidate ask the
+    # same question, and a 30-tag request paid for 30 engine runs.
+    basis_cache: dict = {}
     for line_index, tag_index, line, tag in ordered_tags(request):
         if wanted is not None and tag.id not in wanted:
             continue
@@ -792,7 +796,9 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
             )
         else:
             resolved_ids = []
-        sell_price_basis = _tag_sell_price_basis(db, line, resolved_ids, viewer)
+        sell_price_basis = _tag_sell_price_basis(
+            db, line, resolved_ids, viewer, basis_cache
+        )
         # R16: derived LIVE from THIS tag's own basis, never echoing
         # `line.show_promo_price` - that column is written once at save
         # time, per LINE (D1/D3/AC-S7-5), so a split tag that resolved the
@@ -839,7 +845,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
 
 
 def _tag_sell_price_basis(
-    db: Session, line, resolved_product_ids: list[str], viewer
+    db: Session, line, resolved_product_ids: list[str], viewer, cache: dict | None = None
 ) -> str:
     """AC-S9-3/D4/R11b: what THIS TAG's price is based on, through the exact
     same `line_pricing` engine S7's create/update path and lookup routes use
@@ -856,6 +862,10 @@ def _tag_sell_price_basis(
 
     if not resolved_product_ids:
         return "list"
+    cache = {} if cache is None else cache
+    key = (line.id, tuple(sorted(resolved_product_ids)))
+    if key in cache:
+        return cache[key]
     row = line_pricing(
         db,
         lines=[
@@ -870,7 +880,8 @@ def _tag_sell_price_basis(
         ],
         viewer=viewer,
     )[0]
-    return row["sell_price_basis"]
+    cache[key] = row["sell_price_basis"]
+    return cache[key]
 
 
 def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict]:

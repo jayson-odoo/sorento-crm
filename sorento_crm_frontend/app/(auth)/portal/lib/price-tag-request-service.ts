@@ -57,7 +57,7 @@
  * ---- BACKEND CONTRACT (built) ---------------------------------------------
  *
  *  POST /api/v1/public/portal/lookups/line-pricing
- *    body  { price_mode: PriceMode, lines: [{ key, product_id, part_product_ids: string[],
+ *    body  { lines: [{ key, product_id, part_product_ids: string[],
  *            candidate_product_ids: string[], promotion_id?: string | null }] }
  *    ->    LinePricingResult[]  (one per input `key`, same order)
  *
@@ -456,15 +456,19 @@ import type {
  * One pricing call for every line (D4, S7). Audience-scoped to THIS
  * contact - the portal route reads it off the portal token, not a param
  * this call sends.
+ *
+ * `_priceMode` is not sent either: the route's body has no `price_mode`
+ * field (`LinePricingRequest`, S7) - `sell_price` is a real number in List
+ * mode too, and the mode only decides what the FORM does with the answer.
  */
 export async function lookupLinePricing(
-  priceMode: PriceMode,
+  _priceMode: PriceMode,
   lines: LinePricingLineInputT[],
 ): Promise<LinePricingResultT[]> {
   const res = await portalFetch(`${LOOKUPS}/line-pricing`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ price_mode: priceMode, lines }),
+    body: JSON.stringify({ lines }),
   });
   return unwrap<LinePricingResultT[]>(res, 'Failed to price these lines');
 }

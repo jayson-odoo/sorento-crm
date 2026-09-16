@@ -2097,15 +2097,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         >
           <div className="space-y-1.5">
             <Label>Price</Label>
-            {/* F2/readOnlyManualPrice: the exact string "Selling price" is
-                the Lines table's per-line label (AC-S1-10) - naming the
-                MODE the same way here made `getByText('Selling price')`
-                ambiguous between the two, so this reads as a mode, not a
-                price label. */}
             <p className="text-sm font-medium py-2">
               {(request.price_mode ?? 'list') === 'selling'
-                ? 'Selling price mode'
-                : 'List price mode'}
+                ? 'Selling price'
+                : 'List price'}
             </p>
           </div>
           {/* D1: a promotion is per LINE now (see the Lines table above) -
@@ -3023,7 +3018,10 @@ function LineRow({
                       <Input
                         type="number"
                         inputMode="decimal"
-                        min={0}
+                        // The server takes `gt=0` with 2 decimal places
+                        // (`ManualSellPrice`), so 0 is a refusal, not a bound.
+                        min={0.01}
+                        step={0.01}
                         variant="sm"
                         className="w-28"
                         value={line.manual_sell_price ?? ''}

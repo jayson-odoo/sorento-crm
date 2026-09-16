@@ -346,15 +346,19 @@ export async function updatePriceTagPrintBy(
 /**
  * One pricing call for every line (D4, S7). Staff-audience: the CRM route
  * has no contact to check against, so it prices under `staff_viewer()`.
+ *
+ * `_priceMode` is not sent: the route's body has no `price_mode` field
+ * (`LinePricingRequest`, S7) - `sell_price` is a real number in List mode
+ * too, and the mode only decides what the FORM does with the answer.
  */
 export async function lookupLinePricing(
-  priceMode: PriceMode,
+  _priceMode: PriceMode,
   lines: LinePricingLineInput[],
 ): Promise<LinePricingResult[]> {
   const response = await apiFetch(`${BASE}/line-pricing`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ price_mode: priceMode, lines }),
+    body: JSON.stringify({ lines }),
   });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to price these lines'));
