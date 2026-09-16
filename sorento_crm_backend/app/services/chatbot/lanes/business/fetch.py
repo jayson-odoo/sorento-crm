@@ -7,7 +7,7 @@ JavaScript, with the same `jsc` shim S6a uses for JS truthiness / `String()` / `
 Three hazards are fixed here rather than reproduced, and each says so at its own site:
 
 * **H53** - `sub-get-rag` is GONE, SQL and vector alike. The tool is read straight off
-  `contracts.DOMAIN_SPEC[domain].tools[0]` (`select_tool` below), so this module names no
+  the domain row's own first tool (`select_tool` below), so this module names no
   table, writes no SQL, and makes no provider call. Measured over the 740 business turns
   in the 7 Sep 2026 prod copy, the embedding pick WAS the domain's first-listed tool on
   every turn, and the seeding chain the search depended on cannot run in the deployed
@@ -23,7 +23,7 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
   tools (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
   `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the single
   candidate with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list, and
-  since the candidate is now `DOMAIN_SPEC`'s own first tool the hazard is structural
+  since the candidate is now the domain row's own first tool the hazard is structural
   rather than scored: nothing outside that table can be named, and `ensure_read_only`
   refuses anything off the list at both call seams anyway. The embedded POOL keeps the
   write tools, on purpose - the in-app AI assistant retrieves them and confirms with a
@@ -103,7 +103,7 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
 
     The BODY is n8n's, unchanged and graded byte for byte against 38 captures (D8), which
     is why the ranking is still here after the pick stopped being a ranking. `select_tool`
-    now hands it exactly one candidate off `DOMAIN_SPEC` (similarity 1.0), so the sort has
+    now hands it exactly one candidate off the domain row (similarity 1.0), so the sort has
     one element and the argmax is the identity - the node keeps working the way its
     captures say it does, and nothing about how the candidate was chosen leaked into it.
 
@@ -892,8 +892,8 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
     **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
     The tool used to be chosen by cosine similarity over a pool that contains write tools,
     so the only thing standing between a customer's phrasing and `crm_order_cancel` was
-    that no phrasing had scored it first. `select_tool` now reads the name off
-    `DOMAIN_SPEC`, so a write tool cannot be PICKED at all; this is what stops one being
+    that no phrasing had scored it first. `select_tool` now reads the name off the
+    domain row, so a write tool cannot be PICKED at all; this is what stops one being
     CALLED however else it was named - the tier probe, and any tool name that arrived on a
     payload rather than from the domain table.
     """

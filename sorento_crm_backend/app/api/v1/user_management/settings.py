@@ -667,6 +667,32 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
+    # `chatbot_memory` is one JSONB carrying four named keys (AC-1513). An unknown key
+    # would be stored, returned and read by nobody, and the card that was meant to set it
+    # would read as broken with no error anywhere - the same silent failure the
+    # `chatbot_completed_lanes` check above exists for. A key set is validated, not the
+    # values: those are the owner's to get wrong and fix.
+    if update_data.get("chatbot_memory") is not None:
+        from app.modules.chatbot.lane_vocabulary import CHATBOT_MEMORY_KEYS
+
+        memory = update_data["chatbot_memory"]
+        if not isinstance(memory, dict):
+            raise HTTPException(
+                status_code=422, detail="chatbot_memory must be an object."
+            )
+        unknown_keys = sorted(set(memory) - set(CHATBOT_MEMORY_KEYS))
+        if unknown_keys:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "chatbot_memory does not carry "
+                    + ", ".join(unknown_keys)
+                    + ". Its keys are: "
+                    + ", ".join(CHATBOT_MEMORY_KEYS)
+                    + "."
+                ),
+            )
+
     # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
     # means "reset to the default" - not a null write. Without this the loop below sends
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as

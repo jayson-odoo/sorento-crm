@@ -1,7 +1,20 @@
 # apply(): the pure core (PLAN-chatbot-turn-rearch.md "APPLY contract", AC-1520). One
-# function, six named steps called in order: answer_pending, focus_rules, exclusive,
-# reconcile, narrow, plan. No message text read anywhere below - every input is
-# already-structured (Verdict dict, Policy, State).
+# function; the order below is the order it runs, and the order IS the contract:
+#
+#   1. `_reconcile_step`  - an entity the resolver placed under one kind is rewritten to
+#                           it; two kinds arm a `kind_pick` and nothing else runs.
+#   2. `_answer_pending`  - the open question, resolved, re-printed or carried.
+#   3. `_exclusive`       - `scope_exclusive`, traced.
+#   4. `_focus_rules`     - topic reset, replace-same-axis, the domain, document/status,
+#                           the date window.
+#   5. domain resolution  - the locked pick, else `asks`, else `domain_hint`, else the
+#                           carried focus, else the document's own domain.
+#   6. `_did_you_mean`, then a `set_page` continuation - each returns its own Plan.
+#   7. `_narrow_and_plan` - the narrower and the fetch plan, folded into one per-domain
+#                           loop because they share it.
+#
+# No message text read anywhere below - every input is already-structured (Verdict dict,
+# Policy, State).
 from __future__ import annotations
 
 import copy

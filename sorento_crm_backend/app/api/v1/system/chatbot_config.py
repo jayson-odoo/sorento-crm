@@ -9,7 +9,8 @@ grant an operator holds to look at a customer's conversation.
 **What is validated, and why only this much.** Three things are checked because getting
 them wrong is silent: a tool name that is not in `mcp_tools` (the lane would pick a tool
 that does not exist and the turn would answer nothing), a team code outside
-`SUGGESTED_TEAMS` (the escalation lane would route to a team the assigner cannot find),
+`lanes/escalation.ESCALATION_TEAMS` (the escalation lane would route to a team the
+assigner cannot find),
 and a narrowing policy outside the seven the narrower implements (the narrower would
 fall through its `optional_filter` default and quietly stop asking). Everything else -
 labels, switch words, intents - is free text the owner is entitled to get wrong and fix.
@@ -27,7 +28,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import Text, func
 from sqlalchemy.orm import Session
 
 from app.dependencies import get_db, require_permission
@@ -244,7 +245,10 @@ def _find_domain(db: Session, domain_id: str) -> ChatbotDomain:
     have to look up a uuid to read the row it belongs to."""
     row = (
         db.query(ChatbotDomain)
-        .filter((ChatbotDomain.name == domain_id) | (func.cast(ChatbotDomain.id, __import__("sqlalchemy").Text) == domain_id))
+        .filter(
+            (ChatbotDomain.name == domain_id)
+            | (func.cast(ChatbotDomain.id, Text) == domain_id)
+        )
         .first()
     )
     if row is None:
