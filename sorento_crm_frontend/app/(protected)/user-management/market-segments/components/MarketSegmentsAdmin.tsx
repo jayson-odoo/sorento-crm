@@ -431,10 +431,6 @@ export default function MarketSegmentsAdmin() {
                 placeholder="No additional portal forms"
                 emptyMessage="No additional portal forms"
               />
-              <p className="text-xs text-muted-foreground">
-                Every contact already sees Complaint, Stock Inquiry, Purchase Request and
-                Sponsorship Form. Pick what this segment grants beyond that.
-              </p>
             </div>
             <div className="flex items-start gap-2">
               <Checkbox
