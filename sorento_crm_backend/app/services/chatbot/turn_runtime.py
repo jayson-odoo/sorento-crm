@@ -192,6 +192,27 @@ def _prior_suggested_team(session_block: Any) -> str | None:
         return None
 
 
+def with_routing_agent_default(verdict: dict[str, Any]) -> dict[str, Any]:
+    """The verdict with `routing.suggested_agent` filled in ONCE, before access.
+
+    Hand-pass 1 finding 2b (16 Sep 2026): `engine.run_turn` checked access on the
+    parser's RAW `routing.suggested_agent`, and the `DEFAULT_SUGGESTED_AGENT` fallback
+    only ran later, in `lane_parse_output`, for the lanes - so an unrouted webhook turn
+    (the parser named no agent, which is most casual and many business turns) asked the
+    access service about agent `None`. The default now lands here, at the one seam every
+    turn passes through after the parser (and after the recall re-parse) and before the
+    access read; `lane_parse_output` no longer carries its own copy. The team half of the
+    routing pair stays in `lane_parse_output`, because its chain reads the pending offer
+    and the prior session, which are lane inputs, not a verdict fact.
+    """
+    out = dict(verdict)
+    routing = dict(out.get("routing") or {})
+    if not routing.get("suggested_agent"):
+        routing["suggested_agent"] = DEFAULT_SUGGESTED_AGENT
+    out["routing"] = routing
+    return out
+
+
 def lane_parse_output(
     verdict: dict[str, Any],
     *,
@@ -246,8 +267,8 @@ def lane_parse_output(
         routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
         routing["suggested_team"] = _prior_suggested_team(prior_session) or DEFAULT_SUGGESTED_TEAM
-    if not routing.get("suggested_agent"):
-        routing["suggested_agent"] = DEFAULT_SUGGESTED_AGENT
+    # `suggested_agent`'s default is applied once, upstream, by `with_routing_agent_default`
+    # (finding 2b) - the access read and the lanes see the same value.
     out["routing"] = routing
     return out
 
