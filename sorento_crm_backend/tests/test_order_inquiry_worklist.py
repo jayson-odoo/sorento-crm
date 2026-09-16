@@ -1142,6 +1142,140 @@ def test_a_redirected_placed_row_no_longer_counts_toward_taken_from_po(api):
     assert "Redirected" in (by_id[redirected.id]["note"] or "")
 
 
+def test_worklist_stage_totals_exclude_a_redirected_row(api):
+    """AC-RL-16 (`PLAN-oi-replan-received-links.md` S3): a redirected row's quantity is
+    not owed anywhere any more - the Buy / Purchased / Incoming cards (`_kinds`) must not
+    move when one is added, on top of the taken_from_po / remaining_open exclusion the
+    sibling test above already covers. The row's own `redirected_to_pool` also has to
+    reach the wire - `response_model` silently drops a field it is not told about."""
+    client, db, company_id, seeded = api
+    before = client.get(f"{LIST}/summary").json()["kinds"]
+
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="158", day=6)
+    po_line = _purchase_order(db, company_id)["line"]
+    redirected = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-REDIRECT-KIND",
+        qty="158",
+        state=INQUIRY_PLACED,
+        delivery_date=date(2026, 4, 6),
+        redirected_to_pool=True,
+        po_line_id=po_line.id,
+    )
+    db.commit()
+
+    after = client.get(f"{LIST}/summary").json()["kinds"]
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == redirected.id)
+
+    assert wire_row["redirected_to_pool"] is True
+    assert wire_row["taken_from_po"] == "0"
+    assert wire_row["remaining_open"] == "0"
+    assert after == before, "a redirected row's quantity must not move any card"
+
+
+def test_link_dict_carries_received_qty_and_received(api):
+    """AC-RL-17: `links_for_rows` states the receipt figure on every link, PO or SPO -
+    `received_qty` always, `received` once the document is fully received - and
+    `OrderInquiryLinkOut` ships both, through the worklist ROUTE (`response_model`
+    silently drops a field it is not told about)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    line = _line_on_authored_order(db, company_id, seeded, qty="200", day=7)
+    row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=f"{MARKER}-RECEIVED",
+        qty="200",
+        state="partly_linked",
+        delivery_date=date(2026, 4, 7),
+    )
+    supplier = Supplier(
+        id=_uid(),
+        company_id=company_id,
+        supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} received supplier",
+    )
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} WH",
+    )
+    db.add_all([supplier, warehouse])
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(),
+        company_id=company_id,
+        spo_number=f"ZZT-SPO-RECV-{_uid()[:6]}",
+        product_id=_product(db, f"ZZT-P-RECV-{_uid()[:6]}", f"{MARKER} recv product").id,
+        warehouse_id=warehouse.id,
+        allocated_quantity=Decimal("158"),
+        quantity_received=Decimal("158"),
+        receipt_status="fully_received",
+        line_status="closed",
+    )
+    po = PurchaseOrder(
+        id=_uid(),
+        company_id=company_id,
+        po_number=f"ZZT-PO-OPEN-{_uid()[:6]}",
+        supplier_id=supplier.id,
+    )
+    db.add_all([allocation, po])
+    db.flush()
+    open_line = PurchaseOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        purchase_order_id=po.id,
+        product_id=allocation.product_id,
+        warehouse_id=warehouse.id,
+        qty_ordered=Decimal("42"),
+        qty_received=Decimal("0"),
+        line_status="open",
+    )
+    db.add(open_line)
+    db.flush()
+    db.add_all(
+        [
+            OrderInquiryLink(
+                id=_uid(),
+                company_id=company_id,
+                row_id=row.id,
+                spo_allocation_id=allocation.id,
+                document=allocation.spo_number,
+                qty=Decimal("158"),
+            ),
+            OrderInquiryLink(
+                id=_uid(),
+                company_id=company_id,
+                row_id=row.id,
+                po_line_id=open_line.id,
+                document=po.po_number,
+                qty=Decimal("42"),
+            ),
+        ]
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"delivery_month": "2026-04"}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    by_document = {link["document"]: link for link in wire_row["links"]}
+
+    spo_link = by_document[allocation.spo_number]
+    assert spo_link["received"] is True
+    assert spo_link["received_qty"] == "158"
+
+    po_link = by_document[po.po_number]
+    assert po_link["received"] is False
+    assert po_link["received_qty"] == "0"
+
+
 def test_an_unplaced_lines_row_reports_zero_taken_and_its_full_qty_as_remaining(api):
     client, db, company_id, seeded = api
     inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)

@@ -2224,3 +2224,47 @@ def test_ac_r_46_undated_row_does_not_prefer_an_undated_line():
         assert row.delivery_date == l2.required_date, (
             "the raised row's delivery date is not the line it actually landed on"
         )
+
+
+# ---------------------------------------------------------------------------
+# AC-RL-14 (writer 2 of 2, `PLAN-oi-replan-received-links.md` S2): the sheet
+# importer's re-upload must not disturb a redirected row or its replacement.
+# ---------------------------------------------------------------------------
+
+
+def test_sheet_reupload_skips_redirected_line():
+    """A line already carries TWO rows after a replan - the redirected history row and
+    its fresh replacement - and a re-upload of the same sheet must still read the line
+    as already raised, writing zero new links for either row. `_already_raised` only
+    asks whether a non-cancelled row already exists on the mirror line, so this ought
+    to hold with no change - pinned here as the regression guard AC-RL-14 names."""
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="220")
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+
+        redirected = w.board_row(mirror, qty="182")
+        redirected.redirected_to_pool = True
+        redirected.note = "SPO-2026/01-0143 received 19 Jan 2026, released at revision 4"
+        replacement = w.board_row(mirror, qty="220")
+        w.db.commit()
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 220, D_OCT,
+             w.warehouse.warehouse_code, ""),
+        ])
+        result = w.apply(data)
+
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_raised"] == 0, result
+        assert w.links(redirected) == []
+        assert w.links(replacement) == []
+        w.db.refresh(redirected)
+        w.db.refresh(replacement)
+        assert redirected.redirected_to_pool is True
+        # Set comparison, not order: `board_row`'s two inserts share one frozen `now()`
+        # (Postgres freezes it per transaction), so `w.rows()`'s own `created_at, id`
+        # ordering ties on the timestamp and falls back to the two rows' RANDOM ids -
+        # asserting a fixed order here would fail on nothing but UUID luck.
+        assert {str(r.id) for r in w.rows()} == {str(redirected.id), str(replacement.id)}

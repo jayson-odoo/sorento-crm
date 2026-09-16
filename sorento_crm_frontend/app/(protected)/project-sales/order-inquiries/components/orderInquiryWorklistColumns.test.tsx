@@ -787,6 +787,120 @@ function columnDefs() {
   >;
 }
 
+describe('AC-RL-02/03/04 (`PLAN-oi-replan-received-links.md` S1/S3): received and redirected marks', () => {
+  it('AC-RL-02: a received link shows the document, a muted "received" mark, and a title stating the receipt', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-received',
+          qty: '182',
+          linked_qty: '158',
+          links: [
+            {
+              id: 'l1',
+              kind: 'spo',
+              document: 'SPO-2026/01-0143',
+              qty: '158',
+              received: true,
+              received_qty: '158',
+            },
+          ],
+        }),
+      ],
+      'spo_number',
+    );
+
+    const row = screen.getByTestId('row-row-received');
+    const trigger = within(row).getByTestId('backing-documents-trigger-spo-row-received');
+    expect(trigger.textContent).toBe('SPO-2026/01-0143');
+    expect(trigger.getAttribute('title')).toBe('SPO-2026/01-0143 - received 158 of 158');
+    expect(
+      within(row).getByTestId('backing-documents-received-spo-row-received'),
+    ).toHaveTextContent('received');
+  });
+
+  it('AC-RL-02: an OPEN link shows neither the mark nor a receipt in the title', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-open',
+        qty: '40',
+        linked_qty: '40',
+        po_number: '202607-S0105',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '40' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-open');
+    const trigger = within(row).getByTestId('backing-documents-trigger-row-open');
+    expect(trigger.getAttribute('title')).toBe('202607-S0105');
+    expect(
+      within(row).queryByTestId('backing-documents-received-row-open'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('AC-RL-03: the backing-documents dialog prints "received <qty>" beside a received link, and nothing extra beside an open one', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-mixed',
+        qty: '182',
+        linked_qty: '178',
+        links: [
+          {
+            id: 'l1',
+            kind: 'spo',
+            document: 'SPO-2026/01-0143',
+            qty: '158',
+            location: 'BRW-IR',
+            received: true,
+            received_qty: '158',
+          },
+          {
+            id: 'l2',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '20',
+            location: 'BRW-IB',
+            received: false,
+            received_qty: '0',
+          },
+        ],
+      }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('backing-documents-trigger-row-mixed'));
+    const dialog = screen.getByTestId('backing-documents-row-mixed');
+    expect(within(dialog).getByText(/BRW-IR · 158 · received 158/)).toBeInTheDocument();
+    const openLine = within(dialog).getByText(/BRW-IB · 20/);
+    expect(openLine.textContent).not.toContain('received');
+  });
+
+  it('AC-RL-04: a redirected row carries a muted "redirected" mark on its qty cell', () => {
+    renderQtyCell([
+      worklistRow({
+        id: 'row-redirected',
+        qty: '182',
+        ack_state: 'acknowledged',
+        redirected_to_pool: true,
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-redirected');
+    expect(within(row).getByText('182')).toBeInTheDocument();
+    expect(within(row).getByTestId('redirected-mark-row-redirected')).toHaveTextContent(
+      'redirected',
+    );
+  });
+
+  it('AC-RL-04: an ordinary row carries no redirected mark', () => {
+    renderQtyCell([
+      worklistRow({ id: 'row-plain-2', qty: '10', ack_state: 'acknowledged' }),
+    ]);
+
+    const row = screen.getByTestId('row-row-plain-2');
+    expect(within(row).queryByTestId('redirected-mark-row-plain-2')).not.toBeInTheDocument();
+  });
+});
+
 describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
   it('AC-R-26/AC-D4: one PO link prints that number as the trigger, with no pill and no headline, and the SPO cell reads "awaiting shipment"', () => {
     const row = worklistRow({
