@@ -332,11 +332,16 @@ def _picked_positions(pending: Pending, verdict: dict[str, Any]) -> list[int] | 
     )
     if pending.kind in ESCALATION_OFFER_KINDS:
         # A handover is the most expensive thing the bot can do with a message, so it
-        # takes an EXPLICIT signal and nothing weaker: a position the customer typed
+        # takes an EXPLICIT signal and nothing weaker: ONE position the customer typed
         # (which is how a multi-team roster is answered at all, contract 108), or the
         # plain yes `_answer_offer` reads for itself. A label match and a broaden are
-        # both too weak to hand a conversation to a human on.
-        return positions or None
+        # both too weak to hand a conversation to a human on, and so is a SET of
+        # positions: there is no handing one conversation to every team at once, which
+        # is the rule `_answer_offer` already keeps for "all". Measured on
+        # `console/handpass3-owner-17sep-purchase-cost-po.json` step 3, where the ten
+        # positions of a product roster, typed over an offer the live engine had left
+        # open, assigned a human to a question about purchase orders.
+        return positions if len(positions) == 1 else None
     if positions:
         return positions
     labelled = _positions_by_label(pending, verdict)
