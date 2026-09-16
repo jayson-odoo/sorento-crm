@@ -276,8 +276,17 @@ class TestJourneyChain:
         )
         stub_access()
 
+        # 17 Sep 2026 ruling (`turn/decide.py::_subject_reading`'s domain_in_message
+        # table): `scope_exclusive` is retired - "only BRW" (a message that names an
+        # entity but no domain/status word of its own) is a REFINE row
+        # (`domain_in_message: False` + entities), which combines across kinds and
+        # replaces only the kind it names. `scope_exclusive="product"` (a STRING; the
+        # declared schema type is boolean) was never actually read here even before
+        # the retirement - this test passed via the SAME fallback (`names_its_own_
+        # entity`, `decision.starts_fresh` False) the REFINE row now names outright,
+        # so this re-pin makes the verdict match what the test was always measuring.
         v = verdict(
-            scope_exclusive="product",
+            domain_in_message=False,
             entities=[entity("SRT6536-DIY", hint="product", confident=True)],
         )
         result = _turn(session_factory, stub_parser, v, message_id="ZZT-journey-6")
@@ -285,11 +294,11 @@ class TestJourneyChain:
         sv = _session_vars(session_factory)
         customers_after = sv.get("focus", {}).get("customers") or []
         assert len(customers_after) == 2, (
-            "the customer FAMILY must survive an exclusive narrow on the product axis "
-            f"only (contract 32 + tonight's owner defect): {customers_after!r}"
+            "the customer FAMILY must survive a REFINE that names only the product "
+            f"axis (contract 32 + tonight's owner defect): {customers_after!r}"
         )
         products_after = sv.get("focus", {}).get("products") or []
         codes = [p.get("canonical_code") for p in products_after]
         assert codes == ["SRT6536-DIY"], (
-            f"scope_exclusive='product' must REPLACE only the product axis: {codes!r}"
+            f"a REFINE must replace only the kind it names (product): {codes!r}"
         )
