@@ -37,10 +37,22 @@ from app.services.ai_extract.extract_service import (
     ExtractResult,
 )
 from app.services.error_handler import handle_validation_error
+from app.services.portal_form_visibility_service import require_form_visible
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# A `portal.<kind>` form_key names the same gated kind the generic portal
+# submission routes do (SEC4, r4/AC-R7) - `master.*` keys have no such kind
+# to check against and are issue #964, left alone.
+_PORTAL_FORM_KEY_PREFIX = "portal."
+
+
+def _require_form_key_visible(db: Session, token: PortalToken, form_key: str) -> None:
+    if form_key.startswith(_PORTAL_FORM_KEY_PREFIX):
+        kind = form_key[len(_PORTAL_FORM_KEY_PREFIX) :]
+        require_form_visible(db, token.contact_id, kind)
 
 
 # Same constraints as the portal attachment quota; mirrored here so the
@@ -77,6 +89,7 @@ def ai_extract_schema(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ) -> dict:
+    _require_form_key_visible(db, token, form_key)
     try:
         return AIExtractService(db).get_schema_with_guidance(form_key)
     except KeyError:
@@ -101,6 +114,7 @@ def ai_extract(
     upload route, which stays ``async def`` precisely so it can refuse oversized
     bytes as they arrive. Sibling fix: PR #164.
     """
+    _require_form_key_visible(db, token, form_key)
     if not files:
         raise handle_validation_error("Upload at least one file.")
     if len(files) > _MAX_FILES:

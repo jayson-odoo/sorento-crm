@@ -59,6 +59,9 @@ beforeEach(() => {
     phone_number: '60123456789',
     expires_at: '2026-09-01T00:00:00Z',
     portal_slug: 'darren',
+    // Every kind is gated now (PLAN-portal-forms-market-segment D2) - this
+    // suite is about the revise composer, not visibility.
+    visible_form_types: ['complaint', 'stock_inquiry', 'purchase_request', 'sponsorship_form'],
   });
   (fetchSubmissions as ReturnType<typeof vi.fn>).mockImplementation(async (kind: string) =>
     kind === 'stock_inquiry' ? [ROW] : [],

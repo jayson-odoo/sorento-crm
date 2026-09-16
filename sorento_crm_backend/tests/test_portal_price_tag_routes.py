@@ -31,12 +31,10 @@ _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def _seed_contact_who_can_see_the_form(db: Session) -> str:
-    """A contact whose access type grants ``price_tag_request``."""
-    from app.models.access import (
-        ContactAccessType,
-        RespondContact,
-        respond_contact_access_types,
-    )
+    """A contact whose market segment grants ``price_tag_request``
+    (PLAN-portal-forms-market-segment D1: the grant moved off access types)."""
+    from app.models.access import RespondContact
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -44,20 +42,9 @@ def _seed_contact_who_can_see_the_form(db: Session) -> str:
         name=unique_code("contact"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
-    db.flush()
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     return contact.id
 
 
@@ -1174,19 +1161,18 @@ class TestPriceModeAndRemarks:
 
 
 def _revoke_the_grant(db: Session, contact_id: str) -> None:
-    """Take ``price_tag_request`` off every access type this contact holds."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    """Hide ``price_tag_request`` for this contact regardless of any segment
+    grant (PLAN-portal-forms-market-segment D1) - an ``is_enabled=False``
+    override wins over the segment union."""
+    from app.models.price_tag import ContactPortalFormOverride
 
-    codes = [
-        row.access_type_code
-        for row in db.execute(
-            respond_contact_access_types.select().where(
-                respond_contact_access_types.c.contact_id == contact_id
-            )
+    db.add(
+        ContactPortalFormOverride(
+            id=str(uuid.uuid4()),
+            contact_id=contact_id,
+            form_type="price_tag_request",
+            is_enabled=False,
         )
-    ]
-    db.query(ContactAccessType).filter(ContactAccessType.code.in_(codes)).update(
-        {"portal_form_types": []}, synchronize_session=False
     )
     db.flush()
 
@@ -1227,29 +1213,14 @@ class TestTheGenericPortalDoesNotServeThisKind:
     # already exercises both the happy path and the ownership gate, so
     # nothing here duplicates it.
 
-    def test_the_kind_is_still_grantable_on_an_access_type(self):
-        """The grant schema asks the OTHER question and must still say yes."""
-        from app.schemas.user import ContactAccessTypeUpdate
-
-        updated = ContactAccessTypeUpdate(
-            code="zzt-dealer",
-            name="ZZT Dealer",
-            portal_form_types=["stock_inquiry", "price_tag_request"],
-        )
-
-        assert "price_tag_request" in (updated.portal_form_types or [])
-
-    def test_an_unknown_kind_is_still_refused_by_the_grant_schema(self):
-        from pydantic import ValidationError
-
-        from app.schemas.user import ContactAccessTypeUpdate
-
-        with pytest.raises(ValidationError):
-            ContactAccessTypeUpdate(
-                code="zzt-dealer",
-                name="ZZT Dealer",
-                portal_form_types=["not_a_form"],
-            )
+    # The pair of tests that used to sit here ("still grantable on an access
+    # type" / "unknown kind still refused by the grant schema") asserted the
+    # OTHER question this class's own docstring names - and PLAN-portal-forms-
+    # market-segment D1 answers it "no": access types carry no portal-form
+    # grant at all any more, `ContactAccessTypeUpdate` has no such field
+    # (see `test_access_type_portal_forms_removed.py` for that contract).
+    # The grantable-kind question they meant to guard now belongs to
+    # `MarketSegmentUpdate` (`test_market_segment_portal_forms.py`).
 
 
 class TestTheListTheSalespersonReads:
@@ -1643,6 +1614,7 @@ def _seed_two_company_contact(db: Session):
     )
     from app.models.company import Company, RespondContactCompany
     from app.models.portal import PortalToken
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -1650,10 +1622,13 @@ def _seed_two_company_contact(db: Session):
         name=unique_code("contact"),
     )
     db.add(contact)
+    # PLAN-portal-forms-market-segment D1: the access type no longer carries
+    # any portal-form grant - kept here only for its CODE, which a caller uses
+    # as a product's `access_levels` entry (a different mechanism entirely).
+    # The price_tag_request grant itself now comes from a market segment.
     access_type = ContactAccessType(
         code=unique_code("at"),
         name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
     )
     db.add(access_type)
     second_company = Company(
@@ -1668,6 +1643,8 @@ def _seed_two_company_contact(db: Session):
             contact_id=contact.id, access_type_code=access_type.code
         )
     )
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     db.add_all(
         [
             RespondContactCompany(

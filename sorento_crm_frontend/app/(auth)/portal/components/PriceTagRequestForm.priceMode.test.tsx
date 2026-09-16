@@ -50,6 +50,10 @@ vi.mock('../lib/price-tag-request-service', async () => {
 vi.mock('../lib/portal-client', () => ({
   uploadAttachment: vi.fn(),
   getPriceTagDesign: vi.fn(),
+  // D7 r3: PriceTagRequestForm now reads visible_form_types off /me on
+  // mount for a NEW request - granted here so these suites (about
+  // something else entirely) are unaffected.
+  fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
 }));
 
 // Native `<select>` stand-in: the real component is a Radix popover whose

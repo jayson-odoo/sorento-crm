@@ -11,9 +11,10 @@
  *    field of the kind (Form Number, Status, the kind's own fields, Need by,
  *    Created), not the old `<ul>` of `SubmissionRow`.
  *
- * Mocking pattern mirrors `PortalLanding.revBadge.test.tsx` (no price-tag
- * mock needed - `visible_form_types` is absent from `ME`, so
- * `landingKindsFor` never reaches for it).
+ * Mocking pattern mirrors `PortalLanding.revBadge.test.tsx`. `ME` grants the
+ * base four kinds (PLAN-portal-forms-market-segment D2/D3: every kind is
+ * gated now, so a suite that isn't about visibility itself has to grant what
+ * it needs) and no price tag, which this suite never exercises.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -73,6 +74,7 @@ const ME = {
   phone_number: '60123456789',
   expires_at: '2026-09-01T00:00:00Z',
   portal_slug: 'darren',
+  visible_form_types: ['complaint', 'stock_inquiry', 'purchase_request', 'sponsorship_form'],
 };
 
 const ROW: PortalSubmissionSummary = {
