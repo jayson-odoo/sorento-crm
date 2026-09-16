@@ -220,6 +220,7 @@ def decide(
     resolved_candidates: list[dict[str, Any]] | None = None,
     just_picked: bool = False,
     family_grouping: str | None = None,
+    unplaced: frozenset[str] | set[str] | None = None,
 ) -> NarrowOutcome:
     """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
 
@@ -309,6 +310,22 @@ def decide(
 
     if policy_value == "list_all":
         return NarrowOutcome(None, [], candidates, None)
+
+    if (
+        policy_value in _ROSTER_POLICIES
+        and kind != "tier"
+        and candidates
+        and unplaced
+        and all(_token_of(c).casefold() in unplaced for c in candidates)
+    ):
+        # A roster never offers a token the RESOLVER could not place. "ETA cb2805q" was
+        # answered "Which product do you mean? 1. cb2805q" - a one-option menu whose only
+        # option is the word the customer had just typed, which is no choice at all (turn
+        # e69a0b1b, 17 Sep 2026). The not-found path owns this turn instead: the fetch
+        # runs with the unplaced token as its only subject and `turn_runtime` reads that
+        # back as the miss it is ("I could not find cb2805q."), which is the same sentence
+        # a typo gets anywhere else (coder 16 item 2).
+        return NarrowOutcome(None, [], candidates, None, note="unplaced_never_offered")
 
     if policy_value in _ROSTER_POLICIES:
         if policy_value == "narrow_by_tier" and kind == "tier":

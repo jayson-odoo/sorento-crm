@@ -31,7 +31,11 @@ from app.services.chatbot.turn.decide import (
     DOCUMENT_BY_SCOPE,
     NEW_ASK,
     OUTSTANDING_KINDS,
+    EVERYTHING,
+    FAMILY,
     Decision,
+    broaden_kind,
+    broaden_level,
     decide,
 )
 from app.services.chatbot.turn.narrow import decide as narrow_decide
@@ -741,6 +745,8 @@ def _focus_rules(
             trace.rules_fired.append("domains_from_asks")
         # else: no domain word this turn - focus.domains carries over unchanged.
 
+    _broaden(focus, verdict, decision, by_kind, trace)
+
     document = verdict.get("document")
     status = verdict.get("status")
     if document:
@@ -756,6 +762,57 @@ def _focus_rules(
         trace.rules_fired.append("date_restated_only")
 
     return focus
+
+
+def _broaden(
+    focus: Focus,
+    verdict: dict[str, Any],
+    decision: Decision,
+    by_kind: dict[str, list[dict[str, Any]]],
+    trace: Trace,
+) -> None:
+    """The ONE reader of `broaden_axis` + `broaden_to` (owner ruling, 17 Sep 2026).
+
+    The parser says WHICH axis and HOW FAR; this decides nothing and only applies it.
+
+    * `all` on a named axis - that axis is dropped. "okay nvm for all products" and "for
+      any products", both over an order question carrying SRTWC286-SH, were answered for
+      SRTWC286-SH (turns 6095ce66 / d8ab659e).
+    * `all` with no axis named (`broaden_axis: "all"`) - every axis is dropped and the
+      DOMAIN stays: the question is the same question, widened.
+    * `family` on a named axis - the variant is dropped and the family stands. The uuid is
+      what makes a focus row a VARIANT, so removing it (keeping the code) is the whole
+      change: an unsettled carry is exactly what the engine hands the resolver, whose
+      prefix probe answers with the family (`turn_runtime.with_carried_entities`,
+      `unsettled_only`), and the narrower settles it again this same turn.
+
+    Never when this message ANSWERED the open roster: the options the pick folded in are
+    already the widened set (`decide.broadens_the_roster`, contract 31 / hand pass 2 item
+    10). Never for an axis this message also named outright - naming it IS the scope.
+    """
+    level = broaden_level(verdict)
+    if level is None or decision.answers:
+        return
+    axis = broaden_kind(verdict)
+    if level == EVERYTHING and axis in (None, "date") and focus.date_window:
+        # The date is an axis too ("all time", "any date"), and it is the one axis that
+        # is a window rather than a list of rows - so it is cleared by name.
+        focus.date_window = None
+        trace.rules_fired.append("broaden_all_clears_date")
+    axes = [axis] if axis else list(KIND_FIELD_MAP)
+    for kind in axes:
+        attr = KIND_FIELD_MAP.get(kind)
+        rows = getattr(focus, attr, None) if attr else None
+        if not attr or not rows or kind in by_kind:
+            continue
+        if level == EVERYTHING:
+            setattr(focus, attr, [])
+            trace.rules_fired.append(f"broaden_all_clears_{kind}")
+        elif level == FAMILY:
+            widened = [{k: v for k, v in row.items() if k != "uuid"} for row in rows if isinstance(row, dict)]
+            if widened != rows:
+                setattr(focus, attr, widened)
+                trace.rules_fired.append(f"broaden_family_{kind}")
 
 
 def _exclusive(decision: Decision, trace: Trace) -> None:
@@ -955,6 +1012,7 @@ def _narrow_and_plan(
     trace: Trace,
     attributes: tuple[str, ...] = (),
     candidates: dict[str, list[dict[str, Any]]] | None = None,
+    unplaced: frozenset[str] | set[str] | None = None,
 ) -> Plan:
     denied: list[str] = []
     ask: Pending | None = None
@@ -989,6 +1047,7 @@ def _narrow_and_plan(
                 resolved_candidates=(candidates or {}).get(kind),
                 just_picked=kind in picked,
                 family_grouping=getattr(policy.kind(kind), "family_grouping", None),
+                unplaced=unplaced,
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:
@@ -1088,7 +1147,11 @@ def apply(
     policy: Policy,
     resolved: dict[str, dict[str, int]] | None = None,
     candidates: dict[str, list[dict[str, Any]]] | None = None,
+    unplaced: frozenset[str] | set[str] | None = None,
 ):
+    """`unplaced` is the resolver's own verdict about the tokens THIS message named and
+    could not place (`turn_runtime.unplaced_tokens`, folded). It is read at one seam
+    only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
 
     # F3 (contract 65): a `domain_hint` outside the declared enum must never reach a
@@ -1248,7 +1311,9 @@ def apply(
     attributes = tuple(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
     )
-    plan = _narrow_and_plan(focus, policy, domains, new_state, trace, attributes, candidates)
+    plan = _narrow_and_plan(
+        focus, policy, domains, new_state, trace, attributes, candidates, unplaced
+    )
 
     if trace.outstanding is not None:
         # Contract 38/39: this fetch is the ANSWERED question's own report re-running.
@@ -1259,4 +1324,56 @@ def apply(
         for spec in plan.fetch:
             spec.filters["outstanding"] = dict(trace.outstanding)
 
+    if (
+        decision.kind == NEW_ASK
+        and plan.fetch
+        and plan.ask is None
+        and new_state.pending is not None
+        and is_roster(new_state.pending.kind)
+        and not _roster_is_about(new_state.pending, focus)
+    ):
+        # A NEW ASK that got its own answer closes a roster about something else. S6
+        # cluster 4's sticky carry is for a CARRY - an aside, a greeting, a message that
+        # answered nothing - not for a question the bot has just finished answering.
+        # Measured: a `product_pick` of "cb2805q" opened at 05:27 survived "Incoming and
+        # stock CB2805A", "incoming and stock and PO", "IBWC8315 (Mocha) Stock" and "any
+        # markeitng forms?", and the "1" the customer then typed under a list of twenty
+        # forms answered THAT roster instead (turns e69a0b1b to 543b9a02, 17 Sep 2026).
+        # The roster survives only while it is still about the subject - which is why
+        # this is a test on the options, not on the domain: "incoming CB2805A" fetches
+        # the very domain the stale question was asked under.
+        new_state.pending = None
+        trace.rules_fired.append("new_ask_closes_stale_roster")
+
     return new_state, plan
+
+
+def _roster_is_about(pending: Pending, focus: Focus) -> bool:
+    """Is any option this roster offered still on the focus axis it is a choice of?
+
+    The engine matches labels and codes, never message words (D1/AC-1520): an option is
+    "still the subject" when the focus's own rows for that option's kind carry its code.
+    """
+    for option in pending.options:
+        kind = option.get("entity_type")
+        if not kind:
+            continue
+        code = str(option.get("code") or option.get("label") or "").strip().casefold()
+        if not code:
+            continue
+        for row in _kind_field(focus, str(kind)):
+            if not isinstance(row, dict):
+                continue
+            for name in ("canonical_code", "code", "raw"):
+                if str(row.get(name) or "").strip().casefold() == code:
+                    return True
+    return False
+
+
+def _kind_field(focus: Focus, kind: str) -> list[Any]:
+    attr = KIND_FIELD_MAP.get(kind)
+    if attr:
+        value = getattr(focus, attr, [])
+        return list(value) if isinstance(value, list) else []
+    value = focus.extra.get(kind, [])
+    return list(value) if isinstance(value, list) else []

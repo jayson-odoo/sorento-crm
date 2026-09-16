@@ -136,6 +136,63 @@ def _positions_by_label(pending: Pending, verdict: dict[str, Any]) -> list[int]:
     ]
 
 
+#: How far `broaden_to` widens the axis `broaden_axis` names (owner ruling, 17 Sep 2026).
+FAMILY = "family"
+EVERYTHING = "all"
+
+
+def broaden_kind(verdict: dict[str, Any]) -> str | None:
+    """The entity kind `broaden_axis` names, or None for "all" / nothing.
+
+    Contract 31, R21. The parser emits the AXIS it was asked to widen, and "all" is only
+    the commonest value of it: "okay nvm for all products" and "for any products" both
+    emitted `broaden_axis: "product"` over an order question carrying SRTWC286-SH, and
+    both were answered for SRTWC286-SH anyway (turns 6095ce66 / d8ab659e, 17 Sep 2026) -
+    the key had exactly one reader and it tested for the string "all".
+    """
+    axis = verdict.get("broaden_axis")
+    if not isinstance(axis, str):
+        return None
+    axis = axis.strip().lower()
+    if not axis or axis == EVERYTHING:
+        return None
+    return axis
+
+
+def broaden_level(verdict: dict[str, Any]) -> str | None:
+    """`broaden_to`: "family", "all", or None - HOW FAR the axis is widened.
+
+    A key of its own because the axis alone cannot tell "all variants of 286" (the
+    family stands, the variant goes) from "for all products" (the axis goes). Absent
+    reads as None, so a verdict recorded before the key existed behaves exactly as it
+    did.
+    """
+    level = verdict.get("broaden_to")
+    if not isinstance(level, str):
+        return None
+    level = level.strip().lower()
+    return level if level in (FAMILY, EVERYTHING) else None
+
+
+def broadens_the_roster(verdict: dict[str, Any], pending: Pending) -> bool:
+    """Does this message widen the very axis the open roster is a choice of?
+
+    `broaden_axis: "all"` widens every axis and therefore this one too - contract 31's
+    own rule, unchanged. A NAMED axis does it when the roster is about that kind and the
+    message asked for any widening at all, at EITHER level: a roster IS the family, so
+    "all variants of 286" and "for all products" both come to the same thing over it
+    (hand pass 2 item 10). "for all products" over a CUSTOMER picker answers nothing.
+    """
+    if verdict.get("broaden_axis") == EVERYTHING:
+        return True
+    axis = broaden_kind(verdict)
+    return (
+        axis is not None
+        and broaden_level(verdict) is not None
+        and pending.kind == f"{axis}_pick"
+    )
+
+
 def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[int], str] | None:
     """Which of the open question's positions this message picked, and by which signal.
 
@@ -156,7 +213,7 @@ def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[in
         if isinstance(raw, list)
         else []
     )
-    broadens = verdict.get("broaden_axis") == "all"
+    broadens = broadens_the_roster(verdict, pending)
     if pending.kind in ESCALATION_OFFER_KINDS:
         # A handover is the most expensive thing the bot can do with a message, so it
         # takes an EXPLICIT signal and nothing weaker: ONE position the customer typed
