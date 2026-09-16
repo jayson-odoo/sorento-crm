@@ -269,84 +269,30 @@ class TestGuards:
             engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         assert "409" in str(raised.value) or "not delegated" in str(raised.value).lower()
 
-    def test_a_key_outside_the_allowlist_raises_before_the_write(
-        self, seeded, stub_parser, session_factory, monkeypatch
-    ):
-        """AC-203: the wall is on the WRITE path, so it has to stop the write."""
-        from app.services.chatbot.tail import compile_state as compile_mod
-
-        real = compile_mod.compile_current_state
-
-        def poisoned(item, ctx, **kwargs):
-            compiled = real(item, ctx, **kwargs)
-            compiled.item["reply"]["session_patch"]["variables"]["dym_probe_entities"] = ["harness"]
-            return compiled
-
-        monkeypatch.setattr(
-            "app.services.chatbot.tail.compile_state.compile_current_state", poisoned
-        )
-        head = _head(session_factory, is_test=False)
-        with pytest.raises(Exception) as raised:
-            engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
-        assert "dym_probe_entities" in str(raised.value)
-        assert _session_of(session_factory) == PRIOR_SESSION, "it wrote before validating"
-
-    def test_a_second_probe_key_also_raises_before_the_write(
-        self, seeded, stub_parser, session_factory, monkeypatch
-    ):
-        """A second harness-shaped key, `_dym_probe_input` (leading underscore, the shape
-        an internal diagnostic would use): `extra = "forbid"` has to reject EVERY
-        undeclared key, not just the one example the sibling test happens to use."""
-        from app.services.chatbot.tail import compile_state as compile_mod
-
-        real = compile_mod.compile_current_state
-
-        def poisoned(item, ctx, **kwargs):
-            compiled = real(item, ctx, **kwargs)
-            compiled.item["reply"]["session_patch"]["variables"]["_dym_probe_input"] = {"x": 1}
-            return compiled
-
-        monkeypatch.setattr(
-            "app.services.chatbot.tail.compile_state.compile_current_state", poisoned
-        )
-        head = _head(session_factory, is_test=False)
-        n_contacts_before = session_factory().execute(
-            text("SELECT count(*) FROM respond_contacts")
-        ).scalar_one()
-        with pytest.raises(Exception) as raised:
-            engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
-        assert "_dym_probe_input" in str(raised.value)
-        n_contacts_after = session_factory().execute(
-            text("SELECT count(*) FROM respond_contacts")
-        ).scalar_one()
-        assert n_contacts_after == n_contacts_before, "the allowlist raise must not touch respond_contacts at all"
-        assert _session_of(session_factory) == PRIOR_SESSION
-
-    # FIXED (coder, 5 Sep): every failure in the tail now closes the turn `failed` at
-    # `remembered`, through the tail's OWN session after a rollback. A fresh session
-    # would nest on the same connection under this fixture and its commit would be
-    # discarded when the outer session closed - reported and then silently undone.
-    def test_the_turn_row_is_closed_failed_at_remembered_when_the_allowlist_raises(
-        self, seeded, stub_parser, session_factory, monkeypatch
-    ):
-        from app.services.chatbot.tail import compile_state as compile_mod
-
-        real = compile_mod.compile_current_state
-
-        def poisoned(item, ctx, **kwargs):
-            compiled = real(item, ctx, **kwargs)
-            compiled.item["reply"]["session_patch"]["variables"]["dym_probe_entities"] = ["harness"]
-            return compiled
-
-        monkeypatch.setattr(
-            "app.services.chatbot.tail.compile_state.compile_current_state", poisoned
-        )
-        head = _head(session_factory, is_test=False)
-        with pytest.raises(Exception):
-            engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
-        row = _turn_row(session_factory, head.turn_id)
-        assert row.status == "failed"
-        assert row.stage == "remembered"
+    # B2 (reviewer finding) / AC-1592: the three tests that used to live here
+    # (`test_a_key_outside_the_allowlist_raises_before_the_write`,
+    # `test_a_second_probe_key_also_raises_before_the_write`,
+    # `test_the_turn_row_is_closed_failed_at_remembered_when_the_allowlist_raises`) are
+    # RETIRED, not ported. All three poisoned `tail.compile_state.compile_current_state`'s
+    # RETURN VALUE to smuggle an extra key (`dym_probe_entities`, `_dym_probe_input`) into
+    # the session write, then asserted AC-203/H15 (`extra="forbid"`) caught it before the
+    # write. `tail/compile_state.py` is deleted (AC-1594); `run_tail` (the function
+    # `complete_turn` - still live, `engine.py::complete_turn` - itself calls for its tail,
+    # confirmed by reading it end to end this session) builds the session write's `payload`
+    # from a HARD-CODED five-key dict literal (`focus`, `open_question`, `ideation`,
+    # `access_levels`, `contains_flyer`, each read off `state`/`question`/`before` by name)
+    # and validates it with `SessionVars(**payload)` - there is no longer any producer-
+    # mutable dict for a stray key to leak INTO before that call, so the vulnerability these
+    # three tests poisoned for is structurally impossible now, not merely validated-and-
+    # rejected. The model-level property (AC-203/H15, "a key outside the five raises") is
+    # already re-proven against the CURRENT `SessionVars` shape in `test_rearch_port_tail_
+    # units.py::TestSessionVarsIsAWallForTheFiveKeyShape` (same `dym_probe_entities` poison
+    # value), a real replacement, not a coverage hole for that half. The other half - that
+    # `complete_turn` leaves `respond_contacts`/the prior session untouched and closes the
+    # turn `failed` at `remembered` specifically on THIS poison path - has no equivalent
+    # injection point left to port to (the general "a tail exception closes the turn failed"
+    # property is a different, still-testable claim than this specific one, out of this
+    # item's scope; flagged, not silently dropped).
 
 
 class TestTheEndpoint:
