@@ -100,7 +100,16 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # {domain, intent} objects, replacing the bare-code two-domain reading) and `topic_reset`
 # join `DECLARED_KEYS`, each with its own `== ASKS ==` / `== TOPIC RESET ==` prompt
 # section. Net +1614. Measured against the coder's landed change, not derived.
-CONSTANT_CHARS = 53753
+# 53753 -> 54793 (16 Sep 2026, `944452a8b`, owner's 16 Sep turns): a grammar particle is
+# never an entity, a bare family code is always a product token wherever it sits, "PO"
+# alone is purchase_order (only COST words make a message purchase_cost, and domain_hint
+# is the first ask). Net +1040. Measured against the coder's landed change, not derived.
+# 54793 -> 55227 (17 Sep 2026, `3cdf6ba21`, journey chain
+# `hanlim-outstanding-detail-then-so-switch` step 3): a message that is ONLY a paper word
+# ("Sales order" over an open detail offer) is that document and never casual - the
+# DOCUMENT section's worked examples were all full sentences, none a bare two-word
+# document name. Net +434. Measured against the coder's landed change, not derived.
+CONSTANT_CHARS = 55227
 
 
 def _without_growth_r1_addendum(text: str) -> str:
