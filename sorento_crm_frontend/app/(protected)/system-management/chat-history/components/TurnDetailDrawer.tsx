@@ -105,6 +105,9 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Session" testId="section-session">
         <SessionSection session={detail.session} />
       </Section>
+      <Section title="Sent" testId="section-sent">
+        <SentSection stages={detail.stages} />
+      </Section>
     </>
   );
 }
@@ -145,6 +148,38 @@ function Code({ value }: { value: unknown }) {
   return (
     <div className="overflow-x-auto">
       <SearchableCode text={JSON.stringify(value, null, 2)} />
+    </div>
+  );
+}
+
+/**
+ * The `sent` stage as its own panel (browser pass 1, 16 Sep 2026): every stage the
+ * trace carries must render as a panel, and the hand-off to the caller was the one
+ * that only appeared as a row inside Stages. Read off the stage record itself - the
+ * engine records "Handed the reply to the caller to send." with the action count.
+ */
+function SentSection({ stages }: { stages: TurnDetail['stages'] }) {
+  const sent = stages.find((stage) => stage.name === 'sent');
+  if (!sent) return <Empty>No sent stage recorded.</Empty>;
+  return (
+    <div className="space-y-1 text-xs">
+      <div className="flex items-center gap-2">
+        <Badge
+          variant={sent.status === 'failed' ? 'destructive' : 'success'}
+          appearance="light"
+          size="sm"
+        >
+          {sent.status ?? 'ok'}
+        </Badge>
+        {sent.ms != null && <span className="text-muted-foreground tabular-nums">{sent.ms}ms</span>}
+      </div>
+      {sent.status === 'failed' && sent.error ? (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-2 py-1.5 text-destructive">
+          {sent.error}
+        </p>
+      ) : sent.summary ? (
+        <p className="text-muted-foreground">{sent.summary}</p>
+      ) : null}
     </div>
   );
 }

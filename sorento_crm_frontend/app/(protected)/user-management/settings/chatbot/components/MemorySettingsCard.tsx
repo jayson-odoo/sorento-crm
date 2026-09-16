@@ -1,18 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { LoaderCircleIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import {
-  useChatbotMemorySettings,
-  useSaveChatbotMemorySettings,
-} from '../hooks/useChatbotMemoryAndTierOrder';
 import type { ChatbotMemorySettings } from '../services/chatbotSettingsService';
 
 const RETENTION_OPTIONS = [30, 90, 180, 365].map((days) => ({
@@ -34,23 +27,27 @@ const FOCUS_RESET_OPTIONS = [
 /**
  * Settings > Chatbot > Memory card (chatbot turn re-architecture, AC-1513, AC-1561, S5).
  *
- * Backed by `system_settings.chatbot_memory` - one JSONB, four sub-keys - saved
- * independently of the Switches card's Save button (its own PUT /settings/general call,
- * a partial body).
+ * Backed by `system_settings.chatbot_memory` - one JSONB, four sub-keys. CONTROLLED:
+ * the page owns the draft and the ONE Save button (browser pass 1, 16 Sep 2026: a
+ * Save of its own here sat right under the Switches card and silently no-op'd the
+ * switches), so this card only renders and reports edits.
  */
-export default function MemorySettingsCard() {
-  const query = useChatbotMemorySettings();
-  const save = useSaveChatbotMemorySettings();
-  const [draft, setDraft] = useState<ChatbotMemorySettings | null>(null);
+export default function MemorySettingsCard({
+  value,
+  onChange,
+  isLoading,
+  isError,
+}: {
+  value: ChatbotMemorySettings | null;
+  onChange: (next: ChatbotMemorySettings) => void;
+  isLoading: boolean;
+  isError: boolean;
+}) {
+  const draft = value;
+  const set = <K extends keyof ChatbotMemorySettings>(key: K, v: ChatbotMemorySettings[K]) =>
+    draft && onChange({ ...draft, [key]: v });
 
-  useEffect(() => {
-    if (query.data && draft === null) setDraft(query.data);
-  }, [query.data, draft]);
-
-  const set = <K extends keyof ChatbotMemorySettings>(key: K, value: ChatbotMemorySettings[K]) =>
-    setDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
-
-  if (query.isError && !draft) {
+  if (isError && !draft) {
     return (
       <Card>
         <CardHeader className="border-b border-border">
@@ -65,7 +62,7 @@ export default function MemorySettingsCard() {
     );
   }
 
-  if (query.isLoading || !draft) {
+  if (isLoading || !draft) {
     return <Skeleton className="h-56 w-full" />;
   }
 
@@ -108,17 +105,6 @@ export default function MemorySettingsCard() {
             onChange={(v) => set('focus_reset_events', v)}
             options={FOCUS_RESET_OPTIONS}
           />
-        </div>
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            size="sm"
-            disabled={save.isPending}
-            onClick={() => draft && save.mutate(draft, { onSuccess: (saved) => setDraft(saved) })}
-          >
-            {save.isPending && <LoaderCircleIcon className="size-4 animate-spin" />}
-            Save
-          </Button>
         </div>
       </CardContent>
     </Card>

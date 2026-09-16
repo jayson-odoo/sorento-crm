@@ -23,7 +23,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 
 import { useChatbotSettings, useSaveChatbotSettings } from './hooks/useChatbotSettings';
-import type { ChatbotSettings } from './services/chatbotSettingsService';
+import {
+  useChatbotMemorySettings,
+  useChatbotTierOrder,
+  useSaveChatbotMemorySettings,
+  useSaveChatbotTierOrder,
+} from './hooks/useChatbotMemoryAndTierOrder';
+import type { ChatbotMemorySettings, ChatbotSettings } from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
 import TierOrderCard from './components/TierOrderCard';
 import CrossDomainLadderCard from './components/CrossDomainLadderCard';
@@ -48,13 +54,31 @@ import CrossDomainLadderCard from './components/CrossDomainLadderCard';
 export default function ChatbotSettingsPage() {
   const settingsQuery = useChatbotSettings();
   const save = useSaveChatbotSettings();
+  // One Save for the whole page (browser pass 1, 16 Sep 2026): the Memory and Tier
+  // order cards used to carry a Save each, right under a Switches card that had none
+  // of its own - so the nearest Save silently no-op'd the switches. The page owns all
+  // three drafts now and the one button fires every PUT that has something to save.
+  const memoryQuery = useChatbotMemorySettings();
+  const saveMemory = useSaveChatbotMemorySettings();
+  const tierOrderQuery = useChatbotTierOrder();
+  const saveTierOrder = useSaveChatbotTierOrder();
 
   const [draft, setDraft] = useState<ChatbotSettings | null>(null);
+  const [memoryDraft, setMemoryDraft] = useState<ChatbotMemorySettings | null>(null);
+  const [tierOrderDraft, setTierOrderDraft] = useState<string[] | null>(null);
   const [orderingConfirmOpen, setOrderingConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(settingsQuery.data);
   }, [settingsQuery.data, draft]);
+  useEffect(() => {
+    if (memoryQuery.data && memoryDraft === null) setMemoryDraft(memoryQuery.data);
+  }, [memoryQuery.data, memoryDraft]);
+  useEffect(() => {
+    if (tierOrderQuery.data && tierOrderDraft === null) setTierOrderDraft(tierOrderQuery.data);
+  }, [tierOrderQuery.data, tierOrderDraft]);
+
+  const saving = save.isPending || saveMemory.isPending || saveTierOrder.isPending;
 
   // The failed load is checked FIRST. A load that fails leaves `draft` null, so a
   // loading check that also covered `!draft` would win every time and the operator
@@ -148,31 +172,51 @@ export default function ChatbotSettingsPage() {
         </CardContent>
       </Card>
 
-      <MemorySettingsCard />
-      <TierOrderCard />
+      <MemorySettingsCard
+        value={memoryDraft}
+        onChange={setMemoryDraft}
+        isLoading={memoryQuery.isLoading}
+        isError={memoryQuery.isError}
+      />
+      <TierOrderCard
+        value={tierOrderDraft}
+        onChange={setTierOrderDraft}
+        isLoading={tierOrderQuery.isLoading}
+        isError={tierOrderQuery.isError}
+      />
       <CrossDomainLadderCard />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
         <Button
           type="button"
           variant="outline"
-          disabled={save.isPending}
-          onClick={() => settingsQuery.data && setDraft(settingsQuery.data)}
+          disabled={saving}
+          onClick={() => {
+            if (settingsQuery.data) setDraft(settingsQuery.data);
+            if (memoryQuery.data) setMemoryDraft(memoryQuery.data);
+            if (tierOrderQuery.data) setTierOrderDraft(tierOrderQuery.data);
+          }}
         >
           Reset
         </Button>
         <Button
           type="button"
-          disabled={save.isPending}
-          onClick={() =>
-            save.mutate(draft, {
-              // Re-seed from what came back, not from what was typed: the row the
-              // backend returns is what was actually persisted.
-              onSuccess: (saved) => setDraft(saved),
-            })
-          }
+          disabled={saving}
+          onClick={() => {
+            // Re-seed each draft from what came back, not from what was typed: the
+            // row the backend returns is what was actually persisted.
+            save.mutate(draft, { onSuccess: (saved) => setDraft(saved) });
+            if (memoryDraft) {
+              saveMemory.mutate(memoryDraft, { onSuccess: (saved) => setMemoryDraft(saved) });
+            }
+            if (tierOrderDraft) {
+              saveTierOrder.mutate(tierOrderDraft, {
+                onSuccess: (saved) => setTierOrderDraft(saved),
+              });
+            }
+          }}
         >
-          {save.isPending ? <LoaderCircleIcon className="animate-spin" /> : null}
+          {saving ? <LoaderCircleIcon className="animate-spin" /> : null}
           Save
         </Button>
       </div>
