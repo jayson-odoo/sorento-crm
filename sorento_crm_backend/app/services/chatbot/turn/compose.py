@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from app.services.chatbot.turn.decide import OUTSTANDING_KINDS
 from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
@@ -124,11 +125,25 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
         if not isinstance(ask, dict) or not ask.get("kind"):
             continue
         rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
+        kind = str(ask.get("kind"))
+        # The OUTSTANDING kinds keep their own `entity_type` (their options are a scope,
+        # never a row to pick's own `uuid` - `apply._answer_outstanding` owns the whole
+        # answering turn before the generic roster path ever reads `entity_type`). A
+        # roster this builder mints for an ENTITY KIND instead (item 1: `form_pick`) needs
+        # the bare kind, the same `entity_type` a resolver-matched roster's own
+        # `narrow._options` sets - `apply._answer_pending`'s generic pick resolution reads
+        # it to know which Focus slot the picked row settles.
+        entity_type = kind if kind in OUTSTANDING_KINDS else kind.removesuffix("_pick").removesuffix("_ask")
         options = [
             {
                 "position": int(row.get("idx") or i + 1),
                 "label": row.get("label"),
-                "entity_type": str(ask.get("kind")),
+                "entity_type": entity_type,
+                # The pick's own identity, the same field a resolver-matched option
+                # carries (`narrow._options`'s `uuid`) - `apply._answer_pending`'s
+                # generic roster resolution reads it to build the fetch entity. Inert
+                # for the OUTSTANDING kinds (never reached: they short-circuit first).
+                "uuid": row.get("value"),
                 "payload": {"value": row.get("value")},
             }
             for i, row in enumerate(rows)
@@ -136,7 +151,7 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
         if not options:
             continue
         return pending_ask(
-            str(ask.get("kind")),
+            kind,
             options,
             expects="pick",
             asked_at_turn=turn_no,

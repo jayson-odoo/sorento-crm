@@ -268,6 +268,7 @@ class _Builder:
         expiring_soon=False,
         unallocated=False,
         partially_allocated=False,
+        entity_id: Any = None,
     ) -> None:
         # A pair is either (label, value) or (key, label, value). The 3-tuple form
         # carries the CRM field key, which is what a consumer must match on: the
@@ -277,6 +278,13 @@ class _Builder:
         # `field_access.denied[].field` reports, so a consumer can tell "withheld"
         # from "not yet reached" by comparing the same token on both sides.
         # `key` is omitted, never null, when the source key is unknown.
+        #
+        # `entity_id` (item 1, 17 Sep 2026) rides at the TOP LEVEL of the item, never
+        # inside `fields` - a field is rendered verbatim to the customer
+        # (`_item_line`/`output_structurer`), and a raw uuid must never be. It is the
+        # same identity `narrow.py::_options` carries as `uuid` for a resolver-matched
+        # roster; a caller that arms a pick from a flat item list (a forms browse) reads
+        # it off here instead.
         fields: list[dict[str, Any]] = []
         for pair in pairs:
             key, lbl, val = pair if len(pair) == 3 else (None, *pair)
@@ -301,6 +309,7 @@ class _Builder:
                     "unallocated": bool(unallocated),
                     "partially_allocated": bool(partially_allocated),
                 },
+                **({"id": entity_id} if _filled(entity_id) else {}),
             }
         )
 
@@ -1416,7 +1425,10 @@ def _availability_intro(payload: dict) -> str:
 
 def _forms(rows: list[dict], b: _Builder) -> None:
     for f in rows:
-        b.item(f.get("name"), [("Form Name", f.get("name"))])
+        # `id` rides at the item's top level (browse rows only - `_FORMS_LIST_KEEP_
+        # BROWSE`), never as a rendered field: it is what the engine arms a numbered
+        # pick with, not something to say to the customer.
+        b.item(f.get("name"), [("Form Name", f.get("name"))], entity_id=f.get("id"))
         # Narrowed form lookups carry the attachment so the form file can be sent.
         if f.get("attachment"):
             b.attach(f["attachment"])
