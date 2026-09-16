@@ -166,6 +166,52 @@
           }
         ]
       },
+      "received_session_vars": {
+        "respond_io_id": "423755030",
+        "session_vars": {
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "date_filter_end": null,
+            "date_filter_start": null,
+            "date_mode": null,
+            "domain_hint": null,
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": false,
+                "hint": "inbound_shipment",
+                "raw": "incoming container"
+              }
+            ],
+            "escalation": {
+              "is_escalation_confirmation": true
+            },
+            "ideation": null,
+            "intent_hint": null,
+            "last_result_set": [],
+            "match_mode": "and",
+            "message_type": "request_for_help",
+            "query_brands": [],
+            "requested_attributes": [],
+            "response": "Informed the user that request is out of scope and will proceed to escalate to the purchasing team",
+            "routing": {
+              "suggested_agent": "incoming_stock_enquiries",
+              "suggested_team": "purchasing"
+            },
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": null,
+            "routing_company": null,
+            "routing_roster_plan": null,
+            "selection_context": null,
+            "user_goal": "trying to escalate the issue to the purchasing team"
+          }
+        }
+      },
       "resolutions": {
         "resolutions": [
           {

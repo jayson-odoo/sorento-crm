@@ -175,6 +175,146 @@
           }
         ]
       },
+      "received_session_vars": {
+        "respond_io_id": "445239384",
+        "session_vars": {
+          "quick_reply": "Yes escalate,No it's okay",
+          "user_response": "No incoming stock (ETA) found for SRTWT7445.\nNo incoming for SRTWT7445-LV-GM, SRTWT7445, SRTWT7445-LV, SRTWT7445-NEW, SRTWT7445-LV-BL.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWT7445-LV-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 102\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 5\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 3\n\n- *Product Code:* SRTWT7445\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 34\n*Outstanding:* 90\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 22\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 2\n*Outstanding:* 2\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 2\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445-LV\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-IB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 146\n*Outstanding:* 699\n\n- *Product Code:* SRTWT7445-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 6\n*Outstanding:* 3205\n\n- *Product Code:* SRTWT7445-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 4\n*Outstanding:* 3549\n\n- *Product Code:* SRTWT7445-LV-WEPLS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 352\n\n- *Product Code:* SRTWT7445-LV-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 311\n*Outstanding:* 0\n\n- *Product Code:* SRTWT7445-LV-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 3\n\n- *Product Code:* SRTWT7445-LV-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\nNo incoming and no stock for SRTWT7445-LV-BL-NEW, SRTWT7445-LV-NEW, but PO is placed:\n*Product Code:* SRTWT7445-LV-BL-NEW\n*Ordered:* 124\n*Outstanding:* 124\n*PO date:* 2026-05-04\n*Location:* BRW-NTC\n\n*Product Code:* SRTWT7445-LV-BL-NEW\n*Ordered:* 76\n*Outstanding:* 76\n*PO date:* 2026-05-04\n*Location:* BRW\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 191\n*Outstanding:* 191\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 153\n*Outstanding:* 153\n*PO date:* 2026-05-18\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 2\n*Outstanding:* 2\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 1\n*Outstanding:* 1\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 12\n*Outstanding:* 12\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 1\n*Outstanding:* 1\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 6\n*Outstanding:* 6\n*PO date:* 2026-06-04\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 4\n*Outstanding:* 4\n*PO date:* 2026-05-18\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 35\n*Outstanding:* 35\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 167\n*Outstanding:* 167\n*PO date:* 2026-07-30\n*Location:* BRW\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 148\n*Outstanding:* 148\n*PO date:* 2026-07-30\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 10\n*Outstanding:* 10\n*PO date:* 2026-06-04\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 2\n*Outstanding:* 2\n*PO date:* 2026-06-04\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 12\n*Outstanding:* 12\n*PO date:* 2026-07-30\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 25\n*Outstanding:* 25\n*PO date:* 2026-06-04\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 5\n*Outstanding:* 5\n*PO date:* 2026-06-04\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 145\n*Outstanding:* 145\n*PO date:* 2026-06-04\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 300\n*Outstanding:* 300\n*PO date:* 2026-09-03\n*Location:* BRW\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 6\n*Outstanding:* 6\n*PO date:* 2026-06-04\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 2\n*Outstanding:* 2\n*PO date:* 2026-07-30\n*Location:* BRW-NTC\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 2\n*Outstanding:* 2\n*PO date:* 2026-07-30\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 1\n*Outstanding:* 1\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 1\n*Outstanding:* 1\n*PO date:* 2026-06-04\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 61\n*Outstanding:* 61\n*PO date:* 2026-07-30\n*Location:* BRW-IB\n\n*Product Code:* SRTWT7445-LV-NEW\n*Ordered:* 8\n*Outstanding:* 8\n*PO date:* 2026-07-30\n*Location:* BRW-BB\n\nNo incoming, no stock and nothing on order for SRTWT7445-NL.\n\nNo incoming and stock is 0 at every location for SRTWT7445-LV-WEPLS, but PO is placed:\n*Product Code:* SRTWT7445-LV-WEPLS\n*Ordered:* 8\n*Outstanding:* 8\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-WEPLS\n*Ordered:* 230\n*Outstanding:* 230\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\n*Product Code:* SRTWT7445-LV-WEPLS\n*Ordered:* 122\n*Outstanding:* 122\n*PO date:* 2026-05-18\n*Location:* BRW-BB\n\nRelated products:\n1. SRTWT7445-LV-BL-NEW - has incoming\n2. SRTWT7445-LV-NEW - has incoming\n3. SRTWT7445-LV-WEPLS - has incoming\n4. SRTWT7445-NEW - has incoming\n5. SRTWT7445 - no incoming\n6. SRTWT7445-LV - no incoming\n7. SRTWT7445-LV-BL - no incoming\n8. SRTWT7445-LV-GM - no incoming\n9. SRTWT7445-NL - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "date_filter_end": null,
+            "date_filter_start": null,
+            "date_mode": null,
+            "domain_hint": "incoming",
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [
+              {
+                "canonical_code": "SRTWT7445",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "Srtwt7445"
+              }
+            ],
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "ideation": null,
+            "intent_hint": "check_incoming",
+            "last_result_set": [
+              {
+                "entity_type": "product",
+                "idx": 1,
+                "label": "SRTWT7445-LV-BL-NEW",
+                "product": "SRTWT7445-LV-BL-NEW",
+                "uuid": "445b035d-5e17-4345-9a1a-d41a6bda4868",
+                "value": "SRTWT7445-LV-BL-NEW"
+              },
+              {
+                "entity_type": "product",
+                "idx": 2,
+                "label": "SRTWT7445-LV-NEW",
+                "product": "SRTWT7445-LV-NEW",
+                "uuid": "e6d87826-d2c4-4332-98ec-7381ea821a9f",
+                "value": "SRTWT7445-LV-NEW"
+              },
+              {
+                "entity_type": "product",
+                "idx": 3,
+                "label": "SRTWT7445-LV-WEPLS",
+                "product": "SRTWT7445-LV-WEPLS",
+                "uuid": "e44a6c78-93ee-4126-9ce8-8c3092dab9de",
+                "value": "SRTWT7445-LV-WEPLS"
+              },
+              {
+                "entity_type": "product",
+                "idx": 4,
+                "label": "SRTWT7445-NEW",
+                "product": "SRTWT7445-NEW",
+                "uuid": "7ccd90c1-e4d5-4a0c-b6bc-5783cad6c411",
+                "value": "SRTWT7445-NEW"
+              },
+              {
+                "entity_type": "product",
+                "idx": 5,
+                "label": "SRTWT7445",
+                "product": "SRTWT7445",
+                "uuid": "90afd8db-dbd8-40c2-a3b4-072feb01b08a",
+                "value": "SRTWT7445"
+              },
+              {
+                "entity_type": "product",
+                "idx": 6,
+                "label": "SRTWT7445-LV",
+                "product": "SRTWT7445-LV",
+                "uuid": "b3261772-aae1-4614-b7a8-b89b93734ff7",
+                "value": "SRTWT7445-LV"
+              },
+              {
+                "entity_type": "product",
+                "idx": 7,
+                "label": "SRTWT7445-LV-BL",
+                "product": "SRTWT7445-LV-BL",
+                "uuid": "ed13ab1e-2f13-4f57-800d-1928173ba201",
+                "value": "SRTWT7445-LV-BL"
+              },
+              {
+                "entity_type": "product",
+                "idx": 8,
+                "label": "SRTWT7445-LV-GM",
+                "product": "SRTWT7445-LV-GM",
+                "uuid": "2f949bd7-6426-4cad-8263-41f86f9368e4",
+                "value": "SRTWT7445-LV-GM"
+              },
+              {
+                "entity_type": "product",
+                "idx": 9,
+                "label": "SRTWT7445-NL",
+                "product": "SRTWT7445-NL",
+                "uuid": "bf98c511-4063-4d1b-8737-eeec2cc00d18",
+                "value": "SRTWT7445-NL"
+              }
+            ],
+            "match_mode": "and",
+            "message_type": "business_query",
+            "pending": {
+              "domain": "incoming",
+              "kind": "escalation_offer",
+              "team": "purchasing"
+            },
+            "query_brands": [],
+            "requested_attributes": [
+              "estimated_arrival_date"
+            ],
+            "response": "No incoming stock (ETA) found for SRTWT7445. Related products:\n1. SRTWT7445-LV-BL-NEW - has incoming\n2. SRTWT7445-LV-NEW - has incoming\n3. SRTWT7445-LV-WEPLS - has incoming\n4. SRTWT7445-NEW - has incoming\n5. SRTWT7445 - no incoming\n6. SRTWT7445-LV - no incoming\n7. SRTWT7445-LV-BL - no incoming\n8. SRTWT7445-LV-GM - no incoming\n9. SRTWT7445-NL - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
+            "routing": {
+              "suggested_agent": "incoming_stock_enquiries",
+              "suggested_team": "purchasing"
+            },
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWT7445"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "labels": [
+                  "SRTWT7445"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_roster_plan": null,
+            "selection_context": "suggest_offer",
+            "user_goal": "trying to check the ETA for Srtwt7445"
+          }
+        }
+      },
       "resolutions": {
         "resolutions": [
           {
