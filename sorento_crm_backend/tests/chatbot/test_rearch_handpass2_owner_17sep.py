@@ -119,7 +119,17 @@ class TestFinding5EntityOpReplaceDropsCarriedCustomers:
     """Ruling 5 (turn c45e2929, "Outstsnding DO for 7445"): a new ask that names its
     own entities and says `entity_op: replace` drops the carried customer - recall is
     off, this is focus carry, not episodes. The old engine's own behaviour was "Customer:
-    all" (the carried customer cleared, not kept)."""
+    all" (the carried customer cleared, not kept).
+
+    Re-pinned 17 Sep 2026 (coder 20's S4-adjacent slice, `3c19a8533`): the verdict's own
+    `entity_op` is `replace_combine`, not `replace`, so `Decision.replaces_every_axis`
+    never fires here - this turn passed only through the now-deleted
+    `SHARED_AXIS_BY_DOMAIN` table. The real turn ("Outstsnding DO for 7445") names a
+    document AND a status, which is `domain_in_message: True` under the 17 Sep
+    `domain_in_message`/entities discriminator table
+    (`turn/decide.py::_subject_reading`, row 1: NEW_ASK, every other carried kind
+    dropped) - so the fixture's verdict needs that flag set to reproduce the live
+    reading; `entity_op` alone no longer starts a fresh scope for a different kind."""
 
     def test_a_replace_op_with_a_new_current_entity_drops_the_carried_customer(self) -> None:
         from app.services.chatbot.turn.state import Focus
@@ -133,6 +143,7 @@ class TestFinding5EntityOpReplaceDropsCarriedCustomers:
             intent_hint="check_order",
             domain_hint="order",
             entity_op="replace_combine",
+            domain_in_message=True,
             entities=[{"raw": "SRTWT7445", "hint": "product", "current_message": True, "confident": True}],
         )
         state2, plan, branch = _decide(v, focus=carried)
