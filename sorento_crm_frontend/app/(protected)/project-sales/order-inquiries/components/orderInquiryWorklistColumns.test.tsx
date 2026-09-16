@@ -994,25 +994,29 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlin
   });
 });
 
-describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): the move note reaches the backing-documents popover', () => {
-  it('a row AutoCount moved a document off - now carrying no links - still opens its popover, and the move note is shown', () => {
-    renderRows([
+describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): the move note reaches the existing Qty annotation dialog', () => {
+  it('a row AutoCount moved a document off - now carrying no links - renders the existing Qty annotation trigger, and opening it shows the move note', () => {
+    // Captain's ruling, 16 Sep (second round): reuse the SAME affordance rejected and
+    // settled rows already use (`OrderInquiryQtyAnnotationDialog` / `qty-annotation-
+    // trigger-<id>`) - never a new trigger on `OrderInquiryBackingDocumentsDialog`. This
+    // row is neither rejected nor carries a `previous_qty` (a settle never touched it -
+    // the row was redirected, not amended), so today's trigger condition (`rejected ||
+    // changed`) has no reason to fire at all.
+    renderQtyCell([
       worklistRow({
         id: 'row-moved',
         qty: '90',
-        linked_qty: '0',
+        ack_state: 'acknowledged',
         links: [],
-        note: 'AutoCount moved 202606-S0018 to SO420103 on 16 Sep 2026',
+        note: 'AutoCount moved 202607-S0077 to SO314595',
       }),
     ]);
 
     const row = screen.getByTestId('row-row-moved');
-    fireEvent.click(within(row).getByTestId('backing-documents-trigger-row-moved'));
+    fireEvent.click(within(row).getByTestId('qty-annotation-trigger-row-moved'));
 
-    const dialog = screen.getByTestId('backing-documents-row-moved');
-    expect(
-      within(dialog).getByText('AutoCount moved 202606-S0018 to SO420103 on 16 Sep 2026'),
-    ).toBeInTheDocument();
+    const dialog = screen.getByTestId('qty-annotation-row-moved');
+    expect(within(dialog).getByText('AutoCount moved 202607-S0077 to SO314595')).toBeInTheDocument();
   });
 });
 
