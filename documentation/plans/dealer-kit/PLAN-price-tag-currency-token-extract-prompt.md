@@ -167,6 +167,26 @@ Slice D (pytest + vitest)
   the Insert field dialog lists Currency under Product; a badge layer still shows `RM`.
 - System Management > AI Assistant lists the `ai_extract` prompt with the rule (8) default text.
 - Live extract on the 21-line paste from 16 Sep (scratchpad `pasted.txt`) returns 21 lines, 3 of 3 runs.
+  DONE 16 Sep 12:40 on the lane code: key `ai_extract_portal_price_tag_request` registered, rule 8 present,
+  3 of 3 runs gave 21 products, completion 212 tokens each (identical output), prompt 558 tokens.
+
+### Browser pass, 16 Sep (lane stack :3080/:8080, session ptcur16, evidence under
+`evidence/price-tag-currency-token/`)
+
+- AC-A13 PASS: Insert field lists Currency under Product; on PT-202609-0008 tag 1a the text layer
+  `{{product.currency}} {{product.sell_price}}` drew `MYR 1,490`, the badge beside it kept `RM 1,490`. Note: the
+  Tag Templates editor never resolves merge tokens on its canvas (any layer, pre-existing); the per-tag designer does.
+- AC-C6 PASS: list price 1090 to 1091 in a second tab; red dot on tags 1a and 1b within about 5 s without reload;
+  detail header `Product data changed · 2`, no Update all. Price restored to 1090 afterwards, flag cleared itself.
+- AC-D7 PASS at 1280 and 375.
+- AC-B5 FINDING: the nine keys list, but the editor opened EMPTY because the versions payload carries no code
+  fallback and no version was ever saved. Pre-existing for every code-only key. Fixed in slice E below.
+
+### E. Prompt editor seeds from the code fallback when no version exists
+
+- `AIPromptService.get_versions` returns `fallback_text = PROMPT_KEYS[name].fallback()`; `PromptVersionsResponse`
+  declares it. `PromptDetail.tsx` seeds the draft with it when `versions` is empty; saving creates v1 from it.
+  Unchanged when a version exists.
 
 ## Rollout
 
