@@ -10,7 +10,7 @@ from typing import Any
 
 from app.services.chatbot import contracts
 from app.services.chatbot.turn.narrow import decide as narrow_decide
-from app.services.chatbot.turn.pending import ROSTER_KINDS, OFFER_KINDS, Pending, ask as pending_ask, with_answered_positions
+from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, ask as pending_ask, is_roster, with_answered_positions
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.reconcile import apply_reconciliation
@@ -113,7 +113,7 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         asked_for = pending.payload.get("domain")
         if asked_for:
             focus.domains = [asked_for]
-        if pending.kind in ROSTER_KINDS:
+        if is_roster(pending.kind):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
 
