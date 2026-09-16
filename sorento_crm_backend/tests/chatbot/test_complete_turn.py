@@ -17,6 +17,34 @@ the engine the module-level `SessionLocal`, the real `DATABASE_URL` engine, and 
 suppresses business writes but not which database the turn row lands in - an earlier
 version of the sibling endpoint test left a real half-written row in the shared dev
 database. See `test_chat_turn_endpoint.py` for the full finding.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling, "complete_turn requires status
+delegated; run_turn now completes in-process") - `TestTheTailWritesTheSession`'s 3
+tests and `TestDryRunWritesNothing`'s 2 (`test_the_session_is_untouched_and_the_
+patch_comes_back_instead`, `test_the_dry_run_patch_equals_what_a_live_run_would_
+have_written`; the sibling `test_a_live_turn_does_not_return_the_patch` stays green).
+
+Measured directly (`_head()`'s default `business_query` scenario, this session):
+`run_turn` now completes the turn itself - `head.status == "done"`, `head.stage ==
+"sent"` - not `"delegated"`. A `complete_turn()` call on that turn therefore hits
+its OWN idempotent-replay path (see the still-green `TestGuards.test_completing_
+twice_replays_the_first_answer_and_writes_once`), not a first write, so
+`_fragments()` (this file's stand-in for n8n's own `sub-output` trigger payload)
+is never consulted at all - these 5 tests' entire premise (head delegates with
+nothing written; a SEPARATE `/complete` call is the first write) no longer arises
+for ANY scenario `_head()` can construct here. The session shape these tests
+assert on (`stored["variables"]["domain_hint"]`) is additionally the retired
+nested shape (AC-1504/1521) - a real turn's session is five keys flat at the top
+level (`focus`, `ideation`, `access_levels`, `open_question`, `contains_flyer`,
+measured directly), confirming this is not a narrower fix.
+
+`complete_turn`/`/complete` is NOT retired as a whole - it still answers 410 in S7
+mode (`test_s7_dispatch_edges.py::TestCompleteGoneInS7ModeFullApp`) and still
+guards/replays correctly (`TestGuards`'s 2 remaining tests, `TestTheEndpoint`'s
+whole suite, all still green) - only the "a genuinely still-delegated turn gets a
+first write from `/complete`" scenario has no construction left under the current
+engine, and finding one (if any branch_kind still delegates today) is engine
+investigation, not a mechanical port - flagged, not re-created.
 """
 from __future__ import annotations
 
@@ -27,7 +55,6 @@ import pytest
 from sqlalchemy import text
 
 import app.main  # noqa: F401  isort:skip - registers every model before any query
-from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod
 # The endpoint fixtures are REUSED, not rebuilt: `api_key` issues a real integration key
@@ -120,97 +147,15 @@ def _integration_logs(session_factory, business_table: str) -> int:
     ).scalar_one()
 
 
-class TestTheTailWritesTheSession:
-    def test_a_live_turn_writes_the_patch_and_logs_it(self, seeded, stub_parser, session_factory):
-        """AC-206: one `overwrite_for_contact`, one `integration_log` naming the column."""
-        head = _head(session_factory, is_test=False)
-        done = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
-
-        stored = _session_of(session_factory)
-        assert stored["variables"]["domain_hint"] == "master_products", "the tail overwrote it"
-        # The stored value is the WHOLE patch, not just `variables`: `save-session-vars`
-        # PUT `JSON.stringify($json.reply.session_patch)`, so a variables-only write would
-        # change what every existing reader of that column sees.
-        assert set(stored) >= {"variables", "user_response"}
-        assert stored["user_response"] == done.reply["text"]
-        assert _integration_logs(session_factory, "respond_contacts.session_vars") == 1
-
-    def test_the_reply_carries_the_four_fields_the_sender_reads(self, seeded, stub_parser, session_factory):
-        """AC-201: `sub-sendmsg` and `send-attachments` each become ONE read."""
-        head = _head(session_factory, is_test=False)
-        answer = {"outcome_fragment": {"central-exchange": [{"url": "s3://x"}]}}
-        done = engine_mod.complete_turn(
-            head.turn_id, _fragments(answer=answer), session_factory=session_factory
-        )
-        assert set(done.reply) == {"text", "quick_replies", "result_set", "attachments_src"}
-        assert done.reply["attachments_src"] == [{"url": "s3://x"}]
-        assert done.reply["result_set"] == _session_of(session_factory)["variables"]["last_result_set"]
-
-    def test_the_turn_closes_done_with_the_head_s_trace_continued(self, seeded, stub_parser, session_factory):
-        head = _head(session_factory, is_test=False)
-        before = len(_turn_row(session_factory, head.turn_id).trace)
-        engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
-        row = _turn_row(session_factory, head.turn_id)
-        assert row.status == "done"
-        assert row.stage == "remembered"
-        stages = [record["stage"] for record in row.trace]
-        assert len(stages) == before + 2, "the tail APPENDS, it does not start a second timeline"
-        assert stages[-2:] == ["replied", "remembered"]
-        for record in row.trace[-2:]:
-            assert record["summary"] and record["why"]
-            assert "{" not in record["summary"], "the trace renders words, not JSON (D11)"
-
-
-def _turn_row(session_factory, turn_id: str) -> ChatbotTurn:
-    db = session_factory()
-    return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
-
-
 class TestDryRunWritesNothing:
     """D14: a test envelope does ZERO writes outside `chatbot.turns`, and the decision is
     made on the ENVELOPE at `/turn`, so a caller cannot turn a console turn into a live
     write by posting `/complete` to a different URL."""
 
-    def test_the_session_is_untouched_and_the_patch_comes_back_instead(
-        self, seeded, stub_parser, session_factory
-    ):
-        head = _head(session_factory, is_test=True)
-        done = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
-
-        assert _session_of(session_factory) == PRIOR_SESSION, "a dry run wrote the session"
-        assert done.session_patch is not None
-        assert done.session_patch["variables"]["domain_hint"] == "master_products"
-        assert _integration_logs(session_factory, "respond_contacts.session_vars") == 0
-
     def test_a_live_turn_does_not_return_the_patch(self, seeded, stub_parser, session_factory):
         head = _head(session_factory, is_test=False)
         done = engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         assert done.session_patch is None, "the caller reads the session, it is not echoed"
-
-    def test_the_dry_run_patch_equals_what_a_live_run_would_have_written(
-        self, seeded, stub_parser, session_factory
-    ):
-        """AC-206 + D14: same fragments, same starting session, two DIFFERENT turns (a
-        dry run cannot be replayed live on the SAME turn id - `complete_turn` is
-        idempotent past the first close, AC-201). The dry run's returned `session_patch`
-        must be byte-equal to the `variables` a live run actually persists."""
-        dry_head = _head(session_factory, is_test=True)
-        dry_done = engine_mod.complete_turn(
-            dry_head.turn_id, _fragments(), session_factory=session_factory
-        )
-        assert _session_of(session_factory) == PRIOR_SESSION, "the dry run must not have written"
-
-        from tests.chatbot.test_engine import _envelope as _build_envelope
-
-        live_envelope = _build_envelope(is_test=False)
-        live_envelope.message["message"]["messageId"] = "ZZT-msg-live-cmp"
-        live_head = engine_mod.run_turn(live_envelope, session_factory=session_factory)
-        engine_mod.complete_turn(live_head.turn_id, _fragments(), session_factory=session_factory)
-        live_patch = _session_of(session_factory)
-
-        assert dry_done.session_patch is not None
-        assert dry_done.session_patch["variables"] == live_patch["variables"]
-        assert dry_done.session_patch.get("user_response") == live_patch.get("user_response")
 
 
 class TestGuards:
