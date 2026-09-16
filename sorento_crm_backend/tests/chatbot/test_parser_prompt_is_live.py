@@ -116,7 +116,11 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # Measured against the coder's landed change (`3c19a8533`), not derived. `scope_exclusive`
 # stays DECLARED in both the schema and the prompt per the same ruling (only the engine
 # read is retired), so it does not move this number by itself.
-CONSTANT_CHARS = 59247
+# 59247 -> 58853 (17 Sep 2026, coder 21's item 2, `3fc38c409`): `scope_exclusive` comes
+# OUT of the schema and the prompt entirely (the engine read was already retired by
+# coder 20; this is the follow-up that drops the declaration too, per the same 17 Sep
+# ruling). Net -394. Measured against the coder's landed change, not derived.
+CONSTANT_CHARS = 58853
 
 
 def _without_growth_r1_addendum(text: str) -> str:

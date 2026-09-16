@@ -17,7 +17,7 @@ Three separate guarantees, three separate failure modes for a customer turn:
 
 The read set below is MEASURED, not assumed: every file under `app/services/chatbot/turn/`,
 `turn_runtime.py`, `engine.py` and `lanes/` was grepped for a dict-get/dict-index read of
-each of the 36 `DECLARED_KEYS` (the raw verdict dict is called `verdict` at its entry point
+each of the 35 `DECLARED_KEYS` (the raw verdict dict is called `verdict` at its entry point
 in `engine.py` and threads downstream under renamed parameters - `parse_output`, `parser`,
 `out`, `q`, `semantic_input`, `qf` - as it is copied into `apply.py`'s state and further into
 `lanes/business/*`; the file column below names ONE representative reader per key, not
@@ -61,12 +61,10 @@ MEASURED_VERDICT_READS: dict[str, str] = {
     "demand_qty": "app/services/chatbot/turn/apply.py",
     "entities": "app/services/chatbot/turn/memory.py",
     "entity_op": "app/services/chatbot/turn/apply.py",
-    # Declared, no longer READ anywhere (17 Sep 2026 ruling, turn/decide.py::_subject_reading
-    # docstring): `domain_in_message` replaces it as the discriminator. `apply.py` here is
-    # stale documentation kept only so the set comparison below still holds while the schema
-    # still declares the key - coder 21 is removing it from the schema/prompt too, at which
-    # point this row comes out.
-    "scope_exclusive": "declared, not read (retired by the domain_in_message table)",
+    # `scope_exclusive` row REMOVED 17 Sep 2026 (coder 21's item 2, `3fc38c409`): the
+    # key is gone from the schema AND the prompt now (the engine read was already
+    # retired by coder 20's earlier slice) - `turn/decide.py::_subject_reading`'s
+    # `domain_in_message` table is the sole discriminator. 36 declared keys -> 35.
     "requested_attributes": "app/services/chatbot/turn/apply.py",
     "contains_flyer": "app/services/chatbot/turn/tail.py",
     "reference_positions": "app/services/chatbot/turn/apply.py",
@@ -91,7 +89,7 @@ MEASURED_VERDICT_READS: dict[str, str] = {
 }
 
 
-def test_measured_read_set_matches_the_36_declared_keys():
+def test_measured_read_set_matches_the_35_declared_keys():
     """The table above is complete and has no typo - every declared key is measured read
     exactly once, and the table names nothing DECLARED_KEYS does not also carry. Catches a
     stale table before it can hide a real drift in the two tests below."""
