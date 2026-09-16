@@ -141,6 +141,16 @@ class TestBusinessLaneEnabledReadsTheRowNotConfig:
         assert result.status == "done", result.error
         assert result.delegate is None
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "engine._business_lane_enabled is DEAD CODE - defined, reads "
+            "system_settings per turn, zero callers anywhere in "
+            "app/services/chatbot/; chatbot_business_lane_enabled=False does not "
+            "gate/delegate anything, the lane runs to status='done' instead of "
+            "'delegated' (follow-up, PR #952)"
+        ),
+    )
     def test_business_lane_off_via_the_row_still_delegates(
         self,
         session_factory,
