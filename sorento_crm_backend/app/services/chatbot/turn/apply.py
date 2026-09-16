@@ -121,10 +121,22 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         trace.rules_fired.append("answer_pending_own_entities")
         return focus, pending, None, False
 
-    # Nothing resolved it: the SAME question is re-printed, state untouched.
-    trace.rules_fired.append("answer_pending_unresolved")
-    short_circuit = Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace)
-    return state.focus, pending, short_circuit, False
+    if answers.get("resolved") is False:
+        # The customer TRIED to answer and missed (a number off the list, a label that
+        # matches nothing offered): the SAME question is re-printed, state untouched.
+        trace.rules_fired.append("answer_pending_unresolved")
+        short_circuit = Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace)
+        return state.focus, pending, short_circuit, False
+
+    # `resolved` null (or absent): the parser judged this message to be about something
+    # else (cluster 4, owner ruling 16 Sep 2026 - the PARSER decides, no word lists). It
+    # is not an answer, so the question stays open exactly as it was and the message is
+    # planned as any other; the tail keeps the carried pending (`answer.question or
+    # state.pending`). Before this rule every such message fell through to the re-print
+    # above, which is what re-asked the customer on every aside the moment the question
+    # survived a dry run (finding 2a).
+    trace.rules_fired.append("answer_pending_not_an_answer")
+    return focus, pending, None, False
 
 
 def _focus_rules(
