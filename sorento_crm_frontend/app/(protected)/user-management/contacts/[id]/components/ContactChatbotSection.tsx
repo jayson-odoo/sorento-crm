@@ -45,6 +45,18 @@ export default function ContactChatbotSection({ contactId }: { contactId: string
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
+        <Label htmlFor="contact-chatbot-stock" className="cursor-pointer font-normal">
+          Stock checks
+        </Label>
+        <Switch
+          id="contact-chatbot-stock"
+          checked={profile.stock_allowed}
+          disabled={save.isPending}
+          onCheckedChange={(checked) => save.mutate({ ...profile, stock_allowed: checked === true })}
+        />
+      </div>
+
+      <div className="flex items-center justify-between gap-4">
         <Label htmlFor="contact-chatbot-recall" className="cursor-pointer font-normal">
           Episode recall
         </Label>

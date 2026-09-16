@@ -736,7 +736,7 @@ def run_turn(
     could reorder two messages a customer sent one after the other), and the row insert.
     Everything after that is wrapped, so an unexpected exception anywhere - a provider
     error while resolving config, an access-service failure, the stock predicate throwing
-    on a contact with no `is_allowed_stock` field - closes the turn as `failed` with the
+    on a contact row it could not read - closes the turn as `failed` with the
     stage it reached and hands the caller today's error reply. A turn left at `processing`
     with a null error and no trace is exactly the dropped turn H32 is about. The ticket is
     released in a `finally` around all of it.
@@ -1408,7 +1408,7 @@ def _run_stages(  # noqa: PLR0915
         # from the CONTACT's own record (contract 61, 62).
         if access.get("allowed") is not True:
             branch_kind = "access_denied"
-        elif stock_denial_enabled and _stock_check_denied(envelope, verdict):
+        elif stock_denial_enabled and _stock_check_denied(db, envelope, verdict):
             branch_kind = "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
         else:
             branch_kind = turn_route(plan)
@@ -1913,18 +1913,21 @@ def _pending_option_labels(pending: Any) -> list[str] | None:
     return [str(o.get("label")) for o in pending.options if o.get("label")] or None
 
 
-def _stock_check_denied(envelope: Envelope, verdict: dict[str, Any]) -> bool:
+def _stock_check_denied(db: Session, envelope: Envelope, verdict: dict[str, Any]) -> bool:
     """Contract 61: the contact is not allowed stock and this turn asked for it.
 
     Read off the CONTACT's own record, which is why it cannot be a plan fact: the plan
-    knows what was asked, not who is asking.
+    knows what was asked, not who is asking. S6 (owner ruling, 16 Sep 2026): the record
+    is the CRM's `respond_contacts.chatbot_stock_allowed`, default ON, read through
+    `turn_runtime.load_profile` - the one seam for the contact's facts. The envelope's
+    respond.io custom field (formerly `is_allowed_stock`) is not read at all: a console
+    turn that borrowed an envelope with an empty `custom_fields` read it as "not
+    allowed" and answered a stock ask with the demand-quantity question. No row at all
+    fails open, like the profile.
     """
-    custom_fields = jsc.get(envelope.contact, "custom_fields")
-    row = jsc.find(custom_fields, lambda x: jsc.get(x, "name") == "is_allowed_stock")
-    raw = jsc.get(row, "value")
-    allowed = None if raw is None else jsc.to_boolean(raw)
+    profile, _recall = turn_runtime.load_profile(db, _contact_respond_id(envelope))
     return (
-        allowed is not True
+        profile.stock_allowed is not True
         and verdict.get("intent_hint") == "check_stock"
         and not jsc.is_empty(verdict.get("entities"))
     )

@@ -45,6 +45,12 @@ class Profile:
     # `reveal_key` (or, absent one, its bare name) is a member.
     grants: list[str] | None = None
     default_ledgers: list[str] | None = None
+    # S6 (owner ruling, 16 Sep 2026): may this contact ask for stock. A CRM fact on the
+    # contact row (`respond_contacts.chatbot_stock_allowed`), default ON, so a contact
+    # with no row at all is allowed. Carried on the profile because it is read at the
+    # same moment as the tier and the language, off the same SELECT, and the engine's
+    # stock-denial gate (contract 61, 62) is the one reader.
+    stock_allowed: bool = True
 
 
 @dataclass

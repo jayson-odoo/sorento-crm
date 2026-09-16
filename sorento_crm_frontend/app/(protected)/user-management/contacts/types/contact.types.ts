@@ -29,6 +29,8 @@ export interface RespondContact {
   } | null;
   /** Same-contact episode recall, D3: per-contact toggle, global default off. */
   chatbot_recall_enabled?: boolean;
+  /** S6: may this contact ask the chatbot for stock. A CRM fact, default on. */
+  chatbot_stock_allowed?: boolean;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

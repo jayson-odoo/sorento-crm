@@ -8,7 +8,7 @@
  *     carries `chatbot_profile` / `chatbot_recall_enabled` (AC-1503, both dict
  *     builders) - no dedicated GET route exists for the card alone.
  *   PUT /api/v1/user-management/contacts/{id}/chatbot
- *     { chatbot_profile?, chatbot_recall_enabled? }
+ *     { chatbot_profile?, chatbot_recall_enabled?, chatbot_stock_allowed? }
  *     Absent means "leave it alone", never "clear it" - a recall toggle must not
  *     switch off as a side effect of saving a language.
  *
@@ -30,6 +30,8 @@ export interface ContactChatbotProfile {
   /** Not edited on this card - carried through unchanged so a save from here never
    * clears it (the PUT route replaces the whole `chatbot_profile` dict, not a merge). */
   always_full_report: boolean;
+  /** S6: stock checks allowed for this contact (`chatbot_stock_allowed`), default on. */
+  stock_allowed: boolean;
 }
 
 function fromContact(contact: {
@@ -40,6 +42,7 @@ function fromContact(contact: {
     always_full_report?: boolean | null;
   } | null;
   chatbot_recall_enabled?: boolean;
+  chatbot_stock_allowed?: boolean;
 }): ContactChatbotProfile {
   const profile = contact.chatbot_profile ?? null;
   return {
@@ -48,6 +51,7 @@ function fromContact(contact: {
     language: profile?.language ?? null,
     default_ledgers: profile?.default_ledgers ?? [],
     always_full_report: Boolean(profile?.always_full_report),
+    stock_allowed: contact.chatbot_stock_allowed !== false,
   };
 }
 
@@ -75,6 +79,7 @@ export async function saveContactChatbotProfile(
         always_full_report: input.always_full_report,
       },
       chatbot_recall_enabled: input.recall_enabled,
+      chatbot_stock_allowed: input.stock_allowed,
     }),
   });
   if (!response.ok) {

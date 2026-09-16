@@ -263,6 +263,9 @@ class RespondContact(Base):
     # re-parse with an `Episodes:` block, AC-1547) and defaults OFF per contact.
     chatbot_profile = Column(JSONB(astext_type=Text()), nullable=False, server_default=text("'{}'::jsonb"))
     chatbot_recall_enabled = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # S6 (owner ruling, 16 Sep 2026): whether this contact may ask for stock is a CRM
+    # fact, default ON; the respond.io `is_allowed_stock` custom field is not read.
+    chatbot_stock_allowed = Column(Boolean, nullable=False, server_default=text("true"), default=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
     created_by = Column(Text, nullable=True)

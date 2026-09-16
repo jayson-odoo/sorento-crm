@@ -343,6 +343,8 @@ class ContactService:
             # Chatbot turn re-architecture (AC-1503) - same rule as every field above.
             "chatbot_profile": getattr(contact, "chatbot_profile", None) or {},
             "chatbot_recall_enabled": bool(getattr(contact, "chatbot_recall_enabled", False)),
+            # S6: the stock allowance, default ON - a row without the attribute is allowed.
+            "chatbot_stock_allowed": bool(getattr(contact, "chatbot_stock_allowed", True)),
             "created_at": contact.created_at,
             "updated_at": contact.updated_at,
             "created_by": contact.created_by,
