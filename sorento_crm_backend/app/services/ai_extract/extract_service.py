@@ -97,6 +97,15 @@ def _form_has_line_items(form_key: str) -> bool:
     return form_key in FORMS_WITH_LINE_ITEMS
 
 
+def extract_prompt_key(form_key: str) -> str:
+    """The `PROMPT_KEYS` name for one form's own AI-extract system prompt
+    (PLAN price-tag-currency-token-extract-prompt, Slice B) - one key per
+    form key, so a production override on one form's prompt (the price tag
+    request's rule 8) never leaks into another form's extract.
+    """
+    return "ai_extract_" + form_key.replace(".", "_")
+
+
 # ---- Result schemas -------------------------------------------------------
 
 
@@ -713,33 +722,26 @@ class AIExtractService:
                 spec["multi"] = True
             field_specs.append(spec)
 
-        system = (
-            "You are an information-extraction assistant. The user uploads "
-            "documents (delivery orders, photos, message screenshots, PDFs). "
-            "Read every attachment and return a single JSON object whose top-level "
-            "keys are the form field names below. Rules: "
-            "(1) Omit any field you cannot find or are not confident about - "
-            "do not guess. "
-            "(2) For fields with a `lookup`, return ONLY one of the listed "
-            "option `value` strings, exactly. "
-            "(3) For `do_number` fields with `multi: true`, return an array of "
-            "strings. "
-            "(4) For `date` fields, use ISO-8601 (YYYY-MM-DD). "
-            "(5) For `fk_product`, return the closest-matching product_code "
-            "from the supplied examples; if nothing matches, return the raw "
-            "code as printed in the document. If multiple distinct product "
-            "codes apply, return them as a single comma-separated string "
-            "(e.g. \"TPE-9201, TPE-9203\") - never as a JSON array. "
-            "(6) For `text`, `textarea`, and `fk_customer` fields, if the "
-            "document shows multiple distinct values for the same field, "
-            "return them as a single comma-separated string. "
-            "(7) Never invent values. Never include explanations or prose."
-        )
+        # PLAN price-tag-currency-token-extract-prompt, Slice B: the system
+        # text is now PER FORM KEY, resolved from the prompt registry so it
+        # can be edited from System Management > AI Assistant without a
+        # deploy - a hardcoded string here had no key at all. A local import:
+        # this module must not import `ai_prompt_registry` at module scope,
+        # since that registry's own `_register_ai_extract_keys()` imports
+        # `extract_prompt_key` from here (call shape as
+        # `product_spec_understanding.py:552`).
+        from app.services.ai_prompt_registry import get_prompt
+
+        system = get_prompt(self.db, extract_prompt_key(form_key)).text
         line_items_clause = (
-            " Optionally include a top-level `products` array of "
-            "{product_code, product_name, quantity, unit_price, total, notes} "
-            "when the document lists line items. Only include `unit_price` and "
-            "`total` when the document actually shows them; omit otherwise."
+            (
+                " Include a top-level `products` array of "
+                "{product_code, product_name, quantity, unit_price, total, notes} "
+                "when the document lists line items"
+                + (" (see rule 8)" if form_key == "portal.price_tag_request" else "")
+                + ". Only include `unit_price` and `total` when the document "
+                "actually shows them; omit otherwise."
+            )
             if has_line_items
             else " Do NOT include a top-level `products` array - this form has "
             "no line-item table. Distinct product codes belong in the "

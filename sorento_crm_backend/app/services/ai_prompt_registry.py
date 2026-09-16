@@ -753,6 +753,56 @@ def _chatbot_clarifier_fallback() -> str:
     return CLARIFIER_PROMPT
 
 
+def _ai_extract_base_fallback() -> str:
+    """System prompt shared by every `ai_extract_<form_key>` prompt (PLAN
+    price-tag-currency-token-extract-prompt, Slice B) - today's rules (1) to
+    (7), moved out of `AIExtractService._build_messages` verbatim so a
+    per-form key can be edited from System Management > AI Assistant instead
+    of living as a hardcoded string with no key at all.
+    """
+    return (
+        "You are an information-extraction assistant. The user uploads "
+        "documents (delivery orders, photos, message screenshots, PDFs). "
+        "Read every attachment and return a single JSON object whose top-level "
+        "keys are the form field names below. Rules: "
+        "(1) Omit any field you cannot find or are not confident about - "
+        "do not guess. "
+        "(2) For fields with a `lookup`, return ONLY one of the listed "
+        "option `value` strings, exactly. "
+        "(3) For `do_number` fields with `multi: true`, return an array of "
+        "strings. "
+        "(4) For `date` fields, use ISO-8601 (YYYY-MM-DD). "
+        "(5) For `fk_product`, return the closest-matching product_code "
+        "from the supplied examples; if nothing matches, return the raw "
+        "code as printed in the document. If multiple distinct product "
+        "codes apply, return them as a single comma-separated string "
+        "(e.g. \"TPE-9201, TPE-9203\") - never as a JSON array. "
+        "(6) For `text`, `textarea`, and `fk_customer` fields, if the "
+        "document shows multiple distinct values for the same field, "
+        "return them as a single comma-separated string. "
+        "(7) Never invent values. Never include explanations or prose."
+    )
+
+
+def _ai_extract_price_tag_fallback() -> str:
+    """The price tag request form's own system prompt: the shared base plus
+    rule (8), which forces `products` on any bare list of product codes.
+
+    Owner ruling 16 Sep, second: the portal AI extract on
+    `portal.price_tag_request` returned an empty `products` array on 1 of 3
+    prod runs against a pasted list of 21 bare product codes, because the
+    base rules leave `products` "optional" and a bare code list sits right on
+    that boundary. Only THIS form's fallback carries rule (8) - the other
+    eight registered form keys keep the shared base text unchanged.
+    """
+    return _ai_extract_base_fallback() + (
+        " (8) When the form has line items, `products` is REQUIRED whenever "
+        "the document shows any product code: every product code line is one "
+        "entry, even when no quantity, price or name is shown. Return an "
+        "empty `products` array only when no product code appears anywhere."
+    )
+
+
 @dataclass(frozen=True)
 class PromptKeySpec:
     name: str
@@ -1012,6 +1062,54 @@ def _register_chatbot_reply_keys() -> None:
 
 
 _register_chatbot_reply_keys()
+
+# --- AI extract, one PROMPT_KEYS entry per registered form key (Slice B) ---
+#
+# The `master.*` keys are listed here rather than imported off
+# `app.api.v1.master_data.ai_extract_field._ENTITY_TO_FORM_KEY`: this module
+# is a service, and importing an API route module from it would be the wrong
+# direction of dependency. The inventory test walks both this list AND that
+# module's own `_ENTITY_TO_FORM_KEY`, so the two cannot silently drift apart.
+_AI_EXTRACT_MASTER_FORM_KEYS: tuple[str, ...] = (
+    "master.product_fields",
+    "master.promotion_fields",
+    "master.packing_list_fields",
+    "master.form_fields",
+)
+
+
+def _register_ai_extract_keys() -> None:
+    """One `PromptKeySpec` per registered AI-extract form key (PLAN
+    price-tag-currency-token-extract-prompt, Slice B): the 5 `portal.*` keys
+    in `form_schema_registry.FORM_SCHEMAS` plus the 4 `master.*` keys above.
+
+    A loop, not nine hand-written entries, for the same reason
+    `_register_chatbot_reply_keys` is one: a new form registered in
+    `FORM_SCHEMAS` (or a new master entity wired into `ai_extract_field.py`)
+    gets its prompt key for free, and the inventory test in
+    `test_ai_extract_service.py` fails loudly if the two lists here and there
+    ever disagree.
+    """
+    from app.services.ai_extract.extract_service import extract_prompt_key
+    from app.services.ai_extract.form_schema_registry import FORM_SCHEMAS
+
+    for form_key in list(FORM_SCHEMAS.keys()) + list(_AI_EXTRACT_MASTER_FORM_KEYS):
+        is_price_tag = form_key == "portal.price_tag_request"
+        PROMPT_KEYS[extract_prompt_key(form_key)] = PromptKeySpec(
+            name=extract_prompt_key(form_key),
+            role=f"AI extract - {form_key} prefill (JSON)",
+            active=True,
+            activates_in=None,
+            variables=[],
+            fallback=(
+                _ai_extract_price_tag_fallback
+                if is_price_tag
+                else _ai_extract_base_fallback
+            ),
+        )
+
+
+_register_ai_extract_keys()
 
 
 def prompt_key_names() -> list[str]:

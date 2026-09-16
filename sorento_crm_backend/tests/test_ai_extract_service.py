@@ -702,3 +702,186 @@ def test_resolve_provider_reads_the_gemini_key_column_not_the_openai_env_key(mon
         assert isinstance(provider, GeminiProvider)
         assert provider_name == "gemini"
         assert provider.api_key == "ZZT-gemini-column-key"
+
+
+# ---------------------------------------------------------------------------
+# Per-form AI extract system prompts
+# (PLAN-price-tag-currency-token-extract-prompt.md, owner ruling: the extract
+# system prompt is registered ONE PER FORM KEY, not one shared key - a
+# production override on the price tag form must not leak into any other
+# form's extract.)
+# ---------------------------------------------------------------------------
+
+
+def _all_registered_form_keys() -> list[str]:
+    from app.api.v1.master_data.ai_extract_field import _ENTITY_TO_FORM_KEY
+
+    return list(FORM_SCHEMAS.keys()) + list(_ENTITY_TO_FORM_KEY.values())
+
+
+def test_ac_b1_extract_prompt_key_names_the_form():
+    from app.services.ai_extract.extract_service import extract_prompt_key
+
+    assert (
+        extract_prompt_key("portal.price_tag_request")
+        == "ai_extract_portal_price_tag_request"
+    )
+    assert (
+        extract_prompt_key("master.product_fields") == "ai_extract_master_product_fields"
+    )
+
+
+def test_ac_b1_every_registered_form_key_has_a_prompt_key():
+    """AC-B1: PROMPT_KEYS holds one entry per registered form key - the 5
+    `portal.*` keys in `form_schema_registry.py` plus the 4 `master.*` keys in
+    `_ENTITY_TO_FORM_KEY` - each `active=True`, `variables=[]`, non-empty
+    fallback."""
+    from app.services.ai_extract.extract_service import extract_prompt_key
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+
+    form_keys = _all_registered_form_keys()
+    assert len(form_keys) == 9, "9 registered form keys (5 portal.* + 4 master.*)"
+
+    for form_key in form_keys:
+        key = extract_prompt_key(form_key)
+        assert key in PROMPT_KEYS, f"missing PROMPT_KEYS entry for {key} ({form_key})"
+        spec = PROMPT_KEYS[key]
+        assert spec.active is True
+        assert spec.variables == []
+        assert spec.fallback().strip() != ""
+
+
+def test_ac_b2_only_the_price_tag_forms_fallback_carries_rule_8():
+    """AC-B2: only `ai_extract_portal_price_tag_request`'s fallback states rule
+    (8) - the word REQUIRED and "every product code". The other 8 keep
+    today's rules (1) to (7) verbatim, with no rule (8)."""
+    from app.services.ai_extract.extract_service import extract_prompt_key
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+
+    price_tag_key = extract_prompt_key("portal.price_tag_request")
+    price_tag_text = PROMPT_KEYS[price_tag_key].fallback()
+    assert "REQUIRED" in price_tag_text
+    assert "every product code" in price_tag_text
+
+    for form_key in _all_registered_form_keys():
+        if form_key == "portal.price_tag_request":
+            continue
+        other_key = extract_prompt_key(form_key)
+        other_text = PROMPT_KEYS[other_key].fallback()
+        assert "REQUIRED" not in other_text, other_key
+        assert "every product code" not in other_text, other_key
+        # Rules (1) to (7) are today's shared text, unchanged, on every form.
+        assert "(1) Omit any field you cannot find" in other_text, other_key
+        assert (
+            "(7) Never invent values. Never include explanations or prose."
+            in other_text
+        ), other_key
+
+
+def test_ac_b3_build_messages_system_content_equals_get_prompt_for_that_form(
+    db_session,
+):
+    from app.services.ai_extract.extract_service import extract_prompt_key
+    from app.services.ai_prompt_registry import bust_cache, get_prompt
+
+    bust_cache()
+    svc = AIExtractService(db=db_session)
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    messages = svc._build_messages("portal.complaint", schema, {}, has_line_items=False)
+    system = next(m for m in messages if m["role"] == "system")
+
+    assert system["content"] == get_prompt(
+        db_session, extract_prompt_key("portal.complaint")
+    ).text
+
+
+def test_ac_b3_an_override_on_the_price_tag_form_does_not_leak_into_another_form(
+    db_session,
+):
+    """AC-B3: a production-label override seeded on
+    `ai_extract_portal_price_tag_request` changes what THAT form's extract
+    sends, and a `portal.purchase_request` build must not pick it up - each
+    form owns its own key."""
+    from app.services.ai_extract.extract_service import extract_prompt_key
+    from app.services.ai_prompt_registry import bust_cache
+    from app.services.ai_prompt_seed import seed_prompt_registry
+    from app.services.ai_prompt_service import AIPromptService
+
+    seed_prompt_registry(db_session.get_bind())
+    bust_cache()
+
+    price_tag_key = extract_prompt_key("portal.price_tag_request")
+    marker = "ZZT OVERRIDE FOR THE PRICE TAG FORM ONLY"
+    svc = AIPromptService(db_session)
+    saved = svc.save_version(
+        price_tag_key, template=marker, commit_message="zzt test override", user_id=None
+    )
+    svc.set_label(
+        price_tag_key, label="production", version_id=saved["id"], user_id=None
+    )
+    bust_cache()
+
+    extract_svc = AIExtractService(db=db_session)
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    price_tag_messages = extract_svc._build_messages(
+        "portal.price_tag_request", schema, {}, has_line_items=True
+    )
+    other_messages = extract_svc._build_messages(
+        "portal.purchase_request", schema, {}, has_line_items=True
+    )
+
+    price_tag_system = next(m for m in price_tag_messages if m["role"] == "system")
+    other_system = next(m for m in other_messages if m["role"] == "system")
+
+    assert price_tag_system["content"] == marker
+    assert other_system["content"] != marker
+
+
+def test_ac_b4_line_items_clause_has_no_optionally_and_references_rule_8_for_price_tag(
+    db_session,
+):
+    svc = AIExtractService(db=db_session)
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    messages = svc._build_messages(
+        "portal.price_tag_request", schema, {}, has_line_items=True
+    )
+    user = next(m for m in messages if m["role"] == "user")
+
+    assert "Optionally" not in user["content"]
+    assert "rule (8)" in user["content"] or "rule 8" in user["content"]
+
+
+def test_ac_b4_line_items_clause_for_other_line_item_forms_drops_optionally_but_not_rule_8(
+    db_session,
+):
+    """A line-items form that is NOT the price tag one loses "Optionally" too
+    (D3 wording change applies to every line-items clause), but has no reason
+    to name rule (8) - that rule only exists on the price tag form's own
+    prompt."""
+    svc = AIExtractService(db=db_session)
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    messages = svc._build_messages(
+        "portal.purchase_request", schema, {}, has_line_items=True
+    )
+    user = next(m for m in messages if m["role"] == "user")
+
+    assert "Optionally" not in user["content"]
+    assert "rule (8)" not in user["content"]
+    assert "rule 8" not in user["content"]
+
+
+def test_ac_b4_a_form_with_no_line_items_still_forbids_the_products_array():
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    messages = svc._build_messages(
+        "portal.stock_inquiry", schema, {}, has_line_items=False
+    )
+    user = next(m for m in messages if m["role"] == "user")
+
+    assert "Do NOT include a top-level" in user["content"]
+    assert "products" in user["content"]
