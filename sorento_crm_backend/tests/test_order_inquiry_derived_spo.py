@@ -22,12 +22,22 @@ SPO-linked row, a cancelled row) for the same service.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
 
-from app.models.procurement import InboundShipment, SPOAllocation, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
+from app.models.base import company_scope
+from app.models.company import Company
 from app.services import project_seed_service
+from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
 from ._pg_fixture import blank_session
@@ -280,6 +290,189 @@ def test_an_spo_linked_row_marks_its_po_column_as_derived(world):
     assert spo_link.get("derived_po") is True
 
 
+# --------------------------------------------------------------- AC-D10 to AC-D14
+#
+# Review round 3 (commit 85327545a): the FIRST stage formula double-counted. These
+# five pin the CORRECTED one (PLAN S5): `cover` = sum over DISTINCT open allocations
+# derived from the row's PO links, EXCLUDING any allocation the row already links to
+# for real, counted once even when two PO links share one PO + product;
+# `derived_cover = least(po_linked, cover)`; `incoming = least(qty, spo_real +
+# derived_cover)`; `purchased = least(qty - incoming, greatest(0, po_linked -
+# derived_cover))`.
+
+
+def _kinds_for(db) -> dict:
+    """`_kinds()` over EVERYTHING in this session's scope - safe here because every
+    test in this section builds its own scratch schema (`blank_session`) with nothing
+    else in it."""
+    return OrderInquiryWorklistService(db)._kinds({})
+
+
+def test_ac_d10_a_real_spo_link_on_the_same_allocation_the_po_derives_is_not_double_counted(world):
+    """Row of 8, PO-linked 8, plus a REAL SPO link of 5 on the VERY allocation the PO
+    would otherwise derive. `cover` excludes an allocation the row already links to for
+    real, so `derived_cover` is 0 here, not another 5 stacked on top of the real link:
+    incoming 5 (the real link alone), purchased 3, buy 0.
+
+    Today (uncapped, no exclusion): incoming = least(8, 5 real + 5 derived) = 8,
+    purchased = greatest(least(0, 8-5), 0) = 0 -> spo 8, po 0.
+    """
+    db, company_id, _raiser, project, supplier = world
+    product, po, row = _po_linked_row(db, company_id, project, supplier, qty="8", linked_qty="8")
+    allocation = _spo(
+        db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", product_id=product.id,
+        from_po_number=po.po_number, allocated_quantity=5,
+    )
+    _link(db, company_id, row.id, "5", spo_allocation_id=allocation.id,
+          document=allocation.spo_number)
+    db.commit()
+
+    kinds = _kinds_for(db)
+
+    assert kinds["spo"] == "5", kinds
+    assert kinds["po"] == "3", kinds
+    assert kinds["buy"] == "0", kinds
+
+
+def test_ac_d11_derived_cover_is_capped_at_the_po_linked_qty(world):
+    """Row of 10, PO-linked 3, one open allocation of 500. The derived cover cannot
+    exceed what the PO link itself carries - incoming 3, purchased 0, buy 7 (the 7 is
+    real demand nobody has put anywhere, uncovered by an uncapped 500).
+
+    Today (uncapped): incoming = least(10, 0 + 500) = 10 -> spo 10.
+    """
+    db, company_id, _raiser, project, supplier = world
+    product, po, row = _po_linked_row(db, company_id, project, supplier, qty="10", linked_qty="3")
+    _spo(
+        db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", product_id=product.id,
+        from_po_number=po.po_number, allocated_quantity=500,
+    )
+    db.commit()
+
+    kinds = _kinds_for(db)
+
+    assert kinds["spo"] == "3", kinds
+    assert kinds["po"] == "0", kinds
+    assert kinds["buy"] == "7", kinds
+
+
+def test_ac_d12_one_allocation_is_counted_once_even_behind_two_po_lines_of_the_same_po(world):
+    """Row of 20 over TWO PO lines of the SAME PO and product (12 + 8 = 20, fully
+    linked), one open allocation of 5. The join from each PO link reaches the SAME
+    allocation - `cover` has to count it ONCE, not once per link: incoming 5,
+    purchased 15.
+
+    Today (one EXISTS/SUM row per PO link reaching the same allocation): cover sums
+    to 5 + 5 = 10 -> incoming = least(20, 10) = 10, purchased = least(20-10, 20-10) =
+    10 -> spo 10, po 10 (coordinator's measured red state).
+    """
+    db, company_id, _raiser, project, supplier = world
+    product = _product(db, f"ZZT-DSPO-D12-{_uid()[:6]}", f"{MARKER} product")
+    order, line = _order_and_line(db, company_id, project.id, product, "20", date(2026, 5, 15))
+    inquiry = _inquiry(db, company_id, order.id, None)
+    row = _row(db, company_id, inquiry.id, line.id, product.product_code, "20",
+               delivery_date=date(2026, 5, 15))
+    po, first_line = _po_line(db, company_id, product, supplier)
+    second_line = PurchaseOrderLine(
+        id=_uid(), company_id=company_id, purchase_order_id=po.id, product_id=product.id,
+        qty_ordered=Decimal("8"),
+    )
+    db.add(second_line)
+    db.flush()
+    _link(db, company_id, row.id, "12", po_line_id=first_line.id, document=po.po_number)
+    _link(db, company_id, row.id, "8", po_line_id=second_line.id, document=po.po_number)
+    _spo(
+        db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", product_id=product.id,
+        from_po_number=po.po_number, allocated_quantity=5,
+    )
+    db.commit()
+
+    kinds = _kinds_for(db)
+
+    assert kinds["spo"] == "5", kinds
+    assert kinds["po"] == "15", kinds
+
+
+def test_ac_d13_a_row_linked_to_two_purchase_orders_lists_both_derived_spos(world):
+    """A row linked to PO-A and PO-B, each with its OWN open allocation for the same
+    product, must carry BOTH derived documents in `links[]` - today `links_for_rows`
+    keeps a dict of `{row_id: (po_number, product_id)}`, one pair per row, so the
+    SECOND PO link's pair silently overwrites the first and only one derived entry
+    ever appears."""
+    db, company_id, _raiser, project, supplier = world
+    product = _product(db, f"ZZT-DSPO-D13-{_uid()[:6]}", f"{MARKER} product")
+    order, line = _order_and_line(db, company_id, project.id, product, "10", date(2026, 5, 15))
+    inquiry = _inquiry(db, company_id, order.id, None)
+    row = _row(db, company_id, inquiry.id, line.id, product.product_code, "10",
+               delivery_date=date(2026, 5, 15))
+    po_a, line_a = _po_line(db, company_id, product, supplier)
+    po_b, line_b = _po_line(db, company_id, product, supplier)
+    _link(db, company_id, row.id, "5", po_line_id=line_a.id, document=po_a.po_number)
+    _link(db, company_id, row.id, "5", po_line_id=line_b.id, document=po_b.po_number)
+    allocation_a = _spo(
+        db, company_id, spo_number=f"ZZT-SPO-A-{_uid()[:6]}", product_id=product.id,
+        from_po_number=po_a.po_number, allocated_quantity=5,
+    )
+    allocation_b = _spo(
+        db, company_id, spo_number=f"ZZT-SPO-B-{_uid()[:6]}", product_id=product.id,
+        from_po_number=po_b.po_number, allocated_quantity=5,
+    )
+    db.commit()
+
+    links = ProjectOrderInquiryService(db).links_for_rows([row.id])[row.id]
+
+    derived_documents = {link["document"] for link in links if link.get("derived")}
+    assert derived_documents == {allocation_a.spo_number, allocation_b.spo_number}, links
+
+    client, originals = _client(db, _raiser, READ_ONLY)
+    try:
+        response = client.get(LIST, params={"spo_number": allocation_b.spo_number})
+        ids = {r["id"] for r in response.json()["data"]}
+        assert row.id in ids
+    finally:
+        _restore(originals)
+
+
+def test_ac_d14_a_derived_spo_never_crosses_a_company_boundary(world):
+    """The derived join matches on `from_po_number` + `product_id` alone - neither is
+    itself company-scoped - so an allocation seeded under ANOTHER company, naming the
+    SAME product id and the SAME PO number string, must be invisible from company A's
+    scope: no derived entry, no stage-sum contribution, no `spo_number` match."""
+    db, company_id, raiser, project, supplier = world
+    product, po, row = _po_linked_row(db, company_id, project, supplier, qty="8", linked_qty="8")
+
+    other_company_id = _uid()
+    with company_scope(db, None):
+        db.add(Company(id=other_company_id, name=f"{MARKER} other co", code=f"ZZ{_uid()[:6]}"))
+        db.flush()
+        # Same product id, same PO number string, but a row owned by ANOTHER company -
+        # the schema does not enforce that a company's SPOAllocation names only its
+        # own products, so this is a legal (if wrong) row to test the predicate against.
+        leaked = SPOAllocation(
+            id=_uid(), company_id=other_company_id, spo_number="ZZT-LEAKED-SPO",
+            allocated_quantity=5, quantity_received=0, product_id=product.id,
+            from_po_number=po.po_number, line_status="open", receipt_status="pending",
+        )
+        db.add(leaked)
+        db.flush()
+    db.commit()
+
+    links = ProjectOrderInquiryService(db).links_for_rows([row.id])[row.id]
+    assert not any(link.get("derived") for link in links), links
+
+    kinds = _kinds_for(db)
+    assert kinds["spo"] == "0", kinds
+    assert kinds["po"] == "8", kinds
+
+    client, originals = _client(db, raiser, READ_ONLY)
+    try:
+        response = client.get(LIST, params={"spo_number": "ZZT-LEAKED"})
+        ids = {r["id"] for r in response.json()["data"]}
+        assert row.id not in ids
+    finally:
+        _restore(originals)
+
+
 # ------------------------------------------------------------------------------ AC-D5
 
 
@@ -443,13 +636,26 @@ def test_the_spo_verb_refusal_code_is_renamed_and_the_old_string_is_gone():
     `_SPO_LINKABLE_VERBS` already equals `_LINKABLE_VERBS`, so `_assert_linkable` refuses
     an unlinkable verb before the SPO-specific branch is ever reached and there is no
     live code path left to exercise at runtime. What is checked is the SOURCE: the new
-    code is declared, and the old one - and the docstring claiming an SPO answers only
-    an ORDER BACK row - are gone."""
+    code is declared, and the old one - and every docstring claiming an SPO answers only
+    an ORDER BACK row - are gone.
+
+    Round 3 fix: the previous version of this assertion lower-cased the HAYSTACK but not
+    the NEEDLE (`"only an ORDER BACK row" not in source.lower()` can never be true - the
+    needle still carries its own uppercase letters), so it passed vacuously whether or
+    not the phrase was there. Both sides are lower-cased now, and a second phrase this
+    missed - `link_candidate_products`' own docstring, "an ORDER BACK row may link to
+    either" (`project_order_inquiry_service.py` ~5921) - is checked too.
+    """
     import inspect
 
     from app.services import project_order_inquiry_service as svc
 
-    source = inspect.getsource(svc)
-    assert "order_inquiry_spo_not_linkable" in source
-    assert "order_inquiry_spo_not_order_back" not in source
-    assert "only an ORDER BACK row" not in source.lower()
+    raw = inspect.getsource(svc).lower()
+    # Whitespace-normalised too: the surviving phrase wraps across a docstring line
+    # break ("...an ORDER BACK row may\n        link to either..."), so a single-line
+    # substring search would miss it exactly the way the un-lower-cased needle did.
+    source = " ".join(raw.split())
+    assert "order_inquiry_spo_not_linkable" in raw
+    assert "order_inquiry_spo_not_order_back" not in raw
+    assert "only an order back row" not in source
+    assert "an order back row may link to either" not in source

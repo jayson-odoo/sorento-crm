@@ -566,6 +566,55 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     );
   });
 
+  it('SF-4: a fully bundled row is not linkable - not counted, not posted', async () => {
+    // Bundled entirely inside another row's own line (its whole unlinked remainder
+    // rides along): `isLinkable` today reads only `qty - linked_qty`, so a row with
+    // bundled_qty covering its whole unlinked remainder still counts as needing a
+    // document, and "Link selected" would post an id `auto_place_for_rows` refuses
+    // (nothing left FOR this row to place - it is not the row's own demand).
+    const bundled: OrderInquiryWorklistRow = {
+      ...MOCK_WORKLIST_ROWS[1],
+      id: 'row-bundled',
+      item_code: 'ZZT-BUNDLED',
+      so_number: 'SO-BUNDLED',
+      qty: '5',
+      linked_qty: '0',
+      bundled_qty: '5',
+      bundled_with: {
+        row_id: 'row-host',
+        item_code: 'ZZT-HOST',
+        item_codes: ['ZZT-HOST'],
+        anchor_headline: '5 of 5',
+      },
+    };
+    const plain: OrderInquiryWorklistRow = {
+      ...MOCK_WORKLIST_ROWS[1],
+      id: 'row-plain',
+      item_code: 'ZZT-PLAIN',
+      so_number: 'SO-PLAIN',
+      qty: '5',
+      linked_qty: '0',
+      bundled_qty: '0',
+      bundled_with: null,
+    };
+    listOrderInquiryWorklist.mockResolvedValue(envelope([bundled, plain]));
+    autoPlaceOrderInquiryRows.mockResolvedValue({ placed_rows: 1, after_horizon: 0 });
+    renderClient();
+    await screen.findByText('SO-BUNDLED');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-BUNDLED on SO-BUNDLED'));
+    fireEvent.click(screen.getByLabelText('Select ZZT-PLAIN on SO-PLAIN'));
+    openActionsMenu();
+    expect(
+      screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Link selected (1 of 2)' }));
+
+    await waitFor(() =>
+      expect(autoPlaceOrderInquiryRows).toHaveBeenCalledWith({ row_ids: ['row-plain'] }),
+    );
+  });
+
   it('Unlink selected counts only linked ticked rows, and disables at 0', async () => {
     renderClient();
     await screen.findByText('SO385126');

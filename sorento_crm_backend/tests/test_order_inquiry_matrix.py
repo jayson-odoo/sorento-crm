@@ -173,6 +173,21 @@ def _po_link(db, company_id: str, row: OrderInquiryRow, product: Product, qty: s
     db.add(OrderInquiryLink(id=_uid(), company_id=company_id, row_id=row.id,
                              po_line_id=line.id, document=po.po_number, qty=Decimal(str(qty))))
     db.flush()
+    return po
+
+
+def _open_spo_allocation(db, company_id: str, *, spo_number: str, from_po_number: str,
+                           product: Product, allocated_quantity: int):
+    """An OPEN SPO allocation matching a row's own PO link (from_po_number + product),
+    never itself linked to any row - the "derived cover" AC-D11/AC-X6 measure."""
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=spo_number,
+        allocated_quantity=allocated_quantity, quantity_received=0, product_id=product.id,
+        from_po_number=from_po_number, line_status="open", receipt_status="pending",
+    )
+    db.add(allocation)
+    db.flush()
+    return allocation
 
 
 def _client(db, user_id: str, permissions):
@@ -417,6 +432,113 @@ def test_the_matrix_excludes_cancelled_but_includes_actioned_rows(api):
     assert cell["spo"] == "6", cell
     assert cell["buy"] == "4", cell
     assert cell["po"] == "0", cell
+
+
+# --------------------------------------------------------------------------- AC-X6
+
+
+def test_ac_x6_the_matrix_stage_sums_apply_the_corrected_derived_cover_rule(api):
+    """The matrix's `_INCOMING_QTY`/`_PURCHASED_QTY` are the SAME module-level
+    expressions `_kinds` reads (round 2 `matrix()` docstring) - the AC-D11 case (qty
+    10, PO-linked 3, one open allocation of 500) has to read the SAME cell values
+    through the matrix as it does through the cards: spo 3, po 0, buy 7. Today
+    (uncapped derived cover): spo 10."""
+    client, db, company_id, _seeded = api
+    product = _product(db, f"ZZT-MATRIX-X6-{_uid()[:6]}", f"{MARKER} product x6")
+    core = _core_order(
+        db, company_id, customer=_seeded_customer(db, company_id),
+        agent=_seeded_agent(db, company_id), order_date=date(2026, 8, 1),
+    )
+    pso = _adopted_pso(db, company_id, core)
+    line = _pso_line(db, company_id, pso, product)
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = _row(db, company_id, inquiry, line, item_code=f"{MARKER}-X6", qty="10",
+               delivery_date=date(2026, 8, 10))
+    po = _po_link(db, company_id, row, product, "3")
+    _open_spo_allocation(
+        db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", from_po_number=po.po_number,
+        product=product, allocated_quantity=500,
+    )
+    db.commit()
+
+    body = client.get(MATRIX, params={"axis": "product", "by": "month"}).json()
+    cell = next(c for c in body["data"] if c["axis_key"] == str(product.id))
+
+    assert cell["spo"] == "3", cell
+    assert cell["po"] == "0", cell
+    assert cell["buy"] == "7", cell
+
+
+# --------------------------------------------------------------------------- SF-3
+
+
+def test_sf3_an_authored_row_with_no_core_sales_order_still_appears_on_the_sales_order_axis(api):
+    """`axis=sales_order` is keyed on `SalesOrder.id` - NULL for an authored
+    `ProjectSalesOrder` that was never adopted from a core order (`so_id` null,
+    `provisional_ref` the only identity it has). `matrix()` filters `axis_key.isnot(
+    None)`, which drops the row entirely today rather than falling back to the PSO's
+    own id the way the list's `_SO_NUMBER` label already falls back to
+    `provisional_ref`."""
+    client, db, company_id, _seeded = api
+    product = _product(db, f"ZZT-MATRIX-SF3-{_uid()[:6]}", f"{MARKER} product sf3")
+    pso = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, project_id=None, so_id=None,
+        provisional_ref=f"ZZT-PSO-SF3-{_uid()[:8]}", status="draft",
+    )
+    db.add(pso)
+    db.flush()
+    line = _pso_line(db, company_id, pso, product)
+    inquiry = _inquiry_for(db, company_id, pso)
+    row = _row(db, company_id, inquiry, line, item_code=f"{MARKER}-SF3", qty="5",
+               delivery_date=date(2026, 8, 10))
+    db.commit()
+
+    body = client.get(MATRIX, params={"axis": "sales_order", "by": "month"}).json()
+
+    # No other seeded row in this fixture delivers in August 2026, so a cell existing
+    # at all for this period is this row - today `axis_key.isnot(None)` drops it, so
+    # NO cell for `2026-08-01` appears under this axis at all.
+    august_rows = sum(int(c["rows"]) for c in body["data"] if c["period"] == "2026-08-01")
+    assert august_rows == 1, body["data"]
+
+
+# --------------------------------------------------------------------------- SF-5
+
+
+def test_sf5_an_invalid_delivery_from_names_the_delivery_param_not_raised_date(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(MATRIX, params={"axis": "product", "by": "month",
+                                            "delivery_from": "notadate"})
+
+    assert response.status_code == 422, response.text
+    code = response.json().get("code")
+    assert code != "invalid_raised_date", response.json()
+
+
+# ------------------------------------------------------------- security: unbounded strings
+
+
+@pytest.mark.parametrize("param", ["location", "po_number", "spo_number"])
+def test_security_an_over_long_string_filter_is_refused(api, param):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(
+        MATRIX, params={"axis": "product", "by": "month", param: "x" * 201}
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_security_an_unknown_granularity_is_refused(api):
+    """`by=fortnight`: pinned rather than asserted blind, per the coordinator's own
+    note - the route's `Literal["day","week","month","year"]` may already 422 this
+    before the service's own silent week fallback is ever reached."""
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(MATRIX, params={"axis": "product", "by": "fortnight"})
+
+    assert response.status_code == 422, response.text
 
 
 # ---------------------------------------------------------- axis grouping, parametrized
