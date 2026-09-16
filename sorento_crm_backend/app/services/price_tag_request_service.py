@@ -413,6 +413,11 @@ class PriceTagRequestService:
                         }
                     ],
                     viewer=viewer,
+                    # A SAVED line's basis is what the salesperson committed
+                    # to, never the lookup's auto pick (owner ruling, review
+                    # round 2): with no stored promotion the line is `list`,
+                    # however many promotions cover its product.
+                    auto_pick=False,
                 )[0]
                 if promotion_id and promotion_id not in {
                     option["id"] for option in pricing_row["promotion_options"]
@@ -457,6 +462,11 @@ class PriceTagRequestService:
                         }
                     ],
                     viewer=viewer,
+                    # A SAVED line's basis is what the salesperson committed
+                    # to, never the lookup's auto pick (owner ruling, review
+                    # round 2): with no stored promotion the line is `list`,
+                    # however many promotions cover its product.
+                    auto_pick=False,
                 )[0]
                 if promotion_id and promotion_id not in {
                     option["id"] for option in pricing_row["promotion_options"]
@@ -1019,6 +1029,11 @@ Marketing's own work is not part of the form's payload, so it is captured
                     }
                 ],
                 viewer=viewer,
+                # A SAVED line's basis is what the salesperson committed
+                # to, never the lookup's auto pick (owner ruling, review
+                # round 2): with no stored promotion the line is `list`,
+                # however many promotions cover its product.
+                auto_pick=False,
             )[0]
             if promotion_id and promotion_id not in {
                 option["id"] for option in pricing_row["promotion_options"]
@@ -1049,6 +1064,11 @@ Marketing's own work is not part of the form's payload, so it is captured
                     }
                 ],
                 viewer=viewer,
+                # A SAVED line's basis is what the salesperson committed
+                # to, never the lookup's auto pick (owner ruling, review
+                # round 2): with no stored promotion the line is `list`,
+                # however many promotions cover its product.
+                auto_pick=False,
             )[0]
             if promotion_id and promotion_id not in {
                 option["id"] for option in pricing_row["promotion_options"]

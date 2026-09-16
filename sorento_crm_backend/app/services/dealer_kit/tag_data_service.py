@@ -879,6 +879,11 @@ def _tag_sell_price_basis(
             }
         ],
         viewer=viewer,
+        # Owner ruling (review round 2): a SAVED line's basis reads its
+        # STORED promotion only. The auto pick is the lookup route's job -
+        # inherited here, a line nobody put a promotion on printed SP at a
+        # plain list total the moment any promotion covered its product.
+        auto_pick=False,
     )[0]
     cache[key] = row["sell_price_basis"]
     return cache[key]

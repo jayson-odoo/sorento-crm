@@ -335,6 +335,8 @@ def line_pricing(
     db: Session,
     lines: list[dict],
     viewer: ViewerContext,
+    *,
+    auto_pick: bool = True,
 ) -> list[dict]:
     """What EVERY line of a price tag request/form costs this viewer (D2-D4, S7).
 
@@ -346,11 +348,23 @@ def line_pricing(
     parts_at_list, candidates}`` per the plan's API contract.
 
     ``sell_price_basis`` (AC-S7-4): ``manual`` when a manual figure is given,
-    ``promotion`` when a promotion (given or auto-picked) prices the line,
-    ``list`` otherwise - the SAME three-way answer ``_add_lines`` writes
-    ``show_promo_price`` from (AC-S7-5) and ``resolve_tags_live`` reads back
-    for a tag's own price (D3/AC-S9-3), so the three surfaces cannot disagree
-    about what a line is worth.
+    ``promotion`` when a promotion prices the line, ``list`` otherwise - the
+    SAME three-way answer ``_add_lines`` writes ``show_promo_price`` from
+    (AC-S7-5) and ``resolve_tags_live`` reads back for a tag's own price
+    (D3/AC-S9-3), so the three surfaces cannot disagree about what a line is
+    worth.
+
+    ``auto_pick`` is who the answer is FOR (owner ruling, review round 2).
+    The LOOKUP routes exist so a salesperson can see what would apply before
+    choosing, so with no ``promotion_id`` given they price under
+    ``auto_promotion_id`` - that is the pre-fill the portal form writes onto
+    the line. A SAVED line is the other question: its basis is what the
+    salesperson actually committed to, so ``auto_pick=False`` prices it under
+    its STORED ``promotion_id`` alone and a line saved with none is ``list``,
+    however many promotions happen to cover its product. Without the split, a
+    line nobody put a promotion on printed SP at a plain list total the moment
+    any promotion touched the product - the defect D3 says it retires.
+    ``auto_promotion_id`` is reported either way; only what is CHOSEN changes.
     """
     results: list[dict] = []
     for line in lines:
@@ -397,7 +411,7 @@ def line_pricing(
         )
 
         auto_promotion_id = promotion_options[0]["id"] if promotion_options else None
-        chosen_id = given_promotion_id or auto_promotion_id
+        chosen_id = given_promotion_id or (auto_promotion_id if auto_pick else None)
         chosen_total = totals_by_promotion.get(chosen_id) if chosen_id else None
 
         if manual is not None:
