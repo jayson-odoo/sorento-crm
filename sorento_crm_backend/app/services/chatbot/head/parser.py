@@ -153,6 +153,14 @@ def _build_json_schema() -> dict[str, Any]:
             },
             "entity_op": string_or_null,
             "scope_exclusive": {"type": ["boolean", "null"]},
+            # Does THIS message name a domain or a status word of its own (owner ruling,
+            # 17 Sep 2026)? It is the discriminator between a NEW ASK and a REFINEMENT,
+            # and it replaces `scope_exclusive`, which asked the wrong question of the
+            # same two turns: "outstanding DO for 7445" and "for 7445" both name a
+            # product under an order subject, and only the first is a new question.
+            # `scope_exclusive` stays declared and documented (the prompt still emits it)
+            # but the engine no longer reads it.
+            "domain_in_message": {"type": ["boolean", "null"]},
             "requested_attributes": {"type": "array", "items": {"type": "string"}},
             "contains_flyer": {"type": ["boolean", "null"]},
             "reference_positions": {"type": "array", "items": {"type": "number"}},
@@ -303,6 +311,7 @@ def _build_json_schema() -> dict[str, Any]:
             "entities",
             "entity_op",
             "scope_exclusive",
+            "domain_in_message",
             "requested_attributes",
             "contains_flyer",
             "reference_positions",
@@ -337,7 +346,7 @@ DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 #: a harness value is held to the same check a provider answer is (`assert_emission`).
 #: Absent reads as null everywhere, so an old recording behaves exactly as it did.
 #: A key leaves this set when the corpus has been re-recorded with it.
-TOLERATED_ABSENT: frozenset[str] = frozenset({"broaden_to"})
+TOLERATED_ABSENT: frozenset[str] = frozenset({"broaden_to", "domain_in_message"})
 
 
 def resolve_config(

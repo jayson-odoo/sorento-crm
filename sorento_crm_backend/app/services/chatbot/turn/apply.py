@@ -8,7 +8,6 @@
 #   1. `_reconcile_step`  - an entity the resolver placed under one kind is rewritten to
 #                           it; two kinds arm a `kind_pick` and nothing else runs.
 #   2. `_answer_pending`  - the open question, resolved, re-printed or carried.
-#   3. `_exclusive`       - `scope_exclusive`, traced.
 #   4. `_focus_rules`     - topic reset, replace-same-axis, the domain, document/status,
 #                           the date window.
 #   5. domain resolution  - the locked pick, else `asks`, else `domain_hint`, else the
@@ -64,29 +63,6 @@ DOMAIN_BY_DOCUMENT: dict[str, str] = {
     "PO": "purchase_order",
     "SPO": "incoming",
     "GRN": "goods_receive",
-}
-
-
-#: Kinds that scope the SAME THING under one domain, so naming one REPLACES the others
-#: (hand pass 2 item 5, owner ruling 17 Sep 2026). The retired head carried this as
-#: `output_exchange.AXIS_BY_DOMAIN`; only the row with evidence today is rebuilt, and the
-#: evidence is turn c45e2929 - "Outstsnding DO for 7445" ran the report for HANLIM
-#: [A/C III], a customer named six turns earlier, because product and customer sit in
-#: different focus slots and the product named this turn replaced neither.
-#:
-#: Under an ORDER question there is one axis and it is WHICH ORDER: a product code, a
-#: customer, a transporter and an order number all say which orders are meant, so the one
-#: the customer just typed is the scope and the rest are last question's.
-#:
-#: A literal rather than a `chatbot_domains` column: one domain has this today, and the
-#: trigger for promoting it is a SECOND domain whose kinds collapse differently (the old
-#: table had `promotion` and `master_products` rows too, both of which the narrowing
-#: policy now covers). Every other domain keeps one slot per kind, which is what
-#: `KIND_FIELD_MAP` already gives it.
-SHARED_AXIS_BY_DOMAIN: dict[str, frozenset[str]] = {
-    "order": frozenset(
-        {"product", "customer", "transporter", "order", "order_number", "customer_order"}
-    ),
 }
 
 
@@ -638,31 +614,6 @@ def _answer_pending(state: State, decision: Decision, trace: Trace):
     return focus, pending, None, False
 
 
-def _domain_of_turn(
-    focus: Focus,
-    verdict: dict[str, Any],
-    asks: list[dict[str, Any]],
-    domain_override: str | None,
-    *,
-    domain_locked: bool,
-) -> str | None:
-    """Which domain this turn is ABOUT, read the same order `_focus_rules` resolves it.
-
-    Needed one step earlier than that assignment, because whether two entities share an
-    axis is a fact about the DOMAIN they are named under.
-    """
-    if domain_locked:
-        return focus.domains[0] if focus.domains else None
-    if domain_override:
-        return domain_override
-    for ask in asks:
-        if ask.get("domain"):
-            return str(ask["domain"])
-    if verdict.get("domain_hint"):
-        return str(verdict["domain_hint"])
-    return focus.domains[0] if focus.domains else None
-
-
 def _focus_rules(
     focus: Focus,
     verdict: dict[str, Any],
@@ -701,52 +652,26 @@ def _focus_rules(
 
     asks = verdict.get("asks") or []
     if by_kind:
-        about = _domain_of_turn(focus, verdict, asks, domain_override, domain_locked=domain_locked)
-        shared = SHARED_AXIS_BY_DOMAIN.get(about or "", frozenset())
-        if decision.replaces_every_axis:
-            # The retired head's own rule: `replace` means this turn's entities ARE the
-            # whole scope, on every axis. It is only ever stamped by a pick that has
-            # already folded in whatever it means to keep.
-            shared = frozenset(KIND_FIELD_MAP)
+        if decision.starts_fresh:
+            # A NEW ASK that says WHAT it is asking starts from that domain's defaults:
+            # every carried kind this message did not name goes (owner ruling, 17 Sep
+            # 2026). "Delivery to hanlim" then "outstanding DO for 7445" is a question
+            # about 7445 and EVERY customer, where the carried HANLIM ledgers had been
+            # answering it for one (turn c45e2929). A refinement never evicts: it
+            # combines across kinds and replaces only within the kind it named, so
+            # "orders for hanlim" then "for srtwc286" is hanlim AND srtwc286.
+            #
+            # This replaces `SHARED_AXIS_BY_DOMAIN`, a per-domain table of which kinds
+            # "say the same thing", which could not tell those two apart at all - both
+            # name a product on the order domain's own shared axis.
+            for kind, attr in KIND_FIELD_MAP.items():
+                if kind in by_kind:
+                    continue
+                if getattr(focus, attr, None):
+                    setattr(focus, attr, [])
+                    trace.rules_fired.append(f"new_ask_drops_{kind}")
         elif decision.refines:
-            # A REFINEMENT narrows the standing subject and evicts nothing (hand pass 3
-            # row 3, browser pass 6 item 3). Which turn is a refinement is `decide()`'s
-            # call and no longer this arm's, which is the whole point: this rule and the
-            # outstanding question's own arm used to answer it differently, so the same
-            # message kept the carried customer when no question was open and lost it
-            # when one was.
-            #
-            # The two measured turns both name a product under an order subject that
-            # carries a customer, and both emit `entity_op: replace_combine`, so the op
-            # alone cannot decide:
-            #
-            # * c45e2929 "Outstsnding DO for 7445" - `scope_intent: null`,
-            #   `scope_exclusive: false`. A NEW ASK that states its own scope, and the
-            #   customer named six turns earlier is last question's (hand pass 2 item 5,
-            #   `test_rearch_handpass2_owner_17sep::TestFinding5...`).
-            # * 67df5114 "For srtwc286 only" - `scope_intent: "specific"`,
-            #   `scope_exclusive: true`. A refinement of "orders for CHIN CHUN HARDWARE",
-            #   and evicting the customer re-asked a fresh roster and then answered
-            #   globally (browser pass 6 item 3).
-            #
-            # This is also the reading `test_rearch_s2_exclusive.py` already pins for the
-            # same flag ("only BRW" keeps the product and the customer it narrows); the
-            # shared axis contradicted it for any kind that happens to sit on that axis.
-            shared = frozenset()
             trace.rules_fired.append("refinement_keeps_subject")
-        elif not (shared & set(by_kind)):
-            # The turn named nothing ON the shared axis, so nothing on it is superseded.
-            # Without this test, "only BRW" typed under a report about a customer evicted
-            # that customer - a warehouse is not one of the things that say WHICH ORDER,
-            # and the report re-ran for every customer under a header naming one (owner
-            # round 5's location refinement, measured on
-            # `test_a_location_only_turn_under_the_detail_offer_narrows_by_location`).
-            shared = frozenset()
-        for kind in shared - set(by_kind):
-            attr = KIND_FIELD_MAP.get(kind)
-            if attr and getattr(focus, attr, None):
-                setattr(focus, attr, [])
-                trace.rules_fired.append(f"same_axis_evicts_{kind}")
 
     if not domain_locked:
         if domain_override:
@@ -828,17 +753,6 @@ def _broaden(
             if widened != rows:
                 setattr(focus, attr, widened)
                 trace.rules_fired.append(f"broaden_family_{kind}")
-
-
-def _exclusive(decision: Decision, trace: Trace) -> None:
-    # `replace_same_axis` already narrows only the axis a new entity named (see
-    # `_focus_rules` above) - `scope_exclusive` confirms the same reading rather than
-    # changing it, so this step is a trace marker, not a second mutation. The flag is
-    # read once, by `decide()`, and its ONE behavioural consequence is a REFINE decision:
-    # `_focus_rules` holds the shared axis off for one, so a refinement narrows the
-    # subject instead of replacing it.
-    if decision.exclusive:
-        trace.rules_fired.append("exclusive")
 
 
 def _reconcile_step(
@@ -1174,8 +1088,8 @@ def apply(
     # (a TEAM name, not a domain) and it survived into a tool pick. `coerce_domain_hint`
     # existed but had no call site anywhere in the rearch (AC-1592 test triage);
     # coerced ONCE here, at the verdict's one entry point into apply(), so every
-    # downstream read (`_reconcile_step`, `_answer_pending`, `_exclusive`,
-    # `_focus_rules`, the `domains` build below, `_lane`) sees the same coerced value
+    # downstream read (`_reconcile_step`, `_answer_pending`, `_focus_rules`, the
+    # `domains` build below, `_lane`) sees the same coerced value
     # rather than needing its own guard.
     coerced_domain_hint = contracts.coerce_domain_hint(verdict.get("domain_hint"))
     if coerced_domain_hint != verdict.get("domain_hint"):
@@ -1223,8 +1137,6 @@ def apply(
     if pending_short_circuit is not None:
         unchanged = replace(state, pending=pending_after)
         return unchanged, pending_short_circuit
-
-    _exclusive(decision, trace)
 
     focus = _focus_rules(
         focus_after_pending,
@@ -1344,7 +1256,10 @@ def apply(
         and plan.fetch
         and plan.ask is None
         and new_state.pending is not None
-        and is_roster(new_state.pending.kind)
+        # The outstanding question's own arm decides its own survival (contracts 38, 39,
+        # and hand pass 3's named-document rule); every other open question is this
+        # rule's.
+        and new_state.pending.kind not in OUTSTANDING_KINDS
         and not _roster_is_about(new_state.pending, focus)
     ):
         # A NEW ASK that got its own answer closes a roster about something else. S6
@@ -1356,7 +1271,12 @@ def apply(
         # forms answered THAT roster instead (turns e69a0b1b to 543b9a02, 17 Sep 2026).
         # The roster survives only while it is still about the subject - which is why
         # this is a test on the options, not on the domain: "incoming CB2805A" fetches
-        # the very domain the stale question was asked under.
+        # the very domain the stale question was asked under. An escalate OFFER is closed
+        # the same way and for the same reason - driven on :8099, a bare "1" typed under
+        # a list of twenty forms handed the conversation to purchasing, because the offer
+        # two asks earlier was still open. The sticky-offer rule (contract 43, AC-1167)
+        # is about a CARRY - "thanks", "no" - and those turns fetch nothing, so they are
+        # untouched.
         new_state.pending = None
         trace.rules_fired.append("new_ask_closes_stale_roster")
 
@@ -1364,7 +1284,7 @@ def apply(
 
 
 def _roster_is_about(pending: Pending, focus: Focus) -> bool:
-    """Is any option this roster offered still on the focus axis it is a choice of?
+    """Is any option this question offered still on the focus axis it is a choice of?
 
     The engine matches labels and codes, never message words (D1/AC-1520): an option is
     "still the subject" when the focus's own rows for that option's kind carry its code.

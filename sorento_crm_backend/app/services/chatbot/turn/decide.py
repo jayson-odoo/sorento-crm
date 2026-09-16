@@ -77,7 +77,6 @@ class Decision:
       with the entities beside it.
     * `replaces_every_axis` - `entity_op: replace`, the op a turn carries when its own
       entities ARE the whole scope on every axis.
-    * `exclusive` - `scope_exclusive`, the parser's own "only" marker.
     """
 
     kind: str
@@ -89,7 +88,6 @@ class Decision:
     declined: bool = False
     negated: bool = False
     replaces_every_axis: bool = False
-    exclusive: bool = False
 
     @property
     def answers(self) -> bool:
@@ -98,6 +96,24 @@ class Decision:
     @property
     def refines(self) -> bool:
         return self.kind == REFINE
+
+    @property
+    def starts_fresh(self) -> bool:
+        """Does this turn's own scope replace every carried kind the message did not
+        name? A NEW ASK that says WHAT it is asking (a domain or status word of its own)
+        starts from that domain's defaults, and `entity_op: replace` says the same thing
+        about the axes rather than about the domain. A refinement never does: it combines
+        across kinds and replaces only within the one it named.
+
+        This is what `_focus_rules`' eviction reads, and it replaces
+        `SHARED_AXIS_BY_DOMAIN` - a per-domain table of which kinds "say the same thing",
+        which could not tell "outstanding DO for 7445" from "for 7445" because both name
+        a product on the order domain's own shared axis (owner ruling, 17 Sep 2026).
+        """
+        return self.kind == NEW_ASK and self.why in (
+            "entity_op_replace",
+            "domain_in_message",
+        )
 
     def as_trace(self) -> dict[str, str]:
         return {"kind": self.kind, "why": self.why}
@@ -344,15 +360,15 @@ def _keeps_subject(
     return True
 
 
-def _has_standing_subject(focus: Focus, pending: Pending | None) -> bool:
-    """Is there anything to narrow? A refinement needs a subject to refine.
+def domain_in_message(verdict: dict[str, Any]) -> bool | None:
+    """Does THIS message carry a domain or status word of its own?
 
-    The open question's own resolved subject comes first (it is what the question was
-    asked ABOUT), and the focus stands in when no question is open.
+    The parser's own boolean, read as-is - a domain WORD is a fact about the message's
+    own text, which is exactly the kind of fact the engine may not compute for itself
+    (D1/AC-1520). `None` means the verdict was recorded before the key existed.
     """
-    if _question_subject_axes(pending):
-        return True
-    return any(getattr(focus, attr, None) for attr in set(KIND_FIELD_MAP.values()))
+    value = verdict.get("domain_in_message")
+    return value if isinstance(value, bool) else None
 
 
 def _subject_reading(
@@ -373,23 +389,45 @@ def _subject_reading(
     if facts["replaces_every_axis"] and entities:
         # The retired head's own rule, kept: `replace` means this turn's entities ARE the
         # whole scope, on every axis. It is only ever stamped by a turn that has already
-        # folded in whatever it means to keep, so it outranks the "only" marker below on
-        # the one verdict that could carry both.
+        # folded in whatever it means to keep, so it outranks the table below on the one
+        # verdict that could carry both.
         return Decision(NEW_ASK, "entity_op_replace", entities=named, window=window, **facts)
-    if facts["exclusive"] and (entities or window) and _has_standing_subject(focus, pending):
-        # `scope_exclusive` is the parser's own "only" marker and the single
-        # discriminator between the two turns that otherwise look identical. Both name a
-        # product under an order subject that carries a customer, and both emit
-        # `entity_op: replace_combine`, so the op alone cannot decide:
-        #
-        # * c45e2929 "Outstsnding DO for 7445" - `scope_intent: null`,
-        #   `scope_exclusive: false`. A NEW ASK that states its own scope, and the
-        #   customer named six turns earlier is last question's (hand pass 2 item 5).
-        # * 67df5114 "For srtwc286 only" - `scope_intent: "specific"`,
-        #   `scope_exclusive: true`. A refinement of "orders for CHIN CHUN HARDWARE", and
-        #   evicting the customer re-asked a fresh roster and then answered globally
-        #   (browser pass 6 item 3).
-        return Decision(REFINE, "scope_exclusive", entities=named, window=window, **facts)
+
+    # THE TABLE (owner ruling, 17 Sep 2026). A message is a new question when it says
+    # WHAT IT IS ASKING, and a refinement when it only says WHICH ONE. The parser answers
+    # the first half (`domain_in_message`: does this message carry a domain or a status
+    # word of its own?) and the entities answer the second, and between them the four
+    # rows are the whole discriminator:
+    #
+    #   | domain_in_message | entities | reading                                        |
+    #   | true              | yes      | NEW_ASK - the domain's defaults plus what it   |
+    #   |                   |          |   names; every other carried kind is dropped   |
+    #   | true              | no       | a domain switch over the standing subject      |
+    #   |                   |          |   ("how about delivery?") - today's rule        |
+    #   | false             | yes      | REFINE - combine across kinds, replace within  |
+    #   |                   |          |   the same kind                                |
+    #   | false             | no       | the CARRY / ANSWER paths above                 |
+    #
+    # This retires `scope_exclusive`, which asked the wrong question of the two turns it
+    # was introduced for: "Outstsnding DO for 7445" (c45e2929) and "For srtwc286 only"
+    # (67df5114) differ because the FIRST names a document and a status and the second
+    # names nothing but a product, not because one of them carries an "only" marker. The
+    # key stays declared and documented in the prompt; the engine no longer reads it.
+    #
+    # `None` is a verdict recorded before the key existed - those fall through to the
+    # rules below, unchanged, so the replay corpus still measures what it measured.
+    in_message = domain_in_message(verdict)
+    if in_message is True and entities:
+        return Decision(NEW_ASK, "domain_in_message", entities=named, window=window, **facts)
+    if in_message is False and entities:
+        return Decision(
+            REFINE,
+            "refines_standing_subject",
+            entities=named,
+            window=window,
+            scope=_stored_scope(pending),
+            **facts,
+        )
     if pending is not None and (entities or window) and _keeps_subject(verdict, pending, entities):
         return Decision(
             REFINE,
@@ -417,7 +455,6 @@ def decide(
         "declined": escalation.get("escalation_declined") is True,
         "negated": verdict.get("is_affirmative") is False,
         "replaces_every_axis": verdict.get("entity_op") == "replace",
-        "exclusive": bool(verdict.get("scope_exclusive")),
     }
 
     if pending is None:
