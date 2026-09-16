@@ -48,6 +48,56 @@ function name - same latitude `test_s6b_fetch_lane.py` took):
   so/do/both".
 
 Postgres only (`session_factory`, blank schema). Every row seeded here.
+
+NOT PORTED (AC-1592, 16 Sep 2026, tester triage this session, time-boxed out): all 59
+reds in this file, captain's own queue item 2. Diagnosed with two direct scratch probes
+against real `run_turn` calls (not guessed) before stopping - findings below, not a
+blanket "did not look":
+
+1. **The session-shape rename is real but only PART of the gap.** `pending` ->
+   `open_question` (`turn/pending.py::to_wire`), `selection_context`/`last_result_set` /
+   `outstanding_filters` were this file's OWN pre-rearch names for what the current
+   `focus`/`open_question` fields now carry (captain's own mapping, this session's
+   brief) - `_session_of(session_factory)["variables"]` needs replacing with a reader of
+   the current flat shape throughout (26 call sites). This part IS mechanical.
+2. **CONFIRMED ENGINE DEFECT, measured, not worked around: the escalate offer renders
+   on a genuine HIT, not only a miss.** Probe: a real sales-order HIT (`REPORT_HIT`,
+   real figures: "Sales orders: 1, Ordered: 10, ...") still composes "Would you like me
+   to escalate?" at the end of the reply - `TestHitArmsOutstandingDetailAndNoEscalateOffer
+   ::test_hit_arms_detail_offer_and_no_escalate_text`'s own assertion ("a hit must never
+   also offer to escalate") is a real, currently-violated contract line, not a stale
+   test.
+3. **CONFIRMED ENGINE DEFECT, measured: the outstanding-report's own "outstanding_detail"
+   pending (the "Reply 1 for the sales order list" offer, present in the rendered TEXT)
+   never reaches `open_question` at all.** The SAME probe's persisted session shows
+   `open_question.kind == "team_pick"` (the compose.py escalate offer, contract 106) as
+   the ONLY open question - a session holds one at a time, and the escalate offer is
+   what survived. A customer who replies "1" expecting the sales-order list this turn's
+   own text just showed them would resolve against the wrong roster (the escalate team
+   picker, not the order-detail picker) - `TestDetailPickRerunsToolWithDetail`'s whole
+   class is built on the assumption this pending survives, which it measurably does not.
+4. **CONFIRMED GAP, measured: the scope-clarifying question ("Sales orders, delivery
+   orders, or both?") never arms on this call path.** Probe (via the full test run, not
+   scratch): `TestBareOutstandingWithKeyArmsScopeQuestion::test_bare_outstanding_with_
+   key_arms_scope_question` - a bare "outstanding" with no so/do/both named calls
+   `crm_outstanding_report` immediately with `scope: "both"`, never asking first.
+   `outstanding_scope` IS a declared `PENDING_KINDS` member with a registered ask header
+   in `turn/compose.py::_ASK_HEADERS` ("Sales orders, delivery orders, or both?") - the
+   COMPOSE-side wiring exists - and `lanes/business/__init__.py:319` DOES construct a
+   `{"kind": "outstanding_scope", ...}` pending somewhere in that (older) module.
+   Whether the CURRENT `turn/apply.py` reconciliation/planning path ever reaches that
+   construction site, or whether it is dead code from before the rearch (the same class
+   of gap `dym_offer`/tier-pick showed in `test_r3_pending_end_to_end.py`, this session)
+   was not traced further - genuine architecture tracing, not a mechanical fix.
+
+Given findings 2-4 are real engine defects/gaps (not test staleness) spanning most of
+this file's 59 reds, and the remaining ~26 are a real but LARGE mechanical session-shape
+port entangled with them (many assertions read `pending`/`outstanding_detail` state
+findings 2-3 show is currently broken, so porting the KEY NAME alone would not turn them
+green), this file needs a coder pass before further tester work here is productive -
+same standing precedent this lane has already used for this exact file
+(tester 9's original flag, reaffirmed by every tester session since). Flagged for a
+coder/captain scope call, not silently left red with no diagnosis.
 """
 from __future__ import annotations
 
