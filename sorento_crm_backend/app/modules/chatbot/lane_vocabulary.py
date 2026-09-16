@@ -59,6 +59,22 @@ def default_unsupported_domains() -> list[str]:
     return [row.name for row in default_policy().domains if not row.supported]
 
 
+def escalation_teams() -> tuple[str, ...]:
+    """The team codes the escalation lane knows how to route to (AC-1561, AC-002).
+
+    `app/api/v1/system/chatbot_config.py` validates `escalation_team_code` against this
+    list before a domain row can save it - reached through this doorway rather than
+    `from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS` directly, for
+    the same AC-002 reason as the rest of this module: `tests/chatbot/
+    test_import_boundary.py` only allows `app/api/v1/external/chat.py`,
+    `app/api/v1/system/chatbot.py` and `app/tasks/chat_turns.py` to reach into the
+    package, and a config-CRUD route is not one of those three doorways.
+    """
+    from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
+
+    return ESCALATION_TEAMS
+
+
 def default_tier_order() -> list[str]:
     """The tier order default (chatbot turn re-architecture, AC-1502 captain ruling
     16 Sep 2026, AC-1594 captain ruling 16 Sep 2026).

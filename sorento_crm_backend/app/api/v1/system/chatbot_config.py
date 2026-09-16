@@ -152,7 +152,9 @@ def _validate_domain(db: Session, body: ChatbotDomainBody) -> None:
     Cleaning mutates `body` rather than returning a copy so that both callers - which
     already write `body.model_dump()` onto the row - store exactly what was validated.
     """
-    from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
+    from app.modules.chatbot.lane_vocabulary import escalation_teams
+
+    ESCALATION_TEAMS = escalation_teams()
 
     body.name = _clean_text(body.name, field="name") or ""
     body.label = _clean_text(body.label, field="label", max_chars=128) or ""
