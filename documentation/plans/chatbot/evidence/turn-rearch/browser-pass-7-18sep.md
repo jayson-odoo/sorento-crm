@@ -148,6 +148,14 @@ showed it) is fixed.
 
 ## Row 4 - a named document outranks a position riding along (item 4/5)
 
+**Driven TWICE.** Run 1 (below) landed against a stale MCP server on `:8765` still serving an old
+worktree's code (unknown to me at the time); the coordinator flagged this mid-task and restarted
+it (`PID 7113`, confirmed via `ps aux` started at the moment of the restart message), then asked
+for row 4 to be re-driven after the restart. Run 2 is the one that counts; run 1 is kept below for
+the record since the diff between the two runs is itself informative.
+
+### Run 1 (stale MCP server, superseded)
+
 Fresh continuation from a reset (see Row 3's own precondition for why: item 4's check needed the
 chain to be right after the DO detail list, not after the date-narrowed report row 3 had already
 produced).
@@ -155,23 +163,46 @@ produced).
 | # | Sent | Result | Turn id |
 |---|------|--------|---------|
 | 1 | `outstanding for hanlim` | Same summary as row 3 turn 1, `Reply 1 for the delivery order list.` | `6b40407e-a20a-413e-b5ec-1a025f0514e7` |
-| 2 | `1` | 20-line DO detail list (same shape as row 3 turn 2) | `fb6a8a1a-e576-44fa-befc-2a45274a88d6` |
+| 2 | `1` | 20-line DO detail list, **no `Product:`/`Customer:`/`Location:`/`Order date:` filter header block above the numbered lines** | `fb6a8a1a-e576-44fa-befc-2a45274a88d6` |
 | 3 | `Sales order` | `*orders*:` - a bare domain header with **nothing after it**: no order lines, no "not enabled for your account" denial, no "No matching results found." | `347a9ccd-5926-42a7-8ee0-fceec6ac262d` |
 
-**Row 4 - FAIL, but a DIFFERENT failure than pass 6's.** The specific defect pass 6 measured (the
-identical DO detail list re-printed byte for byte because `reference_positions: [1]` won over
-`document: ["SO"]`) is confirmed FIXED: trace for `347a9ccd` (Parse tab) shows `document: ["SO"]`
-extracted correctly and the reply is NOT the DO list. But the fix's actual output is broken in a
-new way - an empty `*orders*:` section with zero content. Justin does not hold the SO grant (pass
-6 turn 4 showed the correct denial copy, "Sales order figures are not enabled for your account.",
-for the more explicit phrasing `Outstanding for hanlim sales order`), so the most likely
-explanation is that the SO domain switch now correctly routes but the resulting fetch/deny path
-for a domain the contact lacks doesn't render anything (no denial line reaches `compose`, no
-"No matching results found" ladder-fallback fires either) - i.e., the document-outranks-position
-fix (item 4) landed, but the SO-domain access-denied rendering for THIS specific trigger (a bare
-two-word `Sales order` riding the same offer, as opposed to the fuller phrasing) is now silently
-swallowed instead of showing the DO list OR the denial. Screenshot (trace Parse tab, showing
-`document: ["SO"]`): `pass7-row4-sales-order-empty-fail.png`.
+Recorded at the time as a FAIL distinct from pass 6's own defect (trace for `347a9ccd` showed
+`document: ["SO"]` extracted correctly, so the reply was NOT the re-printed DO list pass 6 hit -
+but the SO-domain answer rendered as empty content instead of a denial). Superseded by run 2
+below: this was very likely the stale-MCP-server artifact the coordinator flagged (`httpx.
+ReadTimeout`/empty-envelope behaviour against old code), not a real code defect.
+
+### Run 2 (after the coordinator's MCP restart, counts)
+
+Full chain re-driven from a fresh Reset (a prior tab navigation had dropped the browser's login
+session, so the console was reopened via sidebar clicks and Justin re-selected before resending).
+
+| # | Sent | Result | Turn id |
+|---|------|--------|---------|
+| 1 | `outstanding for hanlim` | Same summary shape as before, `Reply 1 for the delivery order list.` | `cff5a1a6-2899-4f0d-9ced-ed5b4f415da5` |
+| 2 | `1` | 20-line DO detail list, **now WITH the filter header block**: `Product: all` / `Customer: HANLIM TRADING SDN BHD [A/C II], ... (CERAMIC & ELLECI)` / `Location: all` / `Order date: all`, then the 20 numbered DO lines | `4c6d9fa7-f4bd-4643-a8a4-888931f721f1` |
+| 3 | `Sales order` | Filter header block (`Product: all` / `Customer: ...` / `Location: all` / `Order date: all`), then `Sales order figures are not enabled for your account.`, then the full DO outstanding summary fallback (20 DOs, qty 559, by-location/by-product breakdown), `Reply 1 for the delivery order list.` | `195d96a5-8c83-4b5b-8a59-1a4e2a17a95a` |
+
+**Row 4 - PASS on run 2, run 1's verdict retracted.** Trace for `195d96a5` (Parse tab) confirms
+`document: ["SO"]` extracted the same as run 1. This time the full pipeline renders correctly:
+the SO-domain access denial fires (`Sales order figures are not enabled for your account.`,
+matching pass 6's own correct denial copy for the fuller phrasing) followed by the ladder-fallback
+DO summary - not the re-printed DO list (pass 6's original defect, still confirmed fixed) and not
+an empty section (run 1's apparent defect, now shown to be a stale-server artifact, not real code
+behaviour). The coordinator's diagnosis is confirmed by a second, independently useful signal: the
+DO detail list itself (turn 2) went from missing its filter header block entirely in run 1 to
+carrying it correctly in run 2 - the exact "outstanding DETAIL list header ... never live" gap the
+coordinator named, now confirmed live post-restart. Screenshot from run 1
+(`pass7-row4-sales-order-empty-fail.png`, trace Parse tab showing `document: ["SO"]`) is kept as
+the record of the stale-server symptom, not as evidence of a current defect.
+
+**Row 3 footnote, not re-driven:** row 3's own DO detail list turn (`11350bc8-1432-41f7-a735-
+90362a690bd9`, the `1` pick) ran in the same pre-restart window as run 1 above and, by the same
+mechanism, almost certainly also lacked the filter header block on its DO lines - it was not
+specifically checked at the time since row 3's own pass/fail hinged on the SUMMARY report's own
+header (`Order date: 01/09/2026 to 30/09/2026`), which is a separate reply already showing
+correctly pre-restart and is unaffected by this gap. Not re-driven because the coordinator's ask
+was scoped to row 4; flagging it here for completeness rather than silently leaving it unstated.
 
 ## Row 5 - regression spot-check (items 6, 7, 8)
 
@@ -199,38 +230,52 @@ item 7's word-number confirmation exactly.
 - **PASS:** row 1a (promo tier pick fetches real promotions - item 1's core fix confirmed), row 2
   (customer scope survives a multi-step product/customer disambiguation - item 2/3's fix holds,
   with a cosmetic gap: the intermediate roster doesn't visually confirm the kept customer), row 3
-  (date window now shows in the reply header - item 3's fix confirmed), row 5a (two-domain fan-out
-  with one ungranted domain, unchanged from pass 6), row 5b (word-number picking, unchanged from
-  pass 6).
+  (date window now shows in the reply header - item 3's fix confirmed), row 4 run 2 (the fix
+  landed clean: SO-domain access denial + DO summary fallback, DO detail list header confirmed
+  live, no re-printed DO list - see "MCP restart mid-pass" below, run 1's FAIL is retracted), row
+  5a (two-domain fan-out with one ungranted domain, unchanged from pass 6), row 5b (word-number
+  picking, unchanged from pass 6).
 - **FAIL:** row 1b (an ambiguous token resolving to several DISTINCT product families gets no
   roster and no stamps at all under the current `optional_filter` policy - contradicts the
   ruling's literal expectation; the Coder 15 addendum's own two descriptions of when a roster
   fires ("optional_filter never asks" vs "a token this message named that resolves to several
   things asks its roster") are themselves in tension, and the observed behaviour matches the
-  narrower one), row 4 (the specific pass-6 defect - DO list reprinted over `document: ["SO"]` -
-  is FIXED, but the SO-domain answer for a bare `Sales order` now renders as a content-free
-  `*orders*:` header instead of either the DO list or a proper denial - a new, narrower defect).
+  narrower one).
+- **MCP restart mid-pass (coordinator-flagged):** the coordinator reported restarting the MCP
+  server on `:8765` (it had been serving an old worktree's code), confirmed independently via
+  `ps aux` (fresh PID at the moment of the message). Row 4 run 1 - driven before this restart -
+  had recorded a FAIL (a content-free `*orders*:` reply to `Sales order` instead of a denial or
+  the DO list) that is now understood to be a stale-server artifact: run 2, driven after the
+  restart with the full chain re-built from a fresh Reset, produced the correct denial + fallback
+  summary AND, independently, the DO detail list's own filter header block (`Product:`/
+  `Customer:`/`Location:`/`Order date:`) went from absent in run 1 to present in run 2 - the exact
+  gap the coordinator named ("the outstanding DETAIL list header ... was never live"). Row 4's
+  verdict is PASS on the counted run. Row 3's own DO detail turn ran in the same pre-restart
+  window and likely shared the missing-header symptom, but was not re-driven (out of the
+  coordinator's stated scope, and row 3's own PASS hinges on a different reply's header that was
+  already correct pre-restart) - flagged in Row 3's footnote rather than left unstated.
 - **New defect, not one of the five rows:** the trace drawer's Apply tab throws
   `TypeError: apply.state_diff.map is not a function` and crashes to an error boundary for at
   least one turn shape (confirmed via console log, not a misclick as pass 6 speculated).
 - **Environmental:** severe machine-wide contention (load average 118) during this pass caused
   backend `console/turn` latency to climb from 2.6s to 130.5s over the run and produced one
   transient 500 (`httpx.ReadTimeout` inside the console's own MCP call) that also dropped the
-  browser's login session; recovered via re-login and retry. Not counted toward the five rows'
+  browser's login session; recovered via re-login and retry. Not counted toward the rows'
   verdicts.
-- Turn ids for every turn driven this pass are listed inline above (20 total across 7 chains: 2 +
-  2 + 4 + 3 + 3 + 1 + 2, plus 1 discarded/retried send that produced no new turn).
+- Turn ids for every turn driven this pass are listed inline above (23 total across 8 chains: 2 +
+  2 + 4 + 3 + 3 + 3 + 1 + 2, plus 1 discarded/retried send that produced no new turn).
 - Trace drawer detail: `branch_kind` visible inline under every console reply (the badge next to
   the parser-version pill, e.g. `check_promotion`, `business_query`). `document`/`entities`/
   `scope_exclusive`/`entity_op` read from the Parse tab's Raw JSON for every turn a defect
   needed measuring. `rules_fired` / the Apply tab could NOT be read for most turns this pass
   because of the crash documented above - only reachable for turns whose `state_diff` happens to
   already be array-shaped (not confirmed which, if any, are).
-- Screenshots (both FAILs, both under 200 KB, plus the new Apply-tab defect):
-  `pass7-row1-apply-tab-crash.png` (Parse tab open, Apply tab crash reproduced via console log on
-  the same turn), `pass7-row4-sales-order-empty-fail.png` (Parse tab for turn `347a9ccd`, showing
-  `document: ["SO"]` extracted correctly against the empty reply).
+- Screenshots (one FAIL, one superseded-run record, plus the new Apply-tab defect, all under
+  200 KB): `pass7-row1-apply-tab-crash.png` (Parse tab open, Apply tab crash reproduced via
+  console log on the same turn), `pass7-row4-sales-order-empty-fail.png` (Parse tab for turn
+  `347a9ccd`, run 1 / pre-restart, kept as the stale-server symptom record - not evidence of a
+  current defect, since run 2 passed).
 - No FE console errors at the final check (`errors` empty); one earlier console error captured
-  and quoted above (the Apply-tab crash) was deliberately triggered while diagnosing row 1b/row 4,
-  not a spontaneous background error.
+  and quoted above (the Apply-tab crash) was deliberately triggered while diagnosing row 1b, not
+  a spontaneous background error.
 - Session closed cleanly (`close`, not `close --all`) after this evidence was captured.
