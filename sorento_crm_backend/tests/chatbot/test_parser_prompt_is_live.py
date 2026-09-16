@@ -91,7 +91,16 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # field and no rule for filling it; `focus.document` and `outstanding_scope_ask_candidate`
 # already read it correctly (no engine change, prompt-only fix). Measured against the
 # coder's landed change, not derived.
-CONSTANT_CHARS = 52313
+# 52313 -> 52139 (17 Sep 2026, hand pass 3, `ddd6dc970`/`0353b9138`): the OPEN QUESTION
+# section and the `answers_open_question` OUTPUT key line came OUT (the key is retired),
+# and a `Current subject` block went IN (the focus, printed every turn, so refinements and
+# domain switches are judged with context). Net -174. Measured against the coder's landed
+# change.
+# 52139 -> 53753 (17 Sep 2026, coder 14's last item, `4427bb6bb`): `asks` (an array of
+# {domain, intent} objects, replacing the bare-code two-domain reading) and `topic_reset`
+# join `DECLARED_KEYS`, each with its own `== ASKS ==` / `== TOPIC RESET ==` prompt
+# section. Net +1614. Measured against the coder's landed change, not derived.
+CONSTANT_CHARS = 53753
 
 
 def _without_growth_r1_addendum(text: str) -> str:
