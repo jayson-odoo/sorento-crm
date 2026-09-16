@@ -919,7 +919,28 @@ class ProjectOrderInquiryService:
                 )
                 self.db.add(raised_row)
                 self.db.flush()
-                self._record_handover(raised_row, kind="raised", actor_user_id=actor_user_id)
+                if carried and prior_ack is not None:
+                    # AC-H20: the carry site cancels-and-re-raises even when NOTHING
+                    # for purchasing changed (13.4's own reason - `confirmed_unplaced_
+                    # buy_rows` needs the row moved under the new revision) - so
+                    # comparing the fresh row against the one it carries is what tells
+                    # a silent carry from one that actually moved. Same qty and date:
+                    # nothing for purchasing to read, print nothing. Either differs: it
+                    # reads exactly like an in-place settle, never a second bare ORDER.
+                    carry_was: Dict[str, Any] = {}
+                    if raised_row.qty != prior_ack.qty:
+                        carry_was["qty"] = prior_ack.qty
+                    if raised_row.delivery_date != prior_ack.delivery_date:
+                        carry_was["delivery_date"] = prior_ack.delivery_date
+                    if carry_was:
+                        self._record_handover(
+                            raised_row,
+                            kind="settled",
+                            was=carry_was,
+                            actor_user_id=actor_user_id,
+                        )
+                else:
+                    self._record_handover(raised_row, kind="raised", actor_user_id=actor_user_id)
                 raised += 1
                 if not carried:
                     created += 1
@@ -958,7 +979,7 @@ class ProjectOrderInquiryService:
                     }
                 )
 
-        self._retire_uncovered_rows(inquiry, decision, buy_lines)
+        self._retire_uncovered_rows(inquiry, decision, buy_lines, actor_user_id=actor_user_id)
         shortfalls = self._raise_borrow_shortfalls(
             order,
             inquiry,
@@ -1125,7 +1146,7 @@ class ProjectOrderInquiryService:
                 if row.note
                 else f"{moved}; the book left nothing to buy"
             )
-            self._retire_settled_cancel_balance(rows, decision)
+            self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
             self.db.flush()
             if had_links:
                 # S4: a row that carried supply and is now zeroed out is exactly what
@@ -1215,7 +1236,7 @@ class ProjectOrderInquiryService:
                 row.ack_state = ACK_ACKNOWLEDGED
                 row.acknowledged_by = actor_user_id
                 row.acknowledged_at = row.changed_at
-        self._retire_settled_cancel_balance(rows, decision)
+        self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
         self.refresh_link_state([row])
         self.db.flush()
         if changed:
@@ -1448,7 +1469,11 @@ class ProjectOrderInquiryService:
         return {"name": user.name or user.email, "email": user.email}
 
     def _retire_settled_cancel_balance(
-        self, rows: Sequence[OrderInquiryRow], decision: Any
+        self,
+        rows: Sequence[OrderInquiryRow],
+        decision: Any,
+        *,
+        actor_user_id: Optional[str] = None,
     ) -> None:
         """A settle answers the exception an earlier revision raised for the same line.
 
@@ -1461,8 +1486,14 @@ class ProjectOrderInquiryService:
         """
         for row in rows:
             if row.verb == IV_CANCEL_BALANCE and row.state == INQUIRY_RAISED:
+                # AC-H19 (plan 3.1, revised): retired rows print ALWAYS, no pairing to
+                # whatever else the same commit raises.
+                was_qty = row.qty
                 row.state = INQUIRY_CANCELLED
                 row.note = f"Superseded by revision {decision.revision_no}"
+                self._record_handover(
+                    row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
+                )
 
     def _link_expected_date(self, link: OrderInquiryLink):
         """When the document behind this link arrives, whichever family it names."""
@@ -1608,7 +1639,12 @@ class ProjectOrderInquiryService:
         return created
 
     def _retire_uncovered_rows(
-        self, inquiry: OrderInquiry, decision: Any, buy_lines: Sequence[Dict[str, Any]]
+        self,
+        inquiry: OrderInquiry,
+        decision: Any,
+        buy_lines: Sequence[Dict[str, Any]],
+        *,
+        actor_user_id: Optional[str] = None,
     ) -> None:
         """Cancel still-raised rows of an EARLIER revision on lines this one dropped.
 
@@ -1648,9 +1684,16 @@ class ProjectOrderInquiryService:
         for row in stale:
             if str(row.so_line_id) in covered:
                 continue
+            # AC-H19 (plan 3.1, revised 16 Sep): a retired row prints ALWAYS, no pairing
+            # to whatever else the same commit raises - the qty it once asked for is
+            # `was`, captured before either branch below touches the row.
+            was_qty = row.qty
             if row.state == INQUIRY_RAISED:
                 row.state = INQUIRY_CANCELLED
                 row.note = stamp
+                self._record_handover(
+                    row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
+                )
                 continue
             if not self._cascade_only(stale_links.get(str(row.id), [])):
                 continue
@@ -1663,6 +1706,9 @@ class ProjectOrderInquiryService:
             # supply with it - a superseded row that held a link is exactly what
             # purchasing has to hear about, the same as a zeroed settle-in-place.
             self._dispatch_changed_with_links(inquiry, row, had_link=True)
+            self._record_handover(
+                row, kind="cancelled", was={"qty": was_qty}, actor_user_id=actor_user_id
+            )
 
     def derive_for_amendment(
         self, amendment: SOAmendment, *, actor_user_id: Optional[str] = None
