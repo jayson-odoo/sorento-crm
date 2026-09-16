@@ -572,3 +572,28 @@ Not signed, left red or logged elsewhere on purpose:
 - console/case-071-r23-so-detail-list-shows-latest-order-date-first.json: step 1: pending: same cause as case-058 step 1 above (signed JT 2026-09-17, outstanding-pending-now-remembered)
 - console/case-071-r23-so-detail-list-shows-latest-order-date-first.json: step 2: pending: same cause as step 1 above - the remembered offer is what a bare "1" then answers; the answer's own TEXT ("[object Object]" instead of the SO detail list) is a separate, real render defect out of `_compare`'s structural fields, NOT signed here and NOT reported elsewhere yet - flagged for the captain: `turn/compose.py`'s SO-detail-list renderer stringifies a raw object instead of formatting it when answering a remembered outstanding-scope pick (signed JT 2026-09-17, outstanding-pending-now-remembered)
 - console/case-072-r24-a-business-query-under-an-open-offer-is-a-new-ask-hanlim-delivery.json: step 1: pending: same cause as case-058 step 1 above (signed JT 2026-09-17, outstanding-pending-now-remembered)
+
+## Cluster D, 17 Sep 2026 (tester 17, queue item 4): 1 signed, 2 reported as real defects, growth_r1 confirmed fixed on 1
+
+Tester 15's 3-file cluster ("offer/picker branch divergences, each its own thing") plus
+the growth_r1 companion pair (`case-045`, `case-072`) coder 13 fixed at `36a42072f`, all
+re-measured at lane head 4427bb6bb.
+
+`console/owner-15sep-chain-010-console-check-1789443498.json` - SIGNED, all 3 steps'
+`pending` divergence (`expected options ['M218']`/`['SRTWC8517']`, got `[]`) traces to
+two combined, confirmed causes: (1) this case_id has no entry in `_CASE_PRODUCTS`
+(grep-confirmed: neither the file's own slug nor "M218" appears anywhere in
+`test_turn_replay.py`), so `_seed_case_products` seeds nothing for it and both typed
+codes resolve to zero real candidates in this test's DB; (2) the 16 Sep 2026 captain
+ruling in `turn/narrow.py` (see the journey-chain re-pin above) - a name with no
+resolver answer this turn passes through deferred rather than a manufactured ask, which
+is also what a `narrow_to_code`/product pick does on zero real candidates. The OLD
+recording's single-option `['M218']` pending (a self-referential "did you mean M218?"
+with no real alternative) is exactly the pre-ruling manufactured-ask shape the 16 Sep
+change retired.
+
+- console/owner-15sep-chain-010-console-check-1789443498.json: pending: unseeded product code (no `_CASE_PRODUCTS` entry, zero real candidates) plus the 16 Sep 2026 narrow.py ruling - a name with no resolver answer passes through deferred, never a manufactured single-option pick (signed JT 2026-09-17, unseeded-code-plus-16sep-narrow-ruling)
+- **`console/case-045-owner-8-sep-a-delivery-word-plus-a-name-over-an-escalate-offer-is-an-order-ask.json` - growth_r1 CONFIRMED FIXED, not signed.** The regression tester 14 reported (`turn/apply.py::_answer_offer`/`switch_word`) no longer reproduces - no `branch_kind`/`tools` divergence remains. The one remaining divergence (`step 2 entity_ids: expected [6 uuids], got [1 uuid]`) is the SEPARATE, already-documented cluster B harness limit (`resolve_product_set` not stubbed by this corpus's 4 stubs) - deferred to that item, not duplicated here.
+- **`console/case-072-r24-a-business-query-under-an-open-offer-is-a-new-ask-hanlim-delivery.json` - growth_r1 CONFIRMED FIXED.** Already fully signed above (cluster C) - 0 remaining divergences.
+- **`console/case-011-an-out-of-range-tier-pick-keeps-the-product-in-scope.json` - NOT signed, real defect, already tracked.** `step 2 branch_kind: expected 'check_promotion', got 'clarify_menu'`; `step 3 tools`/`pending` show the tier roster gone and a promotions fetch firing instead. Same seam as hand-pass-3 Row 1 / Finding 9 (`_answer_pending`'s roster branch builds `built` only from `option["uuid"]`/`option["uuids"]`, and a tier option has neither) - already covered by `test_rearch_handpass3_owner_17sep.py::TestFinding9ATierPickSetsFocusTier`, not a new finding, left red.
+- **`console/focus-003-c-roster-survives-a-declined-escalate-offer-ac-1015-ac-1017.json` - NOT signed, reported.** `step 3 branch_kind: expected 'escalation_declined', got 'business_query'` for a plain "no" over a `team_pick` pending (`option_labels: ['stock']`) - the OPPOSITE direction from the "no" fix signed on `case-069` (there, a plain "no" over a bare escalate-offer pending now correctly hits `escalation_declined`; here, a plain "no" over a `team_pick` pending now falls through to `business_query` instead). `team_pick` is one of `ESCALATION_OFFER_KINDS`, so the same one-explicit-answer rule should apply - measured, not diagnosed further this session; flagged for the captain rather than guessed at, since signing the wrong direction here would hide a real regression.
