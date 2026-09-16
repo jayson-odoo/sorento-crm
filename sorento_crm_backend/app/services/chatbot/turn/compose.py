@@ -128,8 +128,23 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             n += 1
             rows_text.append(_render_row(n, fig))
 
-        if entities and miss and set(entities) <= set(miss) and not figures:
-            missed_domains.append(domain)
+        # A domain MISSED when it rendered nothing and was not refused: either every
+        # code it was asked about is in `miss`, or - when the fetch carried no named
+        # code at all (an order ask narrowed by customer only, a report scoped by
+        # date) - the fetch itself said it had no result. The old test needed named
+        # entities, so an empty answer with no code armed no offer and the customer's
+        # "no thanks" a turn later had nothing to decline (hand-pass 1, measured on 10
+        # of the 19 recorded `escalation_declined` turns).
+        if not figures and not env.get("denied") and not env.get("error"):
+            if entities:
+                missed = bool(miss) and set(entities) <= set(miss)
+            else:
+                # The tool's OWN answer, not `has_result` (which is ANDed with the
+                # figures): an outstanding report rendered as `lane_text` found rows
+                # and is not a miss; "no outstanding order matched" is.
+                missed = env.get("tool_has_result") is not True
+            if missed:
+                missed_domains.append(domain)
 
         label = row.label if row else domain
         codes = ", ".join(str(e) for e in entities)
