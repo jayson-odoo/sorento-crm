@@ -79,9 +79,10 @@ from app.services.product_companion_service import (
 )
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
+    derived_spo_open_clauses,
     project_customer_label,
 )
-from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm import order_link_service, priority
 from app.services.scm.demand import demand_qty
 
 logger = logging.getLogger(__name__)
@@ -341,41 +342,53 @@ _CAPPED_QTY = func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
 _UNLINKED_QTY = func.greatest(
     _CAPPED_QTY - _linked_qty() - OrderInquiryRow.bundled_qty, 0
 )
+def _derived_spo_query(*columns: Any, extra_where: tuple = ()) -> Any:
+    """S5 (R-D/R-E/R-F): the ONE join a row's own PO link's PO reaches an OPEN SPO
+    allocation for the same product through - `from_po_number = po_number AND
+    product_id = po_line.product_id`. `derived_spo_open_clauses()` (shared with
+    `links_for_rows`'s display entries) is the openness test; this is the shape every
+    reader of it wraps as either an `EXISTS` (`_HAS_DERIVED_SPO`, `kind=spo`,
+    `linked=spo`, `spo_number`) or a `SUM` (`_DERIVED_SPO_OPEN_QTY`), so the four
+    filters and the card's own figure can never disagree about what counts as
+    incoming. Always correlated to the outer `OrderInquiryRow`.
+    """
+    return (
+        select(*(columns or (SPOAllocation.id,)))
+        .select_from(OrderInquiryLink)
+        .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .join(
+            SPOAllocation,
+            and_(
+                SPOAllocation.from_po_number == PurchaseOrder.po_number,
+                SPOAllocation.product_id == PurchaseOrderLine.product_id,
+            ),
+        )
+        .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
+        .where(
+            OrderInquiryLink.row_id == OrderInquiryRow.id,
+            *derived_spo_open_clauses(),
+            *extra_where,
+        )
+        .correlate(OrderInquiryRow)
+    )
+
+
+#: Does this row's own PO link have an open derived SPO cover at all (S5, R-D/R-E,
+#: round 2 AC-D6b)? The one existence test `kind=spo` and `linked=spo` both filter on,
+#: so a PO-linked row with a derived cover answers to either without a real spo link.
+_HAS_DERIVED_SPO = _derived_spo_query().exists()
 #: S5 (R-D/R-E/R-F, `PLAN-scm-oi-worklist-excel-parity.md`, coordinator's 16 Sep
 #: addendum): the OPEN SPO allocations this row's own PO link's PO carries for the same
-#: product - `from_po_number = po_number AND product_id = po_line.product_id`, open per
-#: `spo_supply.open_incoming_clauses()` AND `retired_at IS NULL` AND `allocated_quantity
-#: > coalesce(quantity_received, 0)` - the same rule `_append_derived_spo_entries`
-#: applies to the display, so the cards and the cell can never disagree about what is
-#: incoming. A row with no PO link answers 0 - the subquery's own join finds nothing to
-#: sum, never a null that would poison the `+` below.
+#: product, summed. A row with no PO link answers 0 - the subquery's own join finds
+#: nothing to sum, never a null that would poison the `+` below.
 _DERIVED_SPO_OPEN_QTY = func.coalesce(
-    select(
+    _derived_spo_query(
         func.sum(
             SPOAllocation.allocated_quantity
             - func.coalesce(SPOAllocation.quantity_received, 0)
         )
-    )
-    .select_from(OrderInquiryLink)
-    .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
-    .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-    .join(
-        SPOAllocation,
-        and_(
-            SPOAllocation.from_po_number == PurchaseOrder.po_number,
-            SPOAllocation.product_id == PurchaseOrderLine.product_id,
-        ),
-    )
-    .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
-    .where(
-        OrderInquiryLink.row_id == OrderInquiryRow.id,
-        SPOAllocation.retired_at.is_(None),
-        SPOAllocation.allocated_quantity
-        > func.coalesce(SPOAllocation.quantity_received, 0),
-        *spo_supply.open_incoming_clauses(),
-    )
-    .correlate(OrderInquiryRow)
-    .scalar_subquery(),
+    ).scalar_subquery(),
     0,
 )
 #: The three STAGES a unit passes through, left to right (R-F): not yet on any document,
@@ -753,7 +766,10 @@ class OrderInquiryWorklistService:
             elif linked == "po":
                 base = base.filter(_HAS_PO_LINK)
             elif linked == "spo":
-                base = base.filter(_HAS_SPO_LINK)
+                # S5, R-E (round 2, AC-D6b): widened to a row whose only real link is
+                # on a PO, but whose PO carries a derived SPO cover - it genuinely is
+                # on both books now, one of them derived.
+                base = base.filter(or_(_HAS_SPO_LINK, _HAS_DERIVED_SPO))
             elif linked == "none":
                 base = base.filter(~_HAS_ANY_LINK)
             else:
@@ -778,12 +794,13 @@ class OrderInquiryWorklistService:
                     code="invalid_kind_filter",
                 )
             base = base.filter(OrderInquiryRow.state.notin_(_NOT_OWED_STATES))
-            # S5, R-F: a STAGE amount, not merely "holds a link of that kind" - `spo`
-            # (incoming) now selects a row whose own PO link has a derived SPO cover even
-            # though it holds no real spo link at all, and `po` (purchased) excludes the
+            # S5, R-F: `spo` is the SAME `_HAS_DERIVED_SPO`-widened test `linked=spo`
+            # uses (round 2, "one rule at one seam") - a row whose own PO link has a
+            # derived SPO cover answers to it even with no real spo link at all. `po`
+            # stays the STAGE amount, since `_PURCHASED_QTY` is what nets out the
             # portion `spo` already claimed.
             if kind == "spo":
-                base = base.filter(_INCOMING_QTY > 0)
+                base = base.filter(or_(_HAS_SPO_LINK, _HAS_DERIVED_SPO))
             elif kind == "po":
                 base = base.filter(_PURCHASED_QTY > 0)
             else:
@@ -854,9 +871,20 @@ class OrderInquiryWorklistService:
         if spo_number:
             like = f"{_escape_like(spo_number)}%"
             base = base.filter(
-                _row_has_link(
-                    OrderInquiryLink.spo_allocation_id.isnot(None),
-                    OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
+                or_(
+                    _row_has_link(
+                        OrderInquiryLink.spo_allocation_id.isnot(None),
+                        OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
+                    ),
+                    # AC-F6b (round 2): the row's only REAL link is a PO, but that PO
+                    # carries a derived SPO cover (S5, R-E) whose own number starts
+                    # with the typed text - `_HAS_DERIVED_SPO`'s own join, narrowed to
+                    # this prefix rather than "any open allocation at all".
+                    _derived_spo_query(
+                        extra_where=(
+                            SPOAllocation.spo_number.ilike(like, escape=_LIKE_ESCAPE),
+                        )
+                    ).exists(),
                 )
             )
         if delivery_from:
@@ -1789,10 +1817,12 @@ class OrderInquiryWorklistService:
         fetched the list once with `limit=1000` and grouped client-side, which a
         delivery-filtered worklist has already exceeded on prod (PLAN section 0).
 
-        `qty` is the list's own quantity, unfiltered by state - a cell's figure has to
-        equal summing the list's own rows for that period (AC-X1), and the list itself
-        does not drop a cancelled row unless `state=` is asked for. `buy`/`po`/`spo` are
-        the R-F stage sums, over the same population.
+        `qty`/`rows`/the stage sums drop a CANCELLED row (AC-X5, round 2) - its
+        quantity is not owed any more, and counting it would inflate a cell nobody
+        can act on. An ACTIONED row still counts, unlike `_kinds`/`kind=` (which drops
+        both via `_NOT_OWED_STATES`): it has been answered somewhere else, but the
+        matrix is a read of what was DELIVERY-DUE in a period, not of what is still
+        outstanding, and an actioned row was still due then.
         """
         if axis not in self._MATRIX_AXES:
             raise AppException(
@@ -1817,7 +1847,11 @@ class OrderInquiryWorklistService:
                 func.count(OrderInquiryRow.id),
             )
             .filter(
-                OrderInquiryRow.delivery_date.isnot(None), axis_key.isnot(None)
+                OrderInquiryRow.delivery_date.isnot(None),
+                axis_key.isnot(None),
+                # AC-X5: cancelled is out, actioned stays - narrower than
+                # `_NOT_OWED_STATES` (which `_kinds`/`kind=` drop both by).
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
             )
             .group_by(axis_key, axis_label, period)
             .order_by(axis_label.asc(), period.asc())

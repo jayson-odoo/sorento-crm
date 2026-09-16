@@ -200,6 +200,28 @@ _SPO_LINKABLE_VERBS = _LINKABLE_VERBS
 #: The old name, for the readers that have not been renamed yet. Same tuple.
 _PLACEABLE_VERBS = _LINKABLE_VERBS
 
+
+def derived_spo_open_clauses() -> tuple:
+    """S5 (R-D/R-E, `PLAN-scm-oi-worklist-excel-parity.md`, coordinator's 16 Sep
+    addendum + round 2 ruling): the clauses an SPO allocation must pass to be a
+    DERIVED cover for a PO link's own product - open per
+    `spo_supply.open_incoming_clauses()` (line open, not received, shipment not
+    landed) AND `retired_at IS NULL` AND `allocated_quantity > coalesce(
+    quantity_received, 0)`.
+
+    Declared ONCE, at one seam, so `links_for_rows`' display entries and
+    `OrderInquiryWorklistService`'s `kind=spo` / `linked=spo` / `spo_number` filters -
+    the same rule, read from two different files - can never drift apart. The caller
+    has already joined `SPOAllocation` (matched on `from_po_number` + `product_id`)
+    and outer-joined `InboundShipment` on it; this states only the openness test.
+    """
+    return (
+        SPOAllocation.retired_at.is_(None),
+        SPOAllocation.allocated_quantity
+        > func.coalesce(SPOAllocation.quantity_received, 0),
+        *spo_supply.open_incoming_clauses(),
+    )
+
 # How the client spells each verb in the order inquiry they send today. `ALREADY_INBOUND`
 # is deliberately absent: their file writes the SPO reference itself in that column
 # (`202511-S0022`), which is the thing purchasing looks up.
@@ -2336,10 +2358,7 @@ class ProjectOrderInquiryService:
             .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
             .filter(
                 tuple_(SPOAllocation.from_po_number, SPOAllocation.product_id).in_(pairs),
-                SPOAllocation.retired_at.is_(None),
-                SPOAllocation.allocated_quantity
-                > func.coalesce(SPOAllocation.quantity_received, 0),
-                *spo_supply.open_incoming_clauses(),
+                *derived_spo_open_clauses(),
             )
             .all()
         )

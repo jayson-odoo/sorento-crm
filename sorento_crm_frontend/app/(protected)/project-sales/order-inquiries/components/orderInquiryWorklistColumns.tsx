@@ -383,25 +383,6 @@ export function useOrderInquiryWorklistColumns({
         },
       },
       {
-        accessorKey: 'inquiry_no',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Order inquiry" column={column} />
-        ),
-        size: 130,
-        meta: { headerTitle: 'Order inquiry', skeleton: <Skeleton className="h-4 w-20" /> },
-        // Which instruction this row belongs to, by the number purchasing quotes. An
-        // amendment raises a SECOND inquiry on the same sales order, so the S/O no beside
-        // it cannot answer "which one was I told about".
-        cell: ({ row }) =>
-          row.original.inquiry_no ? (
-            <span className="block truncate tabular-nums" title={row.original.inquiry_no}>
-              {row.original.inquiry_no}
-            </span>
-          ) : (
-            <Muted>Not numbered</Muted>
-          ),
-      },
-      {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,
         size: 180,
@@ -477,40 +458,6 @@ export function useOrderInquiryWorklistColumns({
           ) : (
             <Muted>Not attributed</Muted>
           ),
-      },
-      {
-        accessorKey: 'agent_code',
-        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
-        size: 110,
-        meta: { headerTitle: 'Agent', skeleton: <Skeleton className="h-4 w-14" /> },
-        // Who sold it, off the core sales order. Blank when the row reaches no core order
-        // or that order carries no agent - never a guess.
-        cell: ({ row }) =>
-          row.original.agent_code ? (
-            <span
-              className="block truncate"
-              title={row.original.agent_label || row.original.agent_code}
-            >
-              {row.original.agent_code}
-            </span>
-          ) : (
-            <Muted>Not assigned</Muted>
-          ),
-      },
-      {
-        accessorKey: 'location',
-        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
-        size: 130,
-        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
-        // Where the PO gets placed for, not where the item is bought TO. Blank when
-        // nobody has stamped a location and the line has no fulfilment warehouse either -
-        // never a dash standing in for "unknown".
-        cell: ({ row }) =>
-          row.original.location ? (
-            <span className="block truncate" title={row.original.location}>
-              {row.original.location}
-            </span>
-          ) : null,
       },
       {
         accessorKey: 'supplier',
@@ -618,6 +565,59 @@ export function useOrderInquiryWorklistColumns({
           }
           return <DocumentsCell row={row.original} kind="spo" />;
         },
+      },
+      {
+        accessorKey: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        size: 110,
+        meta: { headerTitle: 'Agent', skeleton: <Skeleton className="h-4 w-14" /> },
+        // Who sold it, off the core sales order. Blank when the row reaches no core order
+        // or that order carries no agent - never a guess.
+        cell: ({ row }) =>
+          row.original.agent_code ? (
+            <span
+              className="block truncate"
+              title={row.original.agent_label || row.original.agent_code}
+            >
+              {row.original.agent_code}
+            </span>
+          ) : (
+            <Muted>Not assigned</Muted>
+          ),
+      },
+      {
+        accessorKey: 'location',
+        header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+        size: 130,
+        meta: { headerTitle: 'Location', skeleton: <Skeleton className="h-4 w-16" /> },
+        // Where the PO gets placed for, not where the item is bought TO. Blank when
+        // nobody has stamped a location and the line has no fulfilment warehouse either -
+        // never a dash standing in for "unknown".
+        cell: ({ row }) =>
+          row.original.location ? (
+            <span className="block truncate" title={row.original.location}>
+              {row.original.location}
+            </span>
+          ) : null,
+      },
+      {
+        accessorKey: 'inquiry_no',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Order inquiry" column={column} />
+        ),
+        size: 130,
+        meta: { headerTitle: 'Order inquiry', skeleton: <Skeleton className="h-4 w-20" /> },
+        // Which instruction this row belongs to, by the number purchasing quotes. An
+        // amendment raises a SECOND inquiry on the same sales order, so the S/O no beside
+        // it cannot answer "which one was I told about".
+        cell: ({ row }) =>
+          row.original.inquiry_no ? (
+            <span className="block truncate tabular-nums" title={row.original.inquiry_no}>
+              {row.original.inquiry_no}
+            </span>
+          ) : (
+            <Muted>Not numbered</Muted>
+          ),
       },
       {
         accessorKey: 'taken_from_po',

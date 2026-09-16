@@ -287,7 +287,7 @@ describe('OrderInquiriesClient: reading the page', () => {
     expect(screen.queryByText('35 of 35')).not.toBeInTheDocument();
   });
 
-  it("reads the columns in the sheet's own order, renamed (AC-D15)", async () => {
+  it("reads the columns in the Excel's own order, renamed (AC-D15, Phase 2 round 2)", async () => {
     renderClient();
     await screen.findByText('SO385126');
 
@@ -295,21 +295,25 @@ describe('OrderInquiriesClient: reading the page', () => {
       .getAllByRole('columnheader')
       .map((cell) => cell.textContent ?? '');
     const order = [
+      // The Excel's own column order (Phase 2 round 2): SO date through PO/SPO reads
+      // the way the purchasing team already reads their sheet - Order inquiry (a
+      // number the sheet never carried) moves to the end, beside the rest of the
+      // system's own columns rather than in front of Item code.
       'SO date',
       'S/O no',
-      'Order inquiry',
       'Item code',
       'Qty',
       'Delivery date',
       'Project / customer',
-      'Agent',
-      'Location',
       'Supplier',
       // Two columns since 14 Sep, side by side, where "Outstanding PO/SPO" used to be
       // (AC-R-31). The id behind the first is still `po_number`, so a saved layout keeps
       // its place.
       'PO',
       'SPO',
+      'Agent',
+      'Location',
+      'Order inquiry',
       'Taken by PO/SPO',
       'Remaining',
       'Instruction',
