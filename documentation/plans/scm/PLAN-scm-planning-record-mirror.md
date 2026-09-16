@@ -1,6 +1,6 @@
 # PLAN - Planning record mirrors every core line on its own (no Re-sync click)
 
-Status: **APPROVED 17 Sep 2026, building.** Issue #969. UAC: `scm-planning-record-mirror-acceptance-criteria.md`.
+Status: **BUILT 17 Sep 2026, review round 2 pending (B2 ruling open).** Issue #969. UAC: `scm-planning-record-mirror-acceptance-criteria.md`.
 Owner ruling 16 Sep 2026 ("i think we should go with the fixes"): code fixes, no backfill script.
 
 ## 0. What the owner hit
@@ -39,11 +39,18 @@ Purchasing's reorder plan sees the new lines' demand as soon as the ingest lands
    (`fulfilment_planning.py:599`) and `POST /fulfilment-planning/confirm-all` (383), and the
    planning-change apply per order if it builds the same index (coder verifies; one seam inside
    the service that both routes pass through is preferred over two route-level calls).
-2. **Ingest re-mirrors.** In `_upsert_lines`, after the new core lines are inserted, if the order
-   has an adoption mirror (`projects.sales_orders.so_id = so.id`, status `adopted`), call
-   `mirror_missing_lines` for it in the same transaction. Symmetric with the prune it already does.
-   Applies to every caller of `_upsert_lines` (outstanding-book upload, AutoCount ESB ingest;
-   coder lists the callers in the PR).
+2. **Ingest re-mirrors.** Review round 1 found `_upsert_lines` has ONE caller, the manual FE edit
+   (`PUT /sales-orders/{so_id}`); the ESB push and the book upload each write core lines their
+   own way, bypassing it entirely. So the same call lands at all THREE writers, each gated on the
+   order carrying an adopted, unauthored mirror (`projects.sales_orders.so_id = so.id`,
+   `status = 'adopted'`, `project_id IS NULL`), in the same transaction as the write, symmetric
+   with the prune each already does or is adjacent to:
+   - `scm/sales_order_service.py::_upsert_lines` - the manual FE edit.
+   - `document_ingest_service.py::DocumentIngestService._sync_lines` - the AutoCount ESB push
+     (`POST /api/v1/external/ingest/sales_orders`), the true writer behind almost every
+     unmirrored line measured live (394 of 394, all `source_system = autocount`).
+   - `outstanding_import_service.py::apply` - the Excel book upload, called per order right
+     after that order's own line-create pass, not per row.
 
 No new table, no flag, no script. Existing gaps heal on the first confirm or the first ingest.
 
