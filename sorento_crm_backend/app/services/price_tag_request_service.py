@@ -1912,6 +1912,125 @@ Marketing's own work is not part of the form's payload, so it is captured
         return labels
 
     @staticmethod
+    def touched_request_ids(
+        db: Session, requests: list[PriceTagRequest]
+    ) -> set[str]:
+        """AC-D3: which of ``requests`` a cheap query says were touched since
+        their own ``data_checked_at`` (PLAN price-tag-currency-token-extract-
+        prompt.md section D).
+
+        ``data_checked_at IS NULL`` (never checked) is touched; a terminal
+        request is never touched - nothing on it can be updated, so the
+        list route has no reason to pay for its resolve. One grouped SQL over
+        every non-terminal candidate, not one query per row: ``max(...)``
+        across every table a printed tag's data comes from - the line's own
+        product, a part's own product (``diff_pin_against_live`` diffs parts
+        too), a set line's members, a set's own name, a product's spec row,
+        the line's promotion, and a product attachment - compared against the
+        column.
+
+        A deleted image link leaves no timestamp (named gap, plan section D):
+        that change surfaces on the next open of the record, not in the list.
+
+        Code review 16 Sep: the spec and promotion arms compare
+        ``GREATEST(updated_at, created_at)``, not ``updated_at`` alone -
+        ``write_spec_row`` never sets ``product_specifications.updated_at`` on
+        insert (the plan named this gap), so a freshly-derived spec row reads
+        NULL there and a real change would compare as "never moved".
+
+        Contract: ``ids`` MUST already be company-scoped by the caller (ORM
+        rows); this raw SQL adds no company predicate.
+        """
+        candidates = [
+            request
+            for request in requests
+            if not PriceTagRequestService.is_terminal(request)
+        ]
+        if not candidates:
+            return set()
+
+        from sqlalchemy import bindparam, text
+
+        ids = [str(request.id) for request in candidates]
+        checked_at = {str(request.id): request.data_checked_at for request in candidates}
+
+        sql = text(
+            """
+            WITH line_products AS (
+                SELECT l.request_id AS request_id, l.product_id AS product_id,
+                       l.promotion_id AS promotion_id
+                FROM price_tag_request_lines l
+                WHERE l.request_id IN :ids AND l.product_id IS NOT NULL
+                UNION ALL
+                SELECT l.request_id AS request_id, m.product_id AS product_id,
+                       l.promotion_id AS promotion_id
+                FROM price_tag_request_lines l
+                JOIN product_set_members m ON m.product_set_id = l.product_set_id
+                WHERE l.request_id IN :ids AND l.product_set_id IS NOT NULL
+            ),
+            moved AS (
+                SELECT request_id, MAX(moved_at) AS moved_at FROM (
+                    SELECT lp.request_id, p.updated_at AS moved_at
+                    FROM line_products lp
+                    JOIN products p ON p.id = lp.product_id
+                    UNION ALL
+                    -- Code review 16 Sep: a part's OWN product, resolved or
+                    -- picked - `diff_pin_against_live` diffs parts too, and a
+                    -- part's product is not always the line's own.
+                    SELECT l.request_id, pp.updated_at
+                    FROM price_tag_request_lines l
+                    JOIN price_tag_request_line_parts part ON part.line_id = l.id
+                    JOIN products pp ON pp.id = part.product_id
+                    WHERE l.request_id IN :ids AND part.product_id IS NOT NULL
+                    UNION ALL
+                    SELECT lp.request_id, GREATEST(ps.updated_at, ps.created_at)
+                    FROM line_products lp
+                    JOIN product_specifications ps ON ps.product_id = lp.product_id
+                    UNION ALL
+                    SELECT lp.request_id, GREATEST(pr.updated_at, pr.created_at)
+                    FROM line_products lp
+                    JOIN promotions pr ON pr.id = lp.promotion_id
+                    UNION ALL
+                    SELECT l.request_id, m.updated_at
+                    FROM price_tag_request_lines l
+                    JOIN product_set_members m ON m.product_set_id = l.product_set_id
+                    WHERE l.request_id IN :ids AND l.product_set_id IS NOT NULL
+                    UNION ALL
+                    -- Code review 16 Sep: the SET's own name/code (a rename)
+                    -- changes what `resolve_request_line_data` diffs for a
+                    -- set line, not just its members.
+                    SELECT l.request_id, ps2.updated_at
+                    FROM price_tag_request_lines l
+                    JOIN product_sets ps2 ON ps2.id = l.product_set_id
+                    WHERE l.request_id IN :ids AND l.product_set_id IS NOT NULL
+                    UNION ALL
+                    SELECT lp.request_id, pa.created_at
+                    FROM line_products lp
+                    JOIN product_attachments pa ON pa.product_id = lp.product_id
+                ) x
+                GROUP BY request_id
+            )
+            SELECT request_id, moved_at FROM moved
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+
+        moved_by_request = {
+            str(row.request_id): row.moved_at
+            for row in db.execute(sql, {"ids": ids}).all()
+        }
+
+        touched: set[str] = set()
+        for request_id in ids:
+            checked = checked_at.get(request_id)
+            if checked is None:
+                touched.add(request_id)
+                continue
+            moved_at = moved_by_request.get(request_id)
+            if moved_at is not None and moved_at > checked:
+                touched.add(request_id)
+        return touched
+
+    @staticmethod
     def list_items(db: Session, requests: list[PriceTagRequest]) -> list:
         """The listing rows the queue draws, names resolved."""
         from app.schemas.price_tag import PriceTagRequestListItem
@@ -1931,6 +2050,16 @@ Marketing's own work is not part of the form's payload, so it is captured
             for key, value in labels.get(request.id, {}).items():
                 setattr(item, key, value)
             item.has_revision_draft = str(request.id) in draft_ids
+            # Code review 16 Sep (BLOCKER): a terminal request is never
+            # "touched" (`touched_request_ids` excludes it on purpose), so
+            # nothing ever zeroes a stale stored count from before it closed
+            # - the pill would keep reading e.g. "changed - 2" on a request
+            # nothing can be updated on. Zeroed here, at read time, rather
+            # than written back: a closed request's own column stays
+            # whatever it was, which is what the transition itself did not
+            # bother to touch.
+            if PriceTagRequestService.is_terminal(request):
+                item.data_changed_tag_count = 0
             items.append(item)
         return items
 
@@ -1971,7 +2100,16 @@ Marketing's own work is not part of the form's payload, so it is captured
         # prices come off its FIRST tag - every tag on a line prints the same
         # host product, so those three are a line fact even though the rows are
         # per tag.
+        # Security review 16 Sep: the horizon is captured BEFORE the resolve,
+        # never after - see `store_data_change_count`'s own docstring.
+        checked_at = datetime.utcnow()
         rows = tag_data_service.resolve_request_line_data(db, request)
+        # AC-D2: the detail route already pays for this exact resolve, so the
+        # stored count/timestamp are refreshed here at no extra cost - the
+        # list route's own cache stays honest the moment anyone opens the
+        # record, not only on its own 30s poll.
+        tag_data_service.store_data_change_count(db, request, rows, checked_at)
+        db.commit()
         by_tag = {row["tag_id"]: row for row in rows}
         first_by_line: dict[str, dict] = {}
         for row in rows:

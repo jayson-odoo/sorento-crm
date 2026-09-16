@@ -14,15 +14,29 @@ import React, { type ReactElement } from 'react';
 import { render, type RenderOptions, type RenderResult } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-export function renderWithQueryClient(
-  ui: ReactElement,
-  options?: RenderOptions,
-): RenderResult {
-  const client = new QueryClient({
+/** One client factory, so a hook test and a component test build the exact
+ *  same defaults (`retry: false`) and never drift apart. */
+export function createTestQueryClient(): QueryClient {
+  return new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
-  return render(
+}
+
+/**
+ * `queryClient` rides along on the return value (additive - every existing
+ * destructure of a `RenderResult` field is untouched) so a poll-driven test
+ * can push new data into the cache (`invalidateQueries`) without remounting
+ * the component under test, which is the whole point of testing a poll.
+ */
+export function renderWithQueryClient(
+  ui: ReactElement,
+  options?: RenderOptions & { queryClient?: QueryClient },
+): RenderResult & { queryClient: QueryClient } {
+  const { queryClient: provided, ...renderOptions } = options ?? {};
+  const client = provided ?? createTestQueryClient();
+  const result = render(
     <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
-    options,
+    renderOptions,
   );
+  return { ...result, queryClient: client };
 }
