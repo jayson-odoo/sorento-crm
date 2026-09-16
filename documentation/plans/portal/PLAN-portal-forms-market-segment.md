@@ -1,6 +1,6 @@
 # PLAN - Portal forms: grant by market segment, every kind gated, per-contact override for all five
 
-Status: r4, 16 Sep 2026: PR #963 draft, review fix round in progress (r2 owner lavish ruling: base default = four legacy kinds; r3 D7; r4 expand-contract D4)
+Status: r4, 16 Sep 2026: PR #963 ready for review (reviewer + security closed, browser pass green), awaiting owner test on :3082 then merge
 UAC: `documentation/plans/portal/portal-forms-market-segment-acceptance-criteria.md`
 Branch: `feat/portal-forms-market-segment`, worktree `.claude/worktrees/portal-forms-market-segment`
 Lane stack: FE :3080, BE :8080, DB `sorento_pfms` (clone of the dev DB, see Lane setup)

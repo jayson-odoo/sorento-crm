@@ -1,7 +1,7 @@
 # UAC - Portal forms: grant by market segment, every kind gated, per-contact override for all five
 
 Plan: `documentation/plans/portal/PLAN-portal-forms-market-segment.md`
-Status: r4, 16 Sep 2026: PR #963 draft, review fix round (r2 base default = four legacy kinds; r4 expand-only migration)
+Status: r4, 16 Sep 2026: PR #963 ready for review (reviewer + security closed, browser pass green), awaiting owner test on :3082 then merge
 
 ## Journey
 
