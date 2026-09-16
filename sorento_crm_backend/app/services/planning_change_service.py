@@ -2034,7 +2034,7 @@ def compose_row_state(
     suggestion = compose_suggestion(kind, held, proposal, facts)
     # PRE-FILLED (Slice C contract A): Confirm posts this unchanged and Amend edits it, so
     # the composition a row shows is the one it will actually post. `set_row_decision`
-    # still validates it against the line's open quantity when the decision is taken.
+    # still validates it against the line's plan quantity when the decision is taken.
     composition = composition_from_proposal(proposal) or None
     return proposal, suggestion, composition
 
@@ -2439,12 +2439,14 @@ def list_batches(
 
 
 def _row_open_qty(row: PlanningChangeRow) -> Decimal:
-    """What the line's composition must sum to - the SAME figure the board's own editor
-    balances against (`amendDraftFrom`'s `open_qty`): the proposal's own outstanding
-    quantity when there is one, else the row's own new quantity."""
+    """What the line's composition must sum to - the PLAN quantity, the same figure every
+    other arm reads (the board, `project_fulfilment_board_service.py:1430`; the apply
+    recheck, `project_supply_service.py:4781` seeded by `plan_qty_of` at `:7462`): the
+    proposal's own `qty` when there is one, else the row's own new quantity. NOT
+    `qty_outstanding` (what is owed the customer) - a partly delivered line is asked for
+    its whole plan quantity, not what is left to deliver (PLAN-scm-planning-change-plan-qty,
+    issue #971)."""
     proposal = row.proposal_json or {}
-    if proposal.get("qty_outstanding") is not None:
-        return _dec(proposal.get("qty_outstanding"))
     if proposal.get("qty") is not None:
         return _dec(proposal.get("qty"))
     return _dec((row.to_json or {}).get("qty"))
@@ -2504,11 +2506,9 @@ def composition_from_proposal(proposal: Optional[dict]) -> dict:
             qty_text(borrow_qty),
             proposal.get("key") or project_line_id,
         )
-    owed = _dec(
-        proposal.get("qty_outstanding")
-        if proposal.get("qty_outstanding") is not None
-        else proposal.get("qty")
-    )
+    # The plan quantity (`_row_open_qty`'s own reading, issue #971) - not `qty_outstanding`
+    # (what is owed the customer). Only used when `qty_proposed_buy` is absent.
+    owed = _dec(proposal.get("qty"))
     buy_raw = proposal.get("qty_proposed_buy")
     buy = (
         _dec(buy_raw) if buy_raw is not None

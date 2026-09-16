@@ -1,0 +1,250 @@
+"""Seed the order inquiry handover email to purchasing (PLAN-scm-oi-handover-email.md,
+AC-H13/AC-H14).
+
+The parallel run starts at go-live (17 Sep): CS keeps sending the manual mail while
+purchasing also gets one shaped like it, from an Automation row an admin can switch off
+(untick Enabled) the moment the manual mail retires. Seeded ENABLED, unlike the
+purchase-request/sponsorship-approved automations before it (R9, owner ruling 16 Sep) -
+this one has to run from day one for the comparison to mean anything.
+
+Idempotent by ``email_templates.code`` and ``(trigger_type, name)``, same shape as
+``212_seed_pr_sponsorship_approved_automation``: a re-run of this revision SKIPS both
+rows when they already exist (review round 2 ruling) - Alembic never re-runs an applied
+revision, so the only way this branch is reached is a genuinely fresh database or a
+`stamp` back before this one, and an UPDATE there could only overwrite an admin's own
+hand edit, never deliver a fix (a body/config fix ships as its own migration).
+``role_ids`` seeds every role whose slug starts with ``purchasing`` - empty on a
+database with none (CI's blank schema).
+
+Revision ID: oihe_0001_seed_handover
+Revises: ptag_0012_seg_forms
+Create Date: 2026-09-16
+"""
+from __future__ import annotations
+
+import json
+
+import sqlalchemy as sa
+from alembic import op
+
+
+revision = "oihe_0001_seed_handover"
+down_revision = "ptag_0012_seg_forms"
+branch_labels = None
+depends_on = None
+
+
+TEMPLATE_CODE = "order_inquiry_handover_default"
+AUTOMATION_NAME = "Order inquiry to purchasing"
+TRIGGER_TYPE = "order_inquiry_handover"
+
+_SUBJECT = "OI: {{ handover.subject_scope }}"
+
+# Inline, because a mail client carries no stylesheet (production-copy render finding,
+# 16 Sep: a body with only `border-collapse` on the `<table>` and nothing on any cell
+# rendered as a squashed, borderless grid in both the recipient's client and the
+# outbox preview).
+_TH_STYLE = "border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;"
+_TD_STYLE = "border:1px solid #d0d0d5;padding:4px 8px;"
+_TABLE_STYLE = "border-collapse:collapse;font-family:Arial, sans-serif;font-size:13px;"
+
+_BODY_HTML = """\
+<p style="color:#b91c1c;font-weight:bold;">{{ handover.headline }}</p>
+<table style="__TABLE_STYLE__">
+  <thead>
+    <tr><th style="__TH_STYLE__">S/O NO</th><th style="__TH_STYLE__">CUSTOMER</th><th style="__TH_STYLE__">PROJECT</th></tr>
+  </thead>
+  <tbody>
+    {% for order in handover.orders %}
+    <tr>
+      <td style="__TD_STYLE__">{{ order.so_number | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ order.customer | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ order.project | default("", true) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<table style="__TABLE_STYLE__margin-top:12px;">
+  <thead>
+    <tr>
+      <th style="__TH_STYLE__">SO DATE</th><th style="__TH_STYLE__">S/O NO</th><th style="__TH_STYLE__">CUSTOMER</th><th style="__TH_STYLE__">PROJECT</th>
+      <th style="__TH_STYLE__">ITEM CODE</th><th style="__TH_STYLE__">QTY</th><th style="__TH_STYLE__">DELIVERY DATE</th><th style="__TH_STYLE__">REMARK</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for line in handover.lines %}
+    <tr>
+      <td style="__TD_STYLE__">{{ line.so_date | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.so_number | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.customer | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.project | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.item_code | default("", true) }}</td>
+      <td style="__TD_STYLE__">{% if line.was and line.was.qty %}<s>{{ line.was.qty }}</s> {% endif %}{{ line.qty | default("", true) }}</td>
+      <td style="__TD_STYLE__">{% if line.was and line.was.delivery_date %}<s>{{ line.was.delivery_date }}</s> {% endif %}{{ line.delivery_date | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.remark | default("", true) }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p>Raised by {{ actor.name if actor else '-' }}{% if actor %} ({{ actor.email }}){% endif %} on {{ today }}.</p>
+<p><a href="{{ handover.link }}">Open in Order Inquiries</a></p>
+""".replace("__TABLE_STYLE__", _TABLE_STYLE).replace("__TH_STYLE__", _TH_STYLE).replace(
+    "__TD_STYLE__", _TD_STYLE
+)
+
+_BODY_TEXT = """\
+{{ handover.headline }}
+
+{% for order in handover.orders %}{{ order.so_number | default("", true) }}{% if order.customer %} - {{ order.customer }}{% endif %}{% if order.project %} - {{ order.project }}{% endif %}
+{% endfor %}
+SO DATE | S/O NO | CUSTOMER | PROJECT | ITEM CODE | QTY | DELIVERY DATE | REMARK
+{% for line in handover.lines %}{{ line.so_date | default("", true) }} | {{ line.so_number | default("", true) }} | {{ line.customer | default("", true) }} | {{ line.project | default("", true) }} | {{ line.item_code | default("", true) }} | {% if line.was and line.was.qty %}{{ line.qty }} (was {{ line.was.qty }}){% else %}{{ line.qty | default("", true) }}{% endif %} | {% if line.was and line.was.delivery_date %}{{ line.delivery_date }} (was {{ line.was.delivery_date }}){% else %}{{ line.delivery_date | default("", true) }}{% endif %} | {{ line.remark | default("", true) }}
+{% endfor %}
+Raised by {{ actor.name if actor else '-' }} on {{ today }}.
+Open: {{ handover.link }}
+"""
+
+
+def _seed_template(bind) -> None:
+    existing = bind.execute(
+        sa.text("SELECT id FROM email_templates WHERE code = :code"),
+        {"code": TEMPLATE_CODE},
+    ).first()
+    if existing:
+        # Skip, not UPDATE (review round 2 ruling, AC-H13): Alembic never re-runs an
+        # applied revision, so this branch is only reached by a genuine RE-RUN (a fresh
+        # database, or a `stamp` back to before this revision) - an UPDATE here could
+        # only ever overwrite an admin's own hand edit to the template on that re-stamp,
+        # never deliver a fix (a fix to THIS body ships as its own migration).
+        return
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO email_templates (id, code, name, description, subject, body_html, body_text, is_active)
+            VALUES (gen_random_uuid(), :code, :name, :description, :subject, :body_html, :body_text, true)
+            """
+        ),
+        {
+            "code": TEMPLATE_CODE,
+            "name": "Order Inquiry Handover to Purchasing (default)",
+            "description": (
+                "Shaped like the manual handover mail CS sends purchasing: SO table, "
+                "line table, changes struck through in the cell."
+            ),
+            "subject": _SUBJECT,
+            "body_html": _BODY_HTML,
+            "body_text": _BODY_TEXT,
+        },
+    )
+
+
+def _seed_automation(bind) -> None:
+    existing = bind.execute(
+        sa.text(
+            "SELECT id FROM automations WHERE trigger_type = :tt AND name = :name"
+        ),
+        {"tt": TRIGGER_TYPE, "name": AUTOMATION_NAME},
+    ).first()
+    if existing:
+        # Skip, not UPDATE (review round 2 ruling, AC-H13, same reasoning as
+        # `_seed_template` above): Alembic never re-runs an applied revision, so an
+        # UPDATE here could only overwrite an admin's own hand edit to
+        # `recipient_config` on a re-stamp, never deliver a fix.
+        return
+
+    template_row = bind.execute(
+        sa.text("SELECT id FROM email_templates WHERE code = :code"),
+        {"code": TEMPLATE_CODE},
+    ).first()
+    if template_row is None:
+        # Should not happen - _seed_template runs first in upgrade().
+        return
+    template_id = template_row[0]
+
+    role_ids = [
+        row[0]
+        for row in bind.execute(
+            sa.text(
+                "SELECT id FROM user_roles WHERE slug LIKE 'purchasing%' "
+                "AND is_trashed = false"
+            )
+        ).fetchall()
+    ]
+    recipient_config = json.dumps(
+        {
+            "user_ids": [],
+            "role_ids": [str(r) for r in role_ids],
+            "extra_emails": [],
+            "include_actor": True,
+            # R5: the manual mail's shape - one email, purchasing plus the raiser on
+            # one thread, not one copy per address (AC-H26).
+            "one_email": True,
+        }
+    )
+
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO automations (
+                id, name, description, enabled,
+                trigger_type, trigger_config,
+                action_type, email_template_id,
+                recipient_config, group_matches,
+                schedule_type, timezone
+            )
+            VALUES (
+                gen_random_uuid(), :name, :description, true,
+                :trigger_type, '{}'::jsonb,
+                'send_email', :template_id,
+                CAST(:recipient_config AS jsonb), false,
+                'manual', 'Asia/Kuala_Lumpur'
+            )
+            """
+        ),
+        {
+            "name": AUTOMATION_NAME,
+            "description": (
+                "Parallel run (go-live 17 Sep): mails purchasing whenever CS raises, "
+                "settles or cancels order inquiry rows in one write, shaped like the "
+                "manual mail it is being compared against. Untick Enabled to retire "
+                "the comparison."
+            ),
+            "trigger_type": TRIGGER_TYPE,
+            "template_id": template_id,
+            "recipient_config": recipient_config,
+        },
+    )
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    _seed_template(bind)
+    _seed_automation(bind)
+
+
+def downgrade() -> None:
+    bind = op.get_bind()
+    bind.execute(
+        sa.text(
+            "DELETE FROM automations WHERE trigger_type = :tt AND name = :name"
+        ),
+        {"tt": TRIGGER_TYPE, "name": AUTOMATION_NAME},
+    )
+    # Only when nothing else references it (review round 1 nit): `automations.
+    # email_template_id` is `ON DELETE RESTRICT`, and an admin may have pointed a second,
+    # unrelated automation at this same default template after deploy - deleting it
+    # unconditionally would fail the downgrade on that FK rather than leave the template
+    # behind for whoever is still using it.
+    bind.execute(
+        sa.text(
+            """
+            DELETE FROM email_templates
+            WHERE code = :code
+              AND NOT EXISTS (
+                  SELECT 1 FROM automations
+                  WHERE automations.email_template_id = email_templates.id
+              )
+            """
+        ),
+        {"code": TEMPLATE_CODE},
+    )

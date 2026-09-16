@@ -75,13 +75,14 @@ STILL_OUTSIDE = date.today() + timedelta(days=45)
 
 
 def _seed_order(db, company_id, project, product, warehouse, *, qty, required_date,
-                 so_number=None):
+                 so_number=None, qty_delivered="0"):
     core_so = _core_so(db, company_id)
     if so_number:
         core_so.so_number = so_number
         db.flush()
     core_line = _core_line(
-        db, core_so, product, warehouse, qty_ordered=qty, required_date=required_date,
+        db, core_so, product, warehouse, qty_ordered=qty, qty_delivered=qty_delivered,
+        required_date=required_date,
     )
     order = _project_so(db, project, so_id=core_so.id)
     # `_so_number` (planning_change_service.py) reads `order.autocount_doc_no or
@@ -97,13 +98,21 @@ def _seed_order(db, company_id, project, product, warehouse, *, qty, required_da
     return order, line, core_so, core_line
 
 
-def _held_buy_world(db, *, qty="134", required_date=NON_IMMEDIATE):
-    """A held Buy, raised ORDER row, on one line - S1's own starting shape."""
+def _held_buy_world(db, *, qty="134", required_date=NON_IMMEDIATE, qty_delivered="0"):
+    """A held Buy, raised ORDER row, on one line - S1's own starting shape.
+
+    `qty_delivered` (default "0", S1's own shape): PQ7
+    (`documentation/plans/scm/PLAN-scm-planning-change-plan-qty.md`, issue #971) needs the
+    SAME held-Buy shape on a line ALREADY partly delivered, to prove the confirm/amend path
+    still balances against the plan quantity rather than what is left owed. The initial
+    confirm still buys the WHOLE `qty` regardless: `ProjectSupplyService.confirm` validates
+    against the plan quantity, not the owed one, since the 14 September ruling."""
     company_id, actor, project, product = _world(db)
     _group, sites = _group_sites(db)
     own, pool = sites["BRW"]
     order, line, core_so, core_line = _seed_order(
         db, company_id, project, product, own, qty=qty, required_date=required_date,
+        qty_delivered=qty_delivered,
     )
     ProjectSupplyService(db).confirm(
         order,
@@ -125,16 +134,19 @@ def _held_buy_world(db, *, qty="134", required_date=NON_IMMEDIATE):
     }
 
 
-def _held_reserve_world(db, *, qty="134", required_date=NON_IMMEDIATE):
+def _held_reserve_world(db, *, qty="134", required_date=NON_IMMEDIATE, qty_delivered="0"):
     """A held Use-own (Reserve) line, no inquiry row raised - AC-B4's starting shape.
     Seeds exactly `qty` of own stock so the confirm has precisely enough to hold, the way
     S1's own "Use own X" shape would (any more and a later top-up test's "free stock"
-    figure would quietly include some of THIS seed)."""
+    figure would quietly include some of THIS seed).
+
+    `qty_delivered` (default "0"): PQ7's amend variant, see `_held_buy_world`'s own note."""
     company_id, actor, project, product = _world(db)
     _group, sites = _group_sites(db)
     own, pool = sites["BRW"]
     order, line, core_so, core_line = _seed_order(
         db, company_id, project, product, own, qty=qty, required_date=required_date,
+        qty_delivered=qty_delivered,
     )
     _stock(db, product, own, on_hand=qty)
     ProjectSupplyService(db).confirm(
@@ -313,6 +325,47 @@ def test_apply_of_a_qty_up_tops_up_the_same_inquiry_row():
             s for s in decision.line_snapshots if s["project_line_id"] == str(world["line"].id)
         )
         assert Decimal(snapshot["buy_qty"]) == Decimal("234"), snapshot
+
+
+# --------------------------------------------------------------------------- #
+# AC-PQ7 (`PLAN-scm-planning-change-plan-qty.md`, issue #971): the same confirm-and-apply
+# flow, on a line already carrying a delivery. A DELIVERED-VARIANT SIBLING rather than a
+# blind `qty_delivered in (0, 638)` parametrize over the test above: its own 134/234 are
+# too small to admit a real delivery of 638 without a "delivered more than ordered" edge,
+# so this scales the same shape up (700 -> 900) to keep 638 a genuine PARTIAL delivery.
+# --------------------------------------------------------------------------- #
+
+def test_apply_of_a_qty_up_tops_up_the_same_inquiry_row_when_partly_delivered():
+    """PQ7: `qty_delivered=638` on a held Buy line held at 700, book-changed to 900 (owed
+    62 before the change, 262 after; plan 900 throughout). `_row_open_qty`'s bug (PLAN
+    section 1) reads the OWED quantity rather than the plan one, so pre-fix
+    `_confirm_and_apply` raises `AppException` (422 `planning_change_composition_
+    mismatch`) confirming this row instead of reaching the assertions below."""
+    with blank_session() as db:
+        world = _held_buy_world(db, qty="700", qty_delivered="638")
+        original_row_id = world["order_row_id"]
+        batch = _change_and_batch(db, world, new_qty="900")
+        assert batch is not None
+
+        result = _confirm_and_apply(db, world, batch)
+        assert result["failed_orders"] == [], result["failed_orders"]
+
+        live_rows = _live_order_rows(db, world["line"].id)
+        assert len(live_rows) == 1, [str(r.id) for r in live_rows]
+        live_row = live_rows[0]
+        assert str(live_row.id) == original_row_id, (
+            str(live_row.id), original_row_id,
+        )
+        assert live_row.qty == Decimal("900")
+        assert live_row.previous_qty == Decimal("700")
+        assert live_row.note and "Was 700" in live_row.note
+        assert live_row.state == "raised"
+
+        decision = _active_decision(db, world["order"].id)
+        snapshot = next(
+            s for s in decision.line_snapshots if s["project_line_id"] == str(world["line"].id)
+        )
+        assert Decimal(snapshot["buy_qty"]) == Decimal("900"), snapshot
 
 
 # --------------------------------------------------------------------------- #
@@ -694,6 +747,49 @@ def test_an_amended_reserve_posted_with_no_location_key_reads_back_carrying_one(
                         "project_line_id": str(world["line"].id),
                         "reserve": [
                             {"warehouse_id": str(world["own"].id), "qty": "149"}
+                        ],
+                    },
+                },
+            )
+        finally:
+            _restore(originals)
+        assert response.status_code == 200, response.text
+
+        wire_composition = response.json()["composition"]
+        assert wire_composition["reserve"][0]["location"] == world["own"].warehouse_code, (
+            wire_composition
+        )
+
+
+# --------------------------------------------------------------------------- #
+# AC-PQ7 (`PLAN-scm-planning-change-plan-qty.md`, issue #971): the same amend-route shape
+# as the test above, on a line already carrying a delivery. A DELIVERED-VARIANT SIBLING
+# for the same reason `test_apply_of_a_qty_up_tops_up_the_same_inquiry_row_when_partly_
+# delivered` is one, not a parametrize over the test above.
+# --------------------------------------------------------------------------- #
+
+def test_an_amended_reserve_posted_with_no_location_key_reads_back_carrying_one_when_partly_delivered():
+    """PQ7: `qty_delivered=638` on a held Reserve line held at 700, book-changed to 900
+    (owed 262 after the change, plan 900). The composition must add up to the PLAN
+    quantity (900), not the owed one (262) - pre-fix `_row_open_qty` reads the owed one and
+    this amendment is refused with a mismatch instead of reaching the 200 below."""
+    from tests.test_planning_changes import BASE, _client, _restore
+
+    with blank_session() as db:
+        world = _held_reserve_world(db, qty="700", qty_delivered="638")
+        batch = _change_and_batch(db, world, new_qty="900")
+        row = _only_row(db, batch)
+
+        client, originals = _client(db, world["actor"])
+        try:
+            response = client.put(
+                f"{BASE}/planning-changes/{batch.id}/rows/{row.id}",
+                json={
+                    "decision": "amend",
+                    "composition": {
+                        "project_line_id": str(world["line"].id),
+                        "reserve": [
+                            {"warehouse_id": str(world["own"].id), "qty": "900"}
                         ],
                     },
                 },
