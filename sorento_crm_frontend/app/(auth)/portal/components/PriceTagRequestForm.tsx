@@ -277,25 +277,33 @@ function formatRM(value: number | null | undefined): string {
 }
 
 /** AC-S1-10: a submitted line's List price, read straight off what the
- *  server resolved - shared between the desktop `<td>` column and the
- *  mobile stack under the Item cell (never both at once, see `isMobile`). */
-function viewListPriceCell(line: PriceTagRequestLine) {
+ *  server resolved - shared between the desktop `<td>` column (no label -
+ *  the header already names it) and the mobile stack under the Item cell
+ *  (label kept there, no header to read it off). Never both at once, see
+ *  `isMobile`. */
+function viewListPriceCell(line: PriceTagRequestLine, withLabel: boolean) {
   return (
     <div>
-      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-        List price
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          List price
+        </div>
+      )}
+      <div className="text-sm font-medium whitespace-nowrap">
+        {formatRM(line.list_price)}
       </div>
-      <div className="text-sm font-medium">{formatRM(line.list_price)}</div>
     </div>
   );
 }
 
-function viewPromotionCell(line: PriceTagRequestLine) {
+function viewPromotionCell(line: PriceTagRequestLine, withLabel: boolean) {
   return (
     <div>
-      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-        Promotion
-      </div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Promotion
+        </div>
+      )}
       <div className="text-sm font-medium">
         {line.promotion_name ??
           (line.sell_price_basis === 'manual' ? 'Manual price' : '-')}
@@ -304,13 +312,17 @@ function viewPromotionCell(line: PriceTagRequestLine) {
   );
 }
 
-function viewSellingPriceCell(line: PriceTagRequestLine) {
+function viewSellingPriceCell(line: PriceTagRequestLine, withLabel: boolean) {
   return (
     <div>
-      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-        Selling price
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Selling price
+        </div>
+      )}
+      <div className="text-sm font-medium whitespace-nowrap">
+        {formatRM(line.sell_price)}
       </div>
-      <div className="text-sm font-medium">{formatRM(line.sell_price)}</div>
     </div>
   );
 }
@@ -2089,25 +2101,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                       data-testid="line-pricing-stack"
                                       className="mt-2 flex flex-wrap items-center gap-4 border-l-2 border-border pl-3"
                                     >
-                                      {viewListPriceCell(line)}
-                                      {viewSelling && viewPromotionCell(line)}
-                                      {viewSelling && viewSellingPriceCell(line)}
+                                      {viewListPriceCell(line, true)}
+                                      {viewSelling && viewPromotionCell(line, true)}
+                                      {viewSelling && viewSellingPriceCell(line, true)}
                                     </div>
                                   )}
                                 </td>
                                 <td className="px-2 py-2">{line.quantity}</td>
                                 {!isMobile && (
                                   <td className="px-2 py-2">
-                                    {hasPricing ? viewListPriceCell(line) : null}
+                                    {hasPricing ? viewListPriceCell(line, false) : null}
                                   </td>
                                 )}
                                 {!isMobile && viewSelling && (
                                   <>
                                     <td className="px-2 py-2">
-                                      {hasPricing ? viewPromotionCell(line) : null}
+                                      {hasPricing ? viewPromotionCell(line, false) : null}
                                     </td>
                                     <td className="px-2 py-2">
-                                      {hasPricing ? viewSellingPriceCell(line) : null}
+                                      {hasPricing ? viewSellingPriceCell(line, false) : null}
                                     </td>
                                   </>
                                 )}
@@ -2549,7 +2561,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                         isMobile
                           ? 'w-[35%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[18%] px-2 py-2 text-left'
+                            ? 'w-[15%] px-2 py-2 text-left'
                             : 'w-[28%] px-2 py-2 text-left'
                       }
                     >
@@ -2560,7 +2572,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                         isMobile
                           ? 'w-[12%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[7%] px-2 py-2 text-left'
+                            ? 'w-[6%] px-2 py-2 text-left'
                             : 'w-[10%] px-2 py-2 text-left'
                       }
                     >
@@ -2570,8 +2582,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       <th
                         className={
                           priceMode === 'selling'
-                            ? 'w-[8%] px-2 py-2 text-left'
-                            : 'w-[12%] px-2 py-2 text-left'
+                            ? 'w-[13%] px-2 py-2 text-left'
+                            : 'w-[14%] px-2 py-2 text-left'
                         }
                       >
                         List price
@@ -2579,8 +2591,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                     )}
                     {!isMobile && priceMode === 'selling' && (
                       <>
-                        <th className="w-[17%] px-2 py-2 text-left">Promotion</th>
-                        <th className="w-[10%] px-2 py-2 text-left">Selling price</th>
+                        <th className="w-[14%] px-2 py-2 text-left">Promotion</th>
+                        <th className="w-[12%] px-2 py-2 text-left">Selling price</th>
                       </>
                     )}
                     <th
@@ -2589,7 +2601,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           ? 'w-[33%] px-2 py-2 text-left'
                           : priceMode === 'selling'
                             ? 'w-[20%] px-2 py-2 text-left'
-                            : 'w-[30%] px-2 py-2 text-left'
+                            : 'w-[28%] px-2 py-2 text-left'
                       }
                     >
                       Remarks
@@ -3048,24 +3060,36 @@ function LineRow({
   // render at once, so nothing duplicates in the DOM.
   const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
 
-  const listPriceCell = (
+  // Owner polish after #948: the desktop `<td>` already sits under a
+  // "List price"/"Promotion"/"Selling price" header, so its cell holds only
+  // the value/control - the label stays only on the mobile stack, which has
+  // no header to read it off. `withLabel` picks between the two; the amount
+  // is `whitespace-nowrap` so "RM 1,350" never breaks mid-string, and the
+  // "+ option" hint gets its own line rather than fighting it for room.
+  const renderListPriceCell = (withLabel: boolean) => (
     <div>
-      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-        List price
-      </div>
-      <div className="text-sm font-medium">
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          List price
+        </div>
+      )}
+      <div className="text-sm font-medium whitespace-nowrap">
         {formatRM(pricing?.list_price)}
-        {hasOpenGroup(line) ? (
-          <span className="ml-1 text-xs text-muted-foreground">+ option</span>
-        ) : null}
       </div>
+      {hasOpenGroup(line) ? (
+        <div className="text-xs text-muted-foreground">+ option</div>
+      ) : null}
     </div>
   );
 
-  const promotionCell = (
+  const renderPromotionCell = (withLabel: boolean) => (
     <div>
       <Label
-        className="text-2xs uppercase tracking-wide text-muted-foreground"
+        className={
+          withLabel
+            ? 'text-2xs uppercase tracking-wide text-muted-foreground'
+            : 'sr-only'
+        }
         htmlFor={`promotion-${line.key}`}
       >
         Promotion
@@ -3084,14 +3108,16 @@ function LineRow({
     </div>
   );
 
-  const sellingPriceCell = (
+  const renderSellingPriceCell = (withLabel: boolean) => (
     <div>
-      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-        Selling price
-      </div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Selling price
+        </div>
+      )}
       {line.promotion_id ? (
         <div
-          className="text-sm font-medium"
+          className="text-sm font-medium whitespace-nowrap"
           title={partsAtListTitle(line, pricing)}
         >
           {formatRM(pricing?.sell_price)}
@@ -3141,13 +3167,13 @@ function LineRow({
               data-testid="line-pricing-stack"
               className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
             >
-              <div className="min-w-[110px]">{listPriceCell}</div>
+              <div className="min-w-[110px]">{renderListPriceCell(true)}</div>
               {priceMode === 'selling' && (
                 <>
                   <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
-                    {promotionCell}
+                    {renderPromotionCell(true)}
                   </div>
-                  <div className="min-w-[110px]">{sellingPriceCell}</div>
+                  <div className="min-w-[110px]">{renderSellingPriceCell(true)}</div>
                 </>
               )}
             </div>
@@ -3168,12 +3194,18 @@ function LineRow({
           />
         </td>
         {!isMobile && (
-          <td className="px-2 py-2">{showPricing ? listPriceCell : null}</td>
+          <td className="px-2 py-2">
+            {showPricing ? renderListPriceCell(false) : null}
+          </td>
         )}
         {!isMobile && priceMode === 'selling' && (
           <>
-            <td className="px-2 py-2">{showPricing ? promotionCell : null}</td>
-            <td className="px-2 py-2">{showPricing ? sellingPriceCell : null}</td>
+            <td className="px-2 py-2">
+              {showPricing ? renderPromotionCell(false) : null}
+            </td>
+            <td className="px-2 py-2">
+              {showPricing ? renderSellingPriceCell(false) : null}
+            </td>
           </>
         )}
         <td className="px-2 py-2">

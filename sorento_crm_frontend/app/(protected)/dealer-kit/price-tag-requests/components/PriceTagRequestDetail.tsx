@@ -1069,11 +1069,20 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         // (`showPriceColumns`/`isMobile` pick exactly one).
                         const hasLinePricing =
                           line.line_type === 'product' && !!line.product_id;
-                        const promotionCell = (
+                        // Owner polish after #948: the desktop `<td>` sits
+                        // under a "Promotion"/"Selling price" header, so its
+                        // cell holds only the value/control - the label
+                        // stays only on the mobile stack, which has no
+                        // header to read it off.
+                        const renderPromotionCell = (withLabel: boolean) => (
                           <div className="min-w-[200px] flex-1 sm:max-w-[280px]">
                             <Label
                               htmlFor={`promotion-${line.id}`}
-                              className="text-2xs uppercase tracking-wide text-muted-foreground"
+                              className={
+                                withLabel
+                                  ? 'text-2xs uppercase tracking-wide text-muted-foreground'
+                                  : 'sr-only'
+                              }
                             >
                               Promotion
                             </Label>
@@ -1108,13 +1117,15 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                             )}
                           </div>
                         );
-                        const sellingPriceDetailCell = (
+                        const renderSellingPriceCell = (withLabel: boolean) => (
                           <div className="min-w-[140px]">
-                            <Label className="text-2xs uppercase tracking-wide text-muted-foreground">
-                              Selling price
-                            </Label>
+                            {withLabel && (
+                              <Label className="text-2xs uppercase tracking-wide text-muted-foreground">
+                                Selling price
+                              </Label>
+                            )}
                             {effectivePromotionId(line.id) ? (
-                              <p className="text-sm font-medium">
+                              <p className="text-sm font-medium whitespace-nowrap">
                                 RM{' '}
                                 {(
                                   linePricing[line.id]?.sell_price ?? 0
@@ -1202,8 +1213,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                     data-testid="line-pricing-stack"
                                     className="mt-2 flex flex-wrap items-center gap-4 border-l-2 border-border pl-3"
                                   >
-                                    {promotionCell}
-                                    {sellingPriceDetailCell}
+                                    {renderPromotionCell(true)}
+                                    {renderSellingPriceCell(true)}
                                   </div>
                                 )}
                               </td>
@@ -1246,10 +1257,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                               {showPriceColumns && (
                                 <>
                                   <td className="py-2 pr-3 align-top">
-                                    {hasLinePricing ? promotionCell : null}
+                                    {hasLinePricing ? renderPromotionCell(false) : null}
                                   </td>
                                   <td className="py-2 pr-3 text-right align-top">
-                                    {hasLinePricing ? sellingPriceDetailCell : null}
+                                    {hasLinePricing ? renderSellingPriceCell(false) : null}
                                   </td>
                                 </>
                               )}
