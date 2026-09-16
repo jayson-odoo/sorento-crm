@@ -202,6 +202,12 @@ class ShippingOrderIngestService(MasterRefResolver):
         # refresh commits, which would land half a batch and defeat the dry-run
         # rollback.
         self.shipment_ids_touched: set[str] = set()
+        # S5 (`PLAN-oi-replan-received-links.md`): every SPO allocation whose
+        # `from_so_line_ref` changed on THIS push - the same shape and the same
+        # reader (`follow_book_repairing`) as `DocumentIngestService.ref_moves`.
+        # `_write_row` captures an in-place move; `_supersede_xlsx_rows` records
+        # the superseded (xlsx-era) row's ref against the NEW allocation it made.
+        self.ref_moves: list[dict[str, Optional[str]]] = []
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -432,6 +438,22 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # the push states LESS than already arrived, and the max
                     # rule would keep the higher stored statement anyway.
                     continue
+                # S5: capture the move BEFORE `_write_row` overwrites `row`'s
+                # own value - the in-place repush half of AC-RL-42. Presence,
+                # never truthiness (`"from_so_line_ref" in values`), so an
+                # explicit `null` is captured too.
+                if "from_so_line_ref" in values:
+                    old_ref = row.from_so_line_ref
+                    new_ref = values["from_so_line_ref"]
+                    if old_ref != new_ref:
+                        self.ref_moves.append(
+                            {
+                                "target_kind": "spo",
+                                "target_id": str(row.id),
+                                "old_ref": old_ref,
+                                "new_ref": new_ref,
+                            }
+                        )
                 self._write_row(
                     row, values, force_closed,
                     container_number=container_number, warnings=warnings,
@@ -1082,6 +1104,22 @@ class ShippingOrderIngestService(MasterRefResolver):
                 consumed.add(line_plan.index)
                 if target is None:
                     target = row
+                    # S5 (`PLAN-oi-replan-received-links.md`): the superseded
+                    # (xlsx-era) rows never carried a ref - `old_ref` is null -
+                    # so this records THIS push's own ref against the NEW row
+                    # `repoint_allocation_dependants` below is about to move
+                    # every dependant onto, including our own order-inquiry
+                    # links. `follow_book_repairing` reads it the same way as
+                    # an in-place move; presence, never truthiness.
+                    if "from_so_line_ref" in values:
+                        self.ref_moves.append(
+                            {
+                                "target_kind": "spo",
+                                "target_id": str(row.id),
+                                "old_ref": None,
+                                "new_ref": values["from_so_line_ref"],
+                            }
+                        )
                     # D25c (security round 6): the group's own facts land on
                     # its FIRST line, the same row the links move to - a
                     # rejection and a note are statements somebody made about

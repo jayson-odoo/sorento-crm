@@ -91,3 +91,21 @@ export function previousValueOf(row: OrderInquiryAckFields): {
   if (qty === null || qty === undefined || qty === '') return null;
   return { qty: String(qty), date: row.previous_delivery_date ?? null };
 }
+
+/**
+ * S5 (`PLAN-oi-replan-received-links.md`): the note AutoCount's own book pairing wrote
+ * when `follow_book_repairing` moved or cleared this row's link - `AutoCount moved
+ * <document> to <SO new> on <date>` or `AutoCount removed <document> from <SO old> on
+ * <date>`. Read by prefix rather than a stored flag: the note IS the record, and
+ * nothing else marks a row the book emptied of links apart from it carrying one.
+ *
+ * `null` when the row's note says nothing of the kind, which is every row today - this
+ * is what widens `QtyAnnotationButton`'s gate (AC-RL-46) beyond rejected/changed.
+ */
+export function movedNoteOf(row: { note?: string | null }): string | null {
+  const note = (row.note ?? '').trim();
+  if (!note) return null;
+  return note.includes('AutoCount moved') || note.includes('AutoCount removed')
+    ? note
+    : null;
+}

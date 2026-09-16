@@ -91,6 +91,8 @@ Settle seam (`ProjectOrderInquiryService.refresh_for_decision` and `_settle_row_
 - **AC-RL-16 [BE]** Given the OI worklist for that SO, When rows serialize, Then the
   redirected row is excluded from the Buy / Purchased / Incoming stage totals and from
   `taken_from_po` / `remaining_open`, and its `redirected_to_pool` reaches the FE.
+- **AC-RL-16b [BE]** Given the Order Inquiries schedule matrix for that SO, When its stage
+  cards compute, Then the redirected row is not counted under Purchased or Incoming.
 - **AC-RL-17 [BE]** Given any link, When `links_for_rows` serializes it, Then the dict
   carries `received_qty` (PO: `qty_received`; SPO: `quantity_received`) and `received`
   (true when the document is fully received by the AC-RL-10 test), and
@@ -142,8 +144,9 @@ Our link follows the book pairing (S5):
 - **AC-RL-45 [BE]** Given a re-push with `from_so_line_ref: null`, Then the link on row A is
   removed with the note `AutoCount removed <document> from <SO A> on <date>` and nothing is
   placed. A re-push with the same ref changes nothing.
-- **AC-RL-46 [FE]** Given row A after a move, When its backing-documents popover opens, Then
-  the move note is shown.
+- **AC-RL-46 [FE]** Given row A after a move (no links left, note carries `AutoCount moved`),
+  When its Qty-cell annotation dialog opens (the existing affordance settled and rejected rows
+  use), Then the move note is shown. No new trigger on an empty documents cell.
 
 ## Phase 3 - end to end
 

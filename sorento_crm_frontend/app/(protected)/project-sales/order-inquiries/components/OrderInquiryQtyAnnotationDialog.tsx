@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
+import { ackStateOf, movedNoteOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
 import { BoardChangeWasNowTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
@@ -45,6 +45,10 @@ export function OrderInquiryQtyAnnotationDialog({
 }) {
   const rejected = ackStateOf(row) === 'rejected';
   const previous = previousValueOf(row);
+  // AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): a row the book redirected off -
+  // a settle never touched it, so `previous` is null, but the note names where its
+  // documents went.
+  const moved = movedNoteOf(row);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -58,12 +62,15 @@ export function OrderInquiryQtyAnnotationDialog({
               ? 'Rejected, and changed before that'
               : rejected
                 ? 'Rejected'
-                : 'Changed'}
+                : previous
+                  ? 'Changed'
+                  : 'Redirected'}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5">
           {rejected ? <RejectedSection row={row} /> : null}
           {previous ? <ChangedSection row={row} previous={previous} /> : null}
+          {moved ? <MovedSection note={moved} /> : null}
         </DialogBody>
       </DialogContent>
     </Dialog>
@@ -122,6 +129,21 @@ function ChangedSection({
           projectLineId: null,
         }}
       />
+    </section>
+  );
+}
+
+/**
+ * S5 (`PLAN-oi-replan-received-links.md`, AC-RL-46): the `follow_book_repairing` note
+ * verbatim - the only record of where this row's documents went once AutoCount's own
+ * pairing moved them off it. Never parsed back into figures; it is a sentence for a
+ * person, the same convention every other note on this row already follows.
+ */
+function MovedSection({ note }: { note: string }) {
+  return (
+    <section className="space-y-1">
+      <h3 className="text-sm font-semibold">Redirected</h3>
+      <p className="text-sm text-muted-foreground">{note}</p>
     </section>
   );
 }

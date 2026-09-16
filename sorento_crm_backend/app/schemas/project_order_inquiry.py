@@ -11,7 +11,7 @@ raw ``verb`` so the screen can colour by verb while printing what purchasing rea
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -102,6 +102,13 @@ class OrderInquiryLinkOut(BaseModel):
     #: link (never a link this system made independently), so the PO column marks it
     #: "via SPO".
     derived_po: bool = False
+    #: S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-23): a concrete
+    #: instruction, never a reason - `{"kind": "repoint", "inquiry_no", "item_code",
+    #: "so_number", "delivery_date", "open_qty"}` naming the soonest other linkable row
+    #: of the same product with open need, or `{"kind": "unlink"}` when there is none.
+    #: Null on a received link or one still inside the product's lead-time window.
+    #: Nothing is written from it - purchasing acts in AutoCount, S5 follows.
+    suggestion: Optional[Dict[str, Any]] = None
 
 
 class OrderInquiryRowOut(BaseModel):

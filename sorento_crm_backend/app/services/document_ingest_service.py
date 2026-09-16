@@ -352,6 +352,15 @@ class DocumentIngestService(MasterRefResolver):
         # (product_id, supplier_id, po_number) triples, purchase_orders only -
         # what `supersede_crm_raised_pos` (the extracted shared function) wants.
         self.po_supersede_triples: set[tuple[str, str, str]] = set()
+        # S5 (`PLAN-oi-replan-received-links.md`): every PO line whose
+        # `from_so_line_ref` changed on THIS push (including to/from null),
+        # `{"target_kind": "po", "target_id", "old_ref", "new_ref"}`. What the
+        # route's `follow_book_repairing` hook reads to move our own order-inquiry
+        # links the same way the book just moved the pairing - captured here,
+        # inside `_sync_lines`'s matched-row branch, which is the only place both
+        # the OLD value (still on `row`) and the NEW one (about to overwrite it)
+        # are in hand at once.
+        self.ref_moves: list[dict[str, Optional[str]]] = []
         # sales_orders only: the BEFORE half of the route's plan-exception hook
         # (AC-V5-1), keyed by product id. Captured ONCE for the whole batch,
         # before the record loop runs (`ingest()` calls
@@ -1334,6 +1343,23 @@ class DocumentIngestService(MasterRefResolver):
                                 new_warehouse_id=new_warehouse_id,
                                 source="autocount_esb",
                             )
+                        )
+                # S5: capture the move BEFORE the setattr loop below overwrites
+                # `row`'s own value - a PO line only, the one book `follow_book_
+                # repairing` moves our own links to follow. `"from_so_line_ref"
+                # in values` is presence (`model_fields_set`), never truthiness,
+                # so a payload that explicitly sends `null` is captured too.
+                if spec.entity_type == "purchase_orders" and "from_so_line_ref" in values:
+                    old_ref = row.from_so_line_ref
+                    new_ref = values["from_so_line_ref"]
+                    if old_ref != new_ref:
+                        self.ref_moves.append(
+                            {
+                                "target_kind": "po",
+                                "target_id": str(row.id),
+                                "old_ref": old_ref,
+                                "new_ref": new_ref,
+                            }
                         )
                 for column, value in values.items():
                     setattr(row, column, value)

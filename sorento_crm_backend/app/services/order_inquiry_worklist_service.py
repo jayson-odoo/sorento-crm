@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -54,6 +54,7 @@ from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
     ACK_CHANGED,
+    ACK_LINKABLE,
     ACK_REJECTED,
     ACK_STATES,
     INQUIRY_ACTIONED,
@@ -63,6 +64,7 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     IV_ORDER,
     IV_ORDER_BACK,
+    IV_RESERVE_AND_ORDER,
     OrderInquiry,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -84,8 +86,10 @@ from app.services.project_order_inquiry_service import (
     derived_spo_open_clauses,
     project_customer_label,
 )
+from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import order_link_service, priority
 from app.services.scm.demand import demand_qty
+from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +356,12 @@ _UNLINKED_QTY = func.greatest(
 #: _incoming_qty()` and `_purchased_qty()` - because the derived leg they read is
 #: company-scoped and the scope lives on the session (AC-D14), which no module-level
 #: expression has.
+
+#: S1b (`PLAN-oi-replan-received-links.md`): the SAME verb set the cascade's own
+#: linkable-row predicate reads (`project_order_inquiry_service._LINKABLE_VERBS`,
+#: `auto_place_for_products`) - a repoint suggestion never names a row the cascade
+#: itself could not have drafted onto.
+_SUGGESTION_LINKABLE_VERBS = (IV_ORDER, IV_RESERVE_AND_ORDER, IV_ORDER_BACK)
 
 
 #: The ANCHOR row's own item code, for a bundled row with no document of its own
@@ -1105,6 +1115,7 @@ class OrderInquiryWorklistService:
         links = ProjectOrderInquiryService(self.db).links_for_rows(
             [row.id for row in rows]
         )
+        self._attach_link_suggestions(rows, links, product_by_row)
         bundle_map = self._bundle_map_for_rows(rows)
         anchor_headline_by_id = self._anchor_headline_by_id(rows, links)
         return {
@@ -1148,6 +1159,151 @@ class OrderInquiryWorklistService:
             set(product_by_row.values())
         )
         return product_by_row, candidates
+
+    def _attach_link_suggestions(
+        self,
+        rows,
+        links: Dict[str, List[Dict[str, Any]]],
+        product_by_row: Dict[str, Optional[str]],
+    ) -> None:
+        """S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-23): a concrete
+        instruction on an open link that has drifted outside its product's lead-time
+        window - never a reason, never "early" (owner ruling 16 Sep).
+
+        Mutates each link dict IN PLACE with `suggestion`: `{"kind": "repoint", ...}`
+        naming the soonest OTHER linkable row of the same product with open need (never
+        a row on the SAME SO line), `{"kind": "unlink"}` when there is no such row, or
+        `None` on a received link or one still inside the window.
+
+        ONE grouped query for the whole page's candidates (AC-RL-23), never one per
+        link: every triggered link's product is collected first, and `_repoint_
+        candidates_by_product` answers all of them together.
+        """
+        delivery_by_row = {row.id: row.delivery_date for row in rows}
+        so_line_by_row = {row.id: row.so_line_id for row in rows}
+        product_ids = {pid for pid in product_by_row.values() if pid}
+        lead_times = (
+            ProjectSupplyService(self.db).lead_times(product_ids) if product_ids else {}
+        )
+
+        triggered: List[Tuple[str, Dict[str, Any], str]] = []
+        for row_id, row_links in links.items():
+            product_id = product_by_row.get(row_id)
+            delivery_date = delivery_by_row.get(row_id)
+            for link in row_links:
+                link["suggestion"] = None
+                if link.get("received"):
+                    continue
+                expected_date = link.get("expected_date")
+                if not product_id or not delivery_date or not expected_date:
+                    continue
+                lead_days = lead_times.get(product_id)
+                if lead_days is None:
+                    lead_days = DEFAULT_LEAD_TIME_DAYS
+                if expected_date > delivery_date - timedelta(days=lead_days):
+                    continue
+                triggered.append((row_id, link, product_id))
+
+        if not triggered:
+            return
+        candidates_by_product = self._repoint_candidates_by_product(
+            {product_id for _row_id, _link, product_id in triggered}
+        )
+        for row_id, link, product_id in triggered:
+            own_so_line = so_line_by_row.get(row_id)
+            delivery_date = delivery_by_row.get(row_id)
+            eligible = [
+                candidate
+                for candidate in candidates_by_product.get(product_id, [])
+                if candidate["so_line_id"] != own_so_line
+                and candidate["delivery_date"] is not None
+                and candidate["delivery_date"] < delivery_date
+            ]
+            eligible.sort(key=lambda c: (c["delivery_date"], -c["open_qty"]))
+            if eligible:
+                best = eligible[0]
+                link["suggestion"] = {
+                    "kind": "repoint",
+                    "inquiry_no": best["inquiry_no"],
+                    "item_code": best["item_code"],
+                    "so_number": best["so_number"],
+                    "delivery_date": best["delivery_date"].isoformat(),
+                    "open_qty": _qty_str(best["open_qty"]),
+                }
+            else:
+                link["suggestion"] = {"kind": "unlink"}
+
+    def _repoint_candidates_by_product(
+        self, product_ids: set
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Every OTHER linkable row for these products, with open need - the cascade's
+        own linkable-row predicate (`raised`/`partly_linked`, `_SUGGESTION_LINKABLE_
+        VERBS`, `ACK_LINKABLE`), so a suggestion never names a row the cascade itself
+        could not have drafted onto. `open_qty` is the SAME `_UNLINKED_QTY` the Buy
+        card reads, so the figure on the popover and the figure on that row's own Qty
+        cell can never disagree.
+        """
+        if not product_ids:
+            return {}
+        rows = (
+            self.db.query(
+                OrderInquiryRow.id,
+                OrderInquiryRow.so_line_id,
+                OrderInquiryRow.delivery_date,
+                OrderInquiryRow.item_code,
+                ProjectSalesOrderLine.product_id,
+                OrderInquiry.inquiry_no,
+                _SO_NUMBER.label("so_number"),
+                _UNLINKED_QTY.label("open_qty"),
+            )
+            .select_from(OrderInquiryRow)
+            .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+            .join(
+                ProjectSalesOrder,
+                ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+            )
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .outerjoin(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .filter(
+                ProjectSalesOrderLine.product_id.in_(product_ids),
+                OrderInquiryRow.state.in_((INQUIRY_RAISED, INQUIRY_PARTLY_LINKED)),
+                OrderInquiryRow.verb.in_(_SUGGESTION_LINKABLE_VERBS),
+                OrderInquiryRow.ack_state.in_(ACK_LINKABLE),
+            )
+            .all()
+        )
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for (
+            row_id,
+            so_line_id,
+            delivery_date,
+            item_code,
+            product_id,
+            inquiry_no,
+            so_number,
+            open_qty,
+        ) in rows:
+            qty = _dec(open_qty)
+            if qty <= _ZERO:
+                continue
+            out.setdefault(str(product_id), []).append(
+                {
+                    "row_id": str(row_id),
+                    "so_line_id": str(so_line_id) if so_line_id else None,
+                    "delivery_date": delivery_date,
+                    "item_code": item_code,
+                    "inquiry_no": inquiry_no,
+                    "so_number": so_number,
+                    "open_qty": qty,
+                }
+            )
+        return out
 
     def _quantity_flow_by_so_line(self, rows) -> Dict[str, Dict[str, Decimal]]:
         """"Taken from PO" and "Remaining" for a whole PAGE, bulk-answered once (the
@@ -1999,6 +2155,11 @@ class OrderInquiryWorklistService:
         The stage sums are the SAME per-row arithmetic the cards read (AC-X6), computed
         once per row in `_stage_rows` and grouped over here - not a second copy of the
         formula, which is how the uncapped derived cover reached the Schedule view.
+
+        AC-RL-16b addendum (`PLAN-oi-replan-received-links.md` S3): a REDIRECTED row is
+        dropped too, the same way `_kinds` drops it - its coverage already shipped to
+        another order, so its history row must not inflate this matrix's `po`/`spo`
+        cells or its own `rows`/`qty` either.
         """
         axis_key, axis_label = self._matrix_axis(axis)
         period = cast(
@@ -2017,6 +2178,8 @@ class OrderInquiryWorklistService:
                 # AC-X5: cancelled is out, actioned stays - narrower than
                 # `_NOT_OWED_STATES` (which `_kinds`/`kind=` drop both by).
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # AC-RL-16b: a redirected row is history, never a cell's own quantity.
+                OrderInquiryRow.redirected_to_pool.is_(False),
             ),
         )
         rows = (

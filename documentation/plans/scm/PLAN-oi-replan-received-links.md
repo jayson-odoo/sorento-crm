@@ -1,6 +1,6 @@
 # PLAN - OI replan with received links
 
-Status: IN PROGRESS, 16 Sep 2026 (lane worktree branch `worktree-agent-a094ed68b05447f09`, issues #957-#961; Phase 1 FE at eeea4ff4c, Phase 2 tester running). UAC: `oi-replan-received-links-acceptance-criteria.md`.
+Status: IN PROGRESS, 17 Sep 2026 (lane worktree branch `worktree-agent-a094ed68b05447f09`, issues #957-#961; Phase 1 FE eeea4ff4c, S1-S3 green 676d0e71c, S1b + S5 + matrix addendum implemented this round - 7 of the round's BE reds stay red, blocked on two test-fixture gaps in `_mirror_row`/`_seed_so_line`/`_purchase_order`/`_early_link` reported to the captain rather than fixed by the coder; matrix addendum and all FE (Vitest) green). UAC: `oi-replan-received-links-acceptance-criteria.md`.
 Domain: SCM, order inquiries / fulfilment planning. Owner ruling 16 Sep 2026: "so far I am
 okay with your proposal and we shall proceed".
 
@@ -131,8 +131,10 @@ Covers AC-RL-01.
 - `order_inquiry_worklist_service.py`: stage totals (`_incoming_qty`, `_purchased_qty`, the
   Buy total) and `_serialize` exclude / flag the redirected row; `redirected_to_pool` reaches
   the FE row (add to `_serialize` and to the FE row type).
+- The Order Inquiries schedule matrix (#951) also reads `_stage_rows`; its Purchased / Incoming
+  cards exclude the redirected row the same way.
 - FE: `redirected` mark on the Qty cell; card totals ignore the row.
-- Covers AC-RL-04, AC-RL-15, AC-RL-16.
+- Covers AC-RL-04, AC-RL-15, AC-RL-16, AC-RL-16b.
 
 ### S1b - repoint suggestion on an open link (BE + FE)
 
@@ -171,8 +173,9 @@ link on a row reflects it. Manual links follow too.
   row (cascade predicate) with `_unlinked_need > 0`, the same document is placed on it through
   `place_on_po_allocations` for `min(freed qty, need)`, `auto=True`. A new ref of null only
   removes.
-- FE: the old row's backing-documents popover shows the move note (row note already reaches
-  the FE).
+- FE: the old row's note reaches the existing Qty-cell annotation dialog
+  (`OrderInquiryQtyAnnotationDialog`), which already shows settled / rejected notes; no new
+  trigger on an empty documents cell (ruling 16 Sep).
 - Covers AC-RL-40 to AC-RL-46, AC-RL-32.
 
 ### S4 - E2E on the 15 Sep copy
@@ -203,7 +206,9 @@ AC-RL-30, AC-RL-31, AC-RL-32 as a recorded agent-browser run.
 
 ## Migration
 
-None. `redirected_to_pool` exists (409). No new column.
+One: `512_committed_v_redirect_exclude` re-freezes the `scm.committed_v` view body with the
+redirected-row exclusion (the view lives in a migration; 511's body is kept for the downgrade).
+No new column: `redirected_to_pool` exists since 409. Re-parent onto main's head before merge.
 
 ## Rollout
 

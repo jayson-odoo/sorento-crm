@@ -8,10 +8,11 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
+import { ackStateOf, movedNoteOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -19,7 +20,10 @@ import {
   formatInquiryQty,
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
-import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+import type {
+  OrderInquiryLinkSuggestion,
+  OrderInquiryWorklistRow,
+} from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
 import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 
@@ -91,6 +95,13 @@ interface DocumentEntry {
   received: boolean;
   receivedQty: string | null;
   qty: string | null;
+  /**
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): the FIRST link
+   * naming this document carries a repoint/unlink instruction. Never on a received
+   * link (S1's own `received` and S1b's `suggestion` are mutually exclusive by
+   * construction on the wire, but the chip reads whichever the link states).
+   */
+  suggestion: OrderInquiryLinkSuggestion | null;
 }
 
 function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
@@ -118,9 +129,56 @@ function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): Document
       received: Boolean(link.received),
       receivedQty: link.received_qty ?? null,
       qty: link.qty ?? null,
+      suggestion: link.suggestion ?? null,
     });
   }
   return entries;
+}
+
+/** `Repoint to OI-000539 · CB2805A-DIY · needed 01/12/2026 · open 90`, or `Unlink · no
+ * sooner inquiry needs this item` (AC-RL-24). One concrete instruction, never a reason -
+ * "early" is never printed. */
+function suggestionInstruction(suggestion: OrderInquiryLinkSuggestion): string {
+  if (suggestion.kind === 'unlink') return 'Unlink · no sooner inquiry needs this item';
+  return (
+    `Repoint to ${suggestion.inquiry_no ?? 'another inquiry'} · ` +
+    `${suggestion.item_code ?? 'this item'} · ` +
+    `needed ${formatDateInMalaysia(suggestion.delivery_date)} · ` +
+    `open ${formatInquiryQty(suggestion.open_qty)}`
+  );
+}
+
+/**
+ * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): the muted `repoint`/
+ * `unlink` word beside the PO/SPO chip, and the popover its own tap (or hover) opens -
+ * the instruction text, never a reason. Nothing is written from here: purchasing acts
+ * in AutoCount, and S5 (our own link follows the book) reacts to that.
+ */
+function LinkSuggestionMark({
+  suggestion,
+  testId,
+}: {
+  suggestion: OrderInquiryLinkSuggestion;
+  testId: string;
+}) {
+  const word = suggestion.kind === 'repoint' ? 'repoint' : 'unlink';
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          data-testid={testId}
+          className="shrink-0 text-2xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none"
+          onClick={(event) => event.stopPropagation()}
+        >
+          {word}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto max-w-xs text-xs" onClick={(event) => event.stopPropagation()}>
+        {suggestionInstruction(suggestion)}
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 /**
@@ -201,6 +259,18 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
         >
           received
         </span>
+      ) : null}
+      {/* S1b, AC-RL-24: a repoint/unlink instruction, mutually exclusive with the
+          `received` mark above (a received link never carries a suggestion). */}
+      {first.suggestion ? (
+        <LinkSuggestionMark
+          suggestion={first.suggestion}
+          testId={
+            kind === 'spo'
+              ? `backing-documents-suggestion-spo-${row.id}`
+              : `backing-documents-suggestion-${row.id}`
+          }
+        />
       ) : null}
       {rest.length ? (
         <Badge asChild size="sm" variant="secondary" appearance="light">
@@ -305,10 +375,16 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
   const [open, setOpen] = React.useState(false);
   const rejected = ackStateOf(row) === 'rejected';
   const changed = Boolean(previousValueOf(row));
-  if (!rejected && !changed) return null;
+  // AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): a row the book redirected off is
+  // neither rejected nor changed - a settle never touched it - so the gate widens to the
+  // same note `follow_book_repairing` wrote, the only other fact this icon ever shows.
+  const moved = Boolean(movedNoteOf(row));
+  if (!rejected && !changed && !moved) return null;
   const label = rejected
     ? `Show why ${row.item_code ?? row.so_number ?? 'this row'} was rejected`
-    : `Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
+    : changed
+      ? `Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`
+      : `Show what AutoCount changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
   return (
     <>
       <Button

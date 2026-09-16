@@ -152,7 +152,29 @@ export interface OrderInquiryLink {
    * done. Null or absent when the book states no receipt yet.
    */
   received_qty?: string | null;
+  /**
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-23): a concrete
+   * instruction on an open link that has drifted outside the product's lead-time
+   * window - never a reason, never "early" (owner ruling 16 Sep). `repoint` names the
+   * soonest other linkable row of the same product with open need; `unlink` means
+   * there is no such row. Null on a received link or one still inside the window.
+   * Nothing is written from the chip's own popover - purchasing acts in AutoCount,
+   * and S5 (our link follows the book) reacts to that.
+   */
+  suggestion?: OrderInquiryLinkSuggestion | null;
 }
+
+/** A `repoint` suggestion names the row to move to; `unlink` names none. */
+export type OrderInquiryLinkSuggestion =
+  | {
+      kind: 'repoint';
+      inquiry_no: string | null;
+      item_code: string | null;
+      so_number: string | null;
+      delivery_date: string;
+      open_qty: string;
+    }
+  | { kind: 'unlink' };
 
 /**
  * The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with it:

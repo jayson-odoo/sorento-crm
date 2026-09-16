@@ -254,6 +254,7 @@ def _run_document_hooks(
     elif entity == "shipping_orders":
         _run_shipping_order_forward_match_hook(db, service, actor=actor)
         _run_shipping_order_shipment_refresh_hook(db, service, actor=actor)
+        _run_shipping_order_book_repair_hook(db, service, actor=actor)
 
 
 def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
@@ -361,6 +362,21 @@ def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str
             db.rollback()
             logger.warning("ingest.relink_to_matching_lines_failed", exc_info=True)
 
+    # S5 (`PLAN-oi-replan-received-links.md`): our own link follows `from_so_
+    # line_ref` wherever THIS push moved it, after the relink hook above -
+    # `service.ref_moves` is `DocumentIngestService`'s own capture, taken
+    # inside `_sync_lines` while the old ref was still on the row.
+    if getattr(service, "ref_moves", None):
+        try:
+            with db.begin_nested():
+                ProjectOrderInquiryService(db).follow_book_repairing(
+                    service.ref_moves, trigger="autocount_ingest",
+                )
+            db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+            db.rollback()
+            logger.warning("ingest.follow_book_repairing_failed", exc_info=True)
+
 
 def _run_shipping_order_forward_match_hook(
     db: Session, service, *, actor: Optional[str]
@@ -390,6 +406,26 @@ def _run_shipping_order_forward_match_hook(
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
         db.rollback()
         logger.warning("ingest.shipping_order_forward_match_hook_failed", exc_info=True)
+
+
+def _run_shipping_order_book_repair_hook(
+    db: Session, service, *, actor: Optional[str]
+) -> None:
+    """S5 (`PLAN-oi-replan-received-links.md`): the SPO twin of the PO relink hook
+    above - `service.ref_moves` is `ShippingOrderIngestService`'s own capture, taken
+    inside `_write_row`'s in-place update path and inside `_supersede_xlsx_rows` for
+    the xlsx-era allocation the ESB's first ref-bearing push replaces."""
+    if not getattr(service, "ref_moves", None):
+        return
+    try:
+        with db.begin_nested():
+            ProjectOrderInquiryService(db).follow_book_repairing(
+                service.ref_moves, trigger="autocount_ingest",
+            )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.shipping_order_book_repair_hook_failed", exc_info=True)
 
 
 def _run_shipping_order_shipment_refresh_hook(
