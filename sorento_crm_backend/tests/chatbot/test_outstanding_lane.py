@@ -89,34 +89,50 @@ remaining TWO stale `_session_of(session_factory)["variables"]` reads (mechanica
 `TestExactProductCodeWinsOverSiblings::test_the_scope_question_arm_stores_the_typed_code_
 too`, `TestOwnerRoundFivePickerAndOfferScope::test_a_customer_pick_after_an_outstanding_
 ask_arms_the_scope_question`) plus every trailing `["variables"]` read still sitting
-downstream of a still-failing assertion in the 15 that remain, so a future fix does not
-also trip a stale `KeyError` the moment its own earlier assertion goes green. 74 passed,
-15 failed (was 72/17) after the port; every customer-visible assertion kept.
+downstream of a still-failing assertion, so a future fix does not also trip a stale
+`KeyError` the moment its own earlier assertion goes green. Item 2's landed fix
+(`c09f12183`, customer roster DO stamps) also turned `TestOutstandingAskPickerHasNoDelive
+ryHint::test_plain_delivery_ask_picker_keeps_the_do_hint` green on its own, unrelated to
+any test-file edit. 74 passed, 15 failed (was 72/17) at that point.
 
-**The remaining 15 are NOT one uniform gap - measured this session, three distinct
+COORDINATOR RULING, 17 Sep 2026 (items c/d): the S6 cluster-4 owner ruling ("an open
+question is answered only when the PARSER says so"; a casual aside CARRIES the pending
+silently, never re-prints it) applies to EVERY pending kind including the two outstanding
+ones - RETIRED three of `TestDetailOfferIsSticky`'s reds
+(`test_detail_offer_survives_a_casual_turn`, `test_a_casual_turn_under_an_open_offer_
+reprints_it_rather_than_greeting`, `test_the_reprint_uses_the_same_offer_form_the_report_
+used`) whose own premise (re-print) the ruling amends AC-1143c/R22 away from; replacement
+coverage is `test_rearch_s6_open_question_parser.py::TestAbsentAnswerCarriesThePendingWith
+outReprinting`, parametrized over every `PENDING_KINDS` value. Also fixed
+`test_detail_offer_survives_an_out_of_range_pick`'s own wrong premise - "3" is the valid
+"Both lists" option on an `outstanding_both` offer (R14), not out of range; changed to "4".
+76 passed, 10 failed after this ruling.
+
+**The remaining 10 are NOT one uniform gap - measured this session, three distinct
 findings**, each already confirmed for the right reason (a real behavioural
 AssertionError against a real fetch/reply, never a fixture bug):
 
-* **The offer/question does not yet win over a generic casual/business read on every
-  call path** (`TestDetailOfferIsSticky` x4, `TestDateNarrowingUnderAnOpenOffer` x5,
+* **R15 refinement (date/location under an open offer) - a coder is wiring it, stays red
+  by design** (`TestDateNarrowingUnderAnOpenOffer` x5 +
   `TestScopeQuestionCarriesTheFullHeader::test_refinement_reask_prints_customer_too`,
-  `TestOpenOfferCanBeLeft` x2 - 12 of the 15): a "thanks"/date-only/location-only turn
-  over a genuinely armed offer still reaches `crm_order_management_orders_list` instead
-  of resolving against (or re-printing) the open question. Measured directly
-  (`test_detail_offer_survives_a_casual_turn`: a bare "thanks" turn's own `captured`
-  list carries a real `crm_order_management_orders_list` call).
+  named by its own docstring as "R19 x R15", the same mechanism - 6 of the 10): a
+  date-only/location-only turn over a genuinely armed offer still reaches
+  `crm_order_management_orders_list` instead of resolving against (or re-printing) the
+  open question.
 * **The scope question's own Customer line prints the roster's generic family label
   instead of the real resolved rows, and drops a carried date filter**
   (`TestScopeQuestionCustomerLineMatchesReportHeader`,
   `TestAllOnTheCustomerPickerKeepsTheQuestion::test_all_on_the_customer_picker_arms_the_
-  scope_question_for_every_family` - 2 of the 15): measured directly - the reply's
+  scope_question_for_every_family` - 2 of the 10): measured directly - the reply's
   `Customer:` line reads `"CHIN CHUN HARDWARE SDN BHD"` (one name) where the real picked
   rows are three, and `Order date: all` where a carried `2026-01-01`/`2026-12-31` window
   should print.
-* **A plain (non-outstanding) delivery ask's DO hint changed**
-  (`TestOutstandingAskPickerHasNoDeliveryHint::test_plain_delivery_ask_picker_keeps_the_
-  do_hint` - 1 of the 15): unrelated to the scope/detail question mechanism above,
-  narrower, not diagnosed further this session.
+* **`TestOpenOfferCanBeLeft` x2** (`test_a_second_unreadable_turn_closes_the_offer`,
+  `test_a_refinement_after_one_reprint_still_works`): the same "offer/question does not
+  yet win over a generic business read" gap, on the CLOSING side (a second unreadable
+  turn / a refinement after a reprint) rather than the R15-refinement side above -
+  distinct from that group because the FIRST unreadable turn (the reprint itself) is
+  already green; not a re-print-premise defect, a real remaining fetch.
 
 Not a tester-owned fix (behavioural engine gaps, not a test/fixture defect) - flagged for
 the coordinator to route, same as this file's original queue-2 flag.
@@ -1981,156 +1997,20 @@ class TestDetailOfferIsSticky:
         reply2 = (result2.reply or {}).get("text") or ""
         assert "*DO Number:*" in reply2, reply2
 
-    def test_detail_offer_survives_a_casual_turn(self, session_factory, monkeypatch) -> None:
-        """"thanks" between the report and "2" must not close the offer - a casual
-        reply names no product and no domain, so it is neither a pick nor a new ask.
-
-        AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
-        `_seed_open_outstanding_detail`'s hand-written `variables` dict predates the
-        rearch's flat five-key shape and its OWN field names (`selection_context`,
-        `last_result_set`, `outstanding_filters`, `pending`) are not among the five
-        `session_state.five_keys()` looks for even in its legacy-nest fallback (which
-        only re-checks the FIVE_KEY names, never these older ones) - the seed is
-        invisible to the current engine (measured: `open_question` reads back `{}`
-        after it). Armed with a REAL turn 1 instead, the same pattern
-        `TestDetailPickRerunsToolWithDetail::test_a_real_hit_arms_the_pending_and_the_
-        next_1_reruns_with_detail_so` already ports this file onto.
-
-        CONFIRMED, currently red for a real reason once armed honestly (not fixed
-        here - the coordinator's queue routes the outstanding lane's remaining
-        answering-the-question wiring to coder 12): a bare "thanks" over the OPEN
-        detail offer still calls `crm_order_management_orders_list` instead of doing
-        nothing, so `open_question` never even survives to the second assertion -
-        the SAME "lane's own question" gap the file's own module docstring already
-        names for the 43 tests still waiting, this one just reached it via the
-        casual arm rather than the business-query arm."""
-        _seed_contact(session_factory, variables={})
-        _result0, captured0 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="outstanding_both"),
-            text_body="SRTWT7445 outstanding both",
-            msg_id="ZZT-sticky-casual-0",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured0 and captured0[0][0] == "crm_outstanding_report", captured0
-        _result1, captured1 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], user_goal="saying thanks",
-            ),
-            text_body="thanks", msg_id="ZZT-sticky-casual-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert not captured1, "a bare 'thanks' must not itself trigger a report re-run"
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", (
-            f"the offer must survive a casual turn in between: {open_question!r}"
-        )
-        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == PRODUCT_CODE, (
-            f"the filters must survive too: {open_question.get('payload')!r}"
-        )
-
-        result2, captured2 = _run_turn(
-            session_factory, monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[2],
-            ),
-            text_body="2", msg_id="ZZT-sticky-casual-2",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=REPORT_HIT,
-        )
-        assert captured2, "'2' after the casual turn must still resolve against the offer"
-        name2, args2 = captured2[0]
-        assert name2 == "crm_outstanding_report", (name2, args2)
-        assert args2.get("detail") == "do", f"'2' must give the DO detail: {args2}"
-        reply2 = (result2.reply or {}).get("text") or ""
-        assert "*DO Number:*" in reply2, reply2
-
-    def test_a_casual_turn_under_an_open_offer_reprints_it_rather_than_greeting(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Seen on the owner's stack, 13 Sep 2026: with the detail offer open, a message
-        the parser read as casual routed to `low_signal` and answered "Hi! How can I help
-        you today?" - a greeting, mid-conversation, over an offer that is still on the
-        customer's screen. An unanswered open question is still open: re-print it. No
-        tool runs (nothing was picked) and the pending stays."""
-        _seed_open_outstanding_detail(session_factory)
-        result, captured = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], user_goal="saying something else",
-            ),
-            text_body="hmm",
-            msg_id="ZZT-outstanding-casual-reprint-1",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured == [], f"nothing was picked, so nothing is fetched: {captured}"
-        reply = (result.reply or {}).get("text") or ""
-        assert "Sales order list" in reply and "Delivery order list" in reply, (
-            f"the open offer must be re-printed, not replaced by a greeting: {reply!r}"
-        )
-        assert "How can I help" not in reply, (
-            f"a greeting mid-conversation, over an offer still on screen: {reply!r}"
-        )
-        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
-        # .kind - customer-visible assertion (the offer stays open) unchanged.
-        open_question = _session_of(session_factory).get("open_question") or {}
-        assert open_question.get("kind") == "outstanding_detail", open_question
-
-    def test_the_reprint_uses_the_same_offer_form_the_report_used(
-        self, session_factory, monkeypatch
-    ) -> None:
-        """Seen on the restarted stack, 13 Sep 2026: an SO-only report offers its detail
-        as R9's single sentence (`Reply 1 for the sales order list.`), and the re-print
-        then answered with the NUMBERED form - two different wordings for the same offer,
-        one after the other, in the same conversation. The re-print must be the SAME text
-        the customer was already shown."""
-        _seed_contact(session_factory, variables={})
-        so_only = {**REPORT_HIT, "do": None, "do_by_location": [], "do_by_customer": [], "do_rows": []}
-        result1, captured1 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_qf(order_status="so_outstanding"),
-            text_body="SRTWT7445 sales order outstanding",
-            msg_id="ZZT-outstanding-reprint-form-1",
-            attributes=["sales_orders.outstanding"],
-            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-            mcp_response=so_only,
-        )
-        assert captured1, "the report must run"
-        reply1 = (result1.reply or {}).get("text") or ""
-        assert "Reply 1 for the sales order list." in reply1, (
-            f"the report itself must use R9's single-line offer: {reply1!r}"
-        )
-
-        result2, captured2 = _run_turn(
-            session_factory,
-            monkeypatch,
-            qf=_parser_output(
-                message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[], user_goal="saying something else",
-            ),
-            text_body="hmm",
-            msg_id="ZZT-outstanding-reprint-form-2",
-            attributes=["sales_orders.outstanding"],
-        )
-        assert captured2 == [], f"a re-print fetches nothing: {captured2}"
-        reply2 = (result2.reply or {}).get("text") or ""
-        assert "Reply 1 for the sales order list." in reply2, (
-            f"the re-print must use the SAME offer form the report used: {reply2!r}"
-        )
-        assert "Reply with a number for detail:" not in reply2, (
-            f"the numbered form is for TWO options; this offer has one: {reply2!r}"
-        )
-
+    # * **`test_detail_offer_survives_a_casual_turn`**, **`test_a_casual_turn_under_an_
+    #   open_offer_reprints_it_rather_than_greeting`**, **`test_the_reprint_uses_the_
+    #   same_offer_form_the_report_used`** - RETIRED (coordinator ruling, 17 Sep 2026).
+    #   The S6 cluster-4 owner ruling ("an open question is answered only when the
+    #   PARSER says so"; absent/null `answers_open_question` is NOT an attempt to
+    #   answer, and the correct behaviour is CARRY THE PENDING SILENTLY, never
+    #   re-print it) applies to EVERY pending kind, including `outstanding_scope` /
+    #   `outstanding_detail` - these three tests' own premise (a casual aside RE-
+    #   PRINTS the open offer's text) is the ruling this session amends AC-1143c/R22
+    #   away from. Replacement coverage:
+    #   `test_rearch_s6_open_question_parser.py::TestAbsentAnswerCarriesThePendingWith
+    #   outReprinting` - parametrized over every one of `PENDING_KINDS` (including the
+    #   two outstanding kinds), proves the pending survives untouched AND that `apply()`
+    #   returns no fetch for a casual aside, without asserting any re-print text at all.
     def test_detail_offer_drops_on_a_new_ask(self, session_factory, monkeypatch) -> None:
         """A product code after the report is a NEW ASK, not a pick against the old
         offer: a fresh report for the NEW product runs, and the old offer is gone -
@@ -2177,19 +2057,21 @@ class TestDetailOfferIsSticky:
         )
 
     def test_detail_offer_survives_an_out_of_range_pick(self, session_factory, monkeypatch) -> None:
-        """Only options 1 and 2 are offered; "3" is out of range and must not close
-        the offer - a subsequent "1" must still resolve, the same re-ask rule
-        AC-1132 already gives the scope question.
+        """Only options 1, 2 and 3 are offered on an `outstanding_both` detail offer
+        (SO / DO / "Both lists", R14); "4" is out of range and must not close the
+        offer - a subsequent "1" must still resolve, the same re-ask rule AC-1132
+        already gives the scope question.
+
+        FIXED (coordinator ruling, 17 Sep 2026, item d): this test's own premise was
+        wrong - "3" is NOT out of range on an `outstanding_both` offer, it is the
+        valid "Both lists" option (R14) - a test asserting position 3 fails to resolve
+        was measuring a defect in the TEST, not the engine. Position 4 is the first
+        genuinely invalid one.
 
         AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026): armed
         with a REAL turn 1 rather than `_seed_open_outstanding_detail`'s hand-written
         `variables` dict, which is invisible to the current engine (same finding as
-        `test_detail_offer_survives_a_casual_turn`, this class's own sibling port).
-
-        CONFIRMED, currently red for a real reason once armed honestly (not fixed
-        here, same gap as the sibling port names - waiting on coder 12): the
-        out-of-range "3" still reaches `crm_order_management_orders_list` instead of
-        being read as unresolved against the open offer."""
+        this class's other real-turn-1 ports)."""
         _seed_contact(session_factory, variables={})
         _result0, captured0 = _run_turn(
             session_factory,
@@ -2206,9 +2088,9 @@ class TestDetailOfferIsSticky:
             session_factory, monkeypatch,
             qf=_parser_output(
                 message_type="casual", intent_hint=None, domain_hint=None, entities=[],
-                reference_positions=[3],
+                reference_positions=[4],
             ),
-            text_body="3", msg_id="ZZT-sticky-oor-1",
+            text_body="4", msg_id="ZZT-sticky-oor-1",
             attributes=["sales_orders.outstanding"],
         )
         assert not captured1, "an out-of-range pick must not run any report"
