@@ -515,3 +515,16 @@ an unresolved one is where this breaks. NOT a T4 mechanism defect - the mechanis
 in the harness's resolver stub for turns whose prior focus carries an entity the source
 conversation itself never fully resolved either. Not fixed this session - flagged for
 whoever picks this up next, same as the original T4 finding was.
+
+## case-057 / focus-009, pending None (coordinator ruling, 17 Sep 2026)
+
+Both files' `pending` was recorded `None` at the steps below - the source conversation's
+OWN capture read a stage BEFORE the outstanding lane's scope/detail question had armed
+(the recorder's own tool-result snapshot lands one step earlier than the question the
+customer was actually shown), not a stage where no question existed. The current engine,
+replayed against the same real prior state, correctly arms the question its own logic
+says it should at that point in the conversation - the divergence is the RECORDING's own
+timing gap, not an engine regression.
+
+- console/case-057-outstanding-report-journey-so-direct-ask-missing-scope-question-both-detail-cust.json: pending: recorded None at steps 1-4 (the capture's own tool-result snapshot precedes the outstanding lane's scope/detail question arming); the current engine correctly arms it (step 1 'Sales order list', step 2 the SO/DO/Both scope options, steps 3-4 'orders' carried from the picker) - recorder read a stage the source turns lack, not a regression (signed JT 2026-09-17, pending-none-recorder-lag)
+- console/focus-009-merge-d-outstanding-detail-list-renders-on-the-first-pick-ac-1106-ac-1138.json: pending: recorded None at steps 1-2 (same recorder-timing gap as case-057) - the current engine correctly arms the outstanding lane's own question at each step (step 1 the SO/DO/Both scope options, step 2 'Sales order list') - not a regression (signed JT 2026-09-17, pending-none-recorder-lag)
