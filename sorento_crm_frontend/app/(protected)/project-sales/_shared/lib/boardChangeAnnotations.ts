@@ -520,6 +520,17 @@ export function uncoverChangedLines<
       so_number: contribution.so_number,
       line_no: contribution.line_no,
       item_code: contribution.item_code,
+      // AND THE LIVE INSTRUCTION, for the same reason identity is kept (AC-RL-06, measured
+      // on SO314594 line 5, 17 September 2026). `proposal` is a SNAPSHOT of the whole
+      // contribution as it stood when the batch was raised, so it carries that moment's
+      // `order_inquiry` too - and a batch raised before the documents behind an instruction
+      // were read at all (or before the SPO landed) then overwrote the live row's own
+      // `documents` / `redirected` with a stale copy, and the `received` word beside the
+      // product vanished on every line of an order with a pending change. The proposal is
+      // about the COMPOSITION - quantity, sources, the date it was walked at. What
+      // purchasing was told and what has landed against it is read fresh off
+      // `order_inquiry_rows` on every board build, so the live row is the current fact.
+      order_inquiry: contribution.order_inquiry,
       covered: false,
       decision: null,
     };
