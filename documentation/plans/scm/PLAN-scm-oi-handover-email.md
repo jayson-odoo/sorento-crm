@@ -213,6 +213,17 @@ Idempotent by template code and `(trigger_type, name)`. Downgrade deletes both.
 3. Whether `_send_per_match` / `AutomationRun` dedupes by `source_id`; if it does, use a per-commit
    token as `source_id`.
 
+## 6b. Review round 1 (16 Sep, Opus): B1 + S1-S5
+
+B1 blocker: the drain marked `session.get_transaction()` (root) while the recorder tagged the
+innermost savepoint, so any confirm inside `begin_nested()` (planning-change apply, book upload)
+never dispatched. Fix: mark `get_nested_transaction() or get_transaction()`, the head
+`_transaction_chain` already uses (AC-H21). S1 marker growth (AC-H24). S2 three queries per line
+plus per-row flushes (AC-H25). S3 AC-H6 deferred to slice 2. S4 carry gate leaks when the live
+handshake is missing (AC-H22). S5 named line re-confirmed at a new qty printed a bare ORDER:
+the silently cancelled old row now prints cancelled beside it (AC-H23). Nits: `today` in
+Asia/Kuala_Lumpur, docstring at the recorder, dead `IV_RELEASE` vocabulary.
+
 ## 7. After merge
 
 Owner types `purchasing@` and the CS manager into the automation's extra emails. Replay on the
