@@ -1733,6 +1733,28 @@ export interface BoardAxisRow {
   description?: string | null;
 }
 
+/**
+ * Why Undo of this order's newest confirm would be refused, even though it carries a journal
+ * (`PLAN-board-undo-last-confirm.md`, R1): purchasing has already acted on one of the order's
+ * OI rows since the confirm - linked a PO line by hand, or marked a row actioned. Null when
+ * nothing blocks it.
+ */
+export type BoardUndoRefusal = 'manual_link' | 'actioned' | null;
+
+/**
+ * What the board knows about undoing an order's newest confirm (`undo_0001`, S1, #978): the
+ * revision the gear entry names, who confirmed it and when, and whether purchasing's own work
+ * since then refuses the undo. Null when the order has no active decision, or its active
+ * decision was not journalled (a pre-lane revision, or one minted by `uncover_lines` rather
+ * than the board's own confirm routes) - there is nothing this lane can replay.
+ */
+export interface BoardUndo {
+  revision_no: number;
+  confirmed_at?: string | null;
+  confirmed_by_name?: string | null;
+  refusal: BoardUndoRefusal;
+}
+
 /** One selected order's standing, which is what makes the partial-decision reality visible. */
 export interface BoardOrderStanding {
   sales_order_id: string;
@@ -1768,6 +1790,12 @@ export interface BoardOrderStanding {
    * change's Was/Now table and pre-marked suggestion without a `?batch=` URL param.
    */
   pending_change_batch_id?: string | null;
+  /**
+   * Whether the order's newest confirm can be undone from the gear, and why not when it
+   * cannot. Absent/null on a server that predates S1, which the Phase 1 mock overlay
+   * (`_shared/lib/boardUndoMock.ts`) stands in for until then.
+   */
+  undo?: BoardUndo | null;
 }
 
 /**

@@ -35,8 +35,10 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -49,6 +51,7 @@ import {
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatchesByIds } from '../../_shared/hooks/usePlanningChanges';
+import { useMockUndoAction } from '../../_shared/hooks/useMockUndoAction';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   annotationsByCell,
@@ -56,6 +59,7 @@ import {
   preMarkedKeys,
   uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
+import { undoRefusalTitle, withMockUndo } from '../../_shared/lib/boardUndoMock';
 import {
   boardAxis,
   bucketLabelText,
@@ -800,6 +804,22 @@ export function FulfilmentBoardPanel({
     }.`;
   }, [singleBatch]);
 
+  /**
+   * Undo last confirm (PLAN-board-undo-last-confirm.md, S0/#977).
+   *
+   * `mockUndo` stands in for the real pending action until S2 (#979) registers it - see its
+   * own file for the contract. `undoableOrders` is the board's own orders with a mocked
+   * `undo` overlaid, so the gear (below) and the Confirm slot (further down) read one list.
+   */
+  const mockUndo = useMockUndoAction();
+  const undoableOrders = React.useMemo(
+    () =>
+      board.data
+        ? withMockUndo(board.data.orders, mockUndo.committedOrderIds).filter((order) => order.undo)
+        : [],
+    [board.data, mockUndo.committedOrderIds],
+  );
+
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
   /**
@@ -1394,6 +1414,43 @@ export function FulfilmentBoardPanel({
                 <Undo2 className="size-4" aria-hidden />
                 Undo all
               </DropdownMenuItem>
+              {/* Undo last confirm, one entry per order the newest revision can be undone
+                  for (R6): below Undo all, same permission as Confirm, hidden entirely when
+                  nothing on the board is undoable (AC-UC-04). A refused order keeps its
+                  entry so purchasing's reason is where the planner is already looking,
+                  rather than a control that silently is not there (AC-UC-03). */}
+              {undoableOrders.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  {undoableOrders.map((order) => {
+                    const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})`;
+                    const title = undoRefusalTitle(order.undo?.refusal ?? undefined);
+                    const disabled = Boolean(order.undo?.refusal) || !order.project_sales_order_id;
+                    return (
+                      <DropdownMenuItem
+                        key={order.sales_order_id}
+                        disabled={disabled}
+                        title={title}
+                        onSelect={
+                          disabled
+                            ? undefined
+                            : () =>
+                                mockUndo.start({
+                                  orderId: order.project_sales_order_id as string,
+                                  soNumber: order.so_number,
+                                  revisionNo: order.undo?.revision_no ?? 1,
+                                })
+                        }
+                      >
+                        <Undo2 className="size-4" aria-hidden />
+                        <span className="truncate" title={label}>
+                          {label}
+                        </span>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </>
+              )}
               <DropdownMenuItem onSelect={onBack}>
                 <ArrowLeft className="size-4" aria-hidden />
                 Back to sales orders
@@ -1401,18 +1458,28 @@ export function FulfilmentBoardPanel({
             </DropdownMenuContent>
           </DropdownMenu>
           {board.data && board.data.cells.length > 0 ? (
-            <Button
-              type="button"
-              size="sm"
-              data-testid="board-confirm"
-              disabled={
-                confirmSummary.toConfirm === 0 || confirmingAll || Boolean(confirmBlockedReason)
+            <DeferredActionButton
+              pending={mockUndo.pending}
+              verb="Undoing"
+              subject={mockUndo.target?.soNumber}
+              onCancel={mockUndo.cancel}
+              idle={
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="board-confirm"
+                  disabled={
+                    confirmSummary.toConfirm === 0 ||
+                    confirmingAll ||
+                    Boolean(confirmBlockedReason)
+                  }
+                  title={confirmBlockedReason ?? undefined}
+                  onClick={() => setConfirmAllOpen(true)}
+                >
+                  {`Confirm (${confirmSummary.toConfirm})`}
+                </Button>
               }
-              title={confirmBlockedReason ?? undefined}
-              onClick={() => setConfirmAllOpen(true)}
-            >
-              {`Confirm (${confirmSummary.toConfirm})`}
-            </Button>
+            />
           ) : null}
         </div>
       </div>
