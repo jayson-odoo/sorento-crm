@@ -76,12 +76,15 @@ born acknowledged as every raise is). No new notification.
 - **AC-RL-05 [UX]** No new motion. The `received`, `reallocate`, `unlink`, `used` and `note`
   marks are static one-word pills; chips stay truncated with `title`; the row is usable at
   375px and 1280px.
-- **AC-RL-06 [FE]** Given the fulfilment planning list view, When a line's linked inquiry
-  cell renders, Then the inquiry number and the word `received` (every document of the
-  row's inquiry fully received) or `used` (the row is redirected) appear whenever the
-  contribution's `order_inquiry.documents` / `redirected` say so, on a covered line AND on an
-  uncovered line with a live proposal; a line that carries its own decision keeps its
-  decision slot instead (shipped rule, reconciled 17 Sep after review).
+- **AC-RL-06 [FE]** Given the fulfilment planning list view, When a line's Product cell
+  renders, Then the word `received` (every document of the row's `order_inquiry` fully
+  received) or `used` (`order_inquiry.redirected`) appears beside the product, on every
+  line, regardless of verdict, draft or decision - driven directly off the contribution's
+  `order_inquiry.documents` / `redirected`, never gated on `covered`, a draft, or whether
+  the Decided cell has a composition to print instead. Amended 17 Sep (owner finding): the
+  word previously lived in the Decided cell and only showed when `contributionDecision`
+  returned no parts, so a board where every line is Saved or Suggested never showed it at
+  all.
 - **AC-RL-07 [BE]** The board contribution's `order_inquiry` dict carries `documents`:
   `[{document, kind, received}]` and `redirected` (bool) for the line's live row(s), read
   through `links_for_rows` (no second query shape).

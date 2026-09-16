@@ -640,6 +640,133 @@ describe('AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the inqu
 });
 
 /**
+ * Owner finding, 17 Sep 2026: the block above puts the word in the DECIDED cell, and only
+ * when `contributionInquiryDecision` returns non-null - which requires `!contributionDecision(
+ * ...)`, i.e. no draft and no decision. On a board where every line is Saved (draft) or
+ * Suggested, the Decided cell prints the composition instead and the word never renders at
+ * all. AC-RL-06 is amended again: the stage word belongs BESIDE THE PRODUCT, driven directly
+ * off `contribution.order_inquiry.documents` / `redirected`, on every line regardless of
+ * verdict, draft or decision - never gated on whether the Decided cell has something else to
+ * print. RED: the Product cell prints only `item_code` today (see the column's `cell` at
+ * `FulfilmentBoardListView.tsx`'s `id: 'product'`); no such word renders there under any
+ * fixture, decided or not.
+ */
+describe('AC-RL-06 (amended 17 Sep): the stage word sits beside the PRODUCT, on every line', () => {
+  it('renders "received" as a pill in the Product cell on a SAVED line (Decided cell prints Buy 280), when every document is received', async () => {
+    const row = contribution({
+      qty: '280',
+      qty_outstanding: '280',
+      order_inquiry: {
+        inquiry_no: 'OI-000950',
+        state: 'partly_linked',
+        ack_state: 'acknowledged',
+        documents: [{ document: 'SPO-2026/02-0009', kind: 'spo', received: true }],
+        redirected: false,
+      },
+    });
+
+    renderView({
+      contributions: [row],
+      draft: {
+        [row.key]: {
+          verdict: 'approved',
+          revision_no: 1,
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [],
+          buy_qty: '280',
+        },
+      },
+    });
+
+    // The Decided cell keeps stating the composition - this is not a replacement for it.
+    expect(await screen.findByText('Buy 280')).toBeInTheDocument();
+
+    const word = screen.getByText('received');
+    expect(word).toBeInTheDocument();
+    // "the same shared pill the OI worklist uses" - a `Badge`, not a bare span: the
+    // component's own base class names every pill it renders (`badge.tsx`), and a plain
+    // `<span>` styled by hand would not carry it.
+    expect(word.closest('[class*="rounded-full"]')).not.toBeNull();
+
+    // Beside the PRODUCT: inside the same cell as the item code, not the Decided cell.
+    const productCell = screen.getByText(row.item_code).closest('td');
+    expect(productCell).not.toBeNull();
+    expect(within(productCell as HTMLElement).getByText('received')).toBeInTheDocument();
+  });
+
+  it('renders "used" in the Product cell when the row was redirected, alongside a live Buy proposal, no draft', async () => {
+    const row = contribution({
+      covered: false,
+      decision: null,
+      sources: [{ kind: 'buy', qty: '96', reason: 'Nothing free at any location.' }],
+      order_inquiry: {
+        inquiry_no: 'OI-000951',
+        state: 'partly_linked',
+        ack_state: 'acknowledged',
+        documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+        redirected: true,
+      },
+    });
+
+    renderView({ contributions: [row] });
+
+    expect(await screen.findByText('Buy 96')).toBeInTheDocument();
+
+    const productCell = screen.getByText(row.item_code).closest('td');
+    expect(productCell).not.toBeNull();
+    expect(within(productCell as HTMLElement).getByText('used')).toBeInTheDocument();
+    expect(within(productCell as HTMLElement).queryByText('received')).not.toBeInTheDocument();
+  });
+
+  it('renders no word in the Product cell while one of the line’s documents is still open', async () => {
+    const row = contribution({
+      order_inquiry: {
+        inquiry_no: 'OI-000952',
+        state: 'partly_linked',
+        ack_state: 'acknowledged',
+        documents: [
+          { document: 'SPO-2026/01-0143', kind: 'spo', received: true },
+          { document: '202607-S0105', kind: 'po', received: false },
+        ],
+        redirected: false,
+      },
+    });
+
+    renderView({ contributions: [row] });
+
+    const productCell = screen.getByText(row.item_code).closest('td');
+    expect(productCell).not.toBeNull();
+    expect(within(productCell as HTMLElement).queryByText('received')).not.toBeInTheDocument();
+    expect(within(productCell as HTMLElement).queryByText('used')).not.toBeInTheDocument();
+  });
+
+  it('(d) an undecided covered line still names the inquiry and its word in the Decided cell (unchanged)', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: null,
+          proposed: null,
+          trail: [],
+          sources: [],
+          order_inquiry: {
+            inquiry_no: 'OI-000418',
+            state: 'partly_linked',
+            ack_state: 'acknowledged',
+            documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+            redirected: false,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('OI-000418')).toBeInTheDocument();
+    expect(screen.queryByText('Not decided')).not.toBeInTheDocument();
+  });
+});
+
+/**
  * D14 (the captain: a quick save for the lines that need nothing amended, and a per-line Undo
  * for the one that a quick save was wrong for).
  */
