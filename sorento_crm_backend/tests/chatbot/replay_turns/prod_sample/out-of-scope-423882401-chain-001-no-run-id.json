@@ -39,7 +39,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/e5819453-c5b3-4f54-ba70-001279b1311a"
+              "value": "https://internal.example.invalid/contacts/423882401"
             },
             {
               "name": "is_allowed_ai",
@@ -74,7 +74,7 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": null,
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
@@ -320,7 +320,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/e5819453-c5b3-4f54-ba70-001279b1311a"
+              "value": "https://internal.example.invalid/contacts/423882401"
             },
             {
               "name": "is_allowed_ai",
@@ -355,7 +355,7 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": null,
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {

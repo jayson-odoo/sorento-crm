@@ -14,7 +14,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -44,7 +44,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -79,12 +79,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -378,7 +378,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -408,7 +408,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -443,12 +443,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -708,7 +708,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -738,7 +738,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -773,12 +773,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -935,7 +935,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -965,7 +965,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -1000,12 +1000,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -1212,7 +1212,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -1242,7 +1242,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -1277,12 +1277,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -1496,7 +1496,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -1526,7 +1526,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -1561,12 +1561,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -1700,7 +1700,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -1730,7 +1730,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -1765,12 +1765,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -1904,7 +1904,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -1934,7 +1934,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -1969,12 +1969,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -2320,7 +2320,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -2350,7 +2350,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -2385,12 +2385,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -2607,7 +2607,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -2637,7 +2637,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -2672,12 +2672,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -2869,7 +2869,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -2899,7 +2899,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -2934,12 +2934,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -3588,7 +3588,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -3618,7 +3618,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -3653,12 +3653,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -4005,7 +4005,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -4035,7 +4035,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/60403815-829a-4a4a-8842-3ca525bf3047"
+              "value": "https://internal.example.invalid/contacts/438930735"
             },
             {
               "name": "is_allowed_ai",
@@ -4070,12 +4070,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27086257930997834\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
