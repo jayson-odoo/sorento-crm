@@ -1227,6 +1227,13 @@ def _run_stages(  # noqa: PLR0915
         parser_usage = getattr(parser_raw, "usage", {}) or {}
         if not isinstance(parser_raw, dict) or not parser_raw:
             raise parser.ParserError("parser returned no usable emission")
+        if parser_bypassed:
+            # G6's own half of R5 / H44. A PROVIDER's answer was held to the declared
+            # keys inside `parser.parse`; the harness value never went near it, so
+            # `{"nope": true}` (the 5 Sep 2026 production case) routed a whole turn off
+            # tolerant defaults and finished `done`. Same rule, same wording, named here
+            # because this is the seam that skipped it.
+            parser.assert_emission(parser_raw)
         verdict: dict[str, Any] = dict(parser_raw)
     except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a

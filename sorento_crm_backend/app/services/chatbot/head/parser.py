@@ -406,6 +406,30 @@ class ParsedOutput(dict):
         self.usage = usage or {}
 
 
+def assert_emission(emission: dict) -> None:
+    """Every key the schema declares is present, or this is not an emission.
+
+    ONE rule, TWO callers, because a verdict reaches the engine two ways and both of them
+    used to answer this question differently: `parse` below, for what a provider returned,
+    and `engine.run_turn`'s harness bypass, for what an operator's
+    `mock_reformulator_output` supplied. The bypass had no check at all beyond "is a
+    non-empty dict", so `{"nope": true}` - the real 5 Sep 2026 production case - routed a
+    whole turn off defaults and came back `done`, with entity resolution running on a
+    token nobody typed. R5 / H44: a failed understanding is a FAILED TURN at `understood`,
+    never a soft default.
+
+    The message names every missing key at once (wording kept from `_assert_emission`, the
+    fix this restores: a bare `KeyError: 'reference_positions'` read as a CRM fault and
+    said nothing about what the model got wrong), so a bad mock or a prompt regression is
+    fixed in one pass instead of one key per run.
+    """
+    missing = sorted(DECLARED_KEYS - set(emission))
+    if missing:
+        raise ParserError(
+            "parser emission missing " + ", ".join(repr(key) for key in missing)
+        )
+
+
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """One structured-output call. Raises `ParserError`; never returns a default.
 
@@ -455,11 +479,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             raise ParserError(f"parser returned non-JSON content: {exc}") from exc
         if not isinstance(parsed, dict):
             raise ParserError("parser returned a non-object")
-        missing = DECLARED_KEYS - set(parsed)
-        if missing:
-            raise ParserError(
-                f"parser output missing required key(s): {', '.join(sorted(missing))}"
-            )
+        assert_emission(parsed)
     except ParserError as exc:
         # The provider answered, so it billed. The turn fails either way; the spend is
         # still real and still has to reach `ai_assistant_usage_logs`.
