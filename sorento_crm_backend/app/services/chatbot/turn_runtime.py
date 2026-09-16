@@ -881,6 +881,7 @@ def make_tool_runner(
                 if fragment.get("outcome") == "access_denied"
                 else None
             ),
+            ran_with=lane_out,
         )
 
     return runner
@@ -1154,8 +1155,18 @@ def envelope_of(
     entities: list[dict[str, Any]],
     *,
     denial_text: str | None = None,
+    ran_with: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531)."""
+    """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
+
+    `ran_with` is the lane input this fetch actually went out with, read for one fact:
+    the date window. Whatever put it there - the verdict's own dates, the focus window
+    `_spec_window` defaults in, the outstanding answer's carried filters - the answer
+    has to say which dates it searched (browser pass 6 item 4, turn 60927579: "This
+    month only" reached the tool as 2026-09-01 to 2026-09-30 and the reply header said
+    nothing about it, so a customer reading "No matching results found." could not tell
+    an empty month from an empty product).
+    """
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
     # The whole-domain grant gate refused before any tool was picked
     # (`lanes/business.run_fetch`'s `outcome="access_denied"`). That is a DENIED
@@ -1209,4 +1220,22 @@ def envelope_of(
         "own_header": bool(fetched.get("outstanding_report")),
         "outcome": fragment.get("outcome"),
         "tool": (fetched.get("tool") or {}).get("name") if isinstance(fetched.get("tool"), dict) else None,
+        # The window this fetch ran with, already in the words the scope question uses
+        # for it (`lanes/business.order_date_text` is the one writer). Absent when the
+        # fetch had no window - the header then says nothing rather than "all", which is
+        # the report's own line and belongs with the other three.
+        "date_line": _date_line(ran_with),
     }
+
+
+def _date_line(ran_with: dict[str, Any] | None) -> str | None:
+    """`Order date: 01/09/2026 to 30/09/2026`, or None when the fetch had no window."""
+    if not isinstance(ran_with, dict):
+        return None
+    start = ran_with.get("date_filter_start")
+    end = ran_with.get("date_filter_end")
+    if not (start or end):
+        return None
+    from app.services.chatbot.lanes.business import order_date_text
+
+    return f"Order date: {order_date_text(start, end)}"
