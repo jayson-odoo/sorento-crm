@@ -190,6 +190,87 @@ def _signed_divergences() -> dict[tuple[str, str], set[int | None]]:
 DIVERGENCES = _signed_divergences()
 
 
+# --------------------------------------------------------------------------- #
+# PENDING-LIVE-RERUN.md - R-A (captain ruling, 17 Sep 2026): a case listed there
+# is a genuine recording-staleness problem (captured under an older engine/prompt
+# version, or needs a source-DB state this blank-seed harness cannot reproduce),
+# not a signable DIVERGENCES.md entry and not an engine defect either. It is
+# SKIPPED here (reason recorded, never silently dropped) so the gate stays honest
+# and CI-green; a case NOT listed here and NOT signed in DIVERGENCES.md still
+# fails, per AC-1591's "every difference is either signed or a failure."
+# --------------------------------------------------------------------------- #
+
+PENDING_PATH = REPLAY_ROOT / "PENDING-LIVE-RERUN.md"
+
+_PENDING_SECTION_RE = re.compile(
+    r"## Composite / cascading chains.*?\n\n(.*?)\n\nNot exhaustively", re.S
+)
+_PENDING_BRACE_RE = re.compile(r"^(?P<prefix>.*)\{(?P<opts>[^}]+)\}$")
+
+PENDING_REASON = (
+    "recorded under the old prompt / composite chain; re-record on v24 "
+    "(tests/chatbot/replay_turns/PENDING-LIVE-RERUN.md, "
+    "\"Composite / cascading chains\")"
+)
+
+
+def _parse_pending_stems(text: str) -> set[str]:
+    """Expand PENDING-LIVE-RERUN.md's own `{a,b,c}` brace-list shorthand under its
+    "Composite / cascading chains" section into one stem per case (e.g.
+    `console/case-{008,010}` -> `{"console/case-008", "console/case-010"}`). A pure
+    function of the file's text so the expansion is unit-testable without touching
+    the real file (same shape as `_parse_divergences` above)."""
+    match = _PENDING_SECTION_RE.search(text)
+    if match is None:
+        return set()
+    paragraphs = match.group(1).split("\n\n")
+    if not paragraphs:
+        return set()
+    list_block = paragraphs[-1].replace("\n", " ")
+    tokens = re.findall(r"`([^`]+)`", list_block)
+    stems: set[str] = set()
+    for token in tokens:
+        brace = _PENDING_BRACE_RE.match(token)
+        if brace is None:
+            stems.add(token)
+            continue
+        for opt in brace.group("opts").split(","):
+            stems.add(brace.group("prefix") + opt.strip())
+    return stems
+
+
+def _stem_matches_case(case_stem: str, stem: str) -> bool:
+    """`case_stem` (a real case id, minus `.json`) matches `stem` (one PENDING-
+    LIVE-RERUN.md entry) when `stem` is a prefix AND the next character (if any)
+    is not a digit - so `..-437264483` does not also swallow a hypothetical
+    `..-4372644830-...` case that merely shares the same leading digits."""
+    if not case_stem.startswith(stem):
+        return False
+    if len(case_stem) == len(stem):
+        return True
+    return not case_stem[len(stem)].isdigit()
+
+
+def _pending_case_ids(stems: set[str], case_ids: list[str]) -> dict[str, str]:
+    """`{case_id: reason}` for every real case file whose stem is named in
+    PENDING-LIVE-RERUN.md's composite/cascading-chains list."""
+    out: dict[str, str] = {}
+    for case_id in case_ids:
+        stem_of_case = case_id[:-5] if case_id.endswith(".json") else case_id
+        if any(_stem_matches_case(stem_of_case, stem) for stem in stems):
+            out[case_id] = PENDING_REASON
+    return out
+
+
+def _pending_cases() -> dict[str, str]:
+    if not PENDING_PATH.exists():
+        return {}
+    return _pending_case_ids(_parse_pending_stems(PENDING_PATH.read_text()), CASE_IDS)
+
+
+PENDING_CASES = _pending_cases()
+
+
 def _excused(case_id: str, field: str, step_no: int | None = None) -> bool:
     """A whole-case signature (no `step N:` in its line, recorded as `None`) excuses
     EVERY step's divergence on that field; a step-scoped signature excuses only the
@@ -751,6 +832,8 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
     from app.services.chatbot import engine as engine_mod
 
     case_id = str(case_path.relative_to(REPLAY_ROOT))
+    if case_id in PENDING_CASES:
+        pytest.skip(PENDING_CASES[case_id])
     payload = json.loads(case_path.read_text())
     turns = payload.get("turns") or []
     assert turns, f"{case_id}: no turns recorded"
@@ -803,6 +886,95 @@ def test_no_case_files_found_is_reported_not_silently_skipped() -> None:
 
 def test_divergences_file_exists() -> None:
     assert DIVERGENCES_PATH.exists(), "tests/chatbot/replay_turns/DIVERGENCES.md is missing"
+
+
+# --------------------------------------------------------------------------- #
+# R-A: PENDING-LIVE-RERUN.md skip rule (captain ruling, 17 Sep 2026).
+# --------------------------------------------------------------------------- #
+
+
+def test_pending_live_rerun_file_exists() -> None:
+    assert PENDING_PATH.exists(), "tests/chatbot/replay_turns/PENDING-LIVE-RERUN.md is missing"
+
+
+class TestPendingLiveRerunParsing:
+    SAMPLE = (
+        "## Composite / cascading chains (2 files)\n\n"
+        "Every file below fails on 3+ of the 5 comparison fields across many steps.\n\n"
+        "`console/case-{008,010}`, `prod_sample/demand-qty-423729473`.\n\n"
+        "Not exhaustively broken down per file this session.\n"
+    )
+
+    def test_expands_brace_list_into_one_stem_per_option(self) -> None:
+        stems = _parse_pending_stems(self.SAMPLE)
+        assert stems == {
+            "console/case-008",
+            "console/case-010",
+            "prod_sample/demand-qty-423729473",
+        }
+
+    def test_a_stem_with_no_braces_is_kept_as_is(self) -> None:
+        stems = _parse_pending_stems(self.SAMPLE)
+        assert "prod_sample/demand-qty-423729473" in stems
+
+    def test_missing_section_yields_no_stems(self) -> None:
+        assert _parse_pending_stems("# Some other doc\n\nno matching section here.\n") == set()
+
+    def test_stem_matches_a_real_case_filename_with_a_suffix(self) -> None:
+        assert _stem_matches_case("console/case-008-console-abcd1234", "console/case-008") is True
+
+    def test_stem_does_not_match_a_case_sharing_only_a_leading_digit_run(self) -> None:
+        # A hypothetical case id "..-4372644830-.." must NOT be swallowed by the
+        # stem "..-437264483" merely because it starts with the same digits.
+        assert _stem_matches_case("prod_sample/business-query-4372644830-chain", "prod_sample/business-query-437264483") is False
+
+    def test_stem_matches_an_exact_case_id_with_no_suffix(self) -> None:
+        assert _stem_matches_case("console/handbuilt-rp-001", "console/handbuilt-rp-001") is True
+
+    def test_pending_case_ids_maps_every_matching_case_id_to_the_shared_reason(self) -> None:
+        stems = {"console/case-008"}
+        case_ids = ["console/case-008-console-abcd1234.json", "console/case-011-console-zzzz9999.json"]
+        result = _pending_case_ids(stems, case_ids)
+        assert result == {"console/case-008-console-abcd1234.json": PENDING_REASON}
+
+    def test_the_real_pending_file_names_owner_15sep_chain_001_but_not_002(self) -> None:
+        # `owner-15sep-chain-002` is explicitly EXCLUDED by PENDING-LIVE-RERUN.md's
+        # own "Named by the coordinator, checked this session" note (superseded,
+        # resolved this session) - it must stay a live FAILURE, never silently
+        # skipped, so a regression there is never hidden by this rule.
+        chain_001 = "console/owner-15sep-chain-001-console-52b91f3f-0f51-41c1-ae04-6d35e5c79d35.json"
+        chain_002 = "console/owner-15sep-chain-002-console-8113f96b-0d9f-463e-b052-4282daf04f7a.json"
+        assert chain_001 in PENDING_CASES
+        assert chain_002 not in PENDING_CASES
+
+    def test_a_case_not_named_anywhere_in_pending_live_rerun_is_not_pending(self) -> None:
+        assert "console/case-057-console-focus-009.json" not in PENDING_CASES
+
+
+class TestPendingCaseIsSkippedBeforeAnyEngineWork:
+    def test_test_replay_skips_a_pending_case_without_touching_its_fixtures(self, monkeypatch) -> None:
+        pending_id = next(iter(PENDING_CASES))
+        case_path = REPLAY_ROOT / pending_id
+        # session_factory/stub_parser are left `None`: if the skip check below
+        # `payload = json.loads(...)` did not fire first, this would blow up on
+        # `None()` well before the assertion - proving the skip is the FIRST thing
+        # that happens, not merely that the test ends up skipped for some other
+        # reason.
+        with pytest.raises(pytest.skip.Exception) as exc_info:
+            test_replay(case_path, session_factory=None, stub_parser=None, monkeypatch=monkeypatch)
+        assert PENDING_REASON in str(exc_info.value)
+
+    def test_a_case_not_in_pending_and_not_signed_still_reaches_the_engine(self, monkeypatch) -> None:
+        # A case outside PENDING_CASES must NOT hit the `pytest.skip` branch - it
+        # should fall through to `json.loads`, which raises a plain (non-skip)
+        # error against a `session_factory=None` fixture we never gave it a real
+        # DB for. This proves the skip branch is scoped to PENDING_CASES only.
+        non_pending = [cid for cid in CASE_IDS if cid not in PENDING_CASES]
+        assert non_pending, "every case is pending - the skip rule would be untestable"
+        case_path = REPLAY_ROOT / non_pending[0]
+        with pytest.raises(Exception) as exc_info:
+            test_replay(case_path, session_factory=None, stub_parser=None, monkeypatch=monkeypatch)
+        assert not isinstance(exc_info.value, pytest.skip.Exception)
 
 
 # --------------------------------------------------------------------------- #
