@@ -1,16 +1,17 @@
-"""`system_settings.chatbot_memory`, and `system.chatbot_config.manage` swept onto the
-roles that already read the chatbot's turns.
+"""`system_settings.chatbot_memory`, and `system.chatbot_config.manage` granted to the
+two administrator roles.
 
 Chatbot turn re-architecture S5 backend (AC-1513, AC-1561).
 
-**Why the sweep, and why from `chat_history.view`.** A permission granted to nobody is
-indistinguishable from a broken feature: `admin` and `superadmin` short-circuit
-`check_user_has_permission`, so the person who verifies the screens never notices that
-every other provisioned role is locked out of it. The source grant is
-`system.chat_history.view` because that is already "may look inside the chatbot" - the
-operator who reads why a turn answered wrongly is the operator who fixes the domain row
-that made it answer wrongly. It is deliberately NOT derived from a hand-written role
-list, so it stays correct on a database whose roles were customised after provisioning.
+**Why only `admin` and `superadmin`.** The first draft of this migration derived the
+grant from every role already holding `system.chat_history.view`, on the reasoning that
+whoever reads a turn is whoever fixes the domain row behind it. Measured on the
+production copy, those roles are `admin`, `guest`, `integration_foundryx_esb` and
+`integration_n8n` - so a read-only visitor and two machine principals would have been
+handed write access to the policy the turn engine routes and narrows on. Reading a turn
+and rewriting the engine's policy are not the same privilege. The grant is now the two
+administrator roles by slug and nothing else; any other role is an operator decision,
+made on the Roles screen.
 
 Idempotent both ways, and a clean no-op on a database with no roles (CI's).
 
@@ -26,7 +27,10 @@ branch_labels = None
 depends_on = None
 
 _TARGET = "system.chatbot_config.manage"
-_SOURCE = "system.chat_history.view"
+# `user_roles.slug`, not `name`: the slug is what `user_service` keys its own
+# administrator bypass on ("superadmin" / "admin"), and a role's display name is
+# editable.
+_ADMIN_ROLE_SLUGS = ("superadmin", "admin")
 # Name and description match `app/rbac/permission_registry.py`'s own row, so the
 # create-if-absent branch below cannot drift from what the registry sync would write.
 _NAME = "Manage Chatbot Configuration"
@@ -69,15 +73,15 @@ def upgrade() -> None:
         sa.text(
             """
             INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
-            SELECT gen_random_uuid()::text, rp.role_id, tgt.id, now()
-            FROM user_role_permissions rp
-            JOIN user_permissions src ON src.id = rp.permission_id AND src.slug = :source
+            SELECT gen_random_uuid()::text, r.id, tgt.id, now()
+            FROM user_roles r
             CROSS JOIN user_permissions tgt
             WHERE tgt.slug = :target
+              AND r.slug = ANY(:role_slugs)
             ON CONFLICT (role_id, permission_id) DO NOTHING
             """
         ),
-        {"source": _SOURCE, "target": _TARGET},
+        {"target": _TARGET, "role_slugs": list(_ADMIN_ROLE_SLUGS)},
     )
 
 
@@ -92,18 +96,13 @@ def downgrade() -> None:
         sa.text(
             """
             DELETE FROM user_role_permissions grant_row
-            USING user_permissions tgt
+            USING user_permissions tgt, user_roles r
             WHERE grant_row.permission_id = tgt.id
+              AND grant_row.role_id = r.id
               AND tgt.slug = :target
-              AND EXISTS (
-                  SELECT 1
-                  FROM user_role_permissions src_rp
-                  JOIN user_permissions src
-                    ON src.id = src_rp.permission_id AND src.slug = :source
-                  WHERE src_rp.role_id = grant_row.role_id
-              )
+              AND r.slug = ANY(:role_slugs)
             """
         ),
-        {"source": _SOURCE, "target": _TARGET},
+        {"target": _TARGET, "role_slugs": list(_ADMIN_ROLE_SLUGS)},
     )
     op.drop_column("system_settings", "chatbot_memory")
