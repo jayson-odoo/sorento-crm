@@ -88,12 +88,10 @@ def seed_marketer(db: Session) -> None:
 
 
 def seed_portal_contact(db: Session) -> str:
-    """A Respond contact whose access type may see the price tag form."""
-    from app.models.access import (
-        ContactAccessType,
-        RespondContact,
-        respond_contact_access_types,
-    )
+    """A Respond contact whose market segment may see the price tag form
+    (PLAN-portal-forms-market-segment D1: the grant moved off access types)."""
+    from app.models.access import RespondContact
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -101,19 +99,9 @@ def seed_portal_contact(db: Session) -> str:
         name=unique_code("ZZT Sales Sam"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id, access_type_code=access_type.code
-        )
-    )
-    db.flush()
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     return contact.id
 
 

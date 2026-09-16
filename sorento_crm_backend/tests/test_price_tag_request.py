@@ -16,11 +16,7 @@ from sqlalchemy.orm import Session
 from tests._pg_fixture import blank_session, unique_code
 
 # Models used for seeding.
-from app.models.access import (
-    ContactAccessType,
-    RespondContact,
-    respond_contact_access_types,
-)
+from app.models.access import RespondContact
 from app.models.order import Customer, Order
 from app.models.price_tag import (
     ContactPortalFormOverride,
@@ -46,7 +42,9 @@ from app.services.price_tag_request_service import (
     VALID_TRANSITIONS,
 )
 from app.services.portal_form_visibility_service import resolve_visible_form_types
+from app.services.portal_service import SUPPORTED_TYPES
 from tests import _ptag_r9_seed
+from tests._portal_grant import link_contact_segment, seed_segment
 
 
 # ---------------------------------------------------------------------------
@@ -73,33 +71,6 @@ def _make_contact(db: Session, *, phone: str | None = None) -> RespondContact:
     db.add(c)
     db.flush()
     return c
-
-
-def _make_access_type(
-    db: Session,
-    *,
-    code: str | None = None,
-    portal_form_types: list[str] | None = None,
-) -> ContactAccessType:
-    """Seed a ContactAccessType with given portal_form_types."""
-    at = ContactAccessType(
-        code=code or unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=portal_form_types or [],
-    )
-    db.add(at)
-    db.flush()
-    return at
-
-
-def _assign_access_type(db: Session, contact: RespondContact, access_type: ContactAccessType) -> None:
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
-    db.flush()
 
 
 def _make_product(
@@ -703,29 +674,28 @@ class TestAutoExportOnApprove:
 
 
 class TestPortalFormVisibility:
+    """r2 rule (PLAN-portal-forms-market-segment D1/D3): the group source is a
+    market segment, not an access type, and every contact already holds the
+    four legacy kinds by default - a segment only ever grants MORE (today:
+    price_tag_request). Test NAMES are kept from the pre-r2 lane (D8); bodies
+    are rewritten to the new contract."""
+
     def test_dealer_access_type(self, db: Session):
-        """Contact with a dealer access type sees price_tag_request + stock_inquiry."""
+        """Contact whose segment grants price_tag_request sees it, plus the base four."""
         contact = _make_contact(db)
-        at = _make_access_type(db, portal_form_types=["price_tag_request", "stock_inquiry"])
-        _assign_access_type(db, contact, at)
+        segment = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment.code)
 
         visible = resolve_visible_form_types(db, contact.id)
         assert "price_tag_request" in visible
         assert "stock_inquiry" in visible
 
     def test_project_access_type(self, db: Session):
-        """Contact with project access type sees project-oriented forms."""
+        """Contact whose segment grants nothing extra still sees the base four,
+        and never price_tag_request without a grant."""
         contact = _make_contact(db)
-        at = _make_access_type(
-            db,
-            portal_form_types=[
-                "stock_inquiry",
-                "purchase_request",
-                "sponsorship_form",
-                "complaint",
-            ],
-        )
-        _assign_access_type(db, contact, at)
+        segment = seed_segment(db, kinds=[])
+        link_contact_segment(db, contact.id, segment.code)
 
         visible = resolve_visible_form_types(db, contact.id)
         assert "stock_inquiry" in visible
@@ -735,20 +705,21 @@ class TestPortalFormVisibility:
         assert "price_tag_request" not in visible
 
     def test_multiple_access_types_union(self, db: Session):
-        """Contact with multiple access types gets the union."""
+        """Contact in multiple segments gets the union of what they each grant -
+        one segment granting nothing does not shadow another's grant."""
         contact = _make_contact(db)
-        at_dealer = _make_access_type(db, portal_form_types=["price_tag_request", "stock_inquiry"])
-        at_project = _make_access_type(db, portal_form_types=["purchase_request", "complaint"])
-        _assign_access_type(db, contact, at_dealer)
-        _assign_access_type(db, contact, at_project)
+        segment_empty = seed_segment(db, kinds=[])
+        segment_price_tag = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment_empty.code)
+        link_contact_segment(db, contact.id, segment_price_tag.code)
 
         visible = resolve_visible_form_types(db, contact.id)
-        assert visible == {"price_tag_request", "stock_inquiry", "purchase_request", "complaint"}
+        assert visible == set(SUPPORTED_TYPES) | {"price_tag_request"}
 
     def test_override_enable_adds_type(self, db: Session):
         """Per-contact override with is_enabled=True adds a type."""
         contact = _make_contact(db)
-        # No access types assigned at all.
+        # No market segment assigned at all.
         override = ContactPortalFormOverride(
             contact_id=contact.id,
             form_type="price_tag_request",
@@ -761,10 +732,11 @@ class TestPortalFormVisibility:
         assert "price_tag_request" in visible
 
     def test_override_disable_removes_type(self, db: Session):
-        """Per-contact override with is_enabled=False removes a type."""
+        """Per-contact override with is_enabled=False removes a type, even a
+        base one the contact would otherwise always see."""
         contact = _make_contact(db)
-        at = _make_access_type(db, portal_form_types=["price_tag_request", "stock_inquiry"])
-        _assign_access_type(db, contact, at)
+        segment = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment.code)
 
         override = ContactPortalFormOverride(
             contact_id=contact.id,
@@ -779,10 +751,12 @@ class TestPortalFormVisibility:
         assert "stock_inquiry" in visible
 
     def test_no_access_types_empty(self, db: Session):
-        """Contact with no access types and no overrides sees nothing."""
+        """D3: a contact with no segment and no override is NOT empty any more -
+        it sees exactly the four legacy kinds (the base default), never
+        price_tag_request without a grant."""
         contact = _make_contact(db)
         visible = resolve_visible_form_types(db, contact.id)
-        assert visible == set()
+        assert visible == set(SUPPORTED_TYPES)
 
 
 # ---------------------------------------------------------------------------

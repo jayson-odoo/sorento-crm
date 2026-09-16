@@ -104,27 +104,18 @@ def _promotion(db, product, *, offer=400.00, access_levels=None, end=None):
 def portal_client():
     from app.api.v1.public.portal import get_portal_token
     from app.database import get_db
-    from app.models.access import ContactAccessType, RespondContact, respond_contact_access_types
+    from app.models.access import RespondContact
     from app.models.portal import PortalToken
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     with blank_session() as db:
         contact = RespondContact(
             id=_uid(), phone_number=f"+60{uuid.uuid4().hex[:9]}", name=unique_code("contact")
         )
         db.add(contact)
-        access_type = ContactAccessType(
-            code=unique_code("at"),
-            name=unique_code("Access Type"),
-            portal_form_types=["price_tag_request"],
-        )
-        db.add(access_type)
         db.flush()
-        db.execute(
-            respond_contact_access_types.insert().values(
-                contact_id=contact.id, access_type_code=access_type.code
-            )
-        )
-        db.flush()
+        segment = seed_segment(db, kinds=["price_tag_request"])
+        link_contact_segment(db, contact.id, segment.code)
 
         def _override_get_db():
             yield db

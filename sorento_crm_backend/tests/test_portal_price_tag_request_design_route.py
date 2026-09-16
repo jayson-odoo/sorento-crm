@@ -39,11 +39,8 @@ _DESIGN_URL = "/api/v1/public/portal/submissions/price_tag_request/{id}/design"
 
 
 def _seed_contact_who_can_see_the_form(db: Session) -> str:
-    from app.models.access import (
-        ContactAccessType,
-        RespondContact,
-        respond_contact_access_types,
-    )
+    from app.models.access import RespondContact
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -51,20 +48,9 @@ def _seed_contact_who_can_see_the_form(db: Session) -> str:
         name=unique_code("contact"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
-    db.flush()
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     return contact.id
 
 
