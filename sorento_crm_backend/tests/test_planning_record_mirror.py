@@ -512,17 +512,25 @@ def test_esb_ingest_new_line_on_adopted_order_mirrors_it():
         assert new_core is not None, "the ESB push must have created the new core line"
         assert new_core["source_system"] == "autocount", dict(new_core)
 
-        mirror = env.db.execute(
-            text("SELECT line_no FROM projects.sales_order_lines "
-                 "WHERE project_sales_order_id = :p AND core_sales_order_line_id = :c"),
-            {"p": project_so.id, "c": str(new_core["id"])},
-        ).mappings().first()
+        # Through the ORM, never a schema-qualified raw string: `blank_session` redirects
+        # ORM constructs with `schema_translate_map` and unqualified raw SQL with
+        # `search_path`, but an explicit `projects.` prefix escapes both and reads the
+        # REAL schema, where this row can never be.
+        env.db.expire_all()
+        mirror = (
+            env.db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == project_so.id,
+                ProjectSalesOrderLine.core_sales_order_line_id == str(new_core["id"]),
+            )
+            .first()
+        )
         assert mirror is not None, (
             "the core line the ESB push created on an adopted order must gain a mirror in "
             "the same transaction (document_ingest_service._sync_lines never calls "
             "mirror_missing_lines)"
         )
-        assert mirror["line_no"] == 2, "line_no must be the previous max (1) + 1"
+        assert mirror.line_no == 2, "line_no must be the previous max (1) + 1"
     finally:
         gen.close()
 
