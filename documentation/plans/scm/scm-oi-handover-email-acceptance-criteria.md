@@ -43,6 +43,7 @@ actions (confirm, reject, link) send nothing.
 | AC-H10 | [BE] | Given rows are recorded and the session rolls back, then nothing is dispatched and the queue is empty for the next commit. |
 | AC-H15 | [BE] | Given a commit, the dispatch runs post-commit on a fresh session (an `EmailOutbox` row exists after the commit; none exists before). A dispatch failure is logged and never raises into the caller. |
 | AC-H19 | [BE] | Given a raised row retired by `_retire_uncovered_rows` or `_retire_settled_cancel_balance` (dropped from the buy list on a later confirm / supersede), then the dispatched context holds a line for it with `qty` = `0`, `was.qty` = the old qty, `remark` = `CANCEL BALANCE <old> NOS`. A retire that is replaced in the same commit prints BOTH the cancelled line and the replacement line; the email never pairs them (same rule as R10). |
+| AC-H20 | [BE] | Given a row carried by the cancel-and-re-raise site with the same qty and delivery date it already had, then no line is printed for it (nothing changed for purchasing). A carry whose qty or date changed prints once as a settled line with `was.*` set, never as a fresh ORDER. |
 | AC-H12 | [BE] | `order_inquiry_handover` is registered in the trigger catalog with an empty `config_schema`; the catalog endpoint lists it. |
 
 ### Context shape (the template contract)
