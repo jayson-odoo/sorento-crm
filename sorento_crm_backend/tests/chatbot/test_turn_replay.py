@@ -514,7 +514,70 @@ _CASE_PRODUCTS: dict[str, tuple[tuple[str, str], ...]] = {
     "console/handpass2-owner-17sep-stock-incoming.json": HAND_PASS_2_SRTWC286_FAMILY,
     "console/handpass2-owner-17sep-outstanding-do-7445-scope.json": HAND_PASS_2_SRTWT7445_FAMILY,
     "console/handpass2-owner-17sep-incoming-stock-7445.json": HAND_PASS_2_SRTWT7445_FAMILY,
+    # AC-1593 hand pass 3 (17 Sep 2026 MYT): same SRTWC286 family, same source clone -
+    # the stock/incoming/word-number chain and the purchase-cost/PO chain both ask
+    # about SRTWC286 first.
+    "console/handpass3-owner-17sep-stock-incoming-multipick-word-number.json": HAND_PASS_2_SRTWC286_FAMILY,
+    "console/handpass3-owner-17sep-purchase-cost-po.json": HAND_PASS_2_SRTWC286_FAMILY,
+    "console/handpass3-owner-17sep-promo-tier.json": HAND_PASS_2_SRTWC286_FAMILY,
 }
+
+# AC-1593 hand pass 3, row 1 (coordinator, 17 Sep 2026): "10 promotions exist on the
+# clone for SRTWC286: seed two" - the private test DB has none at all, so a promo-tier
+# case has nothing to answer with regardless of the apply()-level fix. Two rows only
+# (not ten): enough for `crm_marketing_promotions_list`'s stub to return a non-empty
+# answer without hand-building the clone's full ten-row set this session never measured
+# field-for-field.
+_CASE_PROMOTIONS: dict[str, tuple[tuple[str, str, tuple[str, ...]], ...]] = {
+    # (promotion_id, promotion_group_id, access_levels) - both ids fixed valid-hex
+    # UUIDs (never string-sliced from one another, which risked a non-hex tail).
+    "console/handpass3-owner-17sep-promo-tier.json": (
+        ("00000000-0000-0000-0000-0000000ea001", "00000000-0000-0000-0000-0000000eb001", ("dealer", "office", "end user")),
+        ("00000000-0000-0000-0000-0000000ea002", "00000000-0000-0000-0000-0000000eb002", ("dealer",)),
+    ),
+}
+
+
+def _seed_case_promotions(session_factory, *, case_id: str) -> None:
+    import json as _json
+
+    from sqlalchemy import text
+
+    rows = _CASE_PROMOTIONS.get(case_id)
+    if not rows:
+        return
+    product_rows = _CASE_PRODUCTS.get(case_id) or ()
+    if not product_rows:
+        return
+    db = session_factory()
+    for promo_id, group_id, access_levels in rows:
+        existing = db.execute(text("SELECT 1 FROM promotions WHERE id = :id"), {"id": promo_id}).first()
+        if existing is not None:
+            continue
+        db.execute(
+            text(
+                "INSERT INTO promotions (id, access_levels, company_id, is_active) "
+                "VALUES (:id, CAST(:levels AS jsonb), :cid, true)"
+            ),
+            {"id": promo_id, "levels": _json.dumps(list(access_levels)), "cid": SORENTO_COMPANY_ID},
+        )
+        db.execute(
+            text(
+                "INSERT INTO promotion_groups (id, promotion_id, group_name, company_id, sort_order) "
+                "VALUES (:id, :pid, 'ZZT handpass3 group', :cid, 0)"
+            ),
+            {"id": group_id, "pid": promo_id, "cid": SORENTO_COMPANY_ID},
+        )
+        for product_id, _code in product_rows[:2]:
+            db.execute(
+                text(
+                    "INSERT INTO promotion_products "
+                    "(id, promotion_id, promotion_group_id, product_id, company_id) "
+                    "VALUES (gen_random_uuid(), :pid, :gid, :prod, :cid)"
+                ),
+                {"pid": promo_id, "gid": group_id, "prod": product_id, "cid": SORENTO_COMPANY_ID},
+            )
+    db.commit()
 
 _PRODUCT_SEED_CATEGORY_ID = "00000000-0000-0000-0000-00000000ca01"
 _PRODUCT_SEED_UOM_ID = "00000000-0000-0000-0000-00000000c0a1"
@@ -842,6 +905,7 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
     _seed_contact(session_factory, contact_id=contact_id)
     _seed_case_customers(session_factory, case_id=case_id)
     _seed_case_products(session_factory, case_id=case_id)
+    _seed_case_promotions(session_factory, case_id=case_id)
     # T4 (coordinator ruling, 16 Sep 2026): `_seed_contact` above leaves a brand-new
     # contact's `session_vars` at `{}`. A recorded chain's step 1 ran against the
     # SOURCE contact's REAL prior session (never itself a recorded turn in this file)

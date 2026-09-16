@@ -1,0 +1,3054 @@
+{
+  "_note": "rulings proposed 17 Sep 2026, pending owner go - see documentation/plans/chatbot/evidence/turn-rearch/hand-pass-3-17sep.md (coder worktree). Recorded verbatim off the source clone (observed, currently-broken behaviour, NOT edited to the proposed ruling: hand-editing a multi-KB real order/DO listing to a hypothetical post-fix shape would be inventing data this session never measured, which AC-1592 forbids - 'never re-derive replay expectations from the engine'). The proposed-ruling assertions live instead in the companion unit-red file, tests/chatbot/test_rearch_handpass3_owner_17sep.py, one class per row, against the real turn/apply.py + turn/narrow.py + turn_runtime.py seams directly.",
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Outstanding quantity to hanlim",
+              "type": "text"
+            },
+            "messageId": "console-0b2c2cf97487",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Cabana Dealer"
+          ],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "raw": "300-C043",
+                "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+              },
+              {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "raw": "300-C043",
+                "uuid": "a6a2f62a-eeef-48b0-a032-aa926de57199"
+              },
+              {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "raw": "300-C043",
+                "uuid": "b7289132-29f0-47af-8da5-7726705a3cd4"
+              },
+              {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "raw": "300-C043",
+                "uuid": "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
+              },
+              {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "raw": "300-C043",
+                "uuid": "8690d69e-a4f6-4889-9c4f-f15a3e820538"
+              },
+              {
+                "canonical_code": "300-C043",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                "raw": "300-C043",
+                "uuid": "78dab676-49c4-476f-a406-5644cf81f014"
+              }
+            ],
+            "date_window": {
+              "end": "2026-09-30",
+              "mode": null,
+              "start": "2026-09-01"
+            },
+            "document": [],
+            "domains": [
+              "promotion"
+            ],
+            "extra": {},
+            "products": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "hint_confident": true,
+                "raw": "srtwc286"
+              }
+            ],
+            "set_page": null,
+            "status": null,
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": null,
+            "expects": "yes_no",
+            "kind": "team_pick",
+            "options": [
+              {
+                "entity_type": "team",
+                "label": "Yes",
+                "payload": {},
+                "position": 1
+              }
+            ],
+            "payload": {},
+            "team": "marketing_promotion"
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "Sales orders",
+            "Delivery orders",
+            "Both"
+          ]
+        },
+        "text": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": [
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Cabana Dealer"
+            ],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-C043",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                  "raw": "300-C043",
+                  "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+                },
+                {
+                  "canonical_code": "300-C043",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                  "raw": "300-C043",
+                  "uuid": "a6a2f62a-eeef-48b0-a032-aa926de57199"
+                },
+                {
+                  "canonical_code": "300-C043",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                  "raw": "300-C043",
+                  "uuid": "b7289132-29f0-47af-8da5-7726705a3cd4"
+                },
+                {
+                  "canonical_code": "300-C043",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                  "raw": "300-C043",
+                  "uuid": "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
+                },
+                {
+                  "canonical_code": "300-C043",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                  "raw": "300-C043",
+                  "uuid": "8690d69e-a4f6-4889-9c4f-f15a3e820538"
+                },
+                {
+                  "canonical_code": "300-C043",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "CHIN CHUN HARDWARE SDN BHD - [A/C I]",
+                  "raw": "300-C043",
+                  "uuid": "78dab676-49c4-476f-a406-5644cf81f014"
+                }
+              ],
+              "date_window": {
+                "end": "2026-09-30",
+                "mode": null,
+                "start": "2026-09-01"
+              },
+              "document": [],
+              "domains": [
+                "promotion"
+              ],
+              "extra": {},
+              "products": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "hint_confident": true,
+                  "raw": "srtwc286"
+                }
+              ],
+              "set_page": null,
+              "status": null,
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": null,
+              "expects": "yes_no",
+              "kind": "team_pick",
+              "options": [
+                {
+                  "entity_type": "team",
+                  "label": "Yes",
+                  "payload": {},
+                  "position": 1
+                }
+              ],
+              "payload": {},
+              "team": "marketing_promotion"
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [],
+            "resolved": false,
+            "token": "hanlim"
+          }
+        ],
+        "tokens": [
+          "hanlim"
+        ],
+        "unresolved_tokens": [
+          "hanlim"
+        ]
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:36:54.051089+09:00",
+        "turn_id": "a5ab4bed-8cb7-485d-b636-dee64289a3c3"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "hint_confident": true,
+            "raw": "hanlim"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "quantity"
+        ],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": "outstanding",
+        "top_n": null,
+        "user_goal": "trying to check the outstanding order quantity for Hanlim"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "2",
+              "type": "text"
+            },
+            "messageId": "console-0020fbbaece1",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H070",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C II]",
+                "raw": "300-H070",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+              },
+              {
+                "canonical_code": "300-H030",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C I]",
+                "raw": "300-H030",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+              },
+              {
+                "canonical_code": "300-H118",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              },
+              {
+                "canonical_code": "300-H119",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                "raw": "300-H119",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              },
+              {
+                "canonical_code": "300-H030",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD",
+                "raw": "300-H030",
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+              },
+              {
+                "canonical_code": "300-H118",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                "raw": "300-H118",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "date_window": {
+              "end": "2026-09-30",
+              "mode": null,
+              "start": "2026-09-01"
+            },
+            "document": [],
+            "domains": [
+              "order"
+            ],
+            "extra": {},
+            "products": [],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1850,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "entity_type": "outstanding_scope",
+                "label": "Sales orders",
+                "payload": {
+                  "value": "so"
+                },
+                "position": 1
+              },
+              {
+                "entity_type": "outstanding_scope",
+                "label": "Delivery orders",
+                "payload": {
+                  "value": "do"
+                },
+                "position": 2
+              },
+              {
+                "entity_type": "outstanding_scope",
+                "label": "Both",
+                "payload": {
+                  "value": "both"
+                },
+                "position": 3
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": null,
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "Delivery order list"
+          ]
+        },
+        "text": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: 01/09/2026 to 30/09/2026\n\n*Delivery order outstanding*\nDelivery orders: 2\nDO qty: 2\nDelivered: 0\nOutstanding: 2\nDO date range: 14/09/2026\n*_By location_*\nBRW: 1 (O/S: 1)\nBRW-RSV: 1 (O/S: 1)\n*_By product_*\nCWC7601-S-ECO: 1 (O/S: 1)\nSRTWB8001: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "order_date_from",
+              "order_date_to",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H070",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C II]",
+                  "raw": "300-H070",
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                },
+                {
+                  "canonical_code": "300-H030",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C I]",
+                  "raw": "300-H030",
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                },
+                {
+                  "canonical_code": "300-H118",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                },
+                {
+                  "canonical_code": "300-H119",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                  "raw": "300-H119",
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+                },
+                {
+                  "canonical_code": "300-H030",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD",
+                  "raw": "300-H030",
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                },
+                {
+                  "canonical_code": "300-H118",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                  "raw": "300-H118",
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                }
+              ],
+              "date_window": {
+                "end": "2026-09-30",
+                "mode": null,
+                "start": "2026-09-01"
+              },
+              "document": [],
+              "domains": [
+                "order"
+              ],
+              "extra": {},
+              "products": [],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1850,
+              "expects": "pick",
+              "kind": "outstanding_scope",
+              "options": [
+                {
+                  "entity_type": "outstanding_scope",
+                  "label": "Sales orders",
+                  "payload": {
+                    "value": "so"
+                  },
+                  "position": 1
+                },
+                {
+                  "entity_type": "outstanding_scope",
+                  "label": "Delivery orders",
+                  "payload": {
+                    "value": "do"
+                  },
+                  "position": 2
+                },
+                {
+                  "entity_type": "outstanding_scope",
+                  "label": "Both",
+                  "payload": {
+                    "value": "both"
+                  },
+                  "position": 3
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "6b52807a-537b-437d-9f55-12f7fda29df8",
+                    "2a4575e0-836b-4a5d-8566-73223465020d",
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ],
+                  "date_filter_end": null,
+                  "date_filter_start": null,
+                  "location_token": null,
+                  "product_code": null,
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:37:04.452492+09:00",
+        "turn_id": "9b9ec39f-ace4-4792-9f45-c82c4d5437c6"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 6,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 6,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "order_date_from": "2026-09-01",
+            "order_date_to": "2026-09-30",
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: 01/09/2026 to 30/09/2026\n\n*Delivery order outstanding*\nDelivery orders: 2\nDO qty: 2\nDelivered: 0\nOutstanding: 2\nDO date range: 14/09/2026\n*_By location_*\nBRW: 1 (O/S: 1)\nBRW-RSV: 1 (O/S: 1)\n*_By product_*\nCWC7601-S-ECO: 1 (O/S: 1)\nSRTWB8001: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "2",
+          "picks": [
+            2
+          ],
+          "resolved": true
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          2
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to choose delivery orders for the outstanding scope question"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Sales order",
+              "type": "text"
+            },
+            "messageId": "console-24b708cb4f42",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "date_window": {
+              "end": "2026-09-30",
+              "mode": null,
+              "start": "2026-09-01"
+            },
+            "document": [
+              "DO"
+            ],
+            "domains": [
+              "order"
+            ],
+            "extra": {},
+            "products": [],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1851,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "entity_type": "outstanding_detail",
+                "label": "Delivery order list",
+                "payload": {
+                  "value": "do"
+                },
+                "position": 1
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ],
+                "date_filter_end": "2026-09-30",
+                "date_filter_start": "2026-09-01",
+                "location_token": null,
+                "offer_text": "Reply 1 for the delivery order list.",
+                "product_code": null,
+                "scope": "do",
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "clarify_menu",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "Delivery order list"
+          ]
+        },
+        "text": "Reply 1 for the delivery order list.",
+        "tools": []
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                }
+              ],
+              "date_window": {
+                "end": "2026-09-30",
+                "mode": null,
+                "start": "2026-09-01"
+              },
+              "document": [
+                "DO"
+              ],
+              "domains": [
+                "order"
+              ],
+              "extra": {},
+              "products": [],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1851,
+              "expects": "pick",
+              "kind": "outstanding_detail",
+              "options": [
+                {
+                  "entity_type": "outstanding_detail",
+                  "label": "Delivery order list",
+                  "payload": {
+                    "value": "do"
+                  },
+                  "position": 1
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "6b52807a-537b-437d-9f55-12f7fda29df8",
+                    "2a4575e0-836b-4a5d-8566-73223465020d",
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ],
+                  "date_filter_end": "2026-09-30",
+                  "date_filter_start": "2026-09-01",
+                  "location_token": null,
+                  "offer_text": "Reply 1 for the delivery order list.",
+                  "product_code": null,
+                  "scope": "do",
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:37:13.465949+09:00",
+        "turn_id": "bb233665-ef09-4db8-b5b3-516839d1e85c"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "Sales order",
+          "picks": [],
+          "resolved": false
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to select the sales order option"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Outstanding for hanlim sales order",
+              "type": "text"
+            },
+            "messageId": "console-d610cedd3bda",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+              },
+              {
+                "current_message": false,
+                "hint": "customer",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "date_window": {
+              "end": "2026-09-30",
+              "mode": null,
+              "start": "2026-09-01"
+            },
+            "document": [
+              "DO"
+            ],
+            "domains": [
+              "order"
+            ],
+            "extra": {},
+            "products": [],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1851,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "entity_type": "outstanding_detail",
+                "label": "Delivery order list",
+                "payload": {
+                  "value": "do"
+                },
+                "position": 1
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ],
+                "date_filter_end": "2026-09-30",
+                "date_filter_start": "2026-09-01",
+                "location_token": null,
+                "offer_text": "Reply 1 for the delivery order list.",
+                "product_code": null,
+                "scope": "do",
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "Sales order list"
+          ]
+        },
+        "text": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 19\nOrdered: 1,685\nTransferred to DO: 563\nOutstanding: 1,122\nOrder date range: 03/10/2023 to 14/09/2026\n*_By location_*\nBRW: 1,685 (O/S: 1,122)\n*_By product_*\nSRT320-CR: 800 (O/S: 506)\nWESERP10B: 305 (O/S: 154)\nCWC7601-S-ECO: 155 (O/S: 100)\nSRT79-SS: 79 (O/S: 79)\nCB88SS-DIY: 60 (O/S: 60)\nSRTWT1907-DIY: 70 (O/S: 54)\nSRTKT1631SS: 35 (O/S: 35)\nSRT6643-GM: 40 (O/S: 30)\nSRTKT1871SS: 24 (O/S: 24)\nCWC7603-SH-300: 40 (O/S: 20)\nCWC7603-SH-150: 30 (O/S: 15)\nCWC7603-SH-250: 15 (O/S: 15)\nSRTWT910-BL: 11 (O/S: 11)\nSRTWB1086: 5 (O/S: 5)\nSRTWC8366-300-RL-UF: 5 (O/S: 4)\nSRTWT6232-GM: 3 (O/S: 3)\nSRTWB8003: 2 (O/S: 2)\nSRTWB8001: 2 (O/S: 1)\nCBF88602: 1 (O/S: 1)\nSRT454-GM: 1 (O/S: 1)\nSRTWC8517-SH-UF-NEW: 1 (O/S: 1)\nSRTWCX8605-S-RL-PJ: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                },
+                {
+                  "current_message": false,
+                  "hint": "customer",
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                }
+              ],
+              "date_window": {
+                "end": "2026-09-30",
+                "mode": null,
+                "start": "2026-09-01"
+              },
+              "document": [
+                "DO"
+              ],
+              "domains": [
+                "order"
+              ],
+              "extra": {},
+              "products": [],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1851,
+              "expects": "pick",
+              "kind": "outstanding_detail",
+              "options": [
+                {
+                  "entity_type": "outstanding_detail",
+                  "label": "Delivery order list",
+                  "payload": {
+                    "value": "do"
+                  },
+                  "position": 1
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "6b52807a-537b-437d-9f55-12f7fda29df8",
+                    "2a4575e0-836b-4a5d-8566-73223465020d",
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ],
+                  "date_filter_end": "2026-09-30",
+                  "date_filter_start": "2026-09-01",
+                  "location_token": null,
+                  "offer_text": "Reply 1 for the delivery order list.",
+                  "product_code": null,
+                  "scope": "do",
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "hanlim",
+                "entity_type": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              }
+            ],
+            "resolved": true,
+            "token": "hanlim"
+          }
+        ],
+        "tokens": [
+          "hanlim"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:37:31.556704+09:00",
+        "turn_id": "0089ddbf-f0bb-4042-93f0-d104982fcadc"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 6,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 6,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "scope": "so",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 19\nOrdered: 1,685\nTransferred to DO: 563\nOutstanding: 1,122\nOrder date range: 03/10/2023 to 14/09/2026\n*_By location_*\nBRW: 1,685 (O/S: 1,122)\n*_By product_*\nSRT320-CR: 800 (O/S: 506)\nWESERP10B: 305 (O/S: 154)\nCWC7601-S-ECO: 155 (O/S: 100)\nSRT79-SS: 79 (O/S: 79)\nCB88SS-DIY: 60 (O/S: 60)\nSRTWT1907-DIY: 70 (O/S: 54)\nSRTKT1631SS: 35 (O/S: 35)\nSRT6643-GM: 40 (O/S: 30)\nSRTKT1871SS: 24 (O/S: 24)\nCWC7603-SH-300: 40 (O/S: 20)\nCWC7603-SH-150: 30 (O/S: 15)\nCWC7603-SH-250: 15 (O/S: 15)\nSRTWT910-BL: 11 (O/S: 11)\nSRTWB1086: 5 (O/S: 5)\nSRTWC8366-300-RL-UF: 5 (O/S: 4)\nSRTWT6232-GM: 3 (O/S: 3)\nSRTWB8003: 2 (O/S: 2)\nSRTWB8001: 2 (O/S: 1)\nCBF88602: 1 (O/S: 1)\nSRT454-GM: 1 (O/S: 1)\nSRTWC8517-SH-UF-NEW: 1 (O/S: 1)\nSRTWCX8605-S-RL-PJ: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [
+          "SO"
+        ],
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "hint_confident": true,
+            "raw": "hanlim"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "so_outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "status": "outstanding",
+        "top_n": null,
+        "user_goal": "trying to check outstanding sales orders for hanlim"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Outstandi delivry for hanlim",
+              "type": "text"
+            },
+            "messageId": "console-6a1067fe18fd",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H070",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C II]",
+                "raw": "300-H070",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+              },
+              {
+                "canonical_code": "300-H030",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C I]",
+                "raw": "300-H030",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+              },
+              {
+                "canonical_code": "300-H118",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              },
+              {
+                "canonical_code": "300-H119",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                "raw": "300-H119",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              },
+              {
+                "canonical_code": "300-H030",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD",
+                "raw": "300-H030",
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+              },
+              {
+                "canonical_code": "300-H118",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                "raw": "300-H118",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "date_window": null,
+            "document": [
+              "SO"
+            ],
+            "domains": [
+              "order"
+            ],
+            "extra": {},
+            "products": [],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1853,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "entity_type": "outstanding_detail",
+                "label": "Sales order list",
+                "payload": {
+                  "value": "so"
+                },
+                "position": 1
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the sales order list.",
+                "product_code": null,
+                "scope": "so",
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+        ],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "Delivery order list"
+          ]
+        },
+        "text": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 20\nDO qty: 559\nDelivered: 0\nOutstanding: 559\nDO date range: 21/04/2026 to 14/09/2026\n*_By location_*\nBRW: 554 (O/S: 554)\nBRW-REWO: 2 (O/S: 2)\nSPARE/P: 2 (O/S: 2)\nBRW-RSV: 1 (O/S: 1)\n*_By product_*\nSRTWT165: 85 (O/S: 85)\nSRT59-CR: 65 (O/S: 65)\nSRTKT39SS: 40 (O/S: 40)\nSRT367-GM: 35 (O/S: 35)\nSRTKT1632SS: 35 (O/S: 35)\nSRTKT1634SS-BL: 35 (O/S: 35)\nBT009: 25 (O/S: 25)\nCB89-CR-DIY: 14 (O/S: 14)\nSRTKT71SS: 12 (O/S: 12)\nSRTWB888-A: 12 (O/S: 12)\nSRTWHBWP: 12 (O/S: 12)\nSRT79-SS-BL: 11 (O/S: 11)\nSRTKT1861SS: 11 (O/S: 11)\nSRTKT1872SS: 11 (O/S: 11)\nSRTKT31SS: 11 (O/S: 11)\nSRTSA840-BL: 11 (O/S: 11)\nSRTSH22613: 11 (O/S: 11)\nSRTSH22913-GM: 11 (O/S: 11)\nSRTSH2623-BL: 11 (O/S: 11)\nSRTWT1906-BL-DIY: 11 (O/S: 11)\nSRTWT5608: 11 (O/S: 11)\nSRTWT5841-BL: 11 (O/S: 11)\nSRTWT5866-GM: 11 (O/S: 11)\nSRTKT1871SS: 10 (O/S: 10)\nSRTSA830: 7 (O/S: 7)\nSRTW5000: 6 (O/S: 6)\nSRTSA860-GM: 5 (O/S: 5)\nCKS6407: 3 (O/S: 3)\nSRTKT1631SS: 3 (O/S: 3)\nRPACC: 2 (O/S: 2)\nSRTKSW302-BL: 2 (O/S: 2)\nSRTWC287-RL: 2 (O/S: 2)\nWESERP10B: 2 (O/S: 2)\nCWC7601-S-ECO: 1 (O/S: 1)\nS-FH10PVC-DIY: 1 (O/S: 1)\nS-FH12PVC-DIY: 1 (O/S: 1)\nS-FH14PVC-DIY: 1 (O/S: 1)\nS-FH16PVC-DIY: 1 (O/S: 1)\nS-FH18PVC-DIY: 1 (O/S: 1)\nSAMPLE: 1 (O/S: 1)\nSRTBV170-DIY: 1 (O/S: 1)\nSRTWB8001: 1 (O/S: 1)\nSRTWT1900-DIY: 1 (O/S: 1)\nSRTWT1905-DIY: 1 (O/S: 1)\nSRTWT1906-DIY: 1 (O/S: 1)\nSRTWT1907-DIY: 1 (O/S: 1)\nSRTWT1908-DIY: 1 (O/S: 1)\nSRTWT1914-DIY: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H070",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C II]",
+                  "raw": "300-H070",
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                },
+                {
+                  "canonical_code": "300-H030",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C I]",
+                  "raw": "300-H030",
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                },
+                {
+                  "canonical_code": "300-H118",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                },
+                {
+                  "canonical_code": "300-H119",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                  "raw": "300-H119",
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+                },
+                {
+                  "canonical_code": "300-H030",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD",
+                  "raw": "300-H030",
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                },
+                {
+                  "canonical_code": "300-H118",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                  "raw": "300-H118",
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                }
+              ],
+              "date_window": null,
+              "document": [
+                "SO"
+              ],
+              "domains": [
+                "order"
+              ],
+              "extra": {},
+              "products": [],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1853,
+              "expects": "pick",
+              "kind": "outstanding_detail",
+              "options": [
+                {
+                  "entity_type": "outstanding_detail",
+                  "label": "Sales order list",
+                  "payload": {
+                    "value": "so"
+                  },
+                  "position": 1
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "6b52807a-537b-437d-9f55-12f7fda29df8",
+                    "2a4575e0-836b-4a5d-8566-73223465020d",
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ],
+                  "date_filter_end": null,
+                  "date_filter_start": null,
+                  "location_token": null,
+                  "offer_text": "Reply 1 for the sales order list.",
+                  "product_code": null,
+                  "scope": "so",
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "matches": [
+              {
+                "canonical_code": "hanlim",
+                "entity_type": "customer",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              }
+            ],
+            "resolved": true,
+            "token": "hanlim"
+          }
+        ],
+        "tokens": [
+          "hanlim"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:37:49.519152+09:00",
+        "turn_id": "c9435361-9d5a-44ec-9f67-47af5966f9e8"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 6,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 6,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "is_active": null,
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 20\nDO qty: 559\nDelivered: 0\nOutstanding: 559\nDO date range: 21/04/2026 to 14/09/2026\n*_By location_*\nBRW: 554 (O/S: 554)\nBRW-REWO: 2 (O/S: 2)\nSPARE/P: 2 (O/S: 2)\nBRW-RSV: 1 (O/S: 1)\n*_By product_*\nSRTWT165: 85 (O/S: 85)\nSRT59-CR: 65 (O/S: 65)\nSRTKT39SS: 40 (O/S: 40)\nSRT367-GM: 35 (O/S: 35)\nSRTKT1632SS: 35 (O/S: 35)\nSRTKT1634SS-BL: 35 (O/S: 35)\nBT009: 25 (O/S: 25)\nCB89-CR-DIY: 14 (O/S: 14)\nSRTKT71SS: 12 (O/S: 12)\nSRTWB888-A: 12 (O/S: 12)\nSRTWHBWP: 12 (O/S: 12)\nSRT79-SS-BL: 11 (O/S: 11)\nSRTKT1861SS: 11 (O/S: 11)\nSRTKT1872SS: 11 (O/S: 11)\nSRTKT31SS: 11 (O/S: 11)\nSRTSA840-BL: 11 (O/S: 11)\nSRTSH22613: 11 (O/S: 11)\nSRTSH22913-GM: 11 (O/S: 11)\nSRTSH2623-BL: 11 (O/S: 11)\nSRTWT1906-BL-DIY: 11 (O/S: 11)\nSRTWT5608: 11 (O/S: 11)\nSRTWT5841-BL: 11 (O/S: 11)\nSRTWT5866-GM: 11 (O/S: 11)\nSRTKT1871SS: 10 (O/S: 10)\nSRTSA830: 7 (O/S: 7)\nSRTW5000: 6 (O/S: 6)\nSRTSA860-GM: 5 (O/S: 5)\nCKS6407: 3 (O/S: 3)\nSRTKT1631SS: 3 (O/S: 3)\nRPACC: 2 (O/S: 2)\nSRTKSW302-BL: 2 (O/S: 2)\nSRTWC287-RL: 2 (O/S: 2)\nWESERP10B: 2 (O/S: 2)\nCWC7601-S-ECO: 1 (O/S: 1)\nS-FH10PVC-DIY: 1 (O/S: 1)\nS-FH12PVC-DIY: 1 (O/S: 1)\nS-FH14PVC-DIY: 1 (O/S: 1)\nS-FH16PVC-DIY: 1 (O/S: 1)\nS-FH18PVC-DIY: 1 (O/S: 1)\nSAMPLE: 1 (O/S: 1)\nSRTBV170-DIY: 1 (O/S: 1)\nSRTWB8001: 1 (O/S: 1)\nSRTWT1900-DIY: 1 (O/S: 1)\nSRTWT1905-DIY: 1 (O/S: 1)\nSRTWT1906-DIY: 1 (O/S: 1)\nSRTWT1907-DIY: 1 (O/S: 1)\nSRTWT1908-DIY: 1 (O/S: 1)\nSRTWT1914-DIY: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
+            "result_type": "outstanding_report"
+          },
+          "tool": "crm_outstanding_report"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [
+          "DO"
+        ],
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "hint_confident": true,
+            "raw": "hanlim"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": "outstanding",
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": "specific",
+        "status": "outstanding",
+        "top_n": null,
+        "user_goal": "trying to check outstanding delivery orders for Hanlim"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-05a280f02ffa",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H070",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C II]",
+                "raw": "300-H070",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+              },
+              {
+                "canonical_code": "300-H030",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C I]",
+                "raw": "300-H030",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+              },
+              {
+                "canonical_code": "300-H118",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              },
+              {
+                "canonical_code": "300-H119",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                "raw": "300-H119",
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+              },
+              {
+                "canonical_code": "300-H030",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD",
+                "raw": "300-H030",
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+              },
+              {
+                "canonical_code": "300-H118",
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                "raw": "300-H118",
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+              }
+            ],
+            "date_window": null,
+            "document": [
+              "DO"
+            ],
+            "domains": [
+              "order"
+            ],
+            "extra": {},
+            "products": [],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [
+              "dealer"
+            ],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1854,
+            "expects": "pick",
+            "kind": "outstanding_detail",
+            "options": [
+              {
+                "entity_type": "outstanding_detail",
+                "label": "Delivery order list",
+                "payload": {
+                  "value": "do"
+                },
+                "position": 1
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "offer_text": "Reply 1 for the delivery order list.",
+                "product_code": null,
+                "scope": "do",
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "45f16b8a-9172-4757-bb3c-94e672555a79"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-2c0a821c-578e-42ba-96e0-0d344053845d"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "2a4575e0-836b-4a5d-8566-73223465020d",
+          "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+          "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+          "6b52807a-537b-437d-9f55-12f7fda29df8",
+          "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+          "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "1. *DO Number:* REP202609-0301\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* CWC7601-S-ECO\n*Location:* BRW\n*DO Qty:* 1\n*Delivered:* 0\n*Outstanding:* 1\n*DO Date:* 14/09/2026\n\n2. *DO Number:* 202609-2464\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Product:* SRTWB8001\n*Location:* BRW-RSV\n*DO Qty:* 1\n*Delivered:* 0\n*Outstanding:* 1\n*DO Date:* 14/09/2026\n\n3. *DO Number:* REP202606-0409\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* S-FH10PVC-DIY, S-FH12PVC-DIY, S-FH14PVC-DIY, S-FH16PVC-DIY, S-FH18PVC-DIY, SRTBV170-DIY, SRTWT1900-DIY, SRTWT1905-DIY, SRTWT1906-DIY, SRTWT1907-DIY, SRTWT1908-DIY, SRTWT1914-DIY\n*Location:* BRW, BRW-REWO\n*DO Qty:* 12\n*Delivered:* 0\n*Outstanding:* 12\n*DO Date:* 25/06/2026\n\n4. *DO Number:* REP202606-0367\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SAMPLE\n*Location:* BRW\n*DO Qty:* 1\n*Delivered:* 0\n*Outstanding:* 1\n*DO Date:* 24/06/2026\n\n5. *DO Number:* REP202606-0168\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* RPACC\n*Location:* SPARE/P\n*DO Qty:* 2\n*Delivered:* 0\n*Outstanding:* 2\n*DO Date:* 11/06/2026\n\n6. *DO Number:* 202604-4298\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT59-CR\n*Location:* BRW\n*DO Qty:* 65\n*Delivered:* 0\n*Outstanding:* 65\n*DO Date:* 29/04/2026\n\n7. *DO Number:* 202604-4167\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT367-GM, SRTSH22913-GM, SRTWT1906-BL-DIY, SRTWT5866-GM\n*Location:* BRW\n*DO Qty:* 60\n*Delivered:* 0\n*Outstanding:* 60\n*DO Date:* 28/04/2026\n\n8. *DO Number:* 202604-4166\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT79-SS-BL, SRTKSW302-BL, SRTSA840-BL, SRTSH2623-BL, SRTWT5841-BL\n*Location:* BRW\n*DO Qty:* 46\n*Delivered:* 0\n*Outstanding:* 46\n*DO Date:* 28/04/2026\n\n9. *DO Number:* 202604-4124\n*Customer:* HANLIM TRADING SDN BHD [A/C IV]\n*Product:* CKS6407\n*Location:* BRW\n*DO Qty:* 3\n*Delivered:* 0\n*Outstanding:* 3\n*DO Date:* 28/04/2026\n\n10. *DO Number:* 202604-4123\n*Customer:* HANLIM TRADING SDN BHD [A/C IV]\n*Product:* CB89-CR-DIY\n*Location:* BRW\n*DO Qty:* 14\n*Delivered:* 0\n*Outstanding:* 14\n*DO Date:* 28/04/2026\n\n11. *DO Number:* 202604-4122\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTW5000\n*Location:* BRW\n*DO Qty:* 6\n*Delivered:* 0\n*Outstanding:* 6\n*DO Date:* 28/04/2026\n\n12. *DO Number:* 202604-4120\n*Customer:* HANLIM TRADING SDN BHD\n*Product:* SRTKT39SS\n*Location:* BRW\n*DO Qty:* 40\n*Delivered:* 0\n*Outstanding:* 40\n*DO Date:* 28/04/2026\n\n13. *DO Number:* 202604-3868\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT367-GM\n*Location:* BRW\n*DO Qty:* 8\n*Delivered:* 0\n*Outstanding:* 8\n*DO Date:* 27/04/2026\n\n14. *DO Number:* 202604-3867\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTWT165\n*Location:* BRW\n*DO Qty:* 85\n*Delivered:* 0\n*Outstanding:* 85\n*DO Date:* 27/04/2026\n\n15. *DO Number:* 202604-3507\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* BT009\n*Location:* BRW\n*DO Qty:* 25\n*Delivered:* 0\n*Outstanding:* 25\n*DO Date:* 27/04/2026\n\n16. *DO Number:* REP202604-0383\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Product:* SRTWC287-RL, WESERP10B\n*Location:* BRW\n*DO Qty:* 4\n*Delivered:* 0\n*Outstanding:* 4\n*DO Date:* 23/04/2026\n\n17. *DO Number:* 202604-3294\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTSA860-GM\n*Location:* BRW\n*DO Qty:* 5\n*Delivered:* 0\n*Outstanding:* 5\n*DO Date:* 23/04/2026\n\n18. *DO Number:* 202604-3021\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTKT1861SS\n*Location:* BRW\n*DO Qty:* 11\n*Delivered:* 0\n*Outstanding:* 11\n*DO Date:* 21/04/2026\n\n19. *DO Number:* 202604-3003\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Product:* SRTWB888-A, SRTWHBWP\n*Location:* BRW\n*DO Qty:* 24\n*Delivered:* 0\n*Outstanding:* 24\n*DO Date:* 21/04/2026\n\n20. *DO Number:* 202604-2927\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTKT1631SS, SRTKT1632SS, SRTKT1634SS-BL, SRTKT1871SS, SRTKT1872SS, SRTKT31SS, SRTKT71SS, SRTSA830, SRTSH22613, SRTWT5608\n*Location:* BRW\n*DO Qty:* 146\n*Delivered:* 0\n*Outstanding:* 146\n*DO Date:* 21/04/2026",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "customer_ids",
+              "date_mode",
+              "detail",
+              "is_active",
+              "scope",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_outstanding_report"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H070",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C II]",
+                  "raw": "300-H070",
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                },
+                {
+                  "canonical_code": "300-H030",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C I]",
+                  "raw": "300-H030",
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                },
+                {
+                  "canonical_code": "300-H118",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                },
+                {
+                  "canonical_code": "300-H119",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                  "raw": "300-H119",
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d"
+                },
+                {
+                  "canonical_code": "300-H030",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD",
+                  "raw": "300-H030",
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                },
+                {
+                  "canonical_code": "300-H118",
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                  "raw": "300-H118",
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                }
+              ],
+              "date_window": null,
+              "document": [
+                "DO"
+              ],
+              "domains": [
+                "order"
+              ],
+              "extra": {},
+              "products": [],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [
+                "dealer"
+              ],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1854,
+              "expects": "pick",
+              "kind": "outstanding_detail",
+              "options": [
+                {
+                  "entity_type": "outstanding_detail",
+                  "label": "Delivery order list",
+                  "payload": {
+                    "value": "do"
+                  },
+                  "position": 1
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "6b52807a-537b-437d-9f55-12f7fda29df8",
+                    "2a4575e0-836b-4a5d-8566-73223465020d",
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ],
+                  "date_filter_end": null,
+                  "date_filter_start": null,
+                  "location_token": null,
+                  "offer_text": "Reply 1 for the delivery order list.",
+                  "product_code": null,
+                  "scope": "do",
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 24,
+        "recorded_at": "2026-09-16T18:38:03.442781+09:00",
+        "turn_id": "6463930f-d44c-494a-b47f-c82423dac9b5"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 6,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 6,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "customer_ids": [
+              "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+              "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+              "6b52807a-537b-437d-9f55-12f7fda29df8",
+              "2a4575e0-836b-4a5d-8566-73223465020d",
+              "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+              "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+            ],
+            "date_mode": null,
+            "detail": "do",
+            "is_active": null,
+            "scope": "do",
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "has_result": true,
+            "response": "1. *DO Number:* REP202609-0301\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* CWC7601-S-ECO\n*Location:* BRW\n*DO Qty:* 1\n*Delivered:* 0\n*Outstanding:* 1\n*DO Date:* 14/09/2026\n\n2. *DO Number:* 202609-2464\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Product:* SRTWB8001\n*Location:* BRW-RSV\n*DO Qty:* 1\n*Delivered:* 0\n*Outstanding:* 1\n*DO Date:* 14/09/2026\n\n3. *DO Number:* REP202606-0409\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* S-FH10PVC-DIY, S-FH12PVC-DIY, S-FH14PVC-DIY, S-FH16PVC-DIY, S-FH18PVC-DIY, SRTBV170-DIY, SRTWT1900-DIY, SRTWT1905-DIY, SRTWT1906-DIY, SRTWT1907-DIY, SRTWT1908-DIY, SRTWT1914-DIY\n*Location:* BRW, BRW-REWO\n*DO Qty:* 12\n*Delivered:* 0\n*Outstanding:* 12\n*DO Date:* 25/06/2026\n\n4. *DO Number:* REP202606-0367\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SAMPLE\n*Location:* BRW\n*DO Qty:* 1\n*Delivered:* 0\n*Outstanding:* 1\n*DO Date:* 24/06/2026\n\n5. *DO Number:* REP202606-0168\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* RPACC\n*Location:* SPARE/P\n*DO Qty:* 2\n*Delivered:* 0\n*Outstanding:* 2\n*DO Date:* 11/06/2026\n\n6. *DO Number:* 202604-4298\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT59-CR\n*Location:* BRW\n*DO Qty:* 65\n*Delivered:* 0\n*Outstanding:* 65\n*DO Date:* 29/04/2026\n\n7. *DO Number:* 202604-4167\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT367-GM, SRTSH22913-GM, SRTWT1906-BL-DIY, SRTWT5866-GM\n*Location:* BRW\n*DO Qty:* 60\n*Delivered:* 0\n*Outstanding:* 60\n*DO Date:* 28/04/2026\n\n8. *DO Number:* 202604-4166\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT79-SS-BL, SRTKSW302-BL, SRTSA840-BL, SRTSH2623-BL, SRTWT5841-BL\n*Location:* BRW\n*DO Qty:* 46\n*Delivered:* 0\n*Outstanding:* 46\n*DO Date:* 28/04/2026\n\n9. *DO Number:* 202604-4124\n*Customer:* HANLIM TRADING SDN BHD [A/C IV]\n*Product:* CKS6407\n*Location:* BRW\n*DO Qty:* 3\n*Delivered:* 0\n*Outstanding:* 3\n*DO Date:* 28/04/2026\n\n10. *DO Number:* 202604-4123\n*Customer:* HANLIM TRADING SDN BHD [A/C IV]\n*Product:* CB89-CR-DIY\n*Location:* BRW\n*DO Qty:* 14\n*Delivered:* 0\n*Outstanding:* 14\n*DO Date:* 28/04/2026\n\n11. *DO Number:* 202604-4122\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTW5000\n*Location:* BRW\n*DO Qty:* 6\n*Delivered:* 0\n*Outstanding:* 6\n*DO Date:* 28/04/2026\n\n12. *DO Number:* 202604-4120\n*Customer:* HANLIM TRADING SDN BHD\n*Product:* SRTKT39SS\n*Location:* BRW\n*DO Qty:* 40\n*Delivered:* 0\n*Outstanding:* 40\n*DO Date:* 28/04/2026\n\n13. *DO Number:* 202604-3868\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRT367-GM\n*Location:* BRW\n*DO Qty:* 8\n*Delivered:* 0\n*Outstanding:* 8\n*DO Date:* 27/04/2026\n\n14. *DO Number:* 202604-3867\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTWT165\n*Location:* BRW\n*DO Qty:* 85\n*Delivered:* 0\n*Outstanding:* 85\n*DO Date:* 27/04/2026\n\n15. *DO Number:* 202604-3507\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* BT009\n*Location:* BRW\n*DO Qty:* 25\n*Delivered:* 0\n*Outstanding:* 25\n*DO Date:* 27/04/2026\n\n16. *DO Number:* REP202604-0383\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Product:* SRTWC287-RL, WESERP10B\n*Location:* BRW\n*DO Qty:* 4\n*Delivered:* 0\n*Outstanding:* 4\n*DO Date:* 23/04/2026\n\n17. *DO Number:* 202604-3294\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTSA860-GM\n*Location:* BRW\n*DO Qty:* 5\n*Delivered:* 0\n*Outstanding:* 5\n*DO Date:* 23/04/2026\n\n18. *DO Number:* 202604-3021\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTKT1861SS\n*Location:* BRW\n*DO Qty:* 11\n*Delivered:* 0\n*Outstanding:* 11\n*DO Date:* 21/04/2026\n\n19. *DO Number:* 202604-3003\n*Customer:* HANLIM TRADING SDN BHD [A/C III]\n*Product:* SRTWB888-A, SRTWHBWP\n*Location:* BRW\n*DO Qty:* 24\n*Delivered:* 0\n*Outstanding:* 24\n*DO Date:* 21/04/2026\n\n20. *DO Number:* 202604-2927\n*Customer:* HANLIM TRADING SDN BHD [A/C I]\n*Product:* SRTKT1631SS, SRTKT1632SS, SRTKT1634SS-BL, SRTKT1871SS, SRTKT1872SS, SRTKT31SS, SRTKT71SS, SRTSA830, SRTSH22613, SRTWT5608\n*Location:* BRW\n*DO Qty:* 146\n*Delivered:* 0\n*Outstanding:* 146\n*DO Date:* 21/04/2026",
+            "result_type": "outstanding_detail"
+          },
+          "tool": "crm_outstanding_report"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "1",
+          "picks": [
+            1
+          ],
+          "resolved": true
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to select the delivery order list option"
+      }
+    }
+  ]
+}
