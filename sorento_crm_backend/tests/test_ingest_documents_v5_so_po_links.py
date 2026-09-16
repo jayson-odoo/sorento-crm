@@ -32,6 +32,7 @@ suite.
 """
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 
@@ -1378,3 +1379,413 @@ class TestLinkFollowsBookPairing:
         assert len(links_a) == 1, links_a
         assert str(links_a[0].id) == link_id_before
         assert row_a.note == note_before
+
+
+    # -------------------------------------------------- security review findings (S5)
+    # AC-RL-47 to AC-RL-51: `follow_book_repairing` (app/services/project_order_
+    # inquiry_service.py ~:1182-1430) and its capture sites (document_ingest_
+    # service.py ~:1356, shipping_order_ingest_service.py ~:449/:1115) had five
+    # defects a security review found - `_resolve_ref_line` conflating "unresolved"
+    # with "explicitly cleared" (AC-RL-47), no company scoping on the ref lookup
+    # (AC-RL-48), a captured move surviving its own record's savepoint rollback
+    # (AC-RL-49), no cap on moves applied per request (AC-RL-50), and `.first()`
+    # picking an arbitrary line when a ref is ambiguous (AC-RL-51). Every test
+    # below is RED against the current build for exactly that reason - never a
+    # fixture bug.
+
+    def test_ref_moved_to_a_line_we_do_not_hold_yet_changes_nothing(self, env):
+        """AC-RL-47: a ref naming a well-formed but UNRESOLVABLE sales-order line
+        (the SO has not been pushed yet - the ordinary case) must not be read the
+        same way an explicit `null` is (AC-RL-45). `_resolve_ref_line` returns
+        `(None, None)` for BOTH today, so an unresolved ref currently unlinks row A
+        and stamps an "AutoCount removed" note exactly as a genuine clear does."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a = _ref("SOLA")
+        so_a, core_line_a = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="22",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=22)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("22"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+        note_before = row_a.note
+
+        # A ref shaped exactly like a real one - three segments in the family
+        # `_resolve_ref_line` matches on exactly - naming a document key nothing
+        # in this company has ever pushed.
+        unresolvable_ref = f"{MARKER}:99999999:99999998"
+        repush_line = _po_line(
+            env, ref=line["source_ref"], from_so_line_ref=unresolvable_ref, qty_ordered=22,
+        )
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        env.db.refresh(row_a)
+
+        assert len(links_a) == 1, "an unresolved ref must not touch row A's link at all"
+        assert str(links_a[0].id) == link_id_before
+        assert row_a.note == note_before, "no note - nothing was actually observed to move"
+
+    def test_ref_moved_to_another_companys_line_changes_nothing(self, env):
+        """AC-RL-48: `_resolve_ref_line` carries no company filter at all - a ref
+        that happens to name ANOTHER company's sales-order line resolves as
+        confidently as one of ours, and row A's real link is unlinked for a "move"
+        this company never authored or even has visibility into."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a = _ref("SOLA")
+        so_a, core_line_a = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="14",
+        )
+
+        # A real sales-order line, resolvable in every way `_resolve_ref_line`
+        # checks - EXCEPT it belongs to company B, not this push's own anchor.
+        foreign_ref = _ref("SOLFOREIGN")
+        foreign_so = SalesOrder(
+            id=str(uuid.uuid4()), so_number=f"{MARKER}-FOREIGN-{uuid.uuid4().hex[:8]}",
+            status="open", company_id=env.company_b,
+        )
+        env.db.add(foreign_so)
+        env.db.flush()
+        foreign_line = SalesOrderLine(
+            id=str(uuid.uuid4()), sales_order_id=foreign_so.id, product_id=product_id,
+            qty_ordered=Decimal("14"), source_ref=foreign_ref, company_id=env.company_b,
+        )
+        env.db.add(foreign_line)
+        env.db.flush()
+        env.db.commit()
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=14)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("14"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+        note_before = row_a.note
+
+        # Pushed under company A's own anchor (`env.post` defaults to
+        # `env.company_a_code`) - the foreign ref is never named by this push's
+        # own principal, only coincidentally resolvable by an unscoped lookup.
+        repush_line = _po_line(
+            env, ref=line["source_ref"], from_so_line_ref=foreign_ref, qty_ordered=14,
+        )
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        env.db.refresh(row_a)
+
+        assert len(links_a) == 1, "a foreign company's line must not move row A's link"
+        assert str(links_a[0].id) == link_id_before
+        assert row_a.note == note_before
+        # Nothing placed for the OTHER company either - no link this push wrote
+        # names the foreign line's own company.
+        other_company_links = (
+            env.db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.company_id == env.company_b)
+            .all()
+        )
+        assert other_company_links == []
+
+    def test_move_captured_in_a_record_that_later_fails_is_not_applied(self, env):
+        """AC-RL-49: `self.ref_moves` is a plain Python list on the ingest service
+        instance, appended to inside `_sync_lines` - it is NOT part of the
+        record's own SAVEPOINT, so a move captured for line 1 survives even when
+        line 2 of the SAME record fails later in the SAME `_sync_lines` call and
+        `_ingest_one`'s `except Exception` (~:521) rolls the whole record back.
+        The route's post-commit hook (`_run_document_hooks`) then reads `service.
+        ref_moves` unconditionally and applies a move whose own ref change was
+        never actually persisted.
+
+        The reliable per-record failure: `qty_ordered` has no upper bound in the
+        canonical payload schema (`Decimal = Field(..., ge=0)`) but the column is
+        `Numeric(15, 4)` (11 integer digits) - a 15-digit value passes validation
+        and overflows at `_sync_lines`' own flush, caught by the generic `except
+        Exception` (empirically verified: the record reports `failed`)."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        so_b, core_line_b = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="30",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="45",
+        )
+
+        line1 = _po_line(env, from_so_line_ref=ref_a, qty_ordered=30)
+        record = _po_record(env, lines=[line1])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("30"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+
+        # ONE record, TWO lines: line 1 moves ref_a -> ref_b (captured into
+        # `service.ref_moves` mid-`_sync_lines`), line 2 overflows `Numeric(15,4)`
+        # at the SAME call's flush, failing the whole record.
+        repush_line1 = _po_line(
+            env, ref=line1["source_ref"], from_so_line_ref=ref_b, qty_ordered=30,
+        )
+        bad_line2 = _po_line(env, qty_ordered=999999999999999)
+        repush = dict(record, lines=[repush_line1, bad_line2])
+        res2 = env.post(INGEST_PO, [repush])
+        entry = res2.json()["records"][0]
+        assert entry["outcome"] == "failed", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+
+        assert len(links_a) == 1, "the failed record's own captured move must not be applied"
+        assert str(links_a[0].id) == link_id_before
+        assert str(links_a[0].po_line_id) == str(po_line["id"])
+        assert links_b == [], "nothing should have been placed for a move that never really happened"
+
+    def test_follow_book_repairing_caps_moves_per_request(self, env, monkeypatch, caplog):
+        """AC-RL-50: nothing bounds how many moves ONE `follow_book_repairing` call
+        processes - a single malicious or malformed ESB push naming thousands of
+        `from_so_line_ref` changes runs the full per-move query fan-out
+        (`_resolve_ref_line`, `_linkable_row_for_core_line`, `place_on_po_
+        allocations`) unbounded. `FOLLOW_BOOK_REPAIRING_MAX_MOVES` (named on
+        `ProjectOrderInquiryService`) does not exist yet, so this monkeypatches
+        it in (`raising=False` - the attribute genuinely is not there today) to
+        cap 3 real moves at 2 without seeding 200+."""
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        monkeypatch.setattr(
+            ProjectOrderInquiryService, "FOLLOW_BOOK_REPAIRING_MAX_MOVES", 2, raising=False,
+        )
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+
+        rows_a = []
+        repush_records = []
+        for i in range(3):
+            ref_a, ref_b = _ref(f"SOLA{i}"), _ref(f"SOLB{i}")
+            so_a, core_line_a = _seed_ref_only_so_line(
+                env, so_number=f"{MARKER}-SOA{i}-{uuid.uuid4().hex[:8]}", product_id=product_id,
+                source_ref=ref_a,
+            )
+            so_b, core_line_b = _seed_ref_only_so_line(
+                env, so_number=f"{MARKER}-SOB{i}-{uuid.uuid4().hex[:8]}", product_id=product_id,
+                source_ref=ref_b,
+            )
+            _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+                env, core_line=core_line_a, product_id=product_id, qty="9",
+            )
+            _mirror_row(env, core_line=core_line_b, product_id=product_id, qty="11")
+
+            line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=9)
+            record = _po_record(env, lines=[line])
+            res = env.post(INGEST_PO, [record])
+            assert res.json()["records"][0]["outcome"] == "created", res.text
+            header = env.header("purchase_orders", record["source_ref"])
+            po_line = env.po_lines(header["id"])[0]
+            env.db.add(OrderInquiryLink(
+                id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+                po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("9"),
+                auto=True,
+            ))
+            env.db.commit()
+            rows_a.append(row_a)
+            repush_records.append(dict(
+                record,
+                lines=[_po_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=9)],
+            ))
+
+        with caplog.at_level(logging.WARNING, logger="app.services.project_order_inquiry_service"):
+            res2 = env.post(INGEST_PO, repush_records)
+        assert all(r["outcome"] == "updated" for r in res2.json()["records"]), res2.text
+
+        env.db.expire_all()
+        still_linked = [
+            row_a for row_a in rows_a
+            if env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).count() > 0
+        ]
+        assert len(still_linked) == 1, (
+            "the cap must stop AT 2 applied moves, leaving exactly one of the three untouched"
+        )
+        assert any(
+            "follow_book_repairing" in record.getMessage() for record in caplog.records
+        ), "the overflow must be logged, naming what was skipped"
+
+    def test_ambiguous_ref_two_lines_same_source_ref_is_refused(self, env, caplog):
+        """AC-RL-51: `_resolve_ref_line` reads `.first()` off a query that has no
+        uniqueness guarantee on `source_ref` - two `sales_order_lines` rows
+        sharing one ref (a data anomaly the ESB should never produce, but the
+        column carries no unique constraint to refuse it) resolve to whichever
+        one Postgres happens to return first, and the move is applied against a
+        guess rather than refused."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a = _ref("SOLA")
+        so_a, core_line_a = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="18",
+        )
+
+        shared_ref = _ref("SHARED")
+        dupe_so_1 = SalesOrder(
+            id=str(uuid.uuid4()), so_number=f"{MARKER}-DUPE1-{uuid.uuid4().hex[:8]}",
+            status="open", company_id=env.company_a,
+        )
+        dupe_so_2 = SalesOrder(
+            id=str(uuid.uuid4()), so_number=f"{MARKER}-DUPE2-{uuid.uuid4().hex[:8]}",
+            status="open", company_id=env.company_a,
+        )
+        env.db.add_all([dupe_so_1, dupe_so_2])
+        env.db.flush()
+        dupe_line_1 = SalesOrderLine(
+            id=str(uuid.uuid4()), sales_order_id=dupe_so_1.id, product_id=product_id,
+            qty_ordered=Decimal("5"), source_ref=shared_ref, company_id=env.company_a,
+        )
+        dupe_line_2 = SalesOrderLine(
+            id=str(uuid.uuid4()), sales_order_id=dupe_so_2.id, product_id=product_id,
+            qty_ordered=Decimal("5"), source_ref=shared_ref, company_id=env.company_a,
+        )
+        env.db.add_all([dupe_line_1, dupe_line_2])
+        env.db.flush()
+        env.db.commit()
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=18)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("18"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+
+        with caplog.at_level(logging.WARNING, logger="app.services.project_order_inquiry_service"):
+            repush_line = _po_line(
+                env, ref=line["source_ref"], from_so_line_ref=shared_ref, qty_ordered=18,
+            )
+            repush = dict(record, lines=[repush_line])
+            res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+
+        assert len(links_a) == 1, "an ambiguous ref must not move anything"
+        assert str(links_a[0].id) == link_id_before
+        assert str(links_a[0].po_line_id) == str(po_line["id"])
+        assert len(caplog.records) >= 1, "an ambiguous ref must log a warning"
+
+    def test_ref_moved_from_an_unresolvable_old_ref_is_a_no_op(self, env):
+        """AC-RL-52 (S3, code review 17 Sep): a NON-null `old_ref` that resolves to
+        no line is not the same fact as NO old ref at all (the genuine xlsx-
+        supersede case, where the superseded row truly never carried one) -
+        `_follow_one_move` currently treats `old_line_id is None` the SAME way
+        either way, so an unresolvable old ref falls into the "every link on the
+        target is a candidate" branch and sweeps up row A's real link even though
+        nothing here proves it was ever on the line the move claims to be FROM."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        so_b, core_line_b = _seed_ref_only_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="16",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="20",
+        )
+
+        # The PO line's own `from_so_line_ref` never actually named row A's line -
+        # it is a well-formed ref nothing resolves, seeded straight onto the line.
+        unresolvable_old_ref = f"{MARKER}:88888888:88888887"
+        line = _po_line(env, from_so_line_ref=unresolvable_old_ref, qty_ordered=16)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        # Row A's own link, established by hand - the ref on the PO line has never
+        # pointed at row A's line at all, which is the whole point: only a GENUINE
+        # match should ever decide whether row A's link moves.
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("16"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+
+        repush_line = _po_line(
+            env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=16,
+        )
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+
+        assert len(links_a) == 1, "an unresolvable OLD ref must not sweep row A's link at all"
+        assert str(links_a[0].id) == link_id_before
+        assert links_b == [], "nothing should be placed for a move whose OLD side was never proven"

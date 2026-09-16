@@ -1180,6 +1180,44 @@ def test_worklist_stage_totals_exclude_a_redirected_row(api):
     assert after == before, "a redirected row's quantity must not move any card"
 
 
+def test_worklist_kind_buy_excludes_a_redirected_rows_unlinked_remainder(api):
+    """AC-RL-16c (S1, code review 17 Sep): `_kinds`' own summary already excludes a
+    redirected row (the sibling test above), but the LIST's `kind=buy` row filter
+    (`order_inquiry_worklist_service.py` ~:892, `_UNLINKED_QTY > 0`) is a SEPARATE
+    query with no `redirected_to_pool` exclusion of its own - a redirected row that
+    is only PARTLY linked (its unlinked remainder still positive) still lists under
+    `kind=buy`, so a click into the Buy card shows a row the card's own number has
+    already excluded. The plan scenario: a redirected row of 182 (158 linked, 24
+    still unlinked) beside a fresh row of 220 - the rows returned for `kind=buy`
+    must sum to 220, never 244 (220 + the redirected row's own unlinked 24)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    item_code = f"{MARKER}-BUYKIND"
+    line = _line_on_authored_order(db, company_id, seeded, qty="182", day=8)
+    po_line = _purchase_order(db, company_id)["line"]
+    redirected = _row(
+        db, company_id, inquiry, so_line_id=line.id, item_code=item_code,
+        qty="182", state="partly_linked", delivery_date=date(2026, 4, 8),
+        redirected_to_pool=True,
+    )
+    db.add(OrderInquiryLink(
+        id=_uid(), company_id=company_id, row_id=redirected.id,
+        po_line_id=po_line.id, document="ZZT-PO-BUYKIND", qty=Decimal("158"),
+    ))
+    _fresh = _row(
+        db, company_id, inquiry, so_line_id=line.id, item_code=item_code,
+        qty="220", state=INQUIRY_RAISED, delivery_date=date(2026, 4, 8),
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"kind": "buy", "delivery_month": "2026-04"}).json()
+    matching = [r for r in body["data"] if r["item_code"] == item_code]
+    total_unlinked = sum(
+        (Decimal(r["qty"]) - Decimal(r["linked_qty"]) for r in matching), Decimal("0")
+    )
+    assert total_unlinked == Decimal("220"), matching
+
+
 def test_link_dict_carries_received_qty_and_received(api):
     """AC-RL-17: `links_for_rows` states the receipt figure on every link, PO or SPO -
     `received_qty` always, `received` once the document is fully received - and

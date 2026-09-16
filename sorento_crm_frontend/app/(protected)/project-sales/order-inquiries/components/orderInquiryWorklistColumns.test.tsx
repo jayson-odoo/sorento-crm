@@ -1369,3 +1369,93 @@ describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
     expect(columns.indexOf(spo!)).toBe(columns.indexOf(po!) + 1);
   });
 });
+
+describe('AC-RL-04 amended (17 Sep review round): a redirected row is visually muted, and the lightbox never says "Redirected"', () => {
+  it('a redirected_to_pool row is muted the same way this table already mutes an inactive row - opacity-60 on the row\'s own cells', () => {
+    // No `state === 'cancelled'` styling exists anywhere in this file (the checkbox's
+    // own `disabledReason` at the select column is the only `state` read at all, and a
+    // cancelled row's OTHER cells read as plain, unmuted text - see the "coverage
+    // restored" describe block above). `opacity-60` is this codebase's own convention
+    // for a row that is no longer active - the DataGrid's own holding-row class
+    // (`components/ui/data-grid-table.tsx`) - reused here rather than invented fresh.
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-redirected-muted',
+          qty: '182',
+          item_code: 'B2154-NL',
+          redirected_to_pool: true,
+        }),
+      ],
+      'item_code',
+    );
+    const itemCodeRow = screen.getByTestId('row-row-redirected-muted');
+    const itemCodeCell = itemCodeRow.querySelector('td')?.firstElementChild;
+    expect(itemCodeCell?.className ?? '').toContain('opacity-60');
+
+    renderQtyCell([
+      worklistRow({
+        id: 'row-redirected-muted-2',
+        qty: '182',
+        redirected_to_pool: true,
+      }),
+    ]);
+    const qtyRow = screen.getByTestId('row-row-redirected-muted-2');
+    const qtyCell = qtyRow.querySelector('td')?.firstElementChild;
+    expect(qtyCell?.className ?? '').toContain('opacity-60');
+  });
+
+  it('an ordinary (not redirected) row carries no opacity-60 on its cells', () => {
+    renderRows(
+      [worklistRow({ id: 'row-plain-muted-check', qty: '10', item_code: 'B2154-NL' })],
+      'item_code',
+    );
+    const row = screen.getByTestId('row-row-plain-muted-check');
+    const cell = row.querySelector('td')?.firstElementChild;
+    expect(cell?.className ?? '').not.toContain('opacity-60');
+  });
+
+  it('the open Qty annotation lightbox for a "used" row never contains the text "Redirected" anywhere in document.body, and shows "Used"', () => {
+    // `OrderInquiryQtyAnnotationDialog`'s own `DialogDescription` reads the literal word
+    // "Redirected" for exactly this row shape (`redirected && !rejected && !previous`) -
+    // the row-level check at AC-RL-04's own test above only reads `row.textContent`, a
+    // scope that never reaches the dialog's portal content at all.
+    renderQtyCell([
+      worklistRow({
+        id: 'row-redirected-dialog',
+        qty: '182',
+        ack_state: 'acknowledged',
+        redirected_to_pool: true,
+        note: 'SPO-2026/01-0143 received 19 Jan 2026 into BRW-IR, used by earlier orders',
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-redirected-dialog');
+    fireEvent.click(within(row).getByTestId('qty-annotation-trigger-row-redirected-dialog'));
+
+    const dialog = screen.getByTestId('qty-annotation-row-redirected-dialog');
+    expect(dialog.textContent ?? '').not.toMatch(/redirected/i);
+    expect(document.body.textContent ?? '').not.toMatch(/redirected/i);
+    expect(within(dialog).getByText('Used')).toBeInTheDocument();
+  });
+
+  it('for a "note" (AutoCount move) row, the lightbox section heading reads "Moved by AutoCount", never "Redirected"', () => {
+    // `MovedSection`'s `<h3>` is shared by BOTH callers today and always prints
+    // "Redirected", even for AC-RL-46's own AutoCount-move row, which is neither
+    // rejected, changed nor `redirected_to_pool` at all.
+    renderQtyCell([
+      worklistRow({
+        id: 'row-moved-heading',
+        qty: '90',
+        ack_state: 'acknowledged',
+        links: [],
+        note: 'AutoCount moved 202607-S0077 to SO314595',
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-moved-heading');
+    fireEvent.click(within(row).getByTestId('qty-annotation-trigger-row-moved-heading'));
+
+    const dialog = screen.getByTestId('qty-annotation-row-moved-heading');
+    expect(within(dialog).getByText('Moved by AutoCount')).toBeInTheDocument();
+    expect(dialog.textContent ?? '').not.toMatch(/\bRedirected\b/);
+  });
+});

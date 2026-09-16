@@ -60,6 +60,19 @@ born acknowledged as every raise is). No new notification.
   <location>, used by earlier orders. Bought again at revision <n>: see the new row`, and
   the row is excluded from the Buy / Purchased / Incoming card totals. The word on screen
   is `used`, never `redirected` (ruling 17 Sep).
+  - **Amended, 17 Sep review round**: "the row is greyed" means every cell of the row
+    (item code, qty, etc.) carries the same `opacity-60` this table already uses for an
+    inactive row (`components/ui/data-grid-table.tsx`'s own holding-row class - no
+    `state === 'cancelled'` precedent exists in this component today, so the review reuses
+    the shared DataGrid convention rather than inventing a new one). The lightbox itself
+    must never print the word "Redirected" anywhere in its own content (today's
+    `OrderInquiryQtyAnnotationDialog` `DialogDescription` prints it literally for exactly
+    this row shape) - it reads `Used` instead. On the SEPARATE `note` trigger (AC-RL-46,
+    an AutoCount book move, never `redirected_to_pool`), the lightbox's own section heading
+    reads `Moved by AutoCount`, not `Redirected` - the two callers of `MovedSection` no
+    longer share one heading.
+    Tests: `orderInquiryWorklistColumns.test.tsx` describe block "AC-RL-04 amended (17 Sep
+    review round)".
 - **AC-RL-05 [UX]** No new motion. The `received`, `reallocate`, `unlink`, `used` and `note`
   marks are static one-word pills; chips stay truncated with `title`; the row is usable at
   375px and 1280px.
@@ -67,6 +80,15 @@ born acknowledged as every raise is). No new notification.
   is shown (the existing order-inquiry cell), Then the same `received` word appears when the
   row's documents are fully received and `used` when the row is redirected, so CS sees the
   stage before confirming. (Ruling 17 Sep, board too.)
+  - **Amended, 17 Sep review round**: the word reads off `contribution.order_inquiry.
+    documents` / `.redirected` directly, on EVERY line that carries an `order_inquiry`,
+    never gated on `covered && !decision` (`contributionInquiryDecision` in
+    `supplyVocabulary.ts` returns `null` on an uncovered line, which today hides the whole
+    inquiry branch - number and word both - on precisely the shape the owner wants to read
+    before confirming: an uncovered line with a live Buy proposal). The word appears
+    ALONGSIDE that live proposal, never replacing it.
+    Tests: `FulfilmentBoardListView.test.tsx`, "AC-RL-06 amended" cases in the existing
+    `AC-RL-06` describe block.
 - **AC-RL-07 [BE]** The board contribution's `order_inquiry` dict carries `documents`:
   `[{document, kind, received}]` and `redirected` (bool) for the line's live row(s), read
   through `links_for_rows` (no second query shape).
@@ -101,11 +123,50 @@ Settle seam (`ProjectOrderInquiryService.refresh_for_decision` and `_settle_row_
   lateral join in `app/services/scm/demand.py` over `projects.order_inquiry_links`) is read
   for the SO line, Then the redirected row contributes nothing (neither its qty nor its
   links) and the new row contributes its full qty.
+  - **Rewritten, 17 Sep review round (B1)**: this must hold on the FORM leg specifically -
+    a row with NO supply decision at all (`supply_decision_id IS NULL`), naming its product
+    and location by code the way the CS form does, never via `ProjectSupplyService.
+    confirm()` whose own `d.state = 'active'` join could drop the confirmed leg's row as a
+    side effect and mask a broken exclusion. Toggling ONLY `redirected_to_pool` on the same
+    form-raised row must move `scm.committed_v`'s `project_committed` (planned=False) by
+    exactly the row's own unlinked (owed) quantity.
+    **Status: already shipped.** Migration `512_committed_v_redirect_exclude` (commit
+    `676d0e71c`, landed before this review round) added `AND oir.redirected_to_pool = FALSE`
+    to BOTH the confirmed and form legs; `demand.py`'s `NOT_REDIRECTED_SQL` constant is
+    already threaded through every leg. `test_committed_v_ignores_a_form_raised_redirected_
+    row` (`tests/scm/test_oi_replan_committed_v.py`) is GREEN today - kept in the suite as a
+    regression guard, not a red test the coder needs to make pass.
+- **AC-RL-15b [BE]** Given the same form-raised redirected row, When the LIVE horizon path
+  a reorder plan run actually reads (`demand.horizon_committed_select_sql()` and its date
+  companion `horizon_project_need_dates_sql()`, both built fresh at call time off `NOT_
+  REDIRECTED_SQL`) is read for the product, Then the redirected row contributes nothing to
+  either - not only the frozen `scm.committed_v` migration body AC-RL-15 pins, but the
+  Python-built SQL a live plan run actually executes.
+  **Status: already shipped**, same commit as AC-RL-15. `test_committed_v_horizon_and_need_
+  dates_ignore_a_form_raised_redirected_row` is GREEN today, kept as a regression guard.
 - **AC-RL-16 [BE]** Given the OI worklist for that SO, When rows serialize, Then the
   redirected row is excluded from the Buy / Purchased / Incoming stage totals and from
   `taken_from_po` / `remaining_open`, and its `redirected_to_pool` reaches the FE.
 - **AC-RL-16b [BE]** Given the Order Inquiries schedule matrix for that SO, When its stage
   cards compute, Then the redirected row is not counted under Purchased or Incoming.
+- **AC-RL-16c [BE]** Given the same redirected row, only PARTLY linked (its unlinked
+  remainder still positive), beside a fresh row, When the worklist LIST filters
+  `kind=buy` (`order_inquiry_worklist_service.py`'s own `_UNLINKED_QTY > 0` query - a
+  SEPARATE query from the stage-total summary AC-RL-16 already covers), Then the redirected
+  row's own unlinked remainder is excluded from the `kind=buy` rows too, so a click into the
+  Buy card never shows a row the card's own number has already excluded. RED today: the
+  filter carries no `redirected_to_pool` exclusion of its own.
+- **AC-RL-16d [BE]** Given the same redirected confirmed-leg row, When `demand_breakdown_
+  service`'s own copies of the confirmed and form legs (`~:514`, `~:591`) sum project demand
+  for a drill-down popover, Then the redirected row is excluded there too - quantity that
+  already shipped to another order must not appear in the popover as demand still open.
+  RED today: neither copy excludes `redirected_to_pool`.
+- **AC-RL-16e [BE]** Given the same redirected row's OWN placement (a link on the core
+  line's project mirror recorded before the redirect), When the loading plan's `_PLACED_ON_
+  LINE_SQL` (container-request build_open_need) sums placement to net a line's own open
+  need, Then a redirected row's placement does not net that need down - the goods already
+  shipped to another order, so purchasing must still read the line's full outstanding
+  quantity to buy. RED today: `_PLACED_ON_LINE_SQL` sums every link with no exclusion.
 - **AC-RL-17 [BE]** Given any link, When `links_for_rows` serializes it, Then the dict
   carries `received_qty` (PO: `qty_received`; SPO: `quantity_received`) and `received`
   (true when the document is fully received by the AC-RL-10 test), and
@@ -168,6 +229,42 @@ Our link follows the book pairing (S5):
   When its Qty cell renders, Then it carries ONE one-word mark `note` that opens the existing
   Qty annotation lightbox showing the move note. No new trigger on an empty documents cell;
   the row stays one line.
+
+Security review findings, 17 Sep (S5's `follow_book_repairing` and its three capture sites -
+`document_ingest_service.py`, `shipping_order_ingest_service.py`):
+
+- **AC-RL-47 [BE]** Given a PO/SPO line's `from_so_line_ref` moved to a well-formed ref that
+  names no line this company has ever pushed (the ordinary "not yet resolvable" case - the
+  SO has not landed yet), When the ingest commits, Then row A's existing link and note are
+  untouched. `_resolve_ref_line` returning `(None, None)` for an UNRESOLVABLE ref must not
+  be read the same way an explicit `from_so_line_ref: null` is (AC-RL-45) - only a genuine
+  `null` clears a link.
+- **AC-RL-48 [BE]** Given a ref that resolves to a real sales-order line belonging to
+  ANOTHER company, When the ingest commits under this company's own anchor, Then row A's
+  link is untouched and nothing is placed for the foreign company either. `_resolve_ref_
+  line`'s lookup must be scoped to the pushing company; an unscoped lookup resolves a
+  foreign line as confidently as one of ours.
+- **AC-RL-49 [BE]** Given ONE record with two lines, where line 1's ref move is captured
+  into `service.ref_moves` mid-`_sync_lines` and line 2 fails later in the SAME call
+  (numeric overflow or any other `except Exception` path), causing `_ingest_one` to roll the
+  whole record back, When the route's post-commit hook reads `service.ref_moves`, Then the
+  failed record's own captured move is NOT applied - a move whose own ref change was never
+  actually persisted must not be applied regardless.
+- **AC-RL-50 [BE]** Given a single push naming more than `FOLLOW_BOOK_REPAIRING_MAX_MOVES`
+  ref moves in one request, When `follow_book_repairing` processes them, Then it stops at
+  the cap, applies no more than the cap's count, and logs a warning naming what was skipped.
+  Cap value: 200 in production; the test proves the mechanism with a monkeypatched smaller
+  cap rather than seeding 200+ rows.
+- **AC-RL-51 [BE]** Given two `sales_order_lines` rows sharing one `source_ref` (a data
+  anomaly the ESB should never produce, but the column carries no unique constraint to
+  refuse it), When a ref move resolves against that shared ref, Then no move is applied (the
+  ambiguous ref is refused, not guessed at) and a warning is logged. `_resolve_ref_line`'s
+  `.first()` must not silently pick whichever row Postgres happens to return first.
+- **AC-RL-52 [BE]** Given a PO/SPO line whose `from_so_line_ref` (the OLD ref) is a
+  well-formed ref that resolves to no line, When the ingest commits, Then row A's real link
+  (established independently of this push) is NOT swept up as a candidate for the move - an
+  unresolvable OLD ref is not the same fact as NO old ref at all (the genuine xlsx-supersede
+  case), and only a genuinely-proven "was on this line" fact should ever move a link.
 
 ## Phase 3 - end to end
 

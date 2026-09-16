@@ -581,6 +581,62 @@ describe('AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the inqu
     expect(screen.queryByText('received')).not.toBeInTheDocument();
     expect(screen.queryByText('used')).not.toBeInTheDocument();
   });
+
+  /**
+   * 17 Sep review round: `contributionInquiryDecision` (`supplyVocabulary.ts`) returns
+   * `null` unless `covered && !decision`, so the whole inquiry branch - number AND word -
+   * never renders on an UNCOVERED line, which is exactly the shape a live Buy proposal
+   * sits on (the default `contribution()` fixture: `covered: false`, `sources: [{kind:
+   * 'buy', ...}]`). The owner wants the word readable on precisely this line - the one CS
+   * is about to confirm a fresh Buy for - so `received`/`used` must read off
+   * `contribution.order_inquiry?.documents` directly, never gated on `covered`/`decision`
+   * at all. RED: today this contribution prints "Not decided", no word, no inquiry number.
+   */
+  it('AC-RL-06 amended: reads "received" even when covered is false and the line carries a live Buy proposal', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: false,
+          decision: null,
+          sources: [{ kind: 'buy', qty: '43', reason: 'Nothing free at any location.' }],
+          order_inquiry: {
+            inquiry_no: 'OI-000901',
+            state: 'partly_linked',
+            ack_state: 'acknowledged',
+            documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+            redirected: false,
+          },
+        }),
+      ],
+    });
+
+    // The live Buy proposal keeps showing - this is not a replacement for it.
+    expect(await screen.findByText('Buy 43')).toBeInTheDocument();
+    expect(screen.getByText('received')).toBeInTheDocument();
+  });
+
+  it('AC-RL-06 amended: reads "used" even when covered is false and the row was redirected', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: false,
+          decision: null,
+          sources: [{ kind: 'buy', qty: '20', reason: 'Nothing free at any location.' }],
+          order_inquiry: {
+            inquiry_no: 'OI-000902',
+            state: 'partly_linked',
+            ack_state: 'acknowledged',
+            documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+            redirected: true,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('Buy 20')).toBeInTheDocument();
+    expect(screen.getByText('used')).toBeInTheDocument();
+    expect(screen.queryByText('received')).not.toBeInTheDocument();
+  });
 });
 
 /**

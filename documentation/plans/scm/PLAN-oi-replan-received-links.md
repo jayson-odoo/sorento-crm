@@ -210,6 +210,32 @@ AC-RL-30, AC-RL-31, AC-RL-32 as a recorded agent-browser run.
   `test_spo_ref_moved_follows`, `test_received_document_ref_move_changes_nothing`,
   `test_ref_cleared_unlinks`, `test_manual_link_follows_book`.
 
+## Review findings, 17 Sep, and the captain's rulings
+
+Security review (Opus) and code review (Opus, with kill tests) ran once on 234442b2d.
+
+| # | Finding | Ruling |
+| --- | --- | --- |
+| SEC-B1 / REV-S2 | `follow_book_repairing` treats a ref that resolves to no line (SO not pushed yet, or another company's line) as "cleared" and deletes the link with a false note | Fix. Only an explicit null ref removes; a present-but-unresolved ref is a no-op with a log line. AC-RL-47, 48. |
+| SEC-S1 | `ref_moves` captured inside the per-record savepoint survive its rollback, so the hook acts on a change never persisted | Fix. Stage per record, publish from `_record_hook_state` after the record succeeds. AC-RL-49. |
+| SEC-S2 | Post-commit follow work is unbounded per request | Fix. `FOLLOW_BOOK_REPAIRING_MAX_MOVES = 200`, overflow logged. AC-RL-50. |
+| SEC-N1 | Ambiguous `source_ref` picks any row | Fix. Refuse on more than one match, log. AC-RL-51. |
+| SEC-N2 | `actor_user_id` typed `str`, passed `None` | Fix. `Optional[str]`; thread the ingest actor through both hooks (REV nit). |
+| SEC-N3 | Suggestion candidates ignore the worklist's project / supplier filters | Deliberate. The worklist is cross-project by design; a candidate on another project is the point. |
+| REV-B1 | `test_oi_replan_committed_v` did not guard AC-RL-15 (fixture row dropped by the `d.state = 'active'` join) | Fix the test: form-raised redirected row. AC-RL-15 rewritten. |
+| REV-B2 | Live reorder legs (`horizon_committed_select_sql`, `horizon_project_need_dates_sql`) untested | Fix: AC-RL-15b. |
+| REV-S1 | `kind=` row filter still lists a redirected row; cards and rows disagree | Fix. AC-RL-16c. |
+| REV-S3 | Non-null unresolved `old_ref` falls into the supersede branch | Fix: no-op. AC-RL-52. |
+| REV-S4 | `demand_breakdown_service` copies of the legs lack the clause | Fix. AC-RL-16d. |
+| REV-S5 | Loading plan `_PLACED_ON_LINE_SQL` nets a line by a redirected row's links | Fix. AC-RL-16e. |
+| REV-S6 | Redirected row not visually muted | Fix, cancelled-row treatment. |
+| REV-S7 | Qty annotation dialog prints "Redirected"; AutoCount-move section mis-headed | Fix: "Used" / "Moved by AutoCount". |
+| REV-S8 | `orderInquiryService.ts` contract comment and `orderInquiry.types.ts` still say repoint / redirected | Fix. |
+| REV design | Four marks in three hand-rolled spellings | Fix: one shared pill (`Badge size="sm" appearance="light" asChild`), warning token, no literal colour. |
+| REV design | Date line year vs server sentence "Buy 334 for 15 Mar" | Leave. AC-RL-01 scoped the Date field; server composer unchanged. Noted for a later pass. |
+| REV nits | dead `actor_user_id` param, dead `SalesOrderLine` join, `qty_ordered` null reads as received, redundant `_links_of` | Fix all; `received` requires `qty_ordered > 0`. |
+| DoD | migration 512 must re-parent onto main's newest head (`ptag_0012_*`) | Before PR: `git fetch origin main`, merge, `./scripts/alembic-reparent.sh`. |
+
 ## Migration
 
 One: `512_committed_v_redirect_exclude` re-freezes the `scm.committed_v` view body with the
