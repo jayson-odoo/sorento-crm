@@ -68,6 +68,10 @@ _UNICODE_DASH_FOLD: dict[str, str] = {
 # `tool` parameters. Not a registry: two literals, named where they are used.
 INCOMING_PROBE_TOOL = "crm_incoming_stock_list"
 CUSTOMER_PROBE_TOOL = "crm_order_management_orders_list"
+# The per-PRODUCT reads behind the promotion and purchase-order roster stamps
+# (owner hand pass 3, rows 1 and 7).
+PROMOTION_PROBE_TOOL = "crm_marketing_promotion_products_list"
+PURCHASE_ORDER_PROBE_TOOL = "crm_procurement_po_placed_list"
 
 #: R20 (owner round 7, 13 Sep 2026): the `order_status` values that make a turn an
 #: OUTSTANDING ask, which is the one ask the customer picker must not offer a delivery
@@ -1163,6 +1167,58 @@ def probe_customer(
         entities=entities,
         aggregate=aggregate,
         default_start=default_start,
+        space_id=space_id,
+    )
+
+
+def probe_promotion(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """"Does this product have a promotion?", per candidate - the promotion roster's own
+    probe (owner hand pass 3, row 1).
+
+    A twin of `probe_incoming`, for a roster the n8n graph never had a picker for at all:
+    the promotion domain narrows on TIER, so a product family under it was printed bare
+    while the same family under incoming carried has/no incoming. `crm_marketing_
+    promotion_products_list` is the per-PRODUCT read (`crm_marketing_promotions_list`
+    returns promotions, which cannot be attributed back to a candidate).
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=PROMOTION_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
+
+
+def probe_purchase_order(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """"Does this product have a PO placed?", per candidate (owner hand pass 3, row 7).
+
+    The same shape and the same reason as `probe_promotion` above. The picker stays: the
+    owner keeps the roster and wants the stamp on it, not the roster replaced.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=PURCHASE_ORDER_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
         space_id=space_id,
     )
 

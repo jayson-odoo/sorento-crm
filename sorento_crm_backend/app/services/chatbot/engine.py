@@ -1479,6 +1479,14 @@ def _run_stages(  # noqa: PLR0915
                         )
                         and not _asks_outstanding(verdict)
                     ),
+                    # Rows 1 and 7: the promotion and purchase-order product rosters carry
+                    # has promo / no promo and has PO / no PO, read the same way
+                    # `stamp_incoming` is - off the DOMAIN the turn is about to ask under,
+                    # because the roster itself does not exist yet on this first plan.
+                    stamp_promotion=plan.ask is not None and "promotion" in plan.domains,
+                    stamp_purchase_order=(
+                        plan.ask is not None and "purchase_order" in plan.domains
+                    ),
                 )
             )
             if resolved_kinds or resolved_candidates:

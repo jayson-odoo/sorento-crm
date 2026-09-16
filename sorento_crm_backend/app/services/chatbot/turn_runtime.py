@@ -453,6 +453,8 @@ def resolve_kinds(
     dry_run: bool,
     stamp_incoming: bool = False,
     stamp_customer: bool = False,
+    stamp_promotion: bool = False,
+    stamp_purchase_order: bool = False,
 ) -> tuple[
     dict[str, dict[str, int]],
     list[dict[str, Any]],
@@ -476,6 +478,9 @@ def resolve_kinds(
     pass 2, item 2), and the engine withholds it for an OUTSTANDING ask for R20's reason:
     the probe measures DELIVERED orders, which is the opposite population from the
     outstanding report's own DO block, so the stamp would contradict the answer.
+    `stamp_promotion` and `stamp_purchase_order` are the same seam for those two domains'
+    product rosters (owner hand pass 3, rows 1 and 7): has promo / no promo, has PO / no
+    PO, measured by the domain's own per-product read.
     """
     from app.services.chatbot.lanes.business import pickers
     from app.services.chatbot.lanes.business import resolve_gate
@@ -560,11 +565,40 @@ def resolve_kinds(
         )
         customer_bases = pickers.customer_bases_with_do(probe)
 
+    product_stamp: tuple[set[str], str, str] | None = None
+    wants_product_stamp = (stamp_promotion or stamp_purchase_order) and any(
+        jsc.nullish_str(e.get("entity_type")).strip().lower() == "product" for e in compatible
+    )
+    if wants_product_stamp and not isinstance(stamps_from.get("incoming_by_code"), dict):
+        # Rows 1 and 7: the promotion and purchase-order rosters carry the same has/no
+        # stamp the incoming roster does, from the same seam. The incoming stamp wins when
+        # both are on the table: it is the domain the gate itself measured, and one line
+        # cannot say two things. `promotion` first for the same reason the plan lists it
+        # first - a turn is asked for one of these domains, not both.
+        probe_fn = (
+            resolve_gate.probe_promotion if stamp_promotion else resolve_gate.probe_purchase_order
+        )
+        codes = pickers.product_codes_in(
+            probe_fn(
+                services,
+                ctx=ctx,
+                entities=compatible,
+                aggregate=payload.get("aggregate"),
+                space_id=space_id,
+            )
+        )
+        if codes is not None:
+            product_stamp = (
+                (codes, "has promo", "no promo")
+                if stamp_promotion
+                else (codes, "has PO", "no PO")
+            )
+
     return (
         by_token,
         compatible,
         predicate,
-        candidates_by_kind(stamps_from, compatible, customer_bases),
+        candidates_by_kind(stamps_from, compatible, customer_bases, product_stamp),
     )
 
 
@@ -628,6 +662,7 @@ def candidates_by_kind(
     gate: dict[str, Any],
     compatible: list[dict[str, Any]],
     customer_bases_with_do: set[str] | None = None,
+    product_stamp: tuple[set[str], str, str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """The resolver's own rows, grouped by entity kind, for the narrower's roster.
 
@@ -670,6 +705,12 @@ def candidates_by_kind(
             built["name"] = display.strip()
         if code in stamps:
             built["stamp"] = "has incoming" if stamps[code] else "no incoming"
+        elif kind == "product" and product_stamp is not None:
+            # Rows 1 and 7: the same line a product carries under incoming, for the
+            # promotion and purchase-order rosters - `(codes measured, has, no)`, so the
+            # two domains that needed it do not each grow a branch of their own.
+            codes_with, has_label, no_label = product_stamp
+            built["stamp"] = has_label if _norm_code(code) in codes_with else no_label
         elif kind == "customer" and customer_bases_with_do is not None:
             # Item 2: a customer line says what a product line says - whether the thing
             # it names has anything to show. `None` is "not measured" (the probe failed,
@@ -678,6 +719,11 @@ def candidates_by_kind(
             built["stamp"] = "has DO" if base in customer_bases_with_do else "no DO"
         grouped.setdefault(kind, []).append(built)
     return grouped
+
+
+def _norm_code(value: Any) -> str:
+    """`pickers._norm`'s own rule, for the one comparison this module makes itself."""
+    return jsc.nullish_str(value).strip().lower()
 
 
 def _spec_window(out: dict[str, Any], spec: FetchSpec) -> dict[str, Any]:

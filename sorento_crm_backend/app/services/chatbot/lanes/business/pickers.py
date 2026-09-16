@@ -206,6 +206,38 @@ def customer_bases_with_do(probe: Any) -> set[str] | None:
     return _bases_with_do(rows)
 
 
+def product_codes_in(probe: Any) -> set[str] | None:
+    """The product codes a probe's rows are ABOUT, or None for NOT MEASURED.
+
+    The general shape of `annotate_incoming`'s own `has_incoming` set, for the two
+    rosters that have no annotator of their own: the promotion products read and the PO
+    placed read (owner hand pass 3, rows 1 and 7 - "product roster without stamps"). The
+    CODE is read off the "Product Code" field first and the row title second, because a
+    PO row is titled by its PO number while a promotion-product row is titled by the
+    code; reading the title first stamped a roster with PO numbers nothing matched.
+
+    An EXPIRED row does not count. A promotion that ended is not a promotion the customer
+    can be offered, and stamping "has promo" from one would promise a price that is gone.
+
+    `None` means the probe did not run or its page saturated, which every caller reads as
+    "no stamp", never as "no promo".
+    """
+    rows = _probe_rows(probe)
+    if rows is None or len(rows) >= PAGE_SATURATION:
+        return None
+    codes: set[str] = set()
+    for row in rows:
+        flags = jsc.get(row, "flags") if jsc.truthy(row) else None
+        if jsc.truthy(flags) and jsc.get(flags, "expired") is True:
+            continue
+        value = _row_field(row, _PRODUCT_CODE_LABEL)
+        if not jsc.truthy(value):
+            value = jsc.get(row, "title") if jsc.truthy(row) else None
+        if jsc.truthy(value):
+            codes.add(_norm(value))
+    return codes
+
+
 def customer_base(value: Any) -> str:
     """The family base of one customer name - `_customer_base` for callers outside."""
     return _customer_base(value)
