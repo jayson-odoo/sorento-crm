@@ -103,10 +103,79 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
     return row[0] if row is not None else None
 
 
-def load_profile(db: Session, contact_respond_id: str) -> tuple[Profile, bool]:
+_PROFILE_COLUMNS = (
+    "c.chatbot_profile, c.chatbot_recall_enabled, c.chatbot_stock_allowed "
+    "FROM respond_contacts c"
+)
+
+
+def _fail_closed_profile() -> tuple[Profile, bool]:
+    """What an AMBIGUOUS contact gets: no stock, no recall.
+
+    The same `respond_io_id` can exist in two workspaces (which is why
+    `field_access.resolve_contact_id` takes a `space_id` at all). Picking the first row
+    would answer one person's stock question with another person's allowance and could
+    recall another person's episodes. Two rows is a resolution failure, and a resolution
+    failure denies.
+    """
+    return Profile(stock_allowed=False), False
+
+
+def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) -> list[Any]:
+    """This contact's rows under `space_id`, falling back to the NULL-workspace ones.
+
+    Mirrors `field_access.resolve_contact_with_null_workspace_fallback`, which is the
+    resolution the rest of the chatbot already runs (`head/access.check_access`, the
+    company scope) on top of `mcp_access_service.evaluate_agent`'s workspace join:
+    resolve inside the workspace first, and only then consider the measured 16 contacts
+    whose `workspace_id` is NULL and which no join can reach. A contact in a DIFFERENT,
+    non-default workspace stays unresolved here on purpose, exactly as it does there.
+    """
+    if not space_id:
+        return list(
+            db.execute(
+                text(f"SELECT {_PROFILE_COLUMNS} WHERE c.respond_io_id = :cid LIMIT 2"),
+                {"cid": contact_respond_id},
+            ).fetchall()
+        )
+    scoped = list(
+        db.execute(
+            text(
+                f"SELECT {_PROFILE_COLUMNS} "
+                "JOIN respond_workspaces w ON w.id = c.workspace_id "
+                "WHERE c.respond_io_id = :cid AND w.space_id = :space LIMIT 2"
+            ),
+            {"cid": contact_respond_id, "space": str(space_id)},
+        ).fetchall()
+    )
+    if scoped:
+        return scoped
+    return list(
+        db.execute(
+            text(
+                f"SELECT {_PROFILE_COLUMNS} "
+                "WHERE c.respond_io_id = :cid AND c.workspace_id IS NULL LIMIT 2"
+            ),
+            {"cid": contact_respond_id},
+        ).fetchall()
+    )
+
+
+def load_profile(
+    db: Session, contact_respond_id: str, *, space_id: str | None = None
+) -> tuple[Profile, bool]:
     """`respond_contacts.chatbot_profile` + `chatbot_recall_enabled` (AC-1503, AC-1548),
-    and `chatbot_stock_allowed` onto `Profile.stock_allowed` (S6) - one SELECT for the
-    three contact facts the engine reads before it routes.
+    and `chatbot_stock_allowed` onto `Profile.stock_allowed` (S6) - the contact facts the
+    engine reads before it routes.
+
+    Resolved inside the workspace, not by `respond_io_id` alone: a respond.io id is only
+    unique WITHIN a workspace, so the old single-row SELECT could have handed one
+    contact's stock allowance and recall toggle to a namesake in another workspace,
+    whichever Postgres returned first. `space_id` defaults to the default workspace's,
+    the same value `check_access` and the company scope resolve for the turn. Two
+    matching rows deny (see `_fail_closed_profile`); no matching row is a blank profile,
+    which leaves stock allowed - "everyone is allowed unless an operator switches the
+    contact off" is the S6 ruling, and an unknown contact has nobody to have switched it.
 
     `grants` stays None - unrestricted. The per-domain reveal gate is the one the
     business lane and `output_structurer` already run off `ctx.access.attributes`
@@ -115,18 +184,24 @@ def load_profile(db: Session, contact_respond_id: str) -> tuple[Profile, bool]:
     trigger for wiring it is S5's grant sweep, which gives every domain a key.
     """
     try:
-        row = db.execute(
-            text(
-                "SELECT chatbot_profile, chatbot_recall_enabled, chatbot_stock_allowed "
-                "FROM respond_contacts "
-                "WHERE respond_io_id = :cid"
-            ),
-            {"cid": contact_respond_id},
-        ).first()
+        if space_id is None:
+            from app.services.chatbot.head.access import default_space_id
+
+            space_id = default_space_id(db)
+        rows = _profile_rows(db, contact_respond_id, space_id)
     except Exception:  # noqa: BLE001 - a contact with no profile row is a blank profile
         return Profile(), False
-    if row is None:
+    if not rows:
         return Profile(), False
+    if len(rows) > 1:
+        logger.warning(
+            "chatbot: respond_io_id %s matches %s contacts in this workspace; "
+            "denying stock and recall rather than picking one",
+            contact_respond_id,
+            len(rows),
+        )
+        return _fail_closed_profile()
+    row = rows[0]
     raw = row[0] if isinstance(row[0], dict) else {}
     ledgers = raw.get("default_ledgers")
     return (
