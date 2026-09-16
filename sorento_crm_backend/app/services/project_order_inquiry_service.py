@@ -86,7 +86,6 @@ from app.models.project_so import (
     IV_ORDER,
     IV_ORDER_BACK,
     IV_PRE_ORDERED,
-    IV_RELEASE,
     IV_RESERVE_AND_ORDER,
     SO_STATUS_AMENDED,
     SO_STATUS_PUBLISHED,
@@ -259,6 +258,15 @@ REMARK_SPELLING = {
 # CANCEL BALANCE, RELEASE. Its own tuple rather than `REMARK_SPELLING`'s keys in
 # declaration order: a raised row's own spelling ("PRE-ORDERED, DO NOT ORDER") carries the
 # instruction to purchasing, and the headline only needs the bare verb name.
+#
+# `IV_RELEASE` deliberately absent (review round 1 nit): nothing today ever produces it.
+# `verb_for` in `project_order_inquiry_engine.py` returns it for `change == CHANGE_RELEASE`,
+# but that constant is imported into `planning_change_service.py`'s `_oi_demand_rows` and
+# never assigned to a row's `"change"` key there (only `CHANGE_DATE_LATER`/`_EARLIER` and
+# `CHANGE_QTY_DECREASE` are), and `derive_for_amendment`'s own `_DELTA_VERB_CHANGE` table
+# has no entry that maps to it either - so no live seam can ever raise a `RELEASE` row for
+# `_record_handover` to see. Carrying dead vocabulary here would be a label nothing can
+# earn; the day a producer exists, add it back beside the producer.
 _HANDOVER_VERB_ORDER = (
     IV_ORDER,
     IV_RESERVE_AND_ORDER,
@@ -269,7 +277,6 @@ _HANDOVER_VERB_ORDER = (
     IV_DELAY,
     IV_CHANGE_SO,
     IV_CANCEL_BALANCE,
-    IV_RELEASE,
 )
 _HANDOVER_VERB_LABEL = {
     IV_ORDER: "ORDER",
@@ -281,7 +288,6 @@ _HANDOVER_VERB_LABEL = {
     IV_DELAY: "DELAY",
     IV_CHANGE_SO: "CHANGE SO NO",
     IV_CANCEL_BALANCE: "CANCEL BALANCE",
-    IV_RELEASE: "RELEASE",
 }
 
 
@@ -613,6 +619,14 @@ class ProjectOrderInquiryService:
         # name" (`claim_identity`'s first element), memoised per row: the cascade calls
         # `_candidates_for_row` once per row and the identity costs two queries to derive.
         self._so_number_cache: Dict[str, Optional[str]] = {}
+        # AC-H25: `_record_handover` runs once per line a write touches, and a 341-line
+        # confirm asked for the SAME sales order's facts (and often the same actor) on
+        # every one of them - `_handover_order_facts` / `_handover_actor` memoise per
+        # instance instead of re-querying every time, the same reasoning as every cache
+        # above. Not invalidated mid-instance: nothing here writes to `ProjectSalesOrder`,
+        # `Project`, `Customer` or `users` while a confirm is raising rows against them.
+        self._handover_order_facts_cache: Dict[str, Dict[str, Any]] = {}
+        self._handover_actor_cache: Dict[str, Optional[Dict[str, str]]] = {}
 
     # ------------------------------------------------------------- derivation
 
@@ -826,10 +840,30 @@ class ProjectOrderInquiryService:
             prior_ack = self._live_handshake(rows)
             linked = self._linked_qty_by_row([row.id for row in rows])
             placed = _ZERO
+            # AC-H22: `prior_ack` is None whenever the live handshake finds nothing
+            # ACKNOWLEDGED/CHANGED to point at - a row purchasing rejected, or one still
+            # AWAITING - which is not the same as "nothing to compare this carry
+            # against". The row this very loop is about to cancel below IS that
+            # instruction, so it is kept as the fallback the handover carry-gate reads.
+            cancelled_owned_row: Optional[OrderInquiryRow] = None
             for row in rows:
                 if row.state == INQUIRY_RAISED:
+                    was_qty = row.qty
                     row.state = INQUIRY_CANCELLED
                     row.note = f"Superseded by revision {decision.revision_no}"
+                    if row.verb in (IV_ORDER, IV_ORDER_BACK) and cancelled_owned_row is None:
+                        cancelled_owned_row = row
+                    if not carried:
+                        # AC-H23: a NAMED line superseded at a qty/date the settle
+                        # above declined to absorb in place is a genuine drop of the
+                        # old instruction, not the carry's silent cancel-and-re-raise -
+                        # purchasing has to be told the old row is gone, same as H19.
+                        self._record_handover(
+                            row,
+                            kind="cancelled",
+                            was={"qty": was_qty},
+                            actor_user_id=actor_user_id,
+                        )
                     continue
                 if row.verb not in owned_verbs or row.verb == IV_CANCEL_BALANCE:
                     continue
@@ -918,26 +952,39 @@ class ProjectOrderInquiryService:
                     changed_at=changed_at,
                 )
                 self.db.add(raised_row)
-                self.db.flush()
-                if carried and prior_ack is not None:
-                    # AC-H20: the carry site cancels-and-re-raises even when NOTHING
-                    # for purchasing changed (13.4's own reason - `confirmed_unplaced_
-                    # buy_rows` needs the row moved under the new revision) - so
-                    # comparing the fresh row against the one it carries is what tells
-                    # a silent carry from one that actually moved. Same qty and date:
+                if carried:
+                    # AC-H20/AC-H22: the carry site cancels-and-re-raises even when
+                    # NOTHING for purchasing changed (13.4's own reason -
+                    # `confirmed_unplaced_buy_rows` needs the row moved under the new
+                    # revision) - so comparing the fresh row against the one it carries
+                    # is what tells a silent carry from one that actually moved. Gated
+                    # on `carried` ALONE, never on `prior_ack`: a rejected or still-
+                    # AWAITING row has no LIVE handshake (`_live_handshake` only reads
+                    # ACKNOWLEDGED/CHANGED), but it is still the row this carry moves
+                    # from, so `cancelled_owned_row` - the very row the loop above just
+                    # cancelled - is read as the fallback reference. Same qty and date:
                     # nothing for purchasing to read, print nothing. Either differs: it
                     # reads exactly like an in-place settle, never a second bare ORDER.
-                    carry_was: Dict[str, Any] = {}
-                    if raised_row.qty != prior_ack.qty:
-                        carry_was["qty"] = prior_ack.qty
-                    if raised_row.delivery_date != prior_ack.delivery_date:
-                        carry_was["delivery_date"] = prior_ack.delivery_date
-                    if carry_was:
+                    carry_reference = prior_ack or cancelled_owned_row
+                    if carry_reference is not None:
+                        carry_was: Dict[str, Any] = {}
+                        if raised_row.qty != carry_reference.qty:
+                            carry_was["qty"] = carry_reference.qty
+                        if raised_row.delivery_date != carry_reference.delivery_date:
+                            carry_was["delivery_date"] = carry_reference.delivery_date
+                        if carry_was:
+                            self._record_handover(
+                                raised_row,
+                                kind="settled",
+                                was=carry_was,
+                                actor_user_id=actor_user_id,
+                            )
+                    else:
+                        # No reference at all to compare against - cannot honestly
+                        # print a diff, so fall back to a plain raise rather than
+                        # silently dropping a carry that HAD no prior row.
                         self._record_handover(
-                            raised_row,
-                            kind="settled",
-                            was=carry_was,
-                            actor_user_id=actor_user_id,
+                            raised_row, kind="raised", actor_user_id=actor_user_id
                         )
                 else:
                     self._record_handover(raised_row, kind="raised", actor_user_id=actor_user_id)
@@ -967,7 +1014,6 @@ class ProjectOrderInquiryService:
                     acknowledged_at=datetime.utcnow(),
                 )
                 self.db.add(cancel_balance_row)
-                self.db.flush()
                 self._record_handover(
                     cancel_balance_row, kind="raised", actor_user_id=actor_user_id
                 )
@@ -1365,18 +1411,16 @@ class ProjectOrderInquiryService:
         `actor_user_id` falls back to the inquiry header's `raised_by` (AC-H18) when the
         write seam received none.
         """
-        resolved_actor_id = actor_user_id
-        if not resolved_actor_id:
-            resolved_actor_id = (
-                self.db.query(OrderInquiry.raised_by)
-                .filter(OrderInquiry.id == row.order_inquiry_id)
-                .scalar()
-            )
-        pso_id = (
-            self.db.query(OrderInquiry.project_sales_order_id)
+        # One round trip for both inquiry scalars (AC-H25), not two: `raised_by` is only
+        # READ when the seam gave no actor, but `project_sales_order_id` is needed either
+        # way, so there is nothing to save by asking twice.
+        inquiry_scalars = (
+            self.db.query(OrderInquiry.raised_by, OrderInquiry.project_sales_order_id)
             .filter(OrderInquiry.id == row.order_inquiry_id)
-            .scalar()
+            .first()
         )
+        resolved_actor_id = actor_user_id or (inquiry_scalars[0] if inquiry_scalars else None)
+        pso_id = inquiry_scalars[1] if inquiry_scalars else None
         facts = self._handover_order_facts(pso_id) if pso_id else {}
         so_number = facts.get("so_number")
         # A row `_settle_row_in_place`'s zero-need branch cancels never has its OWN `qty`
@@ -1420,9 +1464,15 @@ class ProjectOrderInquiryService:
         """SO number / customer / project / SO date for ONE project sales order, kept
         SEPARATE (PLAN-scm-oi-handover-email.md section 2: "the email keeps them apart") -
         unlike `_project_customer_labels`, which is the one thing that joins them for the
-        worklist screen."""
+        worklist screen.
+
+        Memoised per instance (AC-H25): a write raising N lines against the same order
+        asked this the same question N times.
+        """
         if not pso_id:
             return {}
+        if pso_id in self._handover_order_facts_cache:
+            return self._handover_order_facts_cache[pso_id]
         row = (
             self.db.query(
                 ProjectSalesOrder.autocount_doc_no,
@@ -1448,25 +1498,37 @@ class ProjectOrderInquiryService:
             .first()
         )
         if row is None:
-            return {}
-        autocount_doc_no, provisional_ref, published_at, created_at, title, customer_name = row
-        return {
-            "so_number": autocount_doc_no or provisional_ref,
-            "customer": customer_name,
-            "project": title,
-            "so_date": published_at or created_at,
-        }
+            facts: Dict[str, Any] = {}
+        else:
+            autocount_doc_no, provisional_ref, published_at, created_at, title, customer_name = row
+            facts = {
+                "so_number": autocount_doc_no or provisional_ref,
+                "customer": customer_name,
+                "project": title,
+                "so_date": published_at or created_at,
+            }
+        self._handover_order_facts_cache[pso_id] = facts
+        return facts
 
     def _handover_actor(self, user_id: Optional[str]) -> Optional[Dict[str, str]]:
-        """`{name, email}` for the handover's `actor` context key, or `None` (AC-H18)."""
+        """`{name, email}` for the handover's `actor` context key, or `None` (AC-H18).
+
+        Memoised per instance (AC-H25): the same actor raises every line of one write.
+        """
         if not user_id:
             return None
+        if user_id in self._handover_actor_cache:
+            return self._handover_actor_cache[user_id]
         from app.models.user import User
 
         user = self.db.query(User).filter(User.id == user_id).first()
-        if user is None or not user.email:
-            return None
-        return {"name": user.name or user.email, "email": user.email}
+        actor = (
+            {"name": user.name or user.email, "email": user.email}
+            if user is not None and user.email
+            else None
+        )
+        self._handover_actor_cache[user_id] = actor
+        return actor
 
     def _retire_settled_cancel_balance(
         self,
@@ -1633,7 +1695,6 @@ class ProjectOrderInquiryService:
                 acknowledged_at=datetime.utcnow(),
             )
             self.db.add(shortfall_row)
-            self.db.flush()
             self._record_handover(shortfall_row, kind="raised", actor_user_id=actor_user_id)
             created += 1
         return created
@@ -6647,6 +6708,7 @@ def _build_handover_context(
     ]
 
     from app.services.automation_triggers import build_order_inquiry_link
+    from app.services.certificate_service import today_malaysia
 
     context = {
         "handover": {
@@ -6659,7 +6721,11 @@ def _build_handover_context(
             "link": build_order_inquiry_link(so_numbers[0] if so_numbers else None),
         },
         "actor": pending[0].get("actor"),
-        "today": date.today().isoformat(),
+        # Asia/Kuala_Lumpur, not the server's own local time (nit, review round 1) -
+        # the seeded automation's own timezone, and the one every other date-stamped
+        # outbound email in this codebase already reads off (`certificate_service.
+        # today_malaysia`).
+        "today": today_malaysia().isoformat(),
     }
     return context, pending[0]["order_inquiry_id"]
 
@@ -6774,12 +6840,30 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         to tell apart from a rollback - `after_commit` is the one event that fires ONLY
         on the commit path, but (see that listener's docstring) cannot itself say whether
         THIS commit is the write's own or a helper's unrelated inner savepoint, which is
-        why the actual firing waits for `after_transaction_end` instead. The transaction
-        object itself is kept (not its `id()`) so nothing here can be confused by CPython
-        reusing a freed object's address for an unrelated later transaction.
+        why the actual firing waits for `after_transaction_end` instead.
+
+        `get_nested_transaction() or get_transaction()` - the SAME head `_transaction_chain`
+        reads, and NOT bare `get_transaction()` (AC-H21, review round 1 B1). Bare
+        `get_transaction()` always answers the ROOT, never the innermost SAVEPOINT, so a
+        confirm running inside `db.begin_nested()` (`planning_change_service.apply`, one
+        savepoint per order; the outstanding-book upload the same way) had its savepoint
+        commit marked under the WRONG object - `_record_handover` had already tagged its
+        entry with the savepoint itself - so `_fire_pending_handover` could never match
+        it to "committed", read the savepoint's own conclusion as a rollback, and the
+        entry sat stranded on `session.info` forever, un-dispatched.
+
+        Skips the append entirely when nothing is pending on this session (AC-H24): every
+        OTHER commit anywhere in the app also fires this listener (`after_commit` is a
+        `Session`-wide event, not scoped to order-inquiry work), and a long-running import
+        session making thousands of unrelated commits must not grow this list once per
+        commit forever. The transaction object itself is kept (not its `id()`) so nothing
+        here can be confused by CPython reusing a freed object's address for an unrelated
+        later transaction.
         """
+        if not session.info.get(_HANDOVER_PENDING_KEY):
+            return
         session.info.setdefault(_HANDOVER_COMMITTED_TX_KEY, []).append(
-            session.get_transaction()
+            session.get_nested_transaction() or session.get_transaction()
         )
 
     @event.listens_for(Session, "after_transaction_end")
@@ -6807,21 +6891,33 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         `after_soft_rollback` dispatches - so without the commit check below, a rollback
         would drain and dispatch its own items instead of the discard further down ever
         getting a chance to (AC-H10). `_HANDOVER_COMMITTED_TX_KEY` is what that check reads.
+
+        `transaction`'s OWN marker (if it has one) is pruned FIRST, unconditionally, on
+        every exit path below (AC-H24) - a transaction ends exactly once, so its marker
+        is dead weight the moment this fires, whether or not anything was pending for it
+        (a helper's unrelated inner savepoint, still marked because SOMETHING else on
+        this session was pending when it committed, would otherwise never be removed).
         """
+        committed = session.info.get(_HANDOVER_COMMITTED_TX_KEY)
+        was_committed = False
+        if committed:
+            still_committed = [tx for tx in committed if tx is not transaction]
+            was_committed = len(still_committed) != len(committed)
+            if still_committed:
+                session.info[_HANDOVER_COMMITTED_TX_KEY] = still_committed
+            else:
+                session.info.pop(_HANDOVER_COMMITTED_TX_KEY, None)
+
         pending = session.info.get(_HANDOVER_PENDING_KEY)
         if not pending:
             return
         concluded = [item for item in pending if item["tx"] is transaction]
         if not concluded:
             return
-        committed = session.info.get(_HANDOVER_COMMITTED_TX_KEY) or []
-        if not any(tx is transaction for tx in committed):
+        if not was_committed:
             # This transaction ENDED (closed) via rollback, not commit - AC-H10's job,
             # not this listener's; leave the items for `after_soft_rollback` to discard.
             return
-        session.info[_HANDOVER_COMMITTED_TX_KEY] = [
-            tx for tx in committed if tx is not transaction
-        ]
         remaining = [item for item in pending if item["tx"] is not transaction]
         if remaining:
             session.info[_HANDOVER_PENDING_KEY] = remaining
