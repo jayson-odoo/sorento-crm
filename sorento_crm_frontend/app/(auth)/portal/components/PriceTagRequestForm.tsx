@@ -2561,8 +2561,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                         isMobile
                           ? 'w-[35%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[15%] px-2 py-2 text-left'
-                            : 'w-[28%] px-2 py-2 text-left'
+                            ? 'w-[20%] px-2 py-2 text-left'
+                            : 'w-[32%] px-2 py-2 text-left'
                       }
                     >
                       Item
@@ -2572,8 +2572,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                         isMobile
                           ? 'w-[12%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[6%] px-2 py-2 text-left'
-                            : 'w-[10%] px-2 py-2 text-left'
+                            ? 'w-[9%] px-2 py-2 text-left'
+                            : 'w-[12%] px-2 py-2 text-left'
                       }
                     >
                       Qty (tags)
@@ -2600,8 +2600,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                         isMobile
                           ? 'w-[33%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[20%] px-2 py-2 text-left'
-                            : 'w-[28%] px-2 py-2 text-left'
+                            ? 'w-[12%] px-2 py-2 text-left'
+                            : 'w-[22%] px-2 py-2 text-left'
                       }
                     >
                       Remarks
@@ -3180,10 +3180,14 @@ function LineRow({
           )}
         </td>
         <td className="px-2 py-2">
+          {/* Owner polish after #948: two digits plus the number spinner
+              need more room than a narrow percentage column ever
+              guarantees, so the input carries its own floor. */}
           <Input
             type="number"
             inputMode="numeric"
             min={1}
+            className="min-w-[3.5rem]"
             value={line.quantity}
             onChange={(e) =>
               onUpdate(line.key, {
