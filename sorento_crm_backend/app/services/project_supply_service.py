@@ -102,7 +102,6 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER_BACK,
     LIVE_SO_STATUSES,
-    SO_STATUS_ADOPTED,
     AllocationClaim,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -4115,22 +4114,11 @@ class ProjectSupplyService:
                 code="supply_order_not_published",
             )
 
-        # Self-heal (issue #969): a core line that arrived after adoption has no mirror yet
-        # and is invisible to `lines_of()` below, so it cannot be confirmed at all and
-        # `lines_undecided` cannot count it either - a stale planning record used to need a
-        # manual Re-sync first. Additive and idempotent (`mirror_missing_lines` is a no-op
-        # once nothing is missing), so every confirm arm that reaches here - the single
-        # route, confirm-all's non-batch entries, and the planning-change apply path, all
-        # three funnel through this one method - self-heals before the line index is built,
-        # with no route-level duplication. Gated on `SO_STATUS_ADOPTED` (review S1), the
-        # same gate `project_so_reconciliation_service.py` uses: an AUTHORED record
-        # (published/amended, `project_id` set) is somebody's own record of what was
-        # committed, never a mirror this heal appends to on its own.
-        if order.status == SO_STATUS_ADOPTED:
-            from app.services.project_so_adoption_service import ProjectSOAdoptionService
-
-            ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
-
+        # No self-heal here (issue #969, B2 owner ruling 17 Sep 2026): the heal moved to the
+        # board read (`FulfilmentBoardService.build`), the one place the FE derives
+        # `no_mirror` from and the read confirm-all's own multi-order build comes from.
+        # Confirm stays a pure write - AC-PR8 pins that confirming with no prior board read
+        # mirrors nothing.
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}
         payload_lines = list(getattr(payload, "lines", []) or [])

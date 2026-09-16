@@ -649,6 +649,36 @@ class FulfilmentBoardService:
         # instead - and BEFORE the demand rows, because the third value decides which of
         # them an inquiry still counts as deciding.
         adopted_by_so, pending_by_so, pending_core_lines = self._order_plan_status(numbers)
+        # Self-heal (issue #969, B2 owner ruling 17 Sep 2026): the board read is the one
+        # place the FE derives `no_mirror` from (`fulfilmentBoard.ts`) and the read
+        # confirm-all's own multi-order build comes from, so this is the seam that heals a
+        # core line that arrived after adoption - confirm stays a pure write (AC-PR8). Run
+        # BEFORE `_demand_rows` below, which is what resolves each line's `project_line_id`
+        # off the mirror this creates (`_mirror_addressing`) - a heal after it would leave
+        # this same response's late line addressed to nothing. Gated on an adopted,
+        # unauthored mirror (`status = 'adopted'`, `project_id IS NULL`), the same gate
+        # every other seam uses. `adopted_by_so` above already answers whether ANY selected
+        # order has a `ProjectSalesOrder` row at all - empty means none of them can need
+        # healing, so an ordinary (never-adopted) board build costs no extra statement
+        # (`test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`).
+        if adopted_by_so:
+            from app.models.project_so import SO_STATUS_ADOPTED
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            heal_targets = (
+                self.db.query(ProjectSalesOrder)
+                .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+                .filter(
+                    SalesOrder.so_number.in_(numbers),
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .all()
+            )
+            if heal_targets:
+                adoption = ProjectSOAdoptionService(self.db)
+                for order in heal_targets:
+                    adoption.mirror_missing_lines(order)
         rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never
