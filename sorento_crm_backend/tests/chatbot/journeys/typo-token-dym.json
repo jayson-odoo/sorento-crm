@@ -1,0 +1,31 @@
+{
+  "name": "typo-token-dym",
+  "source": "captain's test list: 'stock for srttwc286' must not silently broad-match ('products have stock. Showing'), must carry a did-you-mean or not-found line; 'stock wc287 wc2867 7445' must name wc2867 as unresolved",
+  "cases": [
+    {
+      "name": "typo-srttwc286-no-silent-broad-match-carries-dym-or-not-found",
+      "cold": true,
+      "turns": [
+        {
+          "text": "stock for srttwc286",
+          "expect": {
+            "reply_not_contains": ["products have stock. Showing"],
+            "reply_contains_any": ["Did you mean", "No matching results found", "not found"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "multi-token-wc2867-named-unresolved",
+      "cold": true,
+      "turns": [
+        {
+          "text": "stock wc287 wc2867 7445",
+          "expect": {
+            "reply_contains": ["wc2867"]
+          }
+        }
+      ]
+    }
+  ]
+}

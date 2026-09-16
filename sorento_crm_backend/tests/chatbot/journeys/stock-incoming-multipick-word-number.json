@@ -1,0 +1,51 @@
+{
+  "name": "stock-incoming-multipick-word-number",
+  "source": "browser-pass-6 chain 5 (handpass3-owner-17sep-stock-incoming-multipick-word-number.json), hand pass 3 ruling: 'Word numbers (\"eight\") are positions; the prompt says so.'",
+  "cases": [
+    {
+      "name": "stock-then-incoming-roster-multipick-word-number",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Check stock srtwc286",
+          "expect": {
+            "reply_contains": ["stock"],
+            "reply_not_contains": ["Which product do you mean"]
+          }
+        },
+        {
+          "text": "Incoming",
+          "expect": {
+            "roster_min_options": 10,
+            "roster_stamped": true
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-200"]
+          }
+        },
+        {
+          "text": "2 3 4",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-P", "SRTWC286-SH-PP", "SRTWC286-SH"]
+          }
+        },
+        {
+          "text": "Eight",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-NEW-P"],
+            "reply_not_contains": ["Which product do you mean"]
+          }
+        },
+        {
+          "text": "The eigthh one",
+          "expect": {
+            "reply_contains": ["SRTWC286-SH-NEW-P"]
+          }
+        }
+      ]
+    }
+  ]
+}
