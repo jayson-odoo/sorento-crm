@@ -860,3 +860,48 @@ def test_malformed_promotion_id_with_a_candidate_is_422_not_500(portal_client):
         },
     )
     assert res.status_code == 422, res.text
+
+
+def test_lookup_route_still_returns_the_auto_pick_for_an_unpromoted_line(portal_client):
+    """D3/AC-S7-4 (owner ruling): the auto pick belongs to the LOOKUP - the
+    portal/CRM line-pricing routes exist so a salesperson can SEE what would
+    apply before choosing - and stays there. Same product/promotion shape as
+    `test_a_saved_lines_basis_never_auto_picks_a_promotion_it_was_not_given`
+    (`test_price_tag_tag_render_data.py`), through the ROUTE this time: no
+    `promotion_id` given, one covering promotion exists, `auto_promotion_id`
+    must still name it.
+    """
+    client, db, contact_id = portal_client
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    code = "end_user"
+    if db.query(ContactAccessType).filter(ContactAccessType.code == code).first() is None:
+        db.add(ContactAccessType(code=code, name=code))
+        db.flush()
+    db.execute(
+        respond_contact_access_types.insert().values(
+            contact_id=contact_id, access_type_code=code
+        )
+    )
+    db.flush()
+
+    parent = _product(db, list_price="899.00")
+    covering = _promotion(db, [(parent, "799.00")])
+
+    res = client.post(
+        "/api/v1/public/portal/lookups/line-pricing",
+        json={
+            "lines": [
+                {
+                    "key": "L1",
+                    "product_id": parent.id,
+                    "part_product_ids": [],
+                    "candidate_product_ids": [],
+                }
+            ],
+        },
+    )
+    assert res.status_code == 200, res.text
+    row = res.json()[0]
+    assert row["auto_promotion_id"] == covering.id
+    assert row["sell_price_basis"] == "promotion"

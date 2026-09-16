@@ -15,7 +15,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -128,7 +128,12 @@ describe('PriceTagRequestForm - read-only view renders the saved manual price (F
     // The bug renders the list total here instead - assert it is gone, so a
     // future accidental "it just happens to also say 150 somewhere else"
     // does not make this pass for the wrong reason once the real fix lands.
-    const sellingPriceLabel = screen.getByText('Selling price');
+    //
+    // Scoped to the Lines table: the read-only "Price" section above it also
+    // reads "Selling price" (it mirrors the price-mode radio's own label),
+    // so an unscoped `getByText` now matches both.
+    const linesTable = screen.getByRole('table');
+    const sellingPriceLabel = within(linesTable).getByText('Selling price');
     const sellingPriceValue = sellingPriceLabel.nextElementSibling;
     expect(sellingPriceValue?.textContent).toBe('RM 175');
   });

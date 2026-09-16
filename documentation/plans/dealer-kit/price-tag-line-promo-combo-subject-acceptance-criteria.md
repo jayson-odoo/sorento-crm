@@ -201,7 +201,9 @@ notifications stand.
   resolved parts of (offer under the line's promotion if worth showing, else
   list). An unresolved choice group contributes nothing.
 - **AC-S7-4** `sell_price_basis` = `manual` when manual set; `promotion` when
-  a promotion covers at least one product on the line; `list` otherwise.
+  the line's SAVED promotion yields an offer below list on a resolved
+  product; the lookup's auto pick never feeds a saved line's basis; `list`
+  otherwise.
 - **AC-S7-5** Each line's `show_promo_price` (existing column) is now written
   as `price_mode == 'selling' and sell_price_basis != 'list'` on every save,
   so a combo with no offer prints LP, matching a plain product.

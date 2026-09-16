@@ -345,3 +345,61 @@ def test_split_route_gone_and_choices_rejected(crm_client):
         f"{base}/tags/{tag_id}", json={"choices": {"Basin": white.id}}
     )
     assert patched.status_code == 422, patched.text
+
+
+# ---------------------------------------------------------------------------
+# Regression for 8ca1980b1 - the real seam, not the route
+# ---------------------------------------------------------------------------
+
+
+def test_create_request_mints_two_tags_under_the_apps_own_autoflush_policy():
+    """`app.database.SessionLocal` (app/database.py:23) is built
+    `autoflush=False`. `_add_line_parts` used to `db.add(...)` a line's part
+    rows without appending them to `line.parts`, so `_add_line_tags`'s very
+    next read of that relationship lazy-loaded BEFORE the pending part
+    inserts existed and came back empty - every request made through the
+    RUNNING APP minted one tag with empty `choices`, while every route test
+    in this suite passed, because `blank_session()` (SQLAlchemy's own
+    default) autoflushes and so wrote the parts out ahead of the read.
+
+    `pg_session(autoflush=False)` reproduces the app's own session policy
+    instead of the test suite's - the one difference that made this bug
+    invisible to five bisected browser-payload variants and every route test
+    here, all of which run on `blank_session()`.
+    """
+    from tests._pg_fixture import pg_session
+
+    with pg_session(autoflush=False) as db:
+        cabinet = _product(db, "afcab", list_price="1599.00")
+        white = _product(db, "afwh", list_price="299.00")
+        black = _product(db, "afbk", list_price="349.00")
+        combo = _combo(db, cabinet, "2 in 1", [(white, "Basin"), (black, "Basin")])
+        contact = _contact(db)
+
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": cabinet.id,
+                        "combo_id": combo.id,
+                        "parts": [
+                            {"role": "Basin", "candidates": [white.id, black.id]}
+                        ],
+                    }
+                ],
+            },
+        )
+        db.flush()
+
+        tags = sorted(request.lines[0].tags, key=lambda tag: tag.sort_order or 0)
+        assert len(tags) == 2, (
+            "one tag per candidate, even when the session never autoflushes",
+            [tag.choices for tag in tags],
+        )
+        assert [tag.choices.get("Basin") for tag in tags] == [white.id, black.id]
+        assert all(tag.choices for tag in tags), "no tag left with an empty choices map"

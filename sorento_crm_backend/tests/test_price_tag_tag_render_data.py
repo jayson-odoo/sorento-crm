@@ -663,3 +663,31 @@ def test_resolve_tags_live_derives_show_promo_price_live_not_from_the_saved_colu
     assert fresh_row["show_promo_price"] is False, (
         "show_promo_price must be re-derived live too, not echo the stale saved column"
     )
+
+
+def test_a_saved_lines_basis_never_auto_picks_a_promotion_it_was_not_given(db):
+    """D3/AC-S7-5 (owner ruling): a SAVED line's price basis is computed from
+    its STORED `promotion_id` only - "no promo + no manual = LP" - the auto
+    pick exists for the lookup routes (portal/CRM `line-pricing`), never for
+    resolve. `_tag_sell_price_basis` calls `line_pricing` with
+    `promotion_id=line.promotion_id` (correctly the saved value, not looked
+    up again) - but `line_pricing` itself falls back to
+    `auto_promotion_id` whenever the GIVEN id is `None`
+    (`chosen_id = given_promotion_id or auto_promotion_id`), so a line saved
+    with no promotion still prices as "promotion" the moment ANY promotion
+    covers its product, exactly as if the salesperson had picked it.
+    """
+    cabinet = _product(db, "SRT7NOPICK", list_price="899.00")
+    _promotion(db, [(cabinet, "799.00")])  # covers the product; never chosen
+
+    request = _request(
+        db, product=cabinet, promotion_id=None, price_mode="selling"
+    )
+    db.flush()
+
+    row = _rows(db, request)[0]
+    assert row["sell_price_basis"] == "list", (
+        "no promo + no manual = LP, even though a promotion covers the product"
+    )
+    assert row["show_promo_price"] is False
+    assert row["sell_price"] == row["list_price"] == 899.0
