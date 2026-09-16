@@ -475,14 +475,24 @@ def _without_guesses(
 ) -> list[dict[str, Any]]:
     """`compatible` minus the rows that ONLY a guess matched.
 
-    A guess is a resolution for a token the resolver itself could not place, or for a
-    token nobody asked about - the whole message, which the resolve route adds as a
-    phrase of its own. "stock for srttwc286" came back with a resolution under the token
-    `stock for srttwc286` carrying 200 products at `match_tier: spec_search`,
-    `similarity: 0.0`, and the inventory fetch ran for every one of them (turn 11476016).
+    ONLY when the resolver said it could not place a token this message named. That
+    verdict is the whole trigger: "stock for srttwc286" put `srttwc286` in
+    `unresolved_tokens` and then returned a SECOND resolution under the token `stock for
+    srttwc286` - the whole message, which the resolve route adds as a phrase of its own -
+    carrying 200 products at `match_tier: spec_search`, `similarity: 0.0`, and the
+    inventory fetch ran for every one of them (turn 11476016).
+
+    A phrase-shaped token is NOT a guess by itself: in AND mode the resolver reports the
+    intersection under exactly that shape, and those rows are the named token's real
+    answer ("Incoming and stock for 7445" -> the four SRTWT7445 variants,
+    `unresolved_tokens` empty). So the phrase test only applies once a named token has
+    already been reported unplaced.
+
     A row a REAL token also matched stays, because then it is that token's answer and the
     guess merely agreed.
     """
+    if not unplaced:
+        return compatible
     asked = {_token_key(t) for t in jsc.array(jsc.get(resolved, "tokens"))} - {""}
     placed: set[str] = set()
     guessed: set[str] = set()

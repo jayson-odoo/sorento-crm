@@ -14,7 +14,7 @@ from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
 from app.services.chatbot.turn.policy import Policy
-from app.services.chatbot.turn.state import State
+from app.services.chatbot.turn.state import KIND_FIELD_MAP, State
 
 _ATTACHED_SENTENCE = "I have attached the file(s) below."
 
@@ -381,8 +381,51 @@ def _join_words(names: list[str]) -> str:
     return ", ".join(clean[:-1]) + " or " + clean[-1]
 
 
-def compose_question(pending: Any) -> Answer:
-    """The ask, as an Answer: the header, the numbered roster, and the same pending back.
+#: How the scope line names each axis - the report's own words for the same filters
+#: (`sorento_crm_mcp.presenters._outstanding_header_lines`), so a question and an answer
+#: about the same subject read the same way.
+_SCOPE_AXIS_LABELS: tuple[tuple[str, str], ...] = (
+    ("products", "Product"),
+    ("customers", "Customer"),
+    ("warehouse", "Location"),
+)
+
+
+def _subject_line(state: State | None, asked_kind: str) -> str:
+    """What the conversation is already about, for a question about something else.
+
+    Owner journey `chinchun-x-only-customer-survives` / browser pass 7 row 2: "orders for
+    chin chun" then "For srtwc286 only" keeps the customer (the fetch two turns later
+    proves it) but asks `Which product do you mean?` with no mention of CHIN CHUN
+    anywhere, so mid-conversation there is nothing on screen saying the customer
+    survived. Only axes this question is NOT about, and each family named once, by the
+    same rule the answer header uses.
+    """
+    if state is None:
+        return ""
+    # A roster's kind is `<entity kind>_pick` (`narrow.decide` builds it that way), and
+    # the axis it is ASKING about is never part of the scope line - the numbered options
+    # under it are that axis.
+    asked_axis = KIND_FIELD_MAP.get(asked_kind.removesuffix("_pick").removesuffix("_ask"))
+    lines: list[str] = []
+    for attr, label in _SCOPE_AXIS_LABELS:
+        if attr == asked_axis:
+            continue
+        rows = getattr(getattr(state, "focus", None), attr, None) or []
+        names = [
+            str(r.get("name") or r.get("canonical_code") or r.get("raw") or "").strip()
+            for r in rows
+            if isinstance(r, dict)
+        ]
+        subjects = _header_subjects([n for n in names if n])
+        if subjects:
+            lines.append(f"{label}: {', '.join(subjects)}")
+    return "\n".join(lines)
+
+
+def compose_question(pending: Any, state: State | None = None) -> Answer:
+    """The ask, as an Answer: the subject line, the header, the numbered roster, and the
+    same pending back.
 
     A roster the customer can see is what a bare "1" answers next turn, so the options
     that are PRINTED here are exactly the options the tail stores - one list, never two.
@@ -404,7 +447,8 @@ def compose_question(pending: Any) -> Answer:
         printed = f"{label} - {stamp}" if stamp else str(label)
         labels.append(printed)
         lines.append(f"{option.get('position')}. {printed}")
-    body = "\n".join(lines)
+    subject = _subject_line(state, str(getattr(pending, "kind", "")))
+    body = "\n".join(([subject] if subject else []) + lines)
 
     # AC-1102: a question the LANE composed is re-printed in the lane's own bytes. The
     # outstanding report's detail offer is worded by the MCP presenter (R9's one

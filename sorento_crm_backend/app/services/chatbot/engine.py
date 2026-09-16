@@ -1669,7 +1669,7 @@ def _run_stages(  # noqa: PLR0915
 
         # -- the ASK: the composer's question IS the answer on this turn ------ #
         if plan.ask is not None and completes_here and branch_kind in _ASK_BRANCH_KINDS:
-            answer = turn_compose.compose_question(plan.ask)
+            answer = turn_compose.compose_question(plan.ask, state_out)
 
         # -- the REFUSAL: a denied stock check is an answer, not silence ------- #
         # `stock_denied` is one of the three business branch kinds, so it is outside
