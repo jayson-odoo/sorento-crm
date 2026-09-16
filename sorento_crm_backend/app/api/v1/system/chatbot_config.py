@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from app.dependencies import get_db, require_permission
 from app.models.access import McpTool
 from app.models.chatbot_policy import ChatbotDomain, ChatbotEntityKind
-from app.schemas.common import ListResponse, PaginationResponse
+from app.schemas.common import MAX_PAGE_LIMIT, ListResponse, PaginationResponse
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chatbot")
@@ -261,7 +261,7 @@ def _find_domain(db: Session, domain_id: str) -> ChatbotDomain:
 @router.get("/domains", response_model=ListResponse[ChatbotDomainResponse])
 def list_domains(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("sort_order"),
     dir: str = Query("asc"),
     query: str | None = Query(None),
@@ -426,7 +426,7 @@ def _find_kind(db: Session, kind: str) -> ChatbotEntityKind:
 @router.get("/entity-kinds", response_model=ListResponse[ChatbotEntityKindResponse])
 def list_entity_kinds(
     page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("kind"),
     dir: str = Query("asc"),
     query: str | None = Query(None),
