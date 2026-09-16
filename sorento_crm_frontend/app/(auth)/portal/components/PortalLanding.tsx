@@ -214,10 +214,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
   } = useDebouncedSearch();
   const initialTabFromUrl = (() => {
     const t = searchParams?.get('type');
-    return isLandingKind(t) ? t : 'stock_inquiry';
+    return isLandingKind(t) ? t : null;
   })();
+  // N1: null, not a hardcoded kind - a kind picked before `visible_form_types`
+  // is known could be one this contact cannot see, and the fallback effect
+  // below corrects it the moment `landingKinds` resolves. Seeding a value
+  // absent from `options` for that one frame is worse than seeding none.
   const [activeTab, setActiveTab] =
-    useState<PortalLandingKind>(initialTabFromUrl);
+    useState<PortalLandingKind | null>(initialTabFromUrl);
   // Filter + sort are component state that resets whenever the type changes
   // (D-L4) - the field set differs per kind, so a status or field value
   // picked for one kind has no business surviving a tab switch. The view
@@ -264,7 +268,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
   useEffect(() => {
     if (!contact) return;
     if (landingKinds.length === 0) return;
-    if (landingKinds.includes(activeTab)) return;
+    if (activeTab && landingKinds.includes(activeTab)) return;
     setActiveTab(landingKinds[0]);
   }, [contact, landingKinds, activeTab]);
 
@@ -307,7 +311,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
   }, [defaultTabKey]);
 
   const handleSetDefaultTab = useCallback(() => {
-    if (!defaultTabKey || typeof window === 'undefined') return;
+    if (!activeTab || !defaultTabKey || typeof window === 'undefined') return;
     window.localStorage.setItem(defaultTabKey, activeTab);
     setSavedDefaultTab(activeTab);
     toast.success(`${LANDING_LABELS[activeTab]} is now your default tab.`);
@@ -365,9 +369,12 @@ export function PortalLanding({ slug }: { slug?: string }) {
         );
         if (dead && dead.status === 'rejected') throw dead.reason;
 
-        const next: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
-          ...EMPTY_LISTS,
-        };
+        // N4: derived from the canonical list rather than spreading the
+        // module-level EMPTY_LISTS - a kind LANDING_KINDS gains cannot be
+        // forgotten here the way a manually-enumerated copy could be.
+        const next = Object.fromEntries(
+          LANDING_KINDS.map((k) => [k, [] as PortalSubmissionSummary[]]),
+        ) as Record<PortalLandingKind, PortalSubmissionSummary[]>;
         kinds.forEach((k, index) => {
           const leg = legs[index];
           if (leg.status === 'fulfilled') {
@@ -480,6 +487,12 @@ export function PortalLanding({ slug }: { slug?: string }) {
     );
   }
 
+  // The tab actually rendered below: `activeTab` can be null for the one
+  // frame before the fallback effect above corrects it (N1); `landingKinds[0]`
+  // is always defined once this render reaches the non-empty branch, so the
+  // final `?? 'complaint'` is a type satisfier only, never actually reached.
+  const currentTab: PortalLandingKind = activeTab ?? landingKinds[0] ?? 'complaint';
+
   return (
     <div className="w-full max-w-3xl mx-auto px-3 pt-3 pb-4 space-y-3">
       {/* Header - Welcome centered, Log out anchored to top-right. */}
@@ -500,14 +513,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
       </div>
 
       {landingKinds.length === 0 ? (
-        // AC-L3: no picker, toolbar, list or search box - just the one next
-        // step this contact has left.
+        // AC-L3/AC-L5: no picker, toolbar, list or search box - just the one
+        // next step this contact has left. Same shape as the per-kind empty
+        // card below (icon, py-8).
         <Card>
-          <CardContent className="py-12 text-center space-y-3">
-            <p className="text-sm text-muted-foreground">
-              No forms are available for your account.
-            </p>
-            {contact?.whatsapp_number && (
+          <CardContent className="py-8 text-center text-sm text-muted-foreground space-y-2">
+            <MessageCircle className="h-8 w-8 mx-auto" />
+            <p>No forms are available for your account.</p>
+            {contact?.whatsapp_number ? (
               <Button asChild>
                 <a
                   href={waMeUrl(contact.whatsapp_number, WA_NO_FORMS_TEXT)}
@@ -517,6 +530,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
                   <MessageCircle className="h-4 w-4 mr-2" />
                   Chat with us on WhatsApp
                 </a>
+              </Button>
+            ) : (
+              // No WhatsApp number on file - Log out (already the header's
+              // own action) is the only next step left to offer, rather than
+              // nothing.
+              <Button variant="outline" onClick={handleLogout}>
+                <LogOut className="h-4 w-4 mr-2" />
+                Log out
               </Button>
             )}
           </CardContent>
@@ -537,7 +558,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
           <div className="flex items-stretch gap-2">
             <SearchableSelect
-              value={activeTab}
+              value={currentTab}
               onChange={(v) => handleTabChange(v as PortalLandingKind)}
               options={landingKinds.map((t) => ({
                 value: t,
@@ -584,14 +605,14 @@ export function PortalLanding({ slug }: { slug?: string }) {
               type="button"
               variant="outline"
               onClick={handleSetDefaultTab}
-              disabled={!contact || savedDefaultTab === activeTab}
+              disabled={!contact || savedDefaultTab === currentTab}
               aria-label={
-                savedDefaultTab === activeTab
-                  ? `${LANDING_LABELS[activeTab]} is your default tab`
-                  : `Set ${LANDING_LABELS[activeTab]} as default tab`
+                savedDefaultTab === currentTab
+                  ? `${LANDING_LABELS[currentTab]} is your default tab`
+                  : `Set ${LANDING_LABELS[currentTab]} as default tab`
               }
               title={
-                savedDefaultTab === activeTab
+                savedDefaultTab === currentTab
                   ? 'Default tab'
                   : 'Set as default for this contact'
               }
@@ -599,7 +620,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
             >
               <Star
                 className={`h-4 w-4 ${
-                  savedDefaultTab === activeTab
+                  savedDefaultTab === currentTab
                     ? 'fill-yellow-400 text-yellow-500'
                     : ''
                 }`}
@@ -608,8 +629,8 @@ export function PortalLanding({ slug }: { slug?: string }) {
           </div>
 
           <SubmissionList
-            kind={activeTab}
-            items={submissions[activeTab] ?? []}
+            kind={currentTab}
+            items={submissions[currentTab] ?? []}
             filters={filters}
             onFiltersChange={setFilters}
             sort={sort}

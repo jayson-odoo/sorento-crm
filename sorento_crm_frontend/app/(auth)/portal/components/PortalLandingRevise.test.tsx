@@ -15,7 +15,11 @@ const replace = vi.fn();
 const router = { push, replace };
 vi.mock('next/navigation', () => ({
   useRouter: () => router,
-  useSearchParams: () => new URLSearchParams(''),
+  // N1: PortalLanding no longer defaults its active tab to a hardcoded
+  // kind - it seeds null and corrects to the first VISIBLE kind
+  // (canonical LANDING_KINDS order: complaint first). This suite is
+  // about stock_inquiry rows specifically, so the deep link pins it.
+  useSearchParams: () => new URLSearchParams('type=stock_inquiry'),
 }));
 
 vi.mock('../lib/portal-client', async (importOriginal) => {

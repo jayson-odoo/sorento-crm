@@ -146,4 +146,19 @@ describe('PortalLanding - empty visible set (AC-L3)', () => {
     expect(fetchSubmissions).not.toHaveBeenCalled();
     expect(listRequestsAsSummaries).not.toHaveBeenCalled();
   });
+
+  it('offers Log out as the next step when the contact has no WhatsApp number on file (S3)', async () => {
+    (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...ME,
+      whatsapp_number: null,
+      visible_form_types: [],
+    });
+    render(<PortalLanding slug="darren" />);
+
+    await screen.findByText('No forms are available for your account.');
+    expect(screen.queryByRole('link', { name: /Chat with us on WhatsApp/ })).toBeNull();
+    // Two Log out buttons now exist (header's own, plus the empty state's) -
+    // the empty state's own next step is the one under test.
+    expect(screen.getAllByRole('button', { name: 'Log out' }).length).toBeGreaterThan(0);
+  });
 });
