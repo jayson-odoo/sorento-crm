@@ -1450,13 +1450,13 @@ class ProjectOrderInquiryService:
                 "line": line,
                 "actor": self._handover_actor(resolved_actor_id),
                 #: Which savepoint this was earned under (C2, `_notify_purchasing`'s own
-                #: rule), so a sibling order's rollback cannot discard it. `tx_chain[0]`
-                #: (the innermost, active-right-now transaction) is also what
-                #: `_fire_pending_handover` waits to see CONCLUDE (AC-H1) before firing -
-                #: see that listener's own docstring for why `after_commit` alone cannot
-                #: tell that apart from a helper's own, unrelated savepoint closing.
+                #: rule), so a sibling order's rollback cannot discard it.
                 "tx_chain": (tx_chain := _transaction_chain(self.db)),
-                "tx": tx_chain[0] if tx_chain else None,
+                #: The OUTERMOST entry of that same chain - the ROOT transaction, not
+                #: the innermost savepoint (AC-H27/AC-H28, review round 2 ruling) - is
+                #: what `_fire_pending_handover` waits to see CONCLUDE BY COMMIT before
+                #: firing, however many savepoints this line's own write nests inside.
+                "tx": tx_chain[-1] if tx_chain else None,
             }
         )
 
@@ -6724,8 +6724,10 @@ def _build_handover_context(
         # Asia/Kuala_Lumpur, not the server's own local time (nit, review round 1) -
         # the seeded automation's own timezone, and the one every other date-stamped
         # outbound email in this codebase already reads off (`certificate_service.
-        # today_malaysia`).
-        "today": today_malaysia().isoformat(),
+        # today_malaysia`). dd/mm/yyyy (AC-H14, review round 2), like every other date
+        # the template prints - the "Raised by ... on <date>" line is not the one place
+        # this email reverts to ISO.
+        "today": today_malaysia().strftime("%d/%m/%Y"),
     }
     return context, pending[0]["order_inquiry_id"]
 
@@ -6836,21 +6838,22 @@ def register_order_inquiry_post_commit_dispatch() -> None:
 
     @event.listens_for(Session, "after_commit")
     def _mark_handover_transaction_committed(session):  # noqa: ANN001
-        """Record which transaction just committed, for `_fire_pending_handover` below
-        to tell apart from a rollback - `after_commit` is the one event that fires ONLY
-        on the commit path, but (see that listener's docstring) cannot itself say whether
-        THIS commit is the write's own or a helper's unrelated inner savepoint, which is
-        why the actual firing waits for `after_transaction_end` instead.
+        """Record that the ROOT transaction just committed, for `_fire_pending_handover`
+        below to tell a genuine root commit apart from a rollback (AC-H27/AC-H28,
+        review round 2 ruling: the drain fires ONLY at the root's own conclusion, never
+        at any savepoint release - see that listener's own docstring for why).
 
-        `get_nested_transaction() or get_transaction()` - the SAME head `_transaction_chain`
-        reads, and NOT bare `get_transaction()` (AC-H21, review round 1 B1). Bare
-        `get_transaction()` always answers the ROOT, never the innermost SAVEPOINT, so a
-        confirm running inside `db.begin_nested()` (`planning_change_service.apply`, one
-        savepoint per order; the outstanding-book upload the same way) had its savepoint
-        commit marked under the WRONG object - `_record_handover` had already tagged its
-        entry with the savepoint itself - so `_fire_pending_handover` could never match
-        it to "committed", read the savepoint's own conclusion as a rollback, and the
-        entry sat stranded on `session.info` forever, un-dispatched.
+        `after_commit` fires on EVERY `SessionTransaction.commit()`, nested or not
+        (`self._parent is None or self.nested`, straight from SQLAlchemy's own source),
+        so this fires just as much for `_hand_to_purchasing`'s own `db.begin_nested()`
+        and for `planning_change_service.apply`'s one-savepoint-per-order as it does for
+        the write's real outer commit. `get_nested_transaction()` is how the two are
+        told apart: `SessionTransaction.close()` (which would clear it) runs AFTER
+        `after_commit` dispatches, so at the moment THIS fires, `get_nested_transaction()`
+        still answers with whichever savepoint is currently committing, if any - a
+        NESTED commit (savepoint or `_hand_to_purchasing`'s own, at any depth) always
+        sees a non-None answer here, and only the session's own root-level `commit()`
+        (called only once every savepoint below it has already closed) sees None.
 
         Skips the append entirely when nothing is pending on this session (AC-H24): every
         OTHER commit anywhere in the app also fires this listener (`after_commit` is a
@@ -6862,42 +6865,57 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         """
         if not session.info.get(_HANDOVER_PENDING_KEY):
             return
+        if session.get_nested_transaction() is not None:
+            # A savepoint's OWN commit fired this, not the root's - do nothing except
+            # leave the queue exactly as it is (AC-H27/AC-H28).
+            return
         session.info.setdefault(_HANDOVER_COMMITTED_TX_KEY, []).append(
-            session.get_nested_transaction() or session.get_transaction()
+            session.get_transaction()
         )
 
     @event.listens_for(Session, "after_transaction_end")
     def _fire_pending_handover(session, transaction):  # noqa: ANN001
-        """Fire the `order_inquiry_handover` parallel-run email once the transaction each
-        queued line was recorded under has genuinely CONCLUDED BY COMMIT (AC-H1, AC-H15).
+        """Fire the `order_inquiry_handover` parallel-run email once the ROOT
+        transaction has genuinely CONCLUDED BY COMMIT (AC-H1, AC-H15, AC-H27, AC-H28).
 
-        Not `after_commit`: `_hand_to_purchasing` above wraps its own task-creation in
-        `db.begin_nested()`, and `SessionTransaction.commit()` dispatches `after_commit`
-        for a SAVEPOINT release exactly as it does for the session's own outermost commit
-        (`self._parent is None or self.nested`, straight from SQLAlchemy's own source) -
-        and at the moment it fires, `session.get_transaction()` still IS the transaction
-        that is committing (it has not closed yet), so a plain `after_commit` cannot tell
-        "an unrelated deeper savepoint just closed, more of this write may follow" from
-        "the write itself just landed". `after_transaction_end` gives the CONCLUDED
-        transaction directly (fired from `SessionTransaction.close()`, by which point
-        `session._transaction` has already moved to its parent) - a line drains only when
-        the transaction event names IS the one active when `_record_handover` queued it,
-        so a purchasing task's own savepoint closing beneath an order's write is correctly
-        ignored, and two orders confirmed under the same outer write before one commit
-        both wait for that SAME commit to conclude.
+        Not `after_commit`: see `_mark_handover_transaction_committed` above for why a
+        plain commit event cannot by itself tell "a savepoint just released, more of
+        this write may follow" from "the write itself just landed". `after_transaction_end`
+        gives the CONCLUDED transaction directly (fired from `SessionTransaction.close()`,
+        by which point `session._transaction` has already moved to its parent).
+
+        Review round 2 ruling (AC-H27/AC-H28): `planning_change_service.apply` gives
+        EACH ORDER its own savepoint, so matching on "the transaction active when the
+        line was recorded" (round 1's fix) fired once PER SAVEPOINT - one email per
+        order instead of R2's one email per WRITE, and could dispatch for rows a later
+        PARENT rollback still had a chance to remove. So this drains ONLY when
+        `transaction` is the ROOT (`transaction.parent is None`) - every line recorded
+        under any savepoint of this write (`_record_handover` tags each with the
+        OUTERMOST entry of its own `_transaction_chain`, not the innermost) waits for
+        THAT SAME root object to conclude, however many savepoints came and went above
+        it. A savepoint release itself does nothing here at all - the queue is simply
+        left as it is, still pending, until the root concludes. An inner savepoint's own
+        ROLLBACK is untouched by this listener (its `transaction.parent is not None`
+        guard below returns immediately) - `after_soft_rollback`'s C2 tx_chain rule
+        further down discards exactly that savepoint's own lines, independently.
 
         `after_transaction_end` ALSO fires for a ROLLED-BACK transaction (`close()` runs
         on both paths) and, per `SessionTransaction.rollback()`'s own source, runs BEFORE
-        `after_soft_rollback` dispatches - so without the commit check below, a rollback
-        would drain and dispatch its own items instead of the discard further down ever
-        getting a chance to (AC-H10). `_HANDOVER_COMMITTED_TX_KEY` is what that check reads.
+        `after_soft_rollback` dispatches - so without the commit check below, a root
+        rollback would drain and dispatch its own items instead of the discard further
+        down ever getting a chance to (AC-H10, AC-H28). `_HANDOVER_COMMITTED_TX_KEY` is
+        what that check reads.
 
         `transaction`'s OWN marker (if it has one) is pruned FIRST, unconditionally, on
         every exit path below (AC-H24) - a transaction ends exactly once, so its marker
-        is dead weight the moment this fires, whether or not anything was pending for it
-        (a helper's unrelated inner savepoint, still marked because SOMETHING else on
-        this session was pending when it committed, would otherwise never be removed).
+        is dead weight the moment this fires, whether or not anything was pending for it.
         """
+        if transaction.parent is not None:
+            # A savepoint concluding (commit OR rollback) - never this listener's to
+            # act on (AC-H27/AC-H28). Nothing was ever marked "committed" for it either
+            # (see `_mark_handover_transaction_committed`'s own guard), so there is
+            # nothing to prune here.
+            return
         committed = session.info.get(_HANDOVER_COMMITTED_TX_KEY)
         was_committed = False
         if committed:

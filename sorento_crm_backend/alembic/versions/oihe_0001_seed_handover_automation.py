@@ -8,11 +8,12 @@ purchase-request/sponsorship-approved automations before it (R9, owner ruling 16
 this one has to run from day one for the comparison to mean anything.
 
 Idempotent by ``email_templates.code`` and ``(trigger_type, name)``, same shape as
-``212_seed_pr_sponsorship_approved_automation`` - except the template body: a re-run
-UPDATEs subject/body_html/body_text on the existing row rather than skipping, so a
-database that already seeded an earlier revision of this body (the 0915 copy, prod after
-deploy) picks up a fix on the next ``alembic upgrade head`` instead of keeping it stale
-forever. ``role_ids`` seeds every role whose slug starts with ``purchasing`` - empty on a
+``212_seed_pr_sponsorship_approved_automation``: a re-run of this revision SKIPS both
+rows when they already exist (review round 2 ruling) - Alembic never re-runs an applied
+revision, so the only way this branch is reached is a genuinely fresh database or a
+`stamp` back before this one, and an UPDATE there could only overwrite an admin's own
+hand edit, never deliver a fix (a body/config fix ships as its own migration).
+``role_ids`` seeds every role whose slug starts with ``purchasing`` - empty on a
 database with none (CI's blank schema).
 
 Revision ID: oihe_0001_seed_handover
@@ -110,26 +111,11 @@ def _seed_template(bind) -> None:
         {"code": TEMPLATE_CODE},
     ).first()
     if existing:
-        # Still idempotent - one row, same code - but not a no-op: the body has already
-        # been revised once after a production-copy render caught real defects (blank
-        # fields printing the word "None", tables with no inline cell borders), so a
-        # database that seeded the FIRST version (the 0915 copy, prod after deploy) must
-        # pick up the fix on the next `alembic upgrade head` rather than keep serving it.
-        bind.execute(
-            sa.text(
-                """
-                UPDATE email_templates
-                SET subject = :subject, body_html = :body_html, body_text = :body_text
-                WHERE code = :code
-                """
-            ),
-            {
-                "code": TEMPLATE_CODE,
-                "subject": _SUBJECT,
-                "body_html": _BODY_HTML,
-                "body_text": _BODY_TEXT,
-            },
-        )
+        # Skip, not UPDATE (review round 2 ruling, AC-H13): Alembic never re-runs an
+        # applied revision, so this branch is only reached by a genuine RE-RUN (a fresh
+        # database, or a `stamp` back to before this revision) - an UPDATE here could
+        # only ever overwrite an admin's own hand edit to the template on that re-stamp,
+        # never deliver a fix (a fix to THIS body ships as its own migration).
         return
     bind.execute(
         sa.text(
@@ -155,31 +141,15 @@ def _seed_template(bind) -> None:
 def _seed_automation(bind) -> None:
     existing = bind.execute(
         sa.text(
-            "SELECT id, recipient_config FROM automations "
-            "WHERE trigger_type = :tt AND name = :name"
+            "SELECT id FROM automations WHERE trigger_type = :tt AND name = :name"
         ),
         {"tt": TRIGGER_TYPE, "name": AUTOMATION_NAME},
     ).first()
     if existing:
-        # Idempotent re-run must still pick up a config key added AFTER the row was
-        # first written (AC-H26: `one_email` did not exist at first seed) - an
-        # already-seeded database (the 0915 copy, prod after deploy) needs it added
-        # once, without touching anything an admin has changed by hand since.
-        automation_id, recipient_config = existing
-        cfg = (
-            recipient_config
-            if isinstance(recipient_config, dict)
-            else json.loads(recipient_config or "{}")
-        )
-        if "one_email" not in cfg:
-            cfg["one_email"] = True
-            bind.execute(
-                sa.text(
-                    "UPDATE automations SET recipient_config = CAST(:cfg AS jsonb) "
-                    "WHERE id = :id"
-                ),
-                {"cfg": json.dumps(cfg), "id": automation_id},
-            )
+        # Skip, not UPDATE (review round 2 ruling, AC-H13, same reasoning as
+        # `_seed_template` above): Alembic never re-runs an applied revision, so an
+        # UPDATE here could only overwrite an admin's own hand edit to
+        # `recipient_config` on a re-stamp, never deliver a fix.
         return
 
     template_row = bind.execute(
