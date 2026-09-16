@@ -397,10 +397,9 @@ export async function unplaceAllOrderInquiryRows(
  *        S1 (PLAN-scm-oi-worklist-excel-parity.md, R-K) adds: location (warehouse code,
  *        equality), agent (sales agent id, equality), so_month=YYYY-MM (on the SO date),
  *        po_number / spo_number (prefix, case-insensitive - `po_number` hits a PO link's
- *        `document` AND an SPO link's `source_po_number`; `spo_number` hits an SPO link's
- *        `document`, own or derived per S5). Unknown/not-yet-implemented params are
- *        ignored server-side, never a 422, so this page keeps working while the backend
- *        catches up (Phase 1 mock -> Phase 2 wiring).
+ *        `document` AND an SPO link's `source_po_number`; `spo_number` hits an SPO
+ *        link's own `document` - a REAL link only, never a derived SPO entry, which is
+ *        computed for display and matches no row of `order_inquiry_links` to filter on).
  *        kind=spo|po|buy is the cards' own filter (AC-I11), now the R-F STAGES (S5): buy
  *        is unlinked, po is on a purchase order line but not yet on a shipment
  *        (`min(qty - incoming, po_linked - derived_spo_cover)`), spo is incoming - on an
@@ -481,7 +480,10 @@ export async function unplaceAllOrderInquiryRows(
  * `MATRIX_FETCH_LIMIT` (1,000) rows a delivery-filtered worklist has already exceeded.
  */
 
-function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
+/** Exported so `orderInquiryMatrixService.ts` builds the SAME filter set the list and
+ * summary do - one function, so a filter added here never drifts out of step with the
+ * matrix's own request. */
+export function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
   return buildDataGridParams(
     {
       pageIndex: (params.page ?? 1) - 1,
@@ -502,8 +504,7 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       // list, the summary facet and the export alike (R3), so the page's default filter is
       // one value rather than two the client would have to union.
       ack: params.ack,
-      // S1, R-K. Forwarded whether or not the backend already reads them (Phase 1
-      // mock contract) - the page keeps working either way.
+      // S1, R-K.
       location: params.location,
       agent: params.agent,
       so_month: params.so_month,
