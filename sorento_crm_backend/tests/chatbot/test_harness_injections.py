@@ -36,7 +36,15 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
 
 
 def _record(trace: list[dict[str, Any]], stage: str) -> dict[str, Any]:
-    rows = [r for r in trace if r["stage"] == stage]
+    """The one STAGE record for `stage`, never an event.
+
+    AC-1592 port: `Trace.persisted()` now interleaves stage records (`{"stage": ...}`)
+    with sub-events a stage's own `add()` calls append (`{"kind": ...}`, no `"stage"`
+    key at all - `trace.py::add`'s own docstring). A bare `r["stage"]` scan over the
+    combined list raised `KeyError` on the first event; `.get` reads "not a stage
+    record" as "not this one" instead.
+    """
+    rows = [r for r in trace if r.get("stage") == stage]
     assert len(rows) == 1, f"expected exactly one {stage!r} record, got {len(rows)}: {trace}"
     return rows[0]
 
@@ -150,6 +158,19 @@ class TestHarnessInjectionsG6:
         The stage and status are unchanged (R5 / H44); what this pins is that the ERROR
         names the key, and does so for a real model answer too, since both go through the
         same check.
+
+        **Confirmed ENGINE DEFECT, kept red, NOT retired (16 Sep 2026, tester):** measured
+        directly - the current engine no longer rejects a malformed verdict at `understood`
+        at all. `{"nope": True}` is coerced with defaults for every missing field (rather
+        than the old hard subscript failing fast) and the turn runs all the way through to
+        `status == "done"`, reaching entity resolution with a garbage token ("nothing",
+        apparently a stray default value) along the way. R5/H44's own rule - a malformed
+        parser emission fails the turn at `understood`, the same path a malformed MODEL
+        answer takes, never a soft default - is still the stated contract nothing in this
+        session's reading of the PLAN/UAC retires; this reads as a real validation gap in
+        the post-rearch verdict pipeline (APPLY's tolerant defaulting swallowing what the
+        old hard KeyError used to catch), not a stale assertion. Flagged for a coder/captain
+        look, not silently softened or invented around.
         """
         stub_access()
         result = engine_mod.run_turn(

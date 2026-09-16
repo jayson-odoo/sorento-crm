@@ -36,6 +36,7 @@ from pathlib import Path
 import pytest
 
 from app.services.chatbot import engine as engine_mod
+from app.services.chatbot import session_state
 from app.services.chatbot.contracts import Envelope
 from app.services.chatbot.head import parser as parser_mod
 
@@ -70,10 +71,14 @@ def _crm_user_block(fixture: dict) -> str:
     envelope = Envelope(**fixture["envelope"])
     session_block = fixture["session_block"]
     variables = session_block["session_vars"]["variables"]
+    # AC-1592 port: `engine._pending_kind` (read `variables["pending"]` off the OLD
+    # nested shape) is retired - the rearch's own reader is `session_state.pending_of`
+    # (the five-key `open_question`, tolerant of the legacy nest too, contract 44/45).
+    pending = session_state.pending_of(session_block)
     return parser_mod.build_user_block(
         previous_response=variables.get("response"),
         latest_user_message=engine_mod.build_latest_user_message(envelope, session_block),
-        pending_kind=engine_mod._pending_kind(variables),
+        pending_kind=pending.kind if pending is not None else None,
     )
 
 
@@ -113,10 +118,10 @@ def test_the_user_block_says_nothing_about_a_result_set(turn6) -> None:
 def test_no_pending_line_is_added_on_this_turn(turn6) -> None:
     """R3's marker is the ONE addition S1 makes to this prompt, and it is a real
     divergence whenever it fires - so the turn that produced the divergence had
-    better not be one where it did. This session carries no `pending` key, so it
-    does not."""
-    variables = turn6["session_block"]["session_vars"]["variables"]
+    better not be one where it did. This session carries no open question, so it
+    does not (AC-1592 port: the field is `session_vars.open_question` now, read via
+    `session_state.pending_of`, not the retired `engine._pending_kind`)."""
+    session_block = turn6["session_block"]
 
-    assert "pending" not in variables
-    assert engine_mod._pending_kind(variables) is None
+    assert session_state.pending_of(session_block) is None
     assert "Pending:" not in _crm_user_block(turn6)

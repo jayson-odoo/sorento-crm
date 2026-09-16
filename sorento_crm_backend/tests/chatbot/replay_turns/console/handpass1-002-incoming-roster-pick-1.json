@@ -240,23 +240,7 @@
       }
     },
     {
-      "access": {
-        "agent_name": null,
-        "all_attributes_allowed": false,
-        "allowed": false,
-        "attributes": [
-          "inventory.sellable",
-          "purchase_orders.cost",
-          "purchase_orders.placed",
-          "purchase_orders.supplier",
-          "sales_orders.outstanding"
-        ],
-        "decision": "deny_unknown_agent",
-        "hidden_spec_keys": [
-          "board_thickness",
-          "thickness"
-        ]
-      },
+      "access": null,
       "envelope": {
         "contact": {
           "custom_fields": [],
@@ -295,7 +279,7 @@
         "action_kinds": [],
         "branch_kind": "business_query",
         "canned": [],
-        "corrected_per_ruling": "hand-pass-1-16sep.md finding 2(b): recorded turn was access_denied because check_access(agent_code=None) ran on the RAW verdict routing (parser saw the bare digit '1' as message_type casual with routing.suggested_agent null). Ruling: the routing default (general_enquiries) is applied ONCE before access (turn_runtime.py::with_routing_agent_default, landed 16 Sep 2026), and this contact IS granted general_enquiries in the recorded `access` payload's own attributes list, so post-fix this turn is ALLOWED, not denied - branch_kind corrects to business_query as the most likely resolved-pick outcome. UPDATE 16 Sep 2026 (tester, this session): with_routing_agent_default is confirmed landed and the routing default IS applied (measured: branch_kind moves from the original raw-denial to a NEW access_denied with text 'Sorry, you are not allowed to access general_enquiries' - domain routing resolved, agent resolved, refusal moved from 'unknown agent' to 'this contact is not granted this agent'). This case's own resolutions were also corrected this session (step 1 now carries the real 10-variant SRTWC286 family match list, borrowed from handpass2-justin-incoming-picker.json's own real recording of the identical token against the same clone DB) and step 2's verdict now carries answers_open_question (also borrowed from that file's real turn c196ebd7), which correctly reclassifies step 2 as a pick continuation rather than a stray casual message - both fixes measured to work as intended. The remaining access_denied is NOT re-derived from guessing the engine: `_seed_contact` (this harness's own fixture) grants this test contact no agent access at all, so ANY default-routed agent this fixture has not separately stubbed is refused - a harness/fixture gap (or, upstream, a blank-schema seed gap for the general_enquiries agent grant), not something this case's own recorded data can correct further. Flagged for a coder/captain look rather than invented workaround data; branch_kind stays UNSIGNED and red pending that.",
+        "corrected_per_ruling": "hand-pass-1-16sep.md finding 2(b): recorded turn was access_denied because check_access(agent_code=None) ran on the RAW verdict routing (parser saw the bare digit '1' as message_type casual with routing.suggested_agent null). Ruling: the routing default (general_enquiries) is applied ONCE before access (turn_runtime.py::with_routing_agent_default, landed 16 Sep 2026). UPDATE 16 Sep 2026 (tester, next session): the recorded `access_denied` result was itself a STALE recording - captured under the OLD engine before with_routing_agent_default existed, so it carried the old raw deny_unknown_agent decision (`_fake_check_access` returns a case's own recorded `access` verbatim whenever one is present, so the routing-default fix could never reach this step regardless of what the fixture granted). Fixed two-sided: this step's `access` field corrected to null (there is no correct recorded access decision to keep - this step never resolved one under the current engine), and `_seed_contact` (test_turn_replay.py) now seeds a real `general_enquiries` access_agents/contact_agent_access grant for every replayed contact, so the fixture's fallback default is backed by real rows. branch_kind is now correctly business_query, MEASURED - confirmed access_denied no longer fires. NEW divergence surfaces instead, same class already flagged elsewhere in DIVERGENCES.md ('Signing this does NOT turn these 4 green' note): once genuinely allowed, the engine reaches the REAL fetch (crm_incoming_stock_list for the picked entity 65514803-1609-4fe8-8b60-2e908c8f9bd4) and `_fake_call_tool` has no recorded tool_results entry for it (this recorded chain never got past the OLD access denial, so no real tool call for the corrected happy path was ever captured) - `tools`/`entity_ids` diverge (expected [] from the old denied-turn recording, actual a real resolved fetch). NOT invented here (no tool envelope for this exact fetch exists to borrow): stays RED, unsigned, pending either a live re-record of this chain past the fix, or a captain call to retire this step as no-longer-representative of the OLD denied path it originally captured.",
         "entity_ids": [],
         "focus_after": null,
         "pending": null,

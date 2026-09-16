@@ -16,6 +16,24 @@ Format, one line per excused field:
 `action_kinds`, `tools`, `pending`, `canned`, `text`. `<reason>` names the RULE that
 changed and why the new behaviour is correct, never just "known issue".
 
+**Step granularity (added 16 Sep 2026, tester harness fix)**: the line above excuses
+`<field>` on EVERY step of a multi-turn chain file - correct for most divergences
+(a rule that changed applies to the whole file). A line may instead name ONE step it
+excuses:
+
+```
+- <group>/<slug>: step <N>: <field>: <reason> (signed <initials> <date>)
+```
+
+Use this when a case has more than one divergence on the SAME field across DIFFERENT
+steps and only one of them is the genuine, ruled-on divergence - a whole-case
+signature would silently excuse the OTHER, unrelated (and possibly still-broken)
+step too. `test_turn_replay.py::_excused(case_id, field, step_no)` checks a
+step-scoped line only against its own step; an unnumbered line still excuses every
+step, unchanged. Before this existed, the only way to avoid over-excusing was to
+correct `expected` directly in the JSON instead of signing (see the `handpass1-002`
+entries below for that workaround, still valid, not retroactively converted).
+
 No SIGNED entries yet - none of these are the tester's to sign (a captain/owner
 ruling is what a signature records).
 

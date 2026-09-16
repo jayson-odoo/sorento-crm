@@ -142,34 +142,68 @@ CASE_IDS = [str(p.relative_to(REPLAY_ROOT)) for p in CASE_FILES]
 # --------------------------------------------------------------------------- #
 
 
-def _signed_divergences() -> set[tuple[str, str]]:
-    """`{(case_id, field), ...}` from every signed line in DIVERGENCES.md.
+_SIGNED_LINE_RE = re.compile(
+    r"^(?P<case>[^:]+):\s*(?:step\s+(?P<step>\d+)\s*:\s*)?(?P<field>[^:]+):\s*(?P<reason>.+)$"
+)
 
-    A line reads `- <group>/<slug>: <field>: <reason> (signed <initials> <date>)`.
+
+def _parse_divergences(text: str) -> dict[tuple[str, str], set[int | None]]:
+    """`{(case_id, field): {step_no, ...}}` from every signed line in `text`
+    (DIVERGENCES.md's own format - a pure function of the text, so a unit test can
+    exercise the parsing without touching the real file).
+
+    A line reads `- <group>/<slug>: <field>: <reason> (signed <initials> <date>)` -
+    a WHOLE-CASE signature, excusing that field on every step of that case (recorded
+    as `None` in the step set). A line may instead name one step it excuses:
+    `- <group>/<slug>: step 3: <field>: <reason> (signed <initials> <date>)` - that
+    excuses ONLY step 3's divergence on that field, leaving every other step's own
+    divergence on the same field still red. Both forms coexist per `(case_id, field)`;
+    a case may carry a whole-case signature for one field and a step-scoped one for
+    another.
+
     Unsigned lines (no `(signed ...)`) do not count - a template/placeholder entry
     must not silently excuse a real failure.
     """
-    if not DIVERGENCES_PATH.exists():
-        return set()
-    out: set[tuple[str, str]] = set()
-    for line in DIVERGENCES_PATH.read_text().splitlines():
+    out: dict[tuple[str, str], set[int | None]] = {}
+    for line in text.splitlines():
         line = line.strip()
         if not line.startswith("- ") or "(signed " not in line:
             continue
         body = line[2:]
-        try:
-            case_id, field, _rest = body.split(":", 2)
-        except ValueError:
+        match = _SIGNED_LINE_RE.match(body)
+        if match is None:
             continue
-        out.add((case_id.strip(), field.strip()))
+        case_id = match.group("case").strip()
+        field = match.group("field").strip()
+        step_raw = match.group("step")
+        step_no = int(step_raw) if step_raw is not None else None
+        out.setdefault((case_id, field), set()).add(step_no)
     return out
+
+
+def _signed_divergences() -> dict[tuple[str, str], set[int | None]]:
+    if not DIVERGENCES_PATH.exists():
+        return {}
+    return _parse_divergences(DIVERGENCES_PATH.read_text())
 
 
 DIVERGENCES = _signed_divergences()
 
 
-def _excused(case_id: str, field: str) -> bool:
-    return (case_id, field) in DIVERGENCES
+def _excused(case_id: str, field: str, step_no: int | None = None) -> bool:
+    """A whole-case signature (no `step N:` in its line, recorded as `None`) excuses
+    EVERY step's divergence on that field; a step-scoped signature excuses only the
+    one step it names. Passing no `step_no` (the historical call shape, still used by
+    every caller that has not been updated to thread it through) only matches a
+    whole-case signature - a step-scoped-only signature does not excuse an unnumbered
+    check, since it was written to cover one specific step and no other.
+    """
+    steps = DIVERGENCES.get((case_id, field))
+    if not steps:
+        return False
+    if None in steps:
+        return True
+    return step_no is not None and step_no in steps
 
 
 # --------------------------------------------------------------------------- #
@@ -242,6 +276,54 @@ def _seed_contact(session_factory, *, contact_id: Any) -> None:
                 "VALUES (gen_random_uuid(), :rcid, :cid)"
             ),
             {"rcid": contact_row_id, "cid": SORENTO_COMPANY_ID},
+        )
+        db.commit()
+
+    # handpass1-002 step 2 finding (16 Sep, tester): `_fake_check_access` above only
+    # short-circuits to the recorded/hard-coded access when the case CARRIES an `access`
+    # payload; a case that has none (or one corrected to `null`, the stale-recording
+    # fix applied to handpass1-002 step 2 in its own JSON) falls through to whatever
+    # `check_access` would really decide - and `turn_runtime.with_routing_agent_default`
+    # (landed 16 Sep) means an unrouted turn's `suggested_agent` is `general_enquiries`
+    # (`contracts.DEFAULT_SUGGESTED_AGENT`), not `None`. A blank schema starts with no
+    # `access_agents`/`contact_agent_access` rows at all, so that default agent was
+    # unreachable for every replayed contact regardless of the recorded case. Seeded
+    # once per contact, real DB rows (not a stub), so a case relying on the harness's
+    # fallback default is exercising the SAME grant the fixture actually holds.
+    from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT
+
+    agent_row = db.execute(
+        text("SELECT id FROM access_agents WHERE code = :code"), {"code": DEFAULT_SUGGESTED_AGENT}
+    ).first()
+    if agent_row is None:
+        db.execute(
+            text(
+                "INSERT INTO access_agents "
+                "(id, code, name, is_active, assign_to_new_internal_contacts, synced_to_excel) "
+                "VALUES (gen_random_uuid(), :code, :name, true, false, false)"
+            ),
+            {"code": DEFAULT_SUGGESTED_AGENT, "name": "General Enquiries"},
+        )
+        db.commit()
+        agent_row = db.execute(
+            text("SELECT id FROM access_agents WHERE code = :code"), {"code": DEFAULT_SUGGESTED_AGENT}
+        ).first()
+    agent_id = agent_row.id
+
+    granted = db.execute(
+        text(
+            "SELECT 1 FROM contact_agent_access WHERE respond_contact_id = :rcid AND agent_id = :aid"
+        ),
+        {"rcid": contact_row_id, "aid": agent_id},
+    ).first()
+    if granted is None:
+        db.execute(
+            text(
+                "INSERT INTO contact_agent_access "
+                "(id, respond_contact_id, respond_contact_phone, agent_id, is_allowed, synced_to_excel) "
+                "VALUES (gen_random_uuid(), :rcid, :phone, :aid, true, false)"
+            ),
+            {"rcid": contact_row_id, "phone": f"+6000{str(contact_id)[-7:]}", "aid": agent_id},
         )
         db.commit()
 
@@ -417,7 +499,7 @@ def _compare(
 ) -> None:
     field = "branch_kind"
     if expected.get("branch_kind") and result.branch_kind != expected["branch_kind"]:
-        if not _excused(case_id, field):
+        if not _excused(case_id, field, step_no):
             failures.append(
                 f"step {step_no} {field}: expected {expected['branch_kind']!r}, got {result.branch_kind!r}"
             )
@@ -427,7 +509,7 @@ def _compare(
     expected_kinds = expected.get("action_kinds") or []
     if expected_kinds:
         actual_kinds = [a.get("kind") for a in actions]
-        if actual_kinds != expected_kinds and not _excused(case_id, field):
+        if actual_kinds != expected_kinds and not _excused(case_id, field, step_no):
             failures.append(f"step {step_no} {field}: expected {expected_kinds!r}, got {actual_kinds!r}")
 
     field = "tools"
@@ -445,7 +527,7 @@ def _compare(
             (r.get("tool"), tuple(sorted((r.get("args") or {}).keys()))) for r in recorded_tool_results
         }
         actual_pairs = {(c["tool"], tuple(sorted(c["args"].keys()))) for c in (tool_calls or [])}
-        if actual_pairs != expected_pairs and not _excused(case_id, field):
+        if actual_pairs != expected_pairs and not _excused(case_id, field, step_no):
             failures.append(f"step {step_no} {field}: expected {expected_pairs!r}, got {actual_pairs!r}")
 
     field = "entity_ids"
@@ -457,7 +539,7 @@ def _compare(
         actual_entity_ids: set[str] = set()
         for c in tool_calls or []:
             actual_entity_ids |= _entity_uuids_from_args(c["args"])
-        if actual_entity_ids != expected_entity_ids and not _excused(case_id, field):
+        if actual_entity_ids != expected_entity_ids and not _excused(case_id, field, step_no):
             failures.append(
                 f"step {step_no} {field}: expected {sorted(expected_entity_ids)!r}, "
                 f"got {sorted(actual_entity_ids)!r}"
@@ -479,7 +561,7 @@ def _compare(
     ]
     if expected_pending is not None or actual_open_question is not None:
         expected_labels = (expected_pending or {}).get("option_labels")
-        if actual_labels != expected_labels and not _excused(case_id, field):
+        if actual_labels != expected_labels and not _excused(case_id, field, step_no):
             failures.append(
                 f"step {step_no} {field}: expected options {expected_labels!r}, got {actual_labels!r}"
             )
@@ -487,14 +569,14 @@ def _compare(
     field = "canned"
     for sentence in expected.get("canned") or []:
         text_value = reply.get("text") or ""
-        if sentence not in text_value and not _excused(case_id, field):
+        if sentence not in text_value and not _excused(case_id, field, step_no):
             failures.append(f"step {step_no} {field}: {sentence!r} not found in reply text {text_value!r}")
 
     field = "text"
     pinned_text = expected.get("text")
     if pinned_text is not None and expected.get("_pin_text"):
         actual_text = reply.get("text")
-        if actual_text != pinned_text and not _excused(case_id, field):
+        if actual_text != pinned_text and not _excused(case_id, field, step_no):
             failures.append(f"step {step_no} {field}: expected {pinned_text!r}, got {actual_text!r}")
 
 
@@ -558,3 +640,64 @@ def test_no_case_files_found_is_reported_not_silently_skipped() -> None:
 
 def test_divergences_file_exists() -> None:
     assert DIVERGENCES_PATH.exists(), "tests/chatbot/replay_turns/DIVERGENCES.md is missing"
+
+
+# --------------------------------------------------------------------------- #
+# _excused step granularity (harness fix, 16 Sep 2026) - a signed line may name
+# one step; an unnumbered line still excuses every step of that case/field.
+# --------------------------------------------------------------------------- #
+
+
+class TestExcusedStepGranularity:
+    def test_a_whole_case_signature_excuses_every_step(self) -> None:
+        divergences = _parse_divergences(
+            "- group/case-a.json: branch_kind: a whole-case rule (signed JT 2026-09-16)\n"
+        )
+        assert divergences == {("group/case-a.json", "branch_kind"): {None}}
+
+    def test_a_step_scoped_signature_excuses_only_its_own_step(self) -> None:
+        divergences = _parse_divergences(
+            "- group/case-b.json: step 3: pending: a step-3-only rule (signed JT 2026-09-16)\n"
+        )
+        assert divergences == {("group/case-b.json", "pending"): {3}}
+
+    def test_a_step_scoped_signature_does_not_excuse_a_different_step_on_the_same_field(
+        self,
+    ) -> None:
+        divergences = _parse_divergences(
+            "- group/case-c.json: step 1: pending: only step 1 (signed JT 2026-09-16)\n"
+        )
+        DIVERGENCES_local = divergences
+        assert _excused_against("group/case-c.json", "pending", 1, DIVERGENCES_local) is True
+        assert _excused_against("group/case-c.json", "pending", 2, DIVERGENCES_local) is False
+
+    def test_a_whole_case_and_a_step_scoped_signature_coexist_per_field(self) -> None:
+        divergences = _parse_divergences(
+            "- group/case-d.json: tools: whole case (signed JT 2026-09-16)\n"
+            "- group/case-d.json: step 2: pending: step 2 only (signed JT 2026-09-16)\n"
+        )
+        assert divergences == {
+            ("group/case-d.json", "tools"): {None},
+            ("group/case-d.json", "pending"): {2},
+        }
+
+    def test_an_unsigned_line_excuses_nothing(self) -> None:
+        divergences = _parse_divergences(
+            "- group/case-e.json: step 1: pending: not yet signed off, no signature marker at all\n"
+        )
+        assert divergences == {}
+
+
+def _excused_against(
+    case_id: str, field: str, step_no: int | None, divergences: dict[tuple[str, str], set[int | None]]
+) -> bool:
+    """Same logic as `_excused`, but against an explicit divergences map rather than
+    the module-level `DIVERGENCES` global (which is read from the real
+    DIVERGENCES.md at import time) - lets the step-granularity tests above stay
+    independent of whatever is currently signed in the real file."""
+    steps = divergences.get((case_id, field))
+    if not steps:
+        return False
+    if None in steps:
+        return True
+    return step_no is not None and step_no in steps
