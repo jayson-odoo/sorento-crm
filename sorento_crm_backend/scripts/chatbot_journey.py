@@ -71,6 +71,10 @@ Matchers, all optional, combined with AND inside one step's `expect`:
 * `roster_stamped` (bool) - every numbered option line must end in a "has <word>" / "no
   <word>" stamp (has PO / no PO, has incoming / no incoming, has DO / no DO, has promo / no
   promo - the same probe seam per the 17 Sep rulings).
+* `max_occurrences` - a `{substring: max_count}` mapping; each substring (case-insensitive)
+  must appear no more than `max_count` times in the same text - catches a section/line that
+  repeats itself (e.g. a fan-out reply that prints "0 products have incoming stock." once
+  per internal branch instead of once per rendered section).
 
 Exits non-zero if any step fails. `--record <dir>` additionally writes one text file per
 case with every step's turn id, branch, elapsed seconds and full reply, for a human to read.
@@ -228,6 +232,13 @@ def _grade(expect: dict[str, Any], body: dict[str, Any]) -> list[str]:
                     f"options not stamped has/no at line end: {unstamped} "
                     f"(of {len(lines)} total)"
                 )
+
+    for needle, max_count in (expect.get("max_occurrences") or {}).items():
+        count = words.lower().count(str(needle).lower())
+        if count > int(max_count):
+            failures.append(
+                f"{needle!r} appears {count} times, expected at most {max_count}"
+            )
 
     return failures
 
