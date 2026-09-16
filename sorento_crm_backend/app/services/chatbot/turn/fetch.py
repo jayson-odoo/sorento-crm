@@ -41,6 +41,14 @@ def envelope_missed(env: dict[str, Any]) -> bool:
     """
     if env.get("figures") or env.get("denied") or env.get("error"):
         return False
+    # A tool that renders its OWN answer has no `figures` for the test above and its
+    # codes are never in the rows either, so `envelope_of` puts every code it was asked
+    # about in `miss` - which read as a total miss and offered to escalate over a report
+    # that had just answered in full (outstanding report, measured). Its own verdict is
+    # the only evidence there is about whether it found anything, and that is what the
+    # paragraph above already says this rule does.
+    if env.get("tool_has_result") is True and str(env.get("lane_text") or "").strip():
+        return False
     entities = [e for e in (env.get("entities") or [])]
     miss = [m for m in (env.get("miss") or [])]
     if entities:

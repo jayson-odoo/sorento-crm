@@ -403,6 +403,18 @@ def lane_parse_output(
         out["order_status"] = _DOCUMENT_STATUS_TO_ORDER_STATUS.get(key, status)
     else:
         out.setdefault("order_status", None)
+    # Contract 38: an outstanding ask that named NO document is asked which one before
+    # anything is fetched. The lane's gate reads this flag and adds the grant check it
+    # is the only place able to make; the flag itself was set by the retired
+    # `head/output_exchange._post_process`, and this is the seam that now knows the same
+    # fact - it is the one computing the document axis, from the same two fields.
+    # Read off the PROJECTED bucket, not off `status` alone: `("", "outstanding")` is
+    # the one bucket in the map above that means "outstanding, no document named", and
+    # reading it here keeps this true for a caller still speaking the pre-rearch
+    # vocabulary (`order_status` straight on the verdict, no `document`/`status` pair).
+    out["outstanding_scope_ask_candidate"] = (
+        jsc.js_string(out.get("order_status") or "").strip() == "outstanding"
+    )
 
     routing = dict(out.get("routing") or {})
     if accepted_team:
@@ -945,6 +957,14 @@ def envelope_of(
         # instead of them: the composer still renders `figures` through its own
         # per-row grammar, only the domain-generic header line is replaced.
         "header_override": fetched.get("set_header"),
+        # The lane's OWN question, when the fetch asked one instead of (or beside)
+        # answering: contract 38's "which document?" and contract 39's detail offer both
+        # come back as `outstanding_ask` = `{kind, last_result_set, filters}`. The
+        # composer turns it into the turn's open question - before this it was dropped
+        # here, so the report printed "Reply 1 for the sales order list" and stored the
+        # ESCALATE offer instead, and the "1" that came back resolved against the wrong
+        # roster.
+        "lane_ask": fetched.get("outstanding_ask"),
         "outcome": fragment.get("outcome"),
         "tool": (fetched.get("tool") or {}).get("name") if isinstance(fetched.get("tool"), dict) else None,
     }

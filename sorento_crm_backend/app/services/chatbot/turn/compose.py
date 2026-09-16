@@ -105,6 +105,48 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
     return pending_ask("team_pick", options, team=None, expects="pick")
 
 
+def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
+    """The question a LANE asked, as the turn's pending (contract 38, 39).
+
+    A fetch can come back with a question instead of an answer - the outstanding report
+    asks which document before it searches, and offers its detail lists after it has -
+    and it hands that over on `fetch.outstanding_ask` rather than composing a reply the
+    composer would have to parse back. The options are the lane's own rows
+    (`{idx, label, value}`), renumbered into the roster shape the tail stores and the
+    parser is shown, and the filters it resolved ride on the payload so the turn that
+    answers has the subject the question was asked about.
+
+    The FIRST lane to ask wins, because a session holds one open question at a time.
+    """
+    for env in envelopes:
+        ask = env.get("lane_ask")
+        if not isinstance(ask, dict) or not ask.get("kind"):
+            continue
+        rows = [r for r in (ask.get("last_result_set") or []) if isinstance(r, dict)]
+        options = [
+            {
+                "position": int(row.get("idx") or i + 1),
+                "label": row.get("label"),
+                "entity_type": str(ask.get("kind")),
+                "payload": {"value": row.get("value")},
+            }
+            for i, row in enumerate(rows)
+        ]
+        if not options:
+            continue
+        return pending_ask(
+            str(ask.get("kind")),
+            options,
+            expects="pick",
+            asked_at_turn=turn_no,
+            payload={
+                "domain": env.get("domain"),
+                "filters": dict(ask.get("filters") or {}),
+            },
+        )
+    return None
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
@@ -194,8 +236,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
     text = "\n\n".join(text_parts)
 
     offer = None
-    question = None
-    if envelopes and missed_domains and len(missed_domains) == len(envelopes):
+    # ONE open question per turn, and when a lane asked one it is the lane's: a domain
+    # that has just asked "which document?" or offered its detail lists is waiting for
+    # THAT answer, and an escalate offer over the top of it would leave the customer
+    # looking at two numbered lists for one reply - and store the wrong roster for the
+    # number they send back.
+    question = _lane_question(envelopes, getattr(state, "turn_no", None))
+    if question is None and envelopes and missed_domains and len(missed_domains) == len(envelopes):
         teams: list[str] = []
         for domain in missed_domains:
             row = policy.domain(domain) if policy else None
