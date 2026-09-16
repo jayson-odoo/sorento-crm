@@ -152,3 +152,104 @@ Once `.env` is restored to `sorento_ai_automation_0915_1900` (from
 - 375px viewport pass (AC-RL-05).
 - Revisit AC-RL-06 with the coder to confirm whether the UAC's own journey line is expected to
   show the word, or whether it is deliberately never reachable on an actively-decided line.
+
+## Final pass, 17 Sep (branch `feat/oi-replan-received-links`, HEAD `17a14b3ab`, main merged)
+
+Session `oirl-final` on the same stack (`:3000` next dev, `:8000` backend, worker on,
+`sorento_ai_automation_0915_1900`). `.env` was confirmed pointing at the live copy before
+starting and never touched. No environment collision this run - both processes stayed up the
+whole session and console/network showed no unexpected errors throughout.
+
+**AC-RL-30 (FE half) - PASS.** Order Inquiries, searched `SO314593 B2154`: three B2154-NL rows
+for the SO (`OI-000477` x2, `OI-000737` x1 from an unrelated later date-change, out of scope).
+The 182 row is visually muted (lighter grey text vs the other rows' black, matching the
+`opacity-60` convention) and its Qty cell carries the `used` pill; the 220 `OI-000477` row has no
+documents (`-`/`-`) and carries no pill. Screenshot: `AC-RL-30-order-inquiries-B2154NL-rows.png`.
+Clicked `used`: dialog headed "B2154-NL" / "Already used elsewhere", section heading "Used" (never
+"Redirected" anywhere in the dialog), note reads "...SPO-2026/01-0143 received in full, goods are
+BRW-IR stock, released at revision 1". Screenshot: `AC-RL-04-used-dialog-B2154NL-182.png`. Clicked
+the SPO `received` pill on the 182 row: "Backing documents", "158 of 182", `SPO-2026/01-0143`,
+"Received 158 of 158". Screenshot: `AC-RL-02-3-backing-documents-received-dialog.png`. Clicked the
+Buy stage card (filters to `kind=buy`): only the two 220 rows remain, the muted 182 row drops out
+entirely, confirming the redirected row is excluded from Buy. Screenshot:
+`AC-RL-16-buy-card-excludes-redirected-row.png`.
+
+**AC-RL-06 (fulfilment planning list, SO314593, post-confirm) - NOT VISUALLY EXERCISABLE, same
+finding as the prior run.** Opened SO314593's plan (via checkbox select + "Plan SO314593", since
+the row's own "Open" review-state badge and the "Open" action-column button turned out to be a
+status label, not a navigation trigger - only the checkbox-then-"Plan SO314593" path opens the
+board). List view's only B2154-NL line is the fresh 220 row (`Buy 220`, `Confirmed`); the 182
+redirected row contributes nothing to the board (by design, AC-RL-15/16e) so it never appears as
+a separate contributing line to carry the word. No `received`/`used` text found in the row's
+DOM. Same ambiguity flagged in the prior run stands: the mechanism needs an *undecided* line
+that also carries a fully-received or redirected `order_inquiry`, and no line in this exact
+dataset is in that state today (SO314593's B2154-NL line is already Confirmed rev 1; the OI
+worklist page is the only place this data visibly shows `used`).
+
+**AC-RL-06 (pre-confirm, SO314594) - MECHANISM VERIFIED, not visible on the named line
+today.** Planned SO314594 without confirming it (List view). CB2807-DIY (Line 5) already carries
+a server-persisted "Saved" draft decision (`Buy 280`) from earlier testing - "Undo" did not clear
+it (it round-tripped back to the same saved value), so `contributionDecision` returns truthy
+`parts` and the code correctly takes the composition branch, never the inquiry-word branch, per
+`FulfilmentBoardListView.tsx:396-430`. Checked the three genuinely `Not decided` lines in this
+plan (SRTWC8605-SC-RL, SRTWCY8605-PJ, WESERP10B) - none carry an `order_inquiry` with received/
+redirected documents, so none show the word either; this is a live-data gap, not a code gap. Read
+the source directly: the `!parts` gate is exactly the amended AC-RL-06 shape (word rendered
+"informational only" alongside `inquiry_no` when there is no live composition, `received`/`used`
+computed straight off `contribution.order_inquiry.documents`/`.redirected`, never gated on
+`covered`). Ran the component's own AC-RL-06 vitest cases as supporting evidence:
+`npx vitest run ".../FulfilmentBoardListView.test.tsx" -t "AC-RL-06"` - **5 passed, 0 failed**
+(39 skipped, other describe blocks). Screenshot of the pre-confirm list state:
+`AC-RL-06-list-view-so314594-preconfirm.png`.
+
+**AC-RL-02 / AC-RL-24 (SO314594 chips) - PASS.** Order Inquiries, searched `SO314594`.
+CB2805A-DIY carries the amber `reallocate` pill on PO `202607-S0077` (open): lightbox headed
+"202607-S0077", subtitle "CB2805A-DIY · 90 · expected 01/09/2026 · needed 01/04/2027", candidate
+list earliest-first, first row marked "Reallocate to OI-000718 · SO419411 · needed 30/09/2026 ·
+open 460", each subsequent candidate as `<inquiry> · <SO> · needed <dd/mm/yyyy> · open <n>`,
+footer exactly "Re-key the line to the chosen sales order in AutoCount; the link moves at the next
+upload". Screenshot: `AC-RL-02-24-reallocate-lightbox-CB2805A.png`. CB2807-DIY carries the
+`received` pill on SPO `SPO-2026/04-0058`: "Backing documents", "182 of 182",
+`SPO-2026/04-0058` from PO `202603-S0034`, "Received 182 of 182" - matches the brief's named
+document exactly. Screenshot: `AC-RL-02-3-CB2807-received-dialog.png`.
+
+**AC-RL-31 (re-run link, both rows keep their count) - PASS, scoped action used.** Used "Link
+selected" on the two `SO314593`/`OI-000477` B2154-NL rows (the 220 no-link row and the 182
+redirected/received row) via checkbox-select + Actions menu, rather than the global "Auto link
+all" - narrower and sufficient to prove the same guard, and safer on the owner's live copy.
+Before: row 1 (220) 0 links, row 2 (182) 1 link (the received SPO). After: unchanged - row 1
+still shows `-`/`-` in PO/SPO, row 2 still shows exactly one `received` pill, no duplicate, no
+new link on the 220 row. No console/network errors from the action. Screenshot:
+`AC-RL-31-link-selected-no-change.png`. Did not re-upload the 15 Sep OI sheet (not in hand, same
+as the prior run); the scoped link action is a direct enough proxy for "the redirect guard holds
+on re-link" that the full sheet re-upload adds for this AC.
+
+**AC-RL-05 (375px / 1280px) - PASS.** At 375px: Order inquiries usable, rows stay one line (the
+DataGrid scrolls horizontally as designed, not a defect), `received` pill reachable and clickable
+after scrolling the row into view, its lightbox renders full-width and legible with all fields
+present. Screenshots: `AC-RL-05-order-inquiries-375px.png`, `AC-RL-05-lightbox-375px.png`. At
+1280px: full row layout with PO/SPO/Agent/Location/Order inquiry columns visible together,
+`received` pills readable inline, no clipping. Screenshot:
+`AC-RL-05-order-inquiries-1280px.png`.
+
+**AC-RL-32 - NOT EXERCISABLE on this copy, confirmed and left to the pytest file.** `POST
+/api/v1/external/ingest/purchase_orders` with `X-API-Key: test` (the value in this worktree's
+`sorento_crm_backend/.env`) returned `401 {"code":"invalid_key","message":"API key authentication
+failed"}` - the same known gap as `project_prod_copy_db_lacks_local_test_api_key.md`: this
+prod-copy database has no matching API-key row for a local test key. Left to
+`tests/test_ingest_documents_v5_so_po_links.py` as instructed.
+
+**Console / network summary.** No unexpected console errors across the whole run; the one
+pre-existing Radix `AlertDialogContent` a11y warning appeared once (unrelated, not new). The
+pre-existing `500` on `GET /api/v1/scm/sales-orders/{id}` (fired by clicking an SO number link
+from the Fulfilment Planning list, which navigates to the SO detail page) is **still present**,
+reproduced again this run navigating from `SO314593`'s link - confirmed out of scope for this
+lane, unrelated to anything this UAC touches.
+
+**Net result: 6 of 8 line items fully PASS with screenshots (AC-RL-30 FE half, AC-RL-02/24,
+AC-RL-31, AC-RL-05); AC-RL-06 pre-confirm mechanism verified by source + a clean vitest run but
+not visible live on the named line (a live-data state gap, not a code gap - flag for the owner:
+either seed/pick a genuinely-undecided line with a received/redirected inquiry for a future demo,
+or accept the vitest coverage as sufficient); AC-RL-06 post-confirm on SO314593 remains the same
+open question the prior run raised, now confirmed twice; AC-RL-32 confirmed not exercisable on
+this database, by design, and is pytest's to cover.**
