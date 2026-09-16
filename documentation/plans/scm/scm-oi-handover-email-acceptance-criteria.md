@@ -49,6 +49,7 @@ actions (confirm, reject, link) send nothing.
 | AC-H23 | [BE] | Given a named (non-carried) line re-confirmed at a different qty or date where the in-place settle declines and the old row is cancelled and a new one raised, then BOTH print: the old row as `CANCEL BALANCE <old> NOS` (qty 0, was.qty) and the new row as `ORDER <new>`. Purchasing never receives a bare ORDER for a line it already holds. |
 | AC-H24 | [BE] | The committed-transaction marker on `Session.info` is written only when a handover is pending on that session, and every concluded transaction is pruned from it on every exit path (a long import session with thousands of savepoints holds no markers). |
 | AC-H25 | [BE] | `_record_handover` looks up order facts and the actor at most once per sales order and once per user per session (a 341-line confirm issues a handful of lookups, not one per line), and adds no per-row flush. |
+| AC-H26 | [BE] | Given a dispatch resolving to N recipients including the actor, then exactly ONE email is enqueued carrying all N addresses (no per-recipient copies), with the actor LAST so the delivery puts the first purchasing address in To and everyone else, the actor included, in Cc. Reply-all threads across purchasing and CS, as the manual mail does (R5). Measured 16 Sep on the production copy: one confirm produced seven single-address copies. |
 | AC-H12 | [BE] | `order_inquiry_handover` is registered in the trigger catalog with an empty `config_schema`; the catalog endpoint lists it. |
 
 ### Context shape (the template contract)
