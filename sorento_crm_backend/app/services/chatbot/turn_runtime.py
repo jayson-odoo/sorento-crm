@@ -452,6 +452,7 @@ def resolve_kinds(
     space_id: str | None,
     dry_run: bool,
     stamp_incoming: bool = False,
+    stamp_customer: bool = False,
 ) -> tuple[
     dict[str, dict[str, int]],
     list[dict[str, Any]],
@@ -471,6 +472,10 @@ def resolve_kinds(
     `stamp_incoming` is the caller's own answer to "is this turn about to ask a product
     roster under incoming?" - the engine knows it from the plan, the gate cannot know it
     at all (see `resolve_gate.probe_incoming`), and it is what earns the extra probe.
+    `stamp_customer` is its twin for the customer roster's has/no-DO stamps (owner hand
+    pass 2, item 2), and the engine withholds it for an OUTSTANDING ask for R20's reason:
+    the probe measures DELIVERED orders, which is the opposite population from the
+    outstanding report's own DO block, so the stamp would contradict the answer.
     """
     from app.services.chatbot.lanes.business import pickers
     from app.services.chatbot.lanes.business import resolve_gate
@@ -536,7 +541,31 @@ def resolve_kinds(
         )
         annotated = pickers.annotate_incoming(copy.deepcopy(gate), probe=probe)
     stamps_from = annotated if isinstance(annotated, dict) else gate
-    return by_token, compatible, predicate, candidates_by_kind(stamps_from, compatible)
+
+    customer_bases: set[str] | None = None
+    if stamp_customer and any(
+        jsc.nullish_str(e.get("entity_type")).strip().lower() == "customer" for e in compatible
+    ):
+        # The roster this turn is about to print IS the customer picker's roster, reached
+        # from the other side - nothing was ambiguous to the gate, so it never took its
+        # picker arm and the lines went out bare. Same probe, same rule, one annotator
+        # (`pickers.customer_bases_with_do`).
+        probe = resolve_gate.probe_customer(
+            services,
+            ctx=ctx,
+            entities=compatible,
+            aggregate=payload.get("aggregate"),
+            default_start=resolve_gate.default_probe_start(),
+            space_id=space_id,
+        )
+        customer_bases = pickers.customer_bases_with_do(probe)
+
+    return (
+        by_token,
+        compatible,
+        predicate,
+        candidates_by_kind(stamps_from, compatible, customer_bases),
+    )
 
 
 def fill_customer_names(db: Session, entities: list[dict[str, Any]]) -> None:
@@ -587,8 +616,18 @@ def fill_customer_names(db: Session, entities: list[dict[str, Any]]) -> None:
             row["display_name"] = str(name).strip()
 
 
+def pickers_module():
+    """`lanes.business.pickers`, imported lazily - `candidates_by_kind` is called from
+    tests with a hand-built gate and must not drag the lane in at module import."""
+    from app.services.chatbot.lanes.business import pickers
+
+    return pickers
+
+
 def candidates_by_kind(
-    gate: dict[str, Any], compatible: list[dict[str, Any]]
+    gate: dict[str, Any],
+    compatible: list[dict[str, Any]],
+    customer_bases_with_do: set[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """The resolver's own rows, grouped by entity kind, for the narrower's roster.
 
@@ -631,6 +670,12 @@ def candidates_by_kind(
             built["name"] = display.strip()
         if code in stamps:
             built["stamp"] = "has incoming" if stamps[code] else "no incoming"
+        elif kind == "customer" and customer_bases_with_do is not None:
+            # Item 2: a customer line says what a product line says - whether the thing
+            # it names has anything to show. `None` is "not measured" (the probe failed,
+            # or its page saturated) and reads as no stamp at all, never as "no DO".
+            base = pickers_module().customer_base(built.get("name") or code)
+            built["stamp"] = "has DO" if base in customer_bases_with_do else "no DO"
         grouped.setdefault(kind, []).append(built)
     return grouped
 

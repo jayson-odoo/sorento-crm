@@ -725,6 +725,21 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
 # --------------------------------------------------------------------------- #
 
 
+def _asks_outstanding(verdict: dict[str, Any]) -> bool:
+    """Is this turn an OUTSTANDING order ask, in either vocabulary?
+
+    R20's carve-out is decided on the ask's own delivery-status axis, and that axis is
+    spelled twice on the wire: `status` is the v3 key the rearch reads, `order_status`
+    the bucketed one an older prompt version (and every recorded verdict) still carries.
+    Reading only one of them silenced the carve-out for half the corpus.
+    """
+    from app.services.chatbot.lanes.business.resolve_gate import OUTSTANDING_ORDER_STATUS
+
+    if jsc.nullish_str(verdict.get("status")).strip() == "outstanding":
+        return True
+    return jsc.nullish_str(verdict.get("order_status")).strip() in OUTSTANDING_ORDER_STATUS
+
+
 def run_turn(
     envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
 ) -> TurnResult:
@@ -1444,6 +1459,24 @@ def _run_stages(  # noqa: PLR0915
                     # has/no-incoming stamp whether the customer named the family this
                     # turn or the conversation carried it (browser pass 3, turn 2).
                     stamp_incoming=plan.ask is not None and "incoming" in plan.domains,
+                    # Item 2: the customer roster carries has DO / no DO, the way the
+                    # product roster carries has/no incoming. Read off the CUSTOMER TOKEN
+                    # this turn named, not off `plan.ask`: on this pass the plan is the
+                    # FIRST one, taken before the resolver ran, and the roster it is about
+                    # to ask for does not exist yet (the same reason `stamp_incoming`
+                    # reads the domain rather than the ask). R20's carve-out stands and is
+                    # decided on the ask's OWN status: the probe measures DELIVERED
+                    # orders, the opposite population from the outstanding report's DO
+                    # block, so an outstanding ask is stamped with nothing rather than
+                    # with a claim its own answer contradicts two turns later.
+                    stamp_customer=(
+                        any(
+                            jsc.nullish_str(e.get("hint")).strip().lower() == "customer"
+                            for e in (verdict.get("entities") or [])
+                            if isinstance(e, dict)
+                        )
+                        and not _asks_outstanding(verdict)
+                    ),
                 )
             )
             if resolved_kinds or resolved_candidates:
