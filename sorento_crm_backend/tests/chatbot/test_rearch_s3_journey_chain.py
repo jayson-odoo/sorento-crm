@@ -93,7 +93,9 @@ class TestJourneyChain:
         v = verdict(domain_hint="incoming", entities=[entity("wc286", hint="product", confident=True)])
         result = _turn(session_factory, stub_parser, v, message_id="ZZT-journey-1")
 
-        assert result.branch_kind in ("clarify_menu", "product_pick"), result.branch_kind
+        # T1 (coder 7 cluster report, AC-1591): amended to the corpus name -
+        # `product_pick` is not in `contracts.BRANCH_KINDS` at all.
+        assert result.branch_kind == "business_query", result.branch_kind
         sv = _session_vars(session_factory)
         assert sv.get("open_question") is not None, sv
 

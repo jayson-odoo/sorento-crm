@@ -414,7 +414,8 @@ class TestTierVisiblePromotionsOnly:
 
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert result.branch_kind == "business_query", result.branch_kind
+        # T1 (coder 7 cluster report, AC-1591): amended to the corpus name.
+        assert result.branch_kind == "check_promotion", result.branch_kind
 
 
 class TestUnknownAttributeClarify:
