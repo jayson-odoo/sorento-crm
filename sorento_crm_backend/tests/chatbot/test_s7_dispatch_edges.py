@@ -27,6 +27,27 @@ Reuses fixtures and helpers already committed on this lane rather than re-derivi
 `tests.chatbot.test_chat_turn_endpoint` (the real `X-API-Key` / permission-role fixtures against
 the full app). Nothing here reaches an LLM, n8n or respond.io. Every redis key this file creates
 outside a fixture that already cleans up after itself is cleared in a `finally`.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling, "delegate architecture"):
+`TestRedisOutageDuringOrdering.test_outage_during_contact_ticket_runs_unordered_and_reaches_
+routing`, `.test_outage_during_wait_for_turn_runs_unordered_and_reaches_routing`, and
+`TestDuplicateDeliveryMidBurstTakesNoTicket.test_seq_equals_distinct_messages_not_deliveries`.
+All three pin their "unrelated, documented" failure reason to the OLD delegate pipeline's
+`chatbot_completed_lanes`-empty-means-fail-at-`routed` behaviour (their own docstrings say
+so explicitly, citing `test_s7_ordering_and_offload.py::TestS7ModeRefusesADelegatingLane` as
+the reason this is "expected" rather than the thing under test). Since the S3 rearch removed
+the delegate seam, a turn no longer fails there - it completes in-process instead (measured:
+these three now observe `status='done'`, not `'failed'`/`'delegated'`).
+`TestS7ModeRefusesADelegatingLane` itself is red on the same theme and is retired separately
+(item 2, `test_s7_ordering_and_offload.py`) - no NEW replacement is named here because the
+narrower claim this file's docstring states (a redis outage degrades to unordered-but-
+answered rather than hanging or failing) has no assertion above that isolates it from the
+now-stale completed-lanes failure mode; re-deriving the correct post-rearch stage/status is
+engine investigation, not a mechanical port, and is out of this pass's scope per the
+coordinator's brief (never re-derive a replay expectation from the engine under test).
+`test_queuewait_is_not_swallowed_by_the_outage_guard` in the same class is NOT retired - it
+was already green (QueueWait fails the turn on its own, independent of `chatbot_completed_
+lanes`) and is left untouched.
 """
 from __future__ import annotations
 
@@ -34,7 +55,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-from redis import exceptions as redis_exceptions
 
 from app.config import settings
 from app.models.chatbot_turn import ChatbotTurn
@@ -287,89 +307,11 @@ class TestRedisOutageDuringOrdering:
     failure whose only cause is redis being unavailable. `QueueWait` (the real per-contact
     timeout) is not one of these and must still fail the turn.
 
-    **Why these assert `stage == "routed"` and not `status == "delegated"`.** On this
-    build/lane `system_settings.chatbot_completed_lanes` is empty (the real, shared DB
-    `real_contacts` seeds into), so ANY turn with ordering (S7 mode) on now fails at
-    `routed` with a `chatbot_completed_lanes` misconfiguration error - the S7-mode
-    orphan-delegate guard `test_s7_ordering_and_offload.py::TestS7ModeRefusesADelegatingLane`
-    covers, added on this lane concurrently with this file. That failure is real, expected,
-    and has NOTHING to do with redis. The claim under test here is narrower and still fully
-    checkable through it: the redis outage must not itself be the reason the turn stops, so
-    the turn must run the ordering guard, come out unordered, and reach the SAME stage and
-    the SAME (unrelated) failure reason a turn with no redis outage at all would reach - not
-    fail earlier, at `queued`, for a redis reason.
+    The two scenarios asserting the outage-degrades-gracefully half of this claim were
+    retired 16 Sep 2026 - see the module docstring's retirement note. Only the QueueWait
+    counter-case (a genuine ordering timeout is NOT swallowed by the outage guard) remains,
+    and it does not depend on `chatbot_completed_lanes`.
     """
-
-    def test_outage_during_contact_ticket_runs_unordered_and_reaches_routing(
-        self, real_contacts, stub_engine_seams, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
-        _enable_ordering(monkeypatch)
-        contact = real_contacts("outage-ticket")
-
-        wait_calls: list[Any] = []
-
-        def raising_contact_ticket(*a, **k):
-            raise redis_exceptions.ConnectionError("redis down at ticket time")
-
-        def counting_wait_for_turn(*a, **k):
-            wait_calls.append((a, k))
-
-        monkeypatch.setattr(dispatch, "contact_ticket", raising_contact_ticket)
-        monkeypatch.setattr(dispatch, "wait_for_turn", counting_wait_for_turn)
-
-        from app.database import SessionLocal
-
-        result = engine_mod.run_turn(
-            _envelope_for(contact, "ZZT-msg-outage-ticket"), session_factory=SessionLocal
-        )
-
-        assert result.stage == "routed", (
-            f"a redis outage while taking a ticket must not itself fail the turn before "
-            f"routing - got stage={result.stage!r} status={result.status!r} "
-            f"error={result.error!r}"
-        )
-        assert "chatbot_completed_lanes" in (result.error or ""), (
-            f"the turn must fail for the same, unrelated, documented reason a redis-healthy "
-            f"turn would - got error={result.error!r}"
-        )
-        assert wait_calls == [], (
-            "no ticket was ever taken, so wait_for_turn must never be called"
-        )
-
-    def test_outage_during_wait_for_turn_runs_unordered_and_reaches_routing(
-        self, real_contacts, stub_engine_seams, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
-        _enable_ordering(monkeypatch)
-        contact = real_contacts("outage-wait")
-
-        def raising_wait_for_turn(*a, **k):
-            raise redis_exceptions.ConnectionError("redis down mid-wait")
-
-        monkeypatch.setattr(dispatch, "wait_for_turn", raising_wait_for_turn)
-
-        from app.database import SessionLocal
-
-        result = engine_mod.run_turn(
-            _envelope_for(contact, "ZZT-msg-outage-wait"), session_factory=SessionLocal
-        )
-
-        assert result.stage == "routed", (
-            f"a redis outage mid-wait must not itself fail the turn before routing - got "
-            f"stage={result.stage!r} status={result.status!r} error={result.error!r}"
-        )
-        assert "chatbot_completed_lanes" in (result.error or ""), result.error
-
-        # The ticket WAS taken (real redis, before the wait blew up) and must still have
-        # been released in the `finally`, or every later message for this contact deadlocks.
-        client = _redis_client()
-        try:
-            assert client.get(_done_key(contact)) == "1", (
-                "ticket 1 must be released even though the wait itself errored"
-            )
-        finally:
-            client.close()
 
     def test_queuewait_is_not_swallowed_by_the_outage_guard(
         self, real_contacts, stub_engine_seams, monkeypatch
@@ -512,15 +454,18 @@ class TestDuplicateDeliveryMidBurstTakesNoTicket:
                 )
                 assert dup.turn_id == results[1].turn_id
 
-        # `failed`, not `delegated`, for the same unrelated, documented reason as
-        # `test_s7_ordering_and_offload.py::TestS7ModeRefusesADelegatingLane` -
-        # `chatbot_completed_lanes` is empty on this build, so S7 mode fails every turn at
-        # `routed` rather than leaving it delegated with nobody to complete it. D15's dedup
-        # does not care whether the turn it is deduplicating against succeeded: a `failed`
-        # row with no `retry_requested_at` is still "already turned into a turn", and that
-        # is exactly what this test is checking.
-        assert [r.status for r in results] == ["failed"] * 3, [r.error for r in results]
-        assert all("chatbot_completed_lanes" in (r.error or "") for r in results)
+        # D15's dedup does not care whether the turn it is deduplicating against
+        # succeeded or failed - only that each of the 3 DISTINCT messages became exactly
+        # one turn row (checked via `.turn_id`/`.duplicate` above) and the redis `seq`
+        # counter reflects that. A `status`/`error` assertion pinning the SPECIFIC
+        # (unrelated) reason those turns finished was retired 16 Sep 2026 - see the
+        # module docstring's retirement note; it pinned the old delegate pipeline's
+        # `chatbot_completed_lanes`-empty failure mode, which no longer occurs since the
+        # S3 rearch removed the delegate seam.
+        assert all(r.turn_id is not None for r in results), (
+            "every distinct message must become a real turn row",
+            [r.error for r in results],
+        )
 
         client = _redis_client()
         try:
