@@ -83,11 +83,14 @@ vi.mock('./hooks/useChatbotMemoryAndTierOrder', () => ({
 }));
 
 // Urgent finding, 16 Sep 2026 (browser pass 2, supersedes the "not part of this
-// consolidation" note above): the ladder card's own separate Save button IS in
-// scope now too - the ONE page Save must also fire the ladder's PUT. Mocked at the
-// hooks module `CrossDomainLadderCard` itself imports, so the assertions below
-// drive the REAL rendered ladder DOM (OrderableList's own "Move X down" button),
-// not a poked prop.
+// consolidation" note above): the ladder card's own separate Save button was IN
+// scope too - the ruling is one Save that also fires the ladder's PUT. Coder landed
+// this (`CrossDomainLadderCard.tsx` no longer owns a Save of its own); the describe
+// block below pins it green: exactly one Save button once the ladder carries real
+// data, and clicking it fires `useUpdateChatbotDomain`'s mutate with the reordered
+// list for the inventory domain row. Mocked at the hooks module
+// `CrossDomainLadderCard` itself imports, so the assertions below drive the REAL
+// rendered ladder DOM (OrderableList's own "Move X down" button), not a poked prop.
 const mockDomainsQuery = vi.fn();
 const mockUpdateDomain = vi.fn();
 
