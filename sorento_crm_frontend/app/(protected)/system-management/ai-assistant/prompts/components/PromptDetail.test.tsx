@@ -208,4 +208,46 @@ describe('PromptDetail', () => {
     expect(screen.getByText(/Discard unsaved edits\?/i)).toBeInTheDocument();
     confirmSpy.mockRestore();
   });
+
+  // ---------------------------------------------------------------------
+  // Slice E: a key with no saved version opened an EMPTY editor - the
+  // `useEffect` that seeds `draft` only fired off `baseQuery.data.template`,
+  // which never arrives when there is nothing to load a version FROM.
+  // `fallback_text` (the code default `PROMPT_KEYS[name].fallback()`) is
+  // what the editor seeds from instead.
+  // ---------------------------------------------------------------------
+
+  it('seeds the draft from fallback_text when the key has no saved version', () => {
+    usePromptVersions.mockReturnValue({
+      data: {
+        ...META,
+        labels: { production: null, staging: null },
+        versions: [],
+        fallback_text: 'RULE TEXT',
+      },
+      isLoading: false,
+      isError: false,
+    });
+    usePromptVersion.mockReturnValue({ data: undefined, isLoading: false, isError: false });
+
+    renderDetail();
+
+    const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
+    expect(editor.value).toBe('RULE TEXT');
+  });
+
+  it('loads the saved version template, not fallback_text, when a version exists', () => {
+    usePromptVersions.mockReturnValue({
+      data: { ...META, fallback_text: 'RULE TEXT (should not show)' },
+      isLoading: false,
+      isError: false,
+    });
+    // usePromptVersion already returns BASE (template 'Classify {{current_date}}.')
+    // from the shared beforeEach.
+
+    renderDetail();
+
+    const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
+    expect(editor.value).toBe('Classify {{current_date}}.');
+  });
 });

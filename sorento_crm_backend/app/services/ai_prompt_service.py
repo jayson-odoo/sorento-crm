@@ -164,6 +164,9 @@ class AIPromptService:
             "variables": list(spec.variables),
             "labels": self._labels_map(name),
             "versions": versions,
+            # Slice E: always present, so the FE can seed the editor from it
+            # when `versions` is empty (no saved version exists yet).
+            "fallback_text": spec.fallback(),
         }
 
     def get_version(self, name: str, version: int) -> dict[str, Any]:
