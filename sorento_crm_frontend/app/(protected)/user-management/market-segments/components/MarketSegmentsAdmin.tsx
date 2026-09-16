@@ -28,10 +28,19 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { ADDITIONAL_LANDING_KINDS, portalFormKindLabel } from '@/lib/portal-form-kinds';
 import { toast } from '@/lib/toast';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { useMarketSegments, useMarketSegmentMutations } from '../hooks/useMarketSegments';
 import { type MarketSegment } from '../services/marketSegmentService';
+
+/** The kinds a segment may grant beyond the base four every contact already
+ *  has (PLAN-portal-forms-market-segment D3/D4; today: Price Tag Request). */
+const ADDITIONAL_PORTAL_FORM_OPTIONS = ADDITIONAL_LANDING_KINDS.map((kind) => ({
+  value: kind,
+  label: portalFormKindLabel(kind),
+}));
 
 export default function MarketSegmentsAdmin() {
   const { data: segments = [], isLoading, isError } = useMarketSegments();
@@ -61,6 +70,7 @@ export default function MarketSegmentsAdmin() {
     is_active: true,
     sort_order: '' as string | number,
     is_requestor_selectable: false,
+    portal_form_types: [] as string[],
   });
 
   function resetForm() {
@@ -71,6 +81,7 @@ export default function MarketSegmentsAdmin() {
       is_active: true,
       sort_order: '',
       is_requestor_selectable: false,
+      portal_form_types: [],
     });
     setEditing(null);
   }
@@ -89,6 +100,7 @@ export default function MarketSegmentsAdmin() {
       is_active: row.is_active,
       sort_order: row.sort_order ?? '',
       is_requestor_selectable: row.is_requestor_selectable,
+      portal_form_types: row.portal_form_types ?? [],
     });
     setDialogOpen(true);
   }
@@ -106,6 +118,7 @@ export default function MarketSegmentsAdmin() {
             is_active: form.is_active,
             sort_order: sort,
             is_requestor_selectable: form.is_requestor_selectable,
+            portal_form_types: form.portal_form_types,
           },
         },
         {
@@ -128,6 +141,7 @@ export default function MarketSegmentsAdmin() {
           is_active: form.is_active,
           sort_order: sort ?? null,
           is_requestor_selectable: form.is_requestor_selectable,
+          portal_form_types: form.portal_form_types,
         },
         {
           onSuccess: () => {
@@ -223,6 +237,32 @@ export default function MarketSegmentsAdmin() {
               Excluded
             </Badge>
           ),
+      },
+      {
+        id: 'portal_form_types',
+        accessorFn: (row) => (row.portal_form_types ?? []).join(', '),
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Additional portal forms" column={column} />
+        ),
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Additional portal forms', skeleton: <Skeleton className="h-6 w-32" /> },
+        cell: ({ row }) => {
+          const kinds = row.original.portal_form_types ?? [];
+          if (!kinds.length) return <span className="text-muted-foreground">-</span>;
+          return (
+            <div
+              className="flex flex-wrap gap-1"
+              title={kinds.map(portalFormKindLabel).join(', ')}
+            >
+              {kinds.map((kind) => (
+                <Badge key={kind} variant="secondary" size="sm">
+                  {portalFormKindLabel(kind)}
+                </Badge>
+              ))}
+            </div>
+          );
+        },
       },
       {
         id: 'actions',
@@ -380,6 +420,21 @@ export default function MarketSegmentsAdmin() {
                 onCheckedChange={(v) => setForm((f) => ({ ...f, is_active: v === true }))}
               />
               <Label htmlFor="segment-active">Active</Label>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="segment-portal-forms">Additional portal forms</Label>
+              <SearchableMultiSelect
+                id="segment-portal-forms"
+                value={form.portal_form_types}
+                onChange={(v) => setForm((f) => ({ ...f, portal_form_types: v }))}
+                options={ADDITIONAL_PORTAL_FORM_OPTIONS}
+                placeholder="No additional portal forms"
+                emptyMessage="No additional portal forms"
+              />
+              <p className="text-xs text-muted-foreground">
+                Every contact already sees Complaint, Stock Inquiry, Purchase Request and
+                Sponsorship Form. Pick what this segment grants beyond that.
+              </p>
             </div>
             <div className="flex items-start gap-2">
               <Checkbox

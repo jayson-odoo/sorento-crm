@@ -12,6 +12,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
+  AlertCircle,
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
@@ -1366,6 +1367,26 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
 
   if (loading) {
     return <SectionSkeleton rows={6} className="p-6" />;
+  }
+
+  // AC-L4: a deep link to a kind this contact cannot see 403s on this same
+  // detail load (`FORM_TYPE_NOT_VISIBLE`, mirroring every other portal
+  // gate). Show the server's message and a way back - no crash, no empty
+  // form rendered underneath it.
+  if (error && !detail) {
+    return (
+      <div className="w-full max-w-3xl mx-auto px-3 pt-4 pb-4 space-y-3">
+        <Alert variant="destructive">
+          <AlertIcon>
+            <AlertCircle />
+          </AlertIcon>
+          <AlertTitle>{error}</AlertTitle>
+        </Alert>
+        <Button asChild variant="outline">
+          <Link href={portalHomePath({ slug })}>Back to your forms</Link>
+        </Button>
+      </div>
+    );
   }
 
   // The badge always reflects the real state - revising does NOT override it

@@ -47,6 +47,10 @@ const ME = {
   phone_number: '60123456789',
   expires_at: '2026-09-01T00:00:00Z',
   portal_slug: 'darren',
+  // Every kind is gated now (PLAN-portal-forms-market-segment D2) - this
+  // suite is about search, not visibility, so it grants the base four the
+  // same way `fetchSubmissions` already answered them before that change.
+  visible_form_types: ['complaint', 'stock_inquiry', 'purchase_request', 'sponsorship_form'],
 };
 
 const ROW: PortalSubmissionSummary = {

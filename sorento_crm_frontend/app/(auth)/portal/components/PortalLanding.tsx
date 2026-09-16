@@ -17,6 +17,7 @@ import {
   Copy,
   FileText,
   LogOut,
+  MessageCircle,
   Plus,
   Star,
 } from 'lucide-react';
@@ -42,14 +43,12 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/lib/toast';
 import {
-  GATED_LANDING_KINDS,
+  LANDING_KINDS,
   LANDING_LABELS,
   PortalContact,
   PortalLandingKind,
-  PortalSubmissionKind,
   PortalSubmissionSummary,
   PortalUnauthorizedError,
-  SUBMISSION_KINDS,
   clearPortalToken,
   fetchMeWithGrace,
   fetchSubmissions,
@@ -71,6 +70,7 @@ import {
   portalNewPath,
   portalRevisePath,
   portalVerifyPath,
+  waMeUrl,
 } from '../lib/portal-paths';
 import { useRevisionPolicy } from '../hooks/useRevisions';
 import { ReviseAction } from './ReviseAction';
@@ -91,23 +91,21 @@ import {
 // Shared across every kind, so the choice survives a type switch (AC-L7).
 const PORTAL_VIEW_KEY = 'sorento.portalView';
 
-// Display order differs from the canonical list: stock inquiry first.
-const TYPES: PortalSubmissionKind[] = [
-  'stock_inquiry',
-  ...SUBMISSION_KINDS.filter((k) => k !== 'stock_inquiry'),
-];
+// AC-L3: a contact whose overrides hide every kind gets a WhatsApp escape
+// hatch rather than a blank landing.
+const WA_NO_FORMS_TEXT = 'Hi, I would like to submit a form.';
 
 /**
- * The dropdown's option list for THIS contact (D45): the four ungated kinds,
- * then every gated form the contact's access types (or an override) grant.
- * The server enforces the same rule on every route regardless, so this only
- * decides what is offered, never what is allowed.
+ * The dropdown's option list for THIS contact: every landing kind the
+ * server's `visible_form_types` grants, in `LANDING_KINDS` order
+ * (PLAN-portal-forms-market-segment D2/AC-L1). All five kinds are gated the
+ * same way now - none is offered or fetched unconditionally. The server
+ * enforces the same rule on every route regardless, so this only decides
+ * what is offered, never what is allowed.
  */
 function landingKindsFor(contact: PortalContact | null): PortalLandingKind[] {
-  const granted = GATED_LANDING_KINDS.filter((k) =>
-    contact?.visible_form_types?.includes(k),
-  );
-  return [...TYPES, ...granted];
+  const visible = contact?.visible_form_types ?? [];
+  return LANDING_KINDS.filter((k) => visible.includes(k));
 }
 
 const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
@@ -258,14 +256,16 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   const landingKinds = useMemo(() => landingKindsFor(contact), [contact]);
 
-  // A `?type=` deep link, or a starred default, can name a gated kind this
-  // contact does not hold - a link forwarded by a colleague, or a grant since
-  // withdrawn. Fall back to the first ungated kind rather than showing an
-  // option whose list the server would refuse (D45).
+  // A `?type=` deep link, or a starred default, can name a kind this contact
+  // does not hold - a link forwarded by a colleague, or a grant since
+  // withdrawn. Fall back to the first visible kind rather than showing an
+  // option whose list the server would refuse (AC-L2). An empty visible set
+  // leaves nothing to fall back to - the empty state renders instead.
   useEffect(() => {
     if (!contact) return;
+    if (landingKinds.length === 0) return;
     if (landingKinds.includes(activeTab)) return;
-    setActiveTab('stock_inquiry');
+    setActiveTab(landingKinds[0]);
   }, [contact, landingKinds, activeTab]);
 
   // Once the contact is known (and the URL has no `?type=` deep-link, and the
@@ -339,20 +339,22 @@ export function PortalLanding({ slug }: { slug?: string }) {
         // (fresh token transiently 401s) before bouncing back to verify.
         const me = await fetchMeWithGrace();
         setContact(me);
-        // The gated kinds answer their own endpoints in their own shapes, so
-        // each brings its own adapter (D45) and is only asked for when the
-        // contact holds the grant.
-        const wantsPriceTags = Boolean(
-          me.visible_form_types?.includes('price_tag_request'),
-        );
+        // Every kind is gated the same way now (AC-L1): only ask for a list
+        // the resolved `visible_form_types` actually grants, in canonical
+        // order. Each kind answers its own endpoint in its own shape, so a
+        // gated form beyond the four legacy ones brings its own adapter.
+        const kinds = landingKindsFor(me);
         // allSettled, not all: the legs are independent lists and one of them
         // answering 403 or 500 used to reject the whole load, so the landing
-        // showed its error screen and the four kinds that answered perfectly
-        // well were unreachable. A leg that fails is that kind empty.
-        const legs = await Promise.allSettled([
-          ...TYPES.map((t) => fetchSubmissions(t, q)),
-          wantsPriceTags ? listRequestsAsSummaries(q) : Promise.resolve([]),
-        ]);
+        // showed its error screen and the rest of the kinds that answered
+        // perfectly well were unreachable. A leg that fails is that kind empty.
+        const legs = await Promise.allSettled(
+          kinds.map((k) =>
+            k === 'price_tag_request'
+              ? listRequestsAsSummaries(q)
+              : fetchSubmissions(k, q),
+          ),
+        );
 
         // An expired token is not one kind failing - every leg would fail and
         // the answer is to re-verify - so it is rethrown to the handler below.
@@ -363,20 +365,18 @@ export function PortalLanding({ slug }: { slug?: string }) {
         );
         if (dead && dead.status === 'rejected') throw dead.reason;
 
-        const rowsOf = (index: number): PortalSubmissionSummary[] => {
-          const leg = legs[index];
-          if (leg.status === 'fulfilled') return leg.value;
-          console.warn('Portal landing: one list failed to load', leg.reason);
-          return [];
+        const next: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
+          ...EMPTY_LISTS,
         };
-
-        setSubmissions({
-          stock_inquiry: rowsOf(0),
-          complaint: rowsOf(1),
-          purchase_request: rowsOf(2),
-          sponsorship_form: rowsOf(3),
-          price_tag_request: rowsOf(4),
+        kinds.forEach((k, index) => {
+          const leg = legs[index];
+          if (leg.status === 'fulfilled') {
+            next[k] = leg.value;
+          } else {
+            console.warn('Portal landing: one list failed to load', leg.reason);
+          }
         });
+        setSubmissions(next);
         setError(null);
         // Token validated - clear the freshness stamp so subsequent transient
         // 401s (e.g. real expiry) bounce back immediately without retry.
@@ -499,103 +499,129 @@ export function PortalLanding({ slug }: { slug?: string }) {
         </Button>
       </div>
 
-      {/* Search input only (D-L3) - the status filter now lives in the
-          toolbar's Filter popover, alongside every other filterable field. */}
-      <ListSearchInput
-        value={search}
-        onChange={setSearch}
-        isSettling={searchSettling}
-        placeholder="Search..."
-        aria-label="Search submissions"
-        className="w-full"
-        inputClassName="h-12 text-base"
-      />
-
-      <div className="flex items-stretch gap-2">
-        <SearchableSelect
-          value={activeTab}
-          onChange={(v) => handleTabChange(v as PortalLandingKind)}
-          options={landingKinds.map((t) => ({
-            value: t,
-            label: LANDING_LABELS[t],
-          }))}
-          size="lg"
-          triggerClassName="flex-1 min-h-12 text-base"
-          renderTriggerLabel={(opt) => {
-            const t = opt.value as PortalLandingKind;
-            return (
-              <span className="flex items-center gap-2">
-                {LANDING_LABELS[t]}
-                <Badge variant="secondary" className="px-1.5 py-0 text-xs">
-                  {totals[t]}
-                </Badge>
-                {savedDefaultTab === t && (
-                  <Star
-                    className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
-                    aria-label="default"
-                  />
-                )}
-              </span>
-            );
-          }}
-          renderOption={(opt) => {
-            const t = opt.value as PortalLandingKind;
-            return (
-              <span className="flex items-center gap-2">
-                {LANDING_LABELS[t]}
-                <Badge variant="secondary" className="px-1.5 py-0 text-xs">
-                  {totals[t]}
-                </Badge>
-                {savedDefaultTab === t && (
-                  <Star
-                    className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
-                    aria-label="default"
-                  />
-                )}
-              </span>
-            );
-          }}
-        />
-        <Button
-          type="button"
-          variant="outline"
-          onClick={handleSetDefaultTab}
-          disabled={!contact || savedDefaultTab === activeTab}
-          aria-label={
-            savedDefaultTab === activeTab
-              ? `${LANDING_LABELS[activeTab]} is your default tab`
-              : `Set ${LANDING_LABELS[activeTab]} as default tab`
-          }
-          title={
-            savedDefaultTab === activeTab
-              ? 'Default tab'
-              : 'Set as default for this contact'
-          }
-          className="h-12 px-3"
-        >
-          <Star
-            className={`h-4 w-4 ${
-              savedDefaultTab === activeTab
-                ? 'fill-yellow-400 text-yellow-500'
-                : ''
-            }`}
+      {landingKinds.length === 0 ? (
+        // AC-L3: no picker, toolbar, list or search box - just the one next
+        // step this contact has left.
+        <Card>
+          <CardContent className="py-12 text-center space-y-3">
+            <p className="text-sm text-muted-foreground">
+              No forms are available for your account.
+            </p>
+            {contact?.whatsapp_number && (
+              <Button asChild>
+                <a
+                  href={waMeUrl(contact.whatsapp_number, WA_NO_FORMS_TEXT)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  Chat with us on WhatsApp
+                </a>
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          {/* Search input only (D-L3) - the status filter now lives in the
+              toolbar's Filter popover, alongside every other filterable field. */}
+          <ListSearchInput
+            value={search}
+            onChange={setSearch}
+            isSettling={searchSettling}
+            placeholder="Search..."
+            aria-label="Search submissions"
+            className="w-full"
+            inputClassName="h-12 text-base"
           />
-        </Button>
-      </div>
 
-      <SubmissionList
-        kind={activeTab}
-        items={submissions[activeTab] ?? []}
-        filters={filters}
-        onFiltersChange={setFilters}
-        sort={sort}
-        onSortChange={setSort}
-        view={view}
-        onViewChange={setView}
-        slug={slug}
-        search={search}
-        onClearSearch={() => setSearch('')}
-      />
+          <div className="flex items-stretch gap-2">
+            <SearchableSelect
+              value={activeTab}
+              onChange={(v) => handleTabChange(v as PortalLandingKind)}
+              options={landingKinds.map((t) => ({
+                value: t,
+                label: LANDING_LABELS[t],
+              }))}
+              size="lg"
+              triggerClassName="flex-1 min-h-12 text-base"
+              renderTriggerLabel={(opt) => {
+                const t = opt.value as PortalLandingKind;
+                return (
+                  <span className="flex items-center gap-2">
+                    {LANDING_LABELS[t]}
+                    <Badge variant="secondary" className="px-1.5 py-0 text-xs">
+                      {totals[t]}
+                    </Badge>
+                    {savedDefaultTab === t && (
+                      <Star
+                        className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
+                        aria-label="default"
+                      />
+                    )}
+                  </span>
+                );
+              }}
+              renderOption={(opt) => {
+                const t = opt.value as PortalLandingKind;
+                return (
+                  <span className="flex items-center gap-2">
+                    {LANDING_LABELS[t]}
+                    <Badge variant="secondary" className="px-1.5 py-0 text-xs">
+                      {totals[t]}
+                    </Badge>
+                    {savedDefaultTab === t && (
+                      <Star
+                        className="h-3.5 w-3.5 fill-yellow-400 text-yellow-500 shrink-0"
+                        aria-label="default"
+                      />
+                    )}
+                  </span>
+                );
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={handleSetDefaultTab}
+              disabled={!contact || savedDefaultTab === activeTab}
+              aria-label={
+                savedDefaultTab === activeTab
+                  ? `${LANDING_LABELS[activeTab]} is your default tab`
+                  : `Set ${LANDING_LABELS[activeTab]} as default tab`
+              }
+              title={
+                savedDefaultTab === activeTab
+                  ? 'Default tab'
+                  : 'Set as default for this contact'
+              }
+              className="h-12 px-3"
+            >
+              <Star
+                className={`h-4 w-4 ${
+                  savedDefaultTab === activeTab
+                    ? 'fill-yellow-400 text-yellow-500'
+                    : ''
+                }`}
+              />
+            </Button>
+          </div>
+
+          <SubmissionList
+            kind={activeTab}
+            items={submissions[activeTab] ?? []}
+            filters={filters}
+            onFiltersChange={setFilters}
+            sort={sort}
+            onSortChange={setSort}
+            view={view}
+            onViewChange={setView}
+            slug={slug}
+            search={search}
+            onClearSearch={() => setSearch('')}
+          />
+        </>
+      )}
     </div>
   );
 }
