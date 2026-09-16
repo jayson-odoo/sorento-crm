@@ -28,6 +28,7 @@ from app.schemas.project_order_inquiry import (
     LinkNowRequest,
     MarkInquiryRowsRequest,
     OrderInquiryDetail,
+    OrderInquiryMatrixResponse,
     OrderInquiryPoCandidate,
     OrderInquiryPoDetail,
     OrderInquiryRowOut,
@@ -99,11 +100,23 @@ def _worklist_filters(
     linked: Optional[str] = None,
     kind: Optional[str] = None,
     ack: Optional[str] = None,
+    # S1, R-K (`PLAN-scm-oi-worklist-excel-parity.md`).
+    location: Optional[str] = None,
+    agent: Optional[str] = None,
+    so_month: Optional[str] = None,
+    po_number: Optional[str] = None,
+    spo_number: Optional[str] = None,
+    delivery_from: Optional[str] = None,
+    delivery_to: Optional[str] = None,
 ) -> dict:
     if project_id:
         validate_uuid_path(project_id, resource="Project")
     if supplier_id:
         validate_uuid_path(supplier_id, resource="Supplier")
+    # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
+    # caller error, not a filter that silently matches nothing.
+    if agent:
+        validate_uuid_path(agent, resource="Sales agent")
     return {
         "query": query,
         "delivery_month": delivery_month,
@@ -116,6 +129,13 @@ def _worklist_filters(
         "linked": linked,
         "kind": kind,
         "ack": ack,
+        "location": location,
+        "agent": agent,
+        "so_month": so_month,
+        "po_number": po_number,
+        "spo_number": spo_number,
+        "delivery_from": delivery_from,
+        "delivery_to": delivery_to,
     }
 
 
@@ -196,6 +216,29 @@ def list_order_inquiry_worklist(
     ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    location: Optional[str] = Query(
+        None, description="The row's Location column, equality (S1, R-K)."
+    ),
+    agent: Optional[str] = Query(
+        None, description="The row's Agent column, equality, by `sales_agents.id`."
+    ),
+    so_month: Optional[str] = Query(
+        None, description="`YYYY-MM` on the SO date, not the delivery date."
+    ),
+    po_number: Optional[str] = Query(
+        None,
+        description=(
+            "Prefix, case-insensitive. Matches a PO link's own document, or an SPO "
+            "link's source purchase order (AC-F5b)."
+        ),
+    ),
+    spo_number: Optional[str] = Query(
+        None, description="Prefix, case-insensitive. Matches an SPO link's document."
+    ),
+    delivery_from: Optional[str] = Query(
+        None, description="`YYYY-MM-DD`, inclusive. A schedule-matrix cell's own period."
+    ),
+    delivery_to: Optional[str] = Query(None, description="`YYYY-MM-DD`, inclusive."),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -226,6 +269,13 @@ def list_order_inquiry_worklist(
                 linked,
                 kind,
                 ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
             ),
         )
     except Exception as exc:
@@ -259,6 +309,13 @@ def order_inquiry_worklist_summary(
             "`state` and `linked`, and a closed set for the same reason both of those are."
         ),
     ),
+    location: Optional[str] = Query(None),
+    agent: Optional[str] = Query(None),
+    so_month: Optional[str] = Query(None),
+    po_number: Optional[str] = Query(None),
+    spo_number: Optional[str] = Query(None),
+    delivery_from: Optional[str] = Query(None),
+    delivery_to: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -276,6 +333,13 @@ def order_inquiry_worklist_summary(
                 linked,
                 kind,
                 ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
             ),
         )
     except Exception as exc:
@@ -294,6 +358,13 @@ def export_order_inquiry_worklist(
     linked: Optional[Literal["po", "spo", "none"]] = Query(None),
     kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
     ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
+    location: Optional[str] = Query(None),
+    agent: Optional[str] = Query(None),
+    so_month: Optional[str] = Query(None),
+    po_number: Optional[str] = Query(None),
+    spo_number: Optional[str] = Query(None),
+    delivery_from: Optional[str] = Query(None),
+    delivery_to: Optional[str] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -316,6 +387,13 @@ def export_order_inquiry_worklist(
                 linked,
                 kind,
                 ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
             )
         )
         return Response(
@@ -323,6 +401,76 @@ def export_order_inquiry_worklist(
             media_type=WORKLIST_XLSX,
             headers={"Content-Disposition": content_disposition(filename)},
         )
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+#: The vertical axis a Schedule matrix column can group by (S3, R-I second half).
+MatrixAxis = Literal["product", "sales_order", "customer", "agent"]
+#: The date cut a matrix row is bucketed by. Week is the default, matching the planning
+#: board's own.
+MatrixGranularity = Literal["day", "week", "month", "year"]
+
+
+@router.get("/order-inquiries/matrix", response_model=OrderInquiryMatrixResponse)
+def order_inquiry_worklist_matrix(
+    axis: MatrixAxis = Query(
+        ..., description="The vertical grouping - product, sales order, customer or agent."
+    ),
+    by: MatrixGranularity = Query("week", description="The date bucket's own width."),
+    query: Optional[str] = Query(None, max_length=_MAX_QUERY_LENGTH),
+    delivery_month: Optional[str] = Query(None),
+    raised_date: Optional[str] = Query(None),
+    state: Optional[Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]] = Query(None),
+    project_id: Optional[str] = Query(None),
+    supplier_id: Optional[str] = Query(None),
+    raised_by: Optional[str] = Query(None),
+    linked: Optional[Literal["po", "spo", "none"]] = Query(None),
+    kind: Optional[Literal["spo", "po", "buy"]] = Query(None),
+    ack: Optional[Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]] = Query(None),
+    location: Optional[str] = Query(None),
+    agent: Optional[str] = Query(None),
+    so_month: Optional[str] = Query(None),
+    po_number: Optional[str] = Query(None),
+    spo_number: Optional[str] = Query(None),
+    delivery_from: Optional[str] = Query(None),
+    delivery_to: Optional[str] = Query(None),
+    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """The Schedule view's own read (S3): the SAME filters the list reads, one GROUP BY
+    over `axis` by `by`, no page and no cap.
+
+    Replaces the old client-side matrix, which asked the list once with `limit=1000` and
+    grouped the rows in the browser - a delivery-filtered worklist has already exceeded
+    that on prod (PLAN section 0). Same permission as the list: reading the schedule is
+    reading the worklist a second way, not a second grant.
+    """
+    try:
+        cells = OrderInquiryWorklistService(db).matrix(
+            axis=axis,
+            by=by,
+            **_worklist_filters(
+                query,
+                delivery_month,
+                raised_date,
+                state,
+                project_id,
+                supplier_id,
+                raised_by,
+                linked,
+                kind,
+                ack,
+                location,
+                agent,
+                so_month,
+                po_number,
+                spo_number,
+                delivery_from,
+                delivery_to,
+            ),
+        )
+        return {"data": cells}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
