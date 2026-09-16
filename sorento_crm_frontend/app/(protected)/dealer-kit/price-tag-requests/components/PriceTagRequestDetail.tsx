@@ -1153,7 +1153,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 disabled={savingLinePrice === line.id}
                               />
                             ) : (
-                              <p className="text-sm font-medium">
+                              <p className="text-sm font-medium whitespace-nowrap">
                                 {linePriceOverrides[line.id]?.manual_sell_price != null
                                   ? `RM ${linePriceOverrides[line.id]!.manual_sell_price!.toLocaleString('en-MY')}`
                                   : '-'}
@@ -1205,7 +1205,8 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                     </span>
                                   </span>
                                 )}
-                                {/* AC-S1-11-equivalent: below md the same
+                                {/* AC-S1-11-equivalent: below the app's 992px
+                                    mobile breakpoint (useIsMobile), the same
                                     Promotion/Selling price fields stack here
                                     instead of living in their own columns. */}
                                 {isMobile && sellingMode && hasLinePricing && (

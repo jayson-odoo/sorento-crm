@@ -2018,11 +2018,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           <th className="w-10 px-2 py-2 text-left">#</th>
                           <th
                             className={
+                              // Owner ruling on review: matches the edit
+                              // table's Item width per mode exactly, so
+                              // View and Edit share the layout - Item stays
+                              // the widest column in every mode.
                               isMobile
-                                ? 'w-[45%] px-2 py-2 text-left'
+                                ? 'w-[46%] px-2 py-2 text-left'
                                 : viewSelling
-                                  ? 'w-[22%] px-2 py-2 text-left'
-                                  : 'w-[32%] px-2 py-2 text-left'
+                                  ? 'w-[31%] px-2 py-2 text-left'
+                                  : 'w-[43%] px-2 py-2 text-left'
                             }
                           >
                             Item
@@ -2030,10 +2034,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           <th
                             className={
                               isMobile
-                                ? 'w-[15%] px-2 py-2 text-left'
+                                ? 'w-[12%] px-2 py-2 text-left'
                                 : viewSelling
-                                  ? 'w-[8%] px-2 py-2 text-left'
-                                  : 'w-[10%] px-2 py-2 text-left'
+                                  ? 'w-[9%] px-2 py-2 text-left'
+                                  : 'w-[12%] px-2 py-2 text-left'
                             }
                           >
                             Qty (tags)
@@ -2042,8 +2046,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                             <th
                               className={
                                 viewSelling
-                                  ? 'w-[10%] px-2 py-2 text-left'
-                                  : 'w-[13%] px-2 py-2 text-left'
+                                  ? 'w-[13%] px-2 py-2 text-left'
+                                  : 'w-[14%] px-2 py-2 text-left'
                               }
                             >
                               List price
@@ -2051,21 +2055,25 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           )}
                           {!isMobile && viewSelling && (
                             <>
-                              <th className="w-[20%] px-2 py-2 text-left">
+                              <th className="w-[14%] px-2 py-2 text-left">
                                 Promotion
                               </th>
-                              <th className="w-[15%] px-2 py-2 text-left">
+                              <th className="w-[12%] px-2 py-2 text-left">
                                 Selling price
                               </th>
                             </>
                           )}
                           <th
                             className={
+                              // No trailing action column here (nothing to
+                              // delete on a read-only line), so Remarks
+                              // absorbs the edit table's action-column share
+                              // too.
                               isMobile
-                                ? 'w-[40%] px-2 py-2 text-left'
+                                ? 'w-[42%] px-2 py-2 text-left'
                                 : viewSelling
-                                  ? 'w-[25%] px-2 py-2 text-left'
-                                  : 'w-[45%] px-2 py-2 text-left'
+                                  ? 'w-[21%] px-2 py-2 text-left'
+                                  : 'w-[31%] px-2 py-2 text-left'
                             }
                           >
                             Remarks
@@ -2093,7 +2101,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                                     {line.line_type === 'product' ? 'Product' : 'Set'}
                                     {line.code ? ` - ${line.code}` : ''}
                                   </div>
-                                  {/* AC-S1-10/AC-S1-11: below md, the same
+                                  {/* AC-S1-10/AC-S1-11: below the app's 992px
+                                      mobile breakpoint (useIsMobile), the same
                                       fields stack here instead of living in
                                       their own columns. */}
                                   {isMobile && hasPricing && (
@@ -2559,21 +2568,26 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                     <th
                       className={
                         isMobile
-                          ? 'w-[35%] px-2 py-2 text-left'
+                          ? 'w-[46%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[20%] px-2 py-2 text-left'
-                            : 'w-[32%] px-2 py-2 text-left'
+                            ? 'w-[31%] px-2 py-2 text-left'
+                            : 'w-[43%] px-2 py-2 text-left'
                       }
                     >
                       Item
                     </th>
                     <th
                       className={
+                        // The min-width floor belongs on the header cell, not
+                        // the input: `table-fixed` sizes every column from the
+                        // FIRST row (this one), so a min-width on the `<td>`'s
+                        // own Input is never honoured once the column is
+                        // narrower than it.
                         isMobile
-                          ? 'w-[12%] px-2 py-2 text-left'
+                          ? 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[9%] px-2 py-2 text-left'
-                            : 'w-[12%] px-2 py-2 text-left'
+                            ? 'w-[9%] min-w-[3.5rem] px-2 py-2 text-left'
+                            : 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
                       }
                     >
                       Qty (tags)
@@ -2598,15 +2612,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                     <th
                       className={
                         isMobile
-                          ? 'w-[33%] px-2 py-2 text-left'
+                          ? 'w-[35%] px-2 py-2 text-left'
                           : priceMode === 'selling'
-                            ? 'w-[12%] px-2 py-2 text-left'
-                            : 'w-[22%] px-2 py-2 text-left'
+                            ? 'w-[14%] px-2 py-2 text-left'
+                            : 'w-[24%] px-2 py-2 text-left'
                       }
                     >
                       Remarks
                     </th>
-                    <th className="w-[20%] px-2 py-2"></th>
+                    {/* One 28px icon, not a fifth of the row. */}
+                    <th className="w-[7%] px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -3051,13 +3066,14 @@ function LineRow({
     .find((part) => !part.product_id && part.candidates.length > 1)?.key;
 
   // Owner ruling after #948: List price / Promotion / Selling price are real
-  // `<td>` columns on the line's own row (md and up), not a `colSpan`
-  // sub-row - `subRowSpan` keeps the OTHER sub-rows (guard error, package,
-  // parts, warning) spanning the row's actual current column count instead
-  // of a stale hard-coded 5. Below the mobile breakpoint the row still has
-  // exactly the original 5 columns, since the price fields move into the
-  // stack nested under the Item cell instead (AC-S1-11) - the two never
-  // render at once, so nothing duplicates in the DOM.
+  // `<td>` columns on the line's own row (above the app's 992px mobile
+  // breakpoint, useIsMobile), not a `colSpan` sub-row - `subRowSpan` keeps
+  // the OTHER sub-rows (guard error, package, parts, warning) spanning the
+  // row's actual current column count instead of a stale hard-coded 5.
+  // Below the mobile breakpoint the row still has exactly the original 5
+  // columns, since the price fields move into the stack nested under the
+  // Item cell instead (AC-S1-11) - the two never render at once, so
+  // nothing duplicates in the DOM.
   const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
 
   // Owner polish after #948: the desktop `<td>` already sits under a
@@ -3159,9 +3175,10 @@ function LineRow({
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
           />
-          {/* AC-S1-11: below md the same fields stack here instead of
-              living in their own columns - never both at once (isMobile
-              picks exactly one), so nothing in the row duplicates. */}
+          {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
+              the same fields stack here instead of living in their own
+              columns - never both at once (isMobile picks exactly one), so
+              nothing in the row duplicates. */}
           {isMobile && showPricing && (
             <div
               data-testid="line-pricing-stack"
@@ -3180,14 +3197,10 @@ function LineRow({
           )}
         </td>
         <td className="px-2 py-2">
-          {/* Owner polish after #948: two digits plus the number spinner
-              need more room than a narrow percentage column ever
-              guarantees, so the input carries its own floor. */}
           <Input
             type="number"
             inputMode="numeric"
             min={1}
-            className="min-w-[3.5rem]"
             value={line.quantity}
             onChange={(e) =>
               onUpdate(line.key, {
