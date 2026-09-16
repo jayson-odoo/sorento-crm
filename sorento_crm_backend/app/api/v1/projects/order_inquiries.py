@@ -50,7 +50,7 @@ from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
-from app.services.uuid_path_param import validate_uuid_path
+from app.services.uuid_path_param import UUID_PATTERN, validate_uuid_path
 from app.utils.http import content_disposition
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,11 @@ def _worklist_filters(
     # caller error, not a filter that silently matches nothing.
     if agent:
         validate_uuid_path(agent, resource="Sales agent")
+    # `axis_key` is NOT validated here: it is compared against a UUID column on every
+    # axis, so it needs the same guard, but a QUERY param has no "missing row" reading
+    # and `validate_uuid_path` answers 404 ("Schedule cell not found") - the lie
+    # `uuid_path_param`'s own note warns about. It carries `pattern=UUID_PATTERN` on the
+    # list route below instead, which FastAPI refuses with a 422 before this runs.
     filters = {
         "query": query,
         "delivery_month": delivery_month,
@@ -274,7 +279,13 @@ def list_order_inquiry_worklist(
     axis_key: Optional[str] = Query(
         None,
         max_length=_MAX_FILTER_LENGTH,
-        description="Equality on the matrix's grouping column for `axis`.",
+        pattern=UUID_PATTERN,
+        description=(
+            "Equality on the matrix's grouping column for `axis`. A UUID on every axis "
+            "(`products.id`, the sales order's own id, `customers.id`, "
+            "`sales_agents.id`) - a malformed one reached Postgres as `invalid input "
+            "syntax for type uuid`, a 500 carrying the statement."
+        ),
     ),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),

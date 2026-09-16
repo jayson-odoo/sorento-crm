@@ -51,7 +51,9 @@ class OrderInquiryLinkOut(BaseModel):
     """
 
     id: str
-    #: `po` or `spo`. Only an ORDER BACK row ever carries an `spo` link (part 2 4b).
+    #: `po` or `spo`. EITHER on any linkable row since R5 (27 Aug,
+    #: `PLAN-scm-oi-draft-links.md`): SPO first, then PO. It was the order back alone
+    #: under the 25 Aug rule, which no longer holds.
     kind: str
     document: Optional[str] = None
     line_label: Optional[str] = None
@@ -142,10 +144,11 @@ class OrderInquiryRowOut(BaseModel):
     bundled_with: Optional[OrderInquiryBundledWithOut] = None
     # Whether this row has anywhere to link to at all (the captain, 20 Aug: a "Link PO"
     # offer with nothing behind it reads as a bug, not an empty state). Verb AND product,
-    # not product alone: an ORDER BACK row may link to an `spo_allocations` row as well as
-    # to a purchase order line, so a flag that only looked at purchase orders hid the Link
-    # action on the one row the feature was built for. Computed with the SAME predicate
-    # `po-candidates` answers, so the flag and the dialog can never disagree.
+    # not product alone: EVERY linkable verb may link to an `spo_allocations` row as well
+    # as to a purchase order line (R5, 27 Aug - SPO first, then PO), so a flag that only
+    # looked at purchase orders hid the Link action on rows that had open incoming stock
+    # waiting for them. Computed with the SAME predicate `po-candidates` answers, so the
+    # flag and the dialog can never disagree.
     has_link_candidate: bool = False
 
     state: str

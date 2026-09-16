@@ -1050,12 +1050,14 @@ describe('AC-F1: the five S1 filters travel in the URL', () => {
       target: { value: 'SRT-HQ' },
     });
 
-    await waitFor(() =>
-      expect(routerReplace).toHaveBeenCalledWith(
-        expect.stringContaining('location=SRT-HQ'),
-        expect.objectContaining({ scroll: false }),
-      ),
+    // The PARAM, parsed - not a substring of the whole URL. `stringContaining` would
+    // pass on `?relocation=SRT-HQ-2` and on a value that is merely a prefix of the one
+    // that was chosen.
+    await waitFor(() => expect(routerReplace).toHaveBeenCalled());
+    const written = new URLSearchParams(
+      String(routerReplace.mock.calls.at(-1)?.[0]).split('?')[1] ?? '',
     );
+    expect(written.get('location')).toBe('SRT-HQ');
   });
 
   it('a URL carrying agent= seeds the Agent select and the request', async () => {

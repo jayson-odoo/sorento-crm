@@ -617,12 +617,15 @@ class OrderInquiryWorklistService:
         purchase order and product reaches ONE allocation, and a join would have
         returned it once per link and summed its quantity twice.
 
-        COMPANY-SCOPED BY HAND (AC-D14). `from_po_number` is plain text off the
-        AutoCount feed and `product_id` is not company-scoped either, so without the
-        predicate another company's allocation naming the same PO number reads as this
-        row's incoming stock - measured, 5 of an 8 row. The session listener does not
-        reach here: this is a correlated `select()` spliced into the worklist's own
-        query, not a query the session executes in its own right.
+        COMPANY-SCOPED BY HAND (AC-D14), AND THE PREDICATE IS NOT REDUNDANT. The session
+        listener (`company_scope.do_orm_execute`) injects `with_loader_criteria` for the
+        entities a statement names at its TOP level; `SPOAllocation` here is inside a
+        correlated sub-select spliced into the worklist's own query, which names
+        `OrderInquiryRow` and its joins, so nothing scopes this leg on the list path.
+        `from_po_number` is plain text off the AutoCount feed and `product_id` is not
+        company-scoped either, so without the predicate another company's allocation
+        naming the same PO number string reads as this row's incoming stock - measured,
+        5 of an 8 row. Do not delete it as duplicated by the listener.
 
         Built PER CALL rather than at import time, because the scope lives on the
         session. Every reader wraps it - an `EXISTS` (`kind=spo`, `linked=spo`,
@@ -716,18 +719,17 @@ class OrderInquiryWorklistService:
     def _purchased_qty(self) -> Any:
         """Stage 2: on a purchase order line, not yet on a shipment.
 
-        `greatest(0, least(qty - incoming, po_linked - derived_cover))` - what the row
-        put on purchase orders, net of the part its own derived cover has already
-        carried to Incoming, so a unit is counted once and at the furthest stage it
-        reached.
+        `least(qty - incoming, greatest(0, po_linked - derived_cover))`, spelled the way
+        the PLAN states it (S5) - what the row put on purchase orders, net of the part
+        its own derived cover has already carried to Incoming, so a unit is counted once
+        and at the furthest stage it reached. Both legs are non-negative by construction
+        (`incoming` is capped at `qty`, `derived_cover` at `po_linked`), so the
+        `greatest` is a guard on the arithmetic rather than a clamp anything reaches.
         """
         derived_cover = func.least(_PO_LINKED_QTY, self._derived_cover_qty())
-        return func.greatest(
-            func.least(
-                OrderInquiryRow.qty - self._incoming_qty(),
-                _PO_LINKED_QTY - derived_cover,
-            ),
-            0,
+        return func.least(
+            OrderInquiryRow.qty - self._incoming_qty(),
+            func.greatest(0, _PO_LINKED_QTY - derived_cover),
         )
 
     # ------------------------------------------------------------------ query
@@ -1756,10 +1758,10 @@ class OrderInquiryWorklistService:
         """ONE ROW PER INQUIRY ROW - its quantity and its three stage amounts, computed
         ONCE - as a subquery to aggregate over.
 
-        The cards (`_kinds`) and the Schedule matrix both read it, which is what keeps
-        them from drifting: a cell and the card above it are then two GROUP BYs over the
-        same per-row arithmetic rather than two copies of it. It also stops the derived
-        cover being recomputed three times per row inside one SELECT list.
+        The cards (`_kinds`) and the Schedule matrix both read it, which is the whole
+        reason it exists: a cell and the card above it are two GROUP BYs over the same
+        per-row arithmetic rather than two copies of the formula, so the Schedule view
+        cannot answer differently from the strip over it (AC-X6).
         """
         return (
             self._base(**filters)

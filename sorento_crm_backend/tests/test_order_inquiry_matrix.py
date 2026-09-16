@@ -38,6 +38,9 @@ from ._pg_fixture import blank_session
 MARKER = "zzt-oi-matrix"
 BASE = "/api/v1/project-sales"
 MATRIX = f"{BASE}/order-inquiries/matrix"
+#: The LIST, for the cell drilldown's own `axis`/`axis_key` pair - the matrix names a
+#: cell, the list is what opens it.
+LIST = f"{BASE}/order-inquiries"
 
 READ_ONLY = ["projects.projects.view"]
 NO_GRANTS: list[str] = []
@@ -513,7 +516,38 @@ def test_sf5_an_invalid_delivery_from_names_the_delivery_param_not_raised_date(a
 
     assert response.status_code == 422, response.text
     code = response.json().get("code")
-    assert code != "invalid_raised_date", response.json()
+    assert code == "invalid_delivery_from", response.json()
+
+
+# --------------------------------------------------------------------------- S1
+#
+# `axis_key` is compared against a UUID column on every axis (`products.id`,
+# `sales_orders.id`/`project_sales_orders.id`, `customers.id`, `sales_agents.id`), so a
+# malformed one has to be refused at the route rather than handed to Postgres, which
+# answers `invalid input syntax for type uuid` - a 500 carrying the SQL.
+
+
+def test_s1_a_malformed_axis_key_on_the_list_is_refused_not_a_500(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(
+        LIST, params={"axis": "product", "axis_key": "not-a-uuid"}
+    )
+
+    assert response.status_code == 422, response.text
+
+
+def test_s1_an_unknown_but_well_formed_axis_key_is_an_empty_page_not_an_error(api):
+    """A cell whose rows have since been answered is an empty list, not a refusal -
+    the key is legal, it just names nothing any more."""
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(LIST, params={"axis": "product", "axis_key": _uid()})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["data"] == [], body
+    assert body["pagination"]["total"] == 0, body
 
 
 # ------------------------------------------------------------- security: unbounded strings

@@ -407,11 +407,13 @@ def _release_components(
             location=location, item_code=item_code,
         ))
     for qty, _location in held_by["spo"]:
-        # NOT a reallocation (review round D7): only an ORDER BACK row may carry an SPO
-        # allocation, so there is no waiting ORDER row and no pool row that could receive
-        # one. What the line can honestly do is give it back - the link comes off and the
-        # allocation reads unallocated on purchasing's incoming list. The sentence says
-        # that, so the row never records an instruction nobody carried out.
+        # NOT a reallocation (review round D7): this engine does not pick the next
+        # claimant for a container - purchasing does, off the incoming list. (The old
+        # reason, that only an ORDER BACK row may carry an SPO allocation, is the 25 Aug
+        # rule R5 retired on 27 Aug; D7 is what stands.) What the line can honestly do is
+        # give it back - the link comes off and the allocation reads unallocated on
+        # purchasing's incoming list. The sentence says that, so the row never records an
+        # instruction nobody carried out.
         document = (facts.get("placed") or {}).get("document")
         out.append(_component(
             "release", "spo", qty,
@@ -3322,12 +3324,14 @@ def _release_spo_share(
 ) -> List[str]:
     """A freed SPO share is UNALLOCATED, not re-dealt (review round D7).
 
-    Only an ORDER BACK row may carry an SPO allocation (`place_on_po_allocations`'s own
-    rule), so no waiting ORDER row and no pool-location row can receive one - there is
-    nowhere to re-deal it TO. What the line can honestly do is give it back: the link comes
-    off, and the allocation reads unallocated on purchasing's incoming list, where somebody
-    can put it where it is needed. The suggestion says exactly that, so no instruction is
-    recorded that was never carried out.
+    This engine does not pick the next claimant for a container - purchasing does, off
+    the incoming list, where every open allocation is visible beside every row waiting
+    for it. (The reason used to be stated as the 25 Aug rule that only an ORDER BACK row
+    may carry an SPO allocation; R5 of 27 Aug widened that to every linkable verb, so the
+    premise is gone and the D7 ruling is what stands.) What the line can honestly do is
+    give it back: the link comes off, and the allocation reads unallocated on purchasing's
+    incoming list, where somebody can put it where it is needed. The suggestion says
+    exactly that, so no instruction is recorded that was never carried out.
 
     Returns the DOCUMENTS it gave back, for `result_json["released_documents"]`: what a
     reader of the batch page needs from this is which SPO is free again, not a sentence
