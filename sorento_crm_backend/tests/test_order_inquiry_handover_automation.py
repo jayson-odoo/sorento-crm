@@ -57,6 +57,7 @@ from app.models.project_so import (
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.automation_triggers import build_order_inquiry_link
 from app.services.project_order_inquiry_service import (
+    _HANDOVER_COMMITTED_TX_KEY,
     _HANDOVER_PENDING_KEY,
     ProjectOrderInquiryService,
 )
@@ -792,6 +793,10 @@ def test_confirm_inside_savepoint_dispatches_once(api, monkeypatch):
     assert not db.info.get(_HANDOVER_PENDING_KEY), (
         "nothing may remain pending on the session once the root transaction commits"
     )
+    assert not db.info.get(_HANDOVER_COMMITTED_TX_KEY), (
+        "AC-H24: the committed-transaction marker must be pruned on every exit path, "
+        "not accumulate across confirms"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -910,6 +915,9 @@ def test_parent_rollback_after_savepoint_release_dispatches_nothing(api, monkeyp
     )
     assert not db.info.get(_HANDOVER_PENDING_KEY), (
         "the pending queue must be empty once the root has rolled back"
+    )
+    assert not db.info.get(_HANDOVER_COMMITTED_TX_KEY), (
+        "AC-H24: the committed-transaction marker must be pruned on a rollback too"
     )
 
     # -- sibling half: order A's savepoint releases, order B's own savepoint rolls
@@ -1488,6 +1496,10 @@ def test_seed_migration_idempotent():
             else json.loads(recipient_config)
         )
         assert cfg.get("include_actor") is True
+        assert cfg.get("one_email") is True, (
+            "AC-H13/AC-H26: the seed must ask for the single combined email, or the "
+            "seeded automation reverts to a copy per recipient with nobody noticing"
+        )
         assert cfg.get("user_ids") == []
         assert cfg.get("extra_emails") == []
         assert cfg.get("role_ids") == [], (
