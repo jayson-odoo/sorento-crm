@@ -123,6 +123,86 @@ def _set_kind_field(focus: Focus, kind: str, entities: list[dict[str, Any]]) -> 
         focus.extra[kind] = entities
 
 
+def _names_a_subject(verdict: dict[str, Any]) -> bool:
+    """Did THIS message name something of its own to be about?
+
+    A carried entity does not count - a confirmation turn routinely still carries the
+    previous product, and reading that as a new question would make every "yes" a fresh
+    ask (owner report 8 Sep 2026, the half that must not move).
+    """
+    return any(
+        isinstance(e, dict) and e.get("current_message") is True
+        for e in (verdict.get("entities") or [])
+    )
+
+
+def _confirmation_defused(verdict: dict[str, Any], trace: Trace) -> dict[str, Any]:
+    """A decisive intent plus an entity this message named outranks the parser's own
+    `is_escalation_confirmation` (owner report, 8 Sep 2026).
+
+    After a stock answer offered to escalate, "PO for SRTWC8517" came back
+    `request_for_help` with `is_escalation_confirmation: true`, so a fresh product question
+    confirmed an offer the customer had ignored. The flag is a MODEL judgement about a
+    message that also carries the parser's own structured evidence of a new question, and
+    the evidence wins.
+
+    Retyped as well as cleared, which is what the retired `output_exchange` did: the flag
+    has three readers (`_answer_offer`, `_answer_pending`'s accept arm and `_lane`) and
+    `message_type: "request_for_help"` would send the same turn to the escalation lane
+    through the other door. Decided ONCE here, at the verdict's entry into `apply()`,
+    beside `domain_hint`'s own coercion, so every reader downstream sees one decision.
+    """
+    escalation = verdict.get("escalation") or {}
+    if escalation.get("is_escalation_confirmation") is not True:
+        return verdict
+    decisive = verdict.get("intent_hint") or verdict.get("domain_hint")
+    if not decisive or not _names_a_subject(verdict):
+        return verdict
+    trace.rules_fired.append("confirmation_defused_by_a_named_ask")
+    return {
+        **verdict,
+        "escalation": {**escalation, "is_escalation_confirmation": False},
+        "message_type": "business_query",
+    }
+
+
+def _help_request_is_an_ask(verdict: dict[str, Any]) -> bool:
+    """A help request that names a SUBJECT and no intent of its own is that subject's ask.
+
+    Owner turns 2d903c96 / 17d38019 / 3a56a48c, 8 Sep 2026: "delivery to hanlim" came back
+    `request_for_help` with both hints null and one customer entity, and the bot handed a
+    human a question it answers itself. The retired head read the domain SWITCH WORD out of
+    the message to retype it; `apply()` reads no message text (AC-1520) and does not need
+    to - the parser naming a subject while naming neither an intent nor a domain is the
+    same statement in structured form, and the domain that subject's KIND belongs to is the
+    one thing the question can be about.
+
+    Narrow on purpose, both halves measured: a help request with no entity at all ("can
+    someone help me with my order") stays a help request, and so does one the parser DID
+    give a decisive intent - review round 2's ruling, that shape is the parser's to
+    classify, not the gate's.
+    """
+    return (
+        verdict.get("message_type") == "request_for_help"
+        and not verdict.get("intent_hint")
+        and not verdict.get("domain_hint")
+        and _names_a_subject(verdict)
+    )
+
+
+def _domain_of_kind(policy: Policy, kind: str | None) -> str | None:
+    """Which domain narrows on this entity kind - the policy's own answer, first row wins.
+
+    The same lookup `_reconcile_step` makes when a rewritten kind has to name its domain.
+    """
+    if not kind:
+        return None
+    for row in policy.domains:
+        if kind in row.narrowing:
+            return row.name
+    return None
+
+
 def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace: Trace):
     """An escalation offer, ACCEPTED - the mirror of `answer_pending_decline`.
 
@@ -620,6 +700,23 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         return focus, pending, None, False
 
     if answers.get("resolved") is False:
+        if (
+            pending.kind in ESCALATION_OFFER_KINDS
+            and verdict.get("message_type") not in _CASUAL_TYPES
+            and _names_a_subject(verdict)
+        ):
+            # An escalation offer is answered with a yes, a no or a team number, and a turn
+            # that names a business subject is none of those - it is the question the
+            # customer would rather have answered ("delivery to hanlim" over "which team?").
+            # Re-printing the offer at them is how the owner's 8 Sep turns ended up asking
+            # which team, twice, about an order question. The offer stays open exactly as
+            # it does for a "no" carrying its own entities, two arms above; the message is
+            # planned as itself. A ROSTER keeps the re-print: "no, the SH one" over a
+            # product picker IS an attempt at that question. So does a turn the parser
+            # typed as chat or could not type at all - an echoed entity under `unknown` is
+            # not a competing question, it is the subject the conversation already had.
+            trace.rules_fired.append("answer_pending_own_entities")
+            return focus, pending, None, False
         # The customer TRIED to answer and missed (a number off the list, a label that
         # matches nothing offered): the SAME question is re-printed, state untouched.
         trace.rules_fired.append("answer_pending_unresolved")
@@ -866,7 +963,11 @@ def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | 
         return "escalation"
     if message_type == "escalation":
         return "escalation"
-    if message_type == "request_for_help" and verdict.get("domain_hint") not in _HELP_EXEMPT_DOMAINS:
+    if (
+        message_type == "request_for_help"
+        and verdict.get("domain_hint") not in _HELP_EXEMPT_DOMAINS
+        and not _help_request_is_an_ask(verdict)
+    ):
         return "escalation"
     if domains and all(
         (policy.domain(name) is not None and not policy.domain(name).supported) for name in domains
@@ -1094,6 +1195,11 @@ def apply(
         trace.rules_fired.append("domain_hint_coerced")
         verdict = {**verdict, "domain_hint": coerced_domain_hint}
 
+    # The same shape, one line down: a hallucinated escalation confirmation over a message
+    # that names its own question (owner report, 8 Sep 2026). Decided here so the three
+    # readers of that flag cannot disagree about one turn.
+    verdict = _confirmation_defused(verdict, trace)
+
     # AC-1592 test triage: the old `head/output_exchange.py::_assert_emission` named
     # a malformed emission's bad KEY and expected TYPE before anything downstream ever
     # touched it; the S3 rewrite dropped it with no equivalent, so a malformed
@@ -1168,6 +1274,21 @@ def apply(
         if carried:
             focus.domains = [carried]
             trace.rules_fired.append("domain_follows_document")
+
+    if not domains and _help_request_is_an_ask(verdict):
+        # "delivery to hanlim" (owner turns 2d903c96 / 17d38019 / 3a56a48c): the parser
+        # named a subject and no domain, so the domain is the one that NARROWS that
+        # subject's kind. Last in the chain deliberately - anything the parser or the
+        # conversation actually said about the domain outranks a lookup from a kind.
+        named = next(
+            (e for e in entities if isinstance(e, dict) and e.get("current_message") is True),
+            None,
+        )
+        by_kind = _domain_of_kind(policy, (named or {}).get("hint"))
+        if by_kind:
+            domains = [by_kind]
+            focus.domains = [by_kind]
+            trace.rules_fired.append("help_request_names_its_own_ask")
 
     new_state = State(focus=focus, pending=pending_after, profile=state.profile, turn_no=state.turn_no)
     trace.lane = _lane(verdict, domains, policy)
