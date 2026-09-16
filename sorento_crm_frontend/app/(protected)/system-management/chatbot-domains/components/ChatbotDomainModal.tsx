@@ -340,7 +340,11 @@ export default function ChatbotDomainModal({
 
         <div className="flex items-center justify-between gap-3 border-t px-6 py-4">
           <div>
-            {!isNew && canManage && (
+            {/* The last domain cannot be deleted (the server refuses, 409): the policy
+                loader falls back to its frozen seed when it reads no domains, so an
+                emptied table answers with fourteen of them again. Hidden rather than
+                disabled-with-a-reason, so nobody starts a countdown that will fail. */}
+            {!isNew && canManage && rows.length > 1 && (
               <Button type="button" variant="ghost" className="text-destructive" onClick={handleDelete}>
                 Delete
               </Button>

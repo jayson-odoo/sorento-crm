@@ -362,6 +362,32 @@ def update_domain(
     return _domain_out(row)
 
 
+def refuse_if_last_domain(db: Session, row: ChatbotDomain) -> None:
+    """Raise 409 when `row` is the only chatbot domain left.
+
+    ONE copy of the rule, because there are two arms that delete a domain and only one
+    of them is this module's route: the Chatbot Domains screen goes through the deferred
+    pending action (`record_actions.chatbot_domain.delete`), which runs its own ORM
+    delete. `record_actions`' own contract is that a deferred handler runs the code the
+    immediate route ran, so it imports this rather than repeating the count.
+
+    `AppException`, not a bare `HTTPException`, for the same reason: it is what
+    `form_action_service._reader_facing_error` lets through to the toast a lapsed
+    countdown leaves behind. A bare one would surface as the generic "could not delete".
+    """
+    from app.services.error_handler import AppException
+
+    if db.query(func.count(ChatbotDomain.id)).scalar() > 1:
+        return
+    raise AppException(
+        status_code=status.HTTP_409_CONFLICT,
+        message=(
+            f"{row.name!r} is the only chatbot domain left. Add another before deleting "
+            f"this one."
+        ),
+    )
+
+
 @router.delete("/domains/{domain_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_domain(
     domain_id: str,
@@ -369,9 +395,21 @@ def delete_domain(
     db: Session = Depends(get_db),
 ):
     """Hard delete (D7). A domain nobody routes to answers nothing, so there is no
-    archived state worth keeping - the row is the policy, not a record of anything."""
+    archived state worth keeping - the row is the policy, not a record of anything.
+
+    The LAST row will not go. `turn.policy.load_policy` falls back to the frozen seed in
+    `turn/policy_rows.py` when it reads no domains, so emptying this table would not give
+    the operator a bot that answers nothing - it would give them fourteen seeded domains
+    back on the next turn, with the screen still showing none. Rather than teach the
+    loader to tell "no rows" from "no table" (it cannot: a blank-schema install has the
+    table and no rows, which is the same two answers), the table simply never empties
+    through here. Deleting the second-to-last is allowed; a one-domain bot is a decision,
+    a zero-domain one is a state nothing can represent.
+    """
     _ = current_user
-    db.delete(_find_domain(db, domain_id))
+    row = _find_domain(db, domain_id)
+    refuse_if_last_domain(db, row)
+    db.delete(row)
     db.commit()
     return None
 

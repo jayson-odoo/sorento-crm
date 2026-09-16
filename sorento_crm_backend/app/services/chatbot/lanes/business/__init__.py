@@ -1229,6 +1229,11 @@ __all__ = [
 ]
 
 
+# NOT ON THE TURN PATH since the re-architecture: `run_turn` calls `run_fetch` above and
+# composes with `turn/compose.py`. Zero callers under `app/`; still driven directly by the
+# KEPT-node replay corpus (`tests/chatbot/test_replay.py`, `divergences.py`) and by
+# `test_crossdomain_ladder.py`, which is why it is not deleted yet - contract 3's ladder
+# now lives in `turn/fetch.py::_climb`.
 def complete_answer(
     payload: dict[str, Any],
     *,

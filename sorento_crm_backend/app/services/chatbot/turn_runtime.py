@@ -161,6 +161,57 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
     )
 
 
+# `console` is its own world: a console turn replays against the operator's own thread
+# and must never read the customer's live reply as its "previous response" (nor the other
+# way round). Every other ingress - webhook, poller, retry - is the same live stream.
+_CONSOLE_INGRESS = "console"
+
+
+def previous_reply_text(
+    db: Session, *, contact_respond_id: str, ingress: str | None, is_test: bool
+) -> str | None:
+    """The text this contact was last answered with, for the parser's `Previous response:`.
+
+    Read from the newest COMPLETED `chatbot.turns` row rather than from the session,
+    because AC-1504 fixes `session_vars` at exactly five keys and a previous reply is not
+    one of them. The turn table already holds every answer the bot has given (D15 needs it
+    to replay a duplicate delivery), so this is a read of something already written, not a
+    new thing to store.
+
+    Scoped three ways, each because crossing it would answer from the wrong conversation:
+    the same contact; the same WORLD (`is_test`, so a test turn never reads a live reply);
+    and the same side of the console boundary (a console turn replays against the
+    operator's own thread). A dry run reads it too - it has to, or the console's second
+    turn parses as though the first never happened.
+
+    `status == "done"` is what "completed" means here, and it also excludes the row for
+    the turn currently running, which is still `processing` when this is called.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    try:
+        query = db.query(ChatbotTurn.response).filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.status == "done",
+            ChatbotTurn.is_test.is_(bool(is_test)),
+        )
+        if str(ingress or "") == _CONSOLE_INGRESS:
+            query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+        else:
+            query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
+        row = query.order_by(ChatbotTurn.created_at.desc()).first()
+    except Exception:  # noqa: BLE001 - no previous reply is a blank line, never a failure
+        logger.warning(
+            "chatbot: previous reply lookup failed for %s", contact_respond_id, exc_info=True
+        )
+        return None
+    if row is None:
+        return None
+    reply = (row[0] or {}).get("reply") if isinstance(row[0], dict) else None
+    text_value = reply.get("text") if isinstance(reply, dict) else None
+    return str(text_value) if text_value else None
+
+
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:
@@ -523,7 +574,16 @@ def make_tool_runner(
             trace=turn_trace,
             db=db,
         )
-        return envelope_of(fragment, spec, entities)
+        return envelope_of(
+            fragment,
+            spec,
+            entities,
+            denial_text=(
+                domain_denial_text(db, domain)
+                if fragment.get("outcome") == "access_denied"
+                else None
+            ),
+        )
 
     return runner
 
@@ -644,11 +704,44 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     ]
 
 
+def domain_denial_text(db: Session, domain: str) -> str | None:
+    """Contract 7's refusal, for a domain the contact is not granted.
+
+    The ONE registered `access_denied` template, rendered through the same
+    `canned.field_grant_denied_text` the retired `complete_answer` called - no new
+    prose, and no second wording to keep in step. `None` for a domain with no subject
+    registered, which leaves the composer's generic denied line as the fallback.
+    """
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.lanes import canned as canned_lanes
+    from app.services.chatbot.lanes.business.answer import DOMAIN_GRANT_SUBJECT
+
+    subject = DOMAIN_GRANT_SUBJECT.get(str(domain or ""))
+    if not subject:
+        return None
+    try:
+        return canned_lanes.field_grant_denied_text(copy_mod.resolve(db), subject)
+    except Exception:  # noqa: BLE001 - a missing copy row must not fail the turn
+        logger.warning("chatbot: the domain refusal copy did not render", exc_info=True)
+        return None
+
+
 def envelope_of(
-    fragment: dict[str, Any], spec: FetchSpec, entities: list[dict[str, Any]]
+    fragment: dict[str, Any],
+    spec: FetchSpec,
+    entities: list[dict[str, Any]],
+    *,
+    denial_text: str | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531)."""
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
+    # The whole-domain grant gate refused before any tool was picked
+    # (`lanes/business.run_fetch`'s `outcome="access_denied"`). That is a DENIED
+    # envelope, not an empty one: without this the composer rendered a bare
+    # `*last purchase cost* for M218:` header and contract 7's refusal sentence was
+    # never said - the tool was still never called, so nothing leaked, but the customer
+    # was told nothing either.
+    refused = fragment.get("outcome") == "access_denied"
     codes = [
         jsc.js_string(e.get("canonical_code") or e.get("raw"))
         for e in entities
@@ -659,7 +752,8 @@ def envelope_of(
     files = fetched.get("attachments")
     has_result = bool(fetched.get("has_result")) and bool(figures)
     return {
-        "denied": False,
+        "domain": spec.domain,
+        "denied": refused,
         "entities": codes,
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
@@ -674,8 +768,9 @@ def envelope_of(
         "error": fragment.get("error") if isinstance(fragment.get("error"), str) else None,
         # The lane's OWN rendered sentence. The composer renders the rows itself
         # (#930's grammar, contract 102); this is what a tool with no rows to render -
-        # a report, a refusal, a miss suggestion - has to say instead.
-        "lane_text": fetched.get("response"),
+        # a report, a refusal, a miss suggestion - has to say instead. A refused domain
+        # says contract 7's registered sentence.
+        "lane_text": denial_text if refused else fetched.get("response"),
         # A counted-set answer's own header ("10 taps have certificates. Showing
         # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
