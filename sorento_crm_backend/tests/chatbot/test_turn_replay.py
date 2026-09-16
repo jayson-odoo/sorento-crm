@@ -306,6 +306,29 @@ def _pending_cases() -> dict[str, str]:
 PENDING_CASES = _pending_cases()
 
 
+# --------------------------------------------------------------------------- #
+# Per-case xfail(strict) - genuine, unsigned, already-tracked ENGINE DEFECTS
+# (tester 17's classification table; AC-1591's "not excused" cases stay a live
+# assertion so a real fix flips them loudly instead of vanishing into a skip).
+# Neither belongs in PENDING-LIVE-RERUN.md - that file is for recording
+# staleness, not code defects - so this is its own small map, not a third
+# mechanism layered onto the pending-skip one above.
+# --------------------------------------------------------------------------- #
+
+_XFAIL_REPLAY_CASES = {
+    "console/case-011-an-out-of-range-tier-pick-keeps-the-product-in-scope.json": (
+        "step 2 branch_kind: expected 'check_promotion', got 'clarify_menu' "
+        "(already-tracked Finding 9/Row 1 tier-pick gap) (engine defect, AC-1591, "
+        "follow-up PR #952)"
+    ),
+    "console/focus-003-c-roster-survives-a-declined-escalate-offer-ac-1015-ac-1017.json": (
+        "step 3 branch_kind: expected 'escalation_declined', got 'business_query' "
+        "(a plain 'no' over a team_pick pending falls through to business_query) "
+        "(engine defect, AC-1591, follow-up PR #952)"
+    ),
+}
+
+
 def _excused(case_id: str, field: str, step_no: int | None = None) -> bool:
     """A whole-case signature (no `step N:` in its line, recorded as `None`) excuses
     EVERY step's divergence on that field; a step-scoped signature excuses only the
@@ -925,7 +948,27 @@ def _compare(
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("case_path", CASE_FILES, ids=CASE_IDS)
+def _replay_params() -> list:
+    """One `pytest.param` per case, marked `xfail(strict=True)` for the two ids in
+    `_XFAIL_REPLAY_CASES` and plain otherwise - a decorator-level mark, not a
+    runtime `request.node.add_marker` call from inside the test body: measured
+    that a fixture-named parameter with a Python default (`request=None`, to keep
+    the two direct, non-parametrized calls below working) is EXCLUDED from
+    pytest's fixture injection entirely (`_pytest.compat.getfuncargnames` skips
+    defaulted params), so `request` was always `None` even under real
+    parametrized collection and the marker never landed. `pytest.param(...,
+    marks=...)` has no such ambiguity and does not touch `test_replay`'s own
+    signature at all."""
+    params = []
+    for case_path, case_id in zip(CASE_FILES, CASE_IDS):
+        marks = []
+        if case_id in _XFAIL_REPLAY_CASES:
+            marks.append(pytest.mark.xfail(strict=True, reason=_XFAIL_REPLAY_CASES[case_id]))
+        params.append(pytest.param(case_path, marks=marks, id=case_id))
+    return params
+
+
+@pytest.mark.parametrize("case_path", _replay_params())
 def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> None:
     from app.services.chatbot import engine as engine_mod
 
