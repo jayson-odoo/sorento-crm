@@ -95,7 +95,11 @@ def _team_pick_question(missed_domains: list[str], policy: Policy):
             "position": len(options) + 1,
             "label": "No it's okay",
             "entity_type": "team",
-            "payload": {"team": None},
+            # Contract 43, the offer hold: picking this option is a DECLINE, and it says
+            # so in its own payload rather than being inferred from a null team - a
+            # `company_pick` option carries no team either, and "the customer said no"
+            # must not be a thing the reader works out from a missing field.
+            "payload": {"team": None, "hold": True},
         }
     )
     return pending_ask("team_pick", options, team=None, expects="pick")

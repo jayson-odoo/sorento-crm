@@ -11,14 +11,8 @@
 # plan exists at all (contract 58, 61, 62). The engine settles those before it routes.
 from __future__ import annotations
 
+from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from app.services.chatbot.turn.plan import Plan
-
-# A pending kind the turn is ASKING becomes the arm that owns that question.
-_ASK_BRANCH: dict[str, str] = {
-    "team_pick": "escalate_offer",
-    "member_offer": "escalate_offer",
-    "company_pick": "escalate_offer",
-}
 
 _LANE_BRANCH: dict[str, str] = {
     "escalation": "out_of_scope",
@@ -52,9 +46,11 @@ def route(plan: Plan) -> str:
     # to fetch and nobody to escalate to yet (contract 111 - did-you-mean before the team
     # question).
     if plan.ask is not None:
-        arm = _ASK_BRANCH.get(plan.ask.kind)
-        if arm is not None:
-            return arm
+        # A pending kind the turn is ASKING becomes the arm that owns that question, and
+        # the three escalation offers are the escalation arm's (`pending.py`, the same
+        # set `apply` routes their ANSWER by).
+        if plan.ask.kind in ESCALATION_OFFER_KINDS:
+            return "escalate_offer"
         # A NARROWING question belongs to the arm that asked it, not to `clarify_menu`.
         # `clarify_menu` is contract 50's DOMAIN menu - "I see you are trying to X, are
         # you asking about any of these? - Product - Stock ..." - a turn with no domain

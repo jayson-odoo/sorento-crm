@@ -346,6 +346,7 @@ def lane_parse_output(
     focus: Focus | None = None,
     pending: Pending | None = None,
     domain: str | None = None,
+    accepted_team: str | None = None,
     prior_session: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
@@ -366,7 +367,10 @@ def lane_parse_output(
       `test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing`
       both call `escalation.run()` directly with a hand-built ctx and pin a null/inherited
       team flowing through UNGUARDED - the default belongs to the layer that builds
-      `ctx.parse.output`, not to the lane that reads it). Chain, in order: a NAMED team
+      `ctx.parse.output`, not to the lane that reads it). Chain, in order: the team an
+      ACCEPTED offer just named (`apply`'s `trace.team`, the option the customer picked
+      off the roster - it outranks the rest because they picked it THIS turn, and a
+      multi-team offer's own `pending.team` stays null until they do); a NAMED team
       (this turn's own); an OFFER's carried team (`pending.team`, contract 108, an
       acceptance names no team of its own); a PREVIOUS turn's own carried routing
       (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
@@ -390,6 +394,8 @@ def lane_parse_output(
         out.setdefault("order_status", None)
 
     routing = dict(out.get("routing") or {})
+    if accepted_team:
+        routing["suggested_team"] = accepted_team
     if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
         routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
