@@ -116,6 +116,7 @@ def _delete_chatbot_domain(db: Session, payload: dict):
     machinery than the rule it is meant to protect. Resolved by id only - the route also
     accepts a NAME, for a caller holding one, and a parked action always carries the id.
     """
+    from app.api.v1.system.chatbot_config import refuse_if_last_domain
     from app.models.chatbot_policy import ChatbotDomain
 
     row = (
@@ -123,6 +124,10 @@ def _delete_chatbot_domain(db: Session, payload: dict):
     )
     if row is None:
         return None
+    # The same rule the route enforces, imported rather than repeated: the loader falls
+    # back to the frozen seed when it reads no domains, so an emptied table gives the
+    # operator fourteen domains back on the next turn and a screen showing none.
+    refuse_if_last_domain(db, row)
     db.delete(row)
     return None
 
