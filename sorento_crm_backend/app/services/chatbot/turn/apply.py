@@ -74,24 +74,37 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             positions = []
 
         matched = [o for o in pending.options if o.get("position") in positions]
-        if matched:
-            built: list[dict[str, Any]] = []
-            for option in matched:
-                uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
-                for u in uuids:
-                    built.append(
-                        {
-                            "raw": option.get("label"),
-                            "hint": option.get("entity_type"),
-                            "canonical_code": u,
-                            "uuid": u,
-                            "current_message": True,
-                            "confident": True,
-                        }
-                    )
-            kind_for_focus = matched[0].get("entity_type")
-            if kind_for_focus:
-                _set_kind_field(focus, kind_for_focus, built)
+        if not matched:
+            # The parser said this WAS an answer, but nothing it picked is on the list -
+            # a position off the end, or a label the roster does not carry. Same outcome
+            # as `resolved: false` below: the SAME question is re-printed, state
+            # untouched. Clearing the pending here (which is what fell out of the
+            # `if matched:` guard before) dropped the question silently and left the
+            # customer's next message with nothing to answer.
+            trace.rules_fired.append("answer_pending_unresolved")
+            return (
+                state.focus,
+                pending,
+                Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace),
+                False,
+            )
+        built: list[dict[str, Any]] = []
+        for option in matched:
+            uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
+            for u in uuids:
+                built.append(
+                    {
+                        "raw": option.get("label"),
+                        "hint": option.get("entity_type"),
+                        "canonical_code": u,
+                        "uuid": u,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                )
+        kind_for_focus = matched[0].get("entity_type")
+        if kind_for_focus:
+            _set_kind_field(focus, kind_for_focus, built)
 
         trace.rules_fired.append("answer_pending")
         # Contract 121: a pick never re-domains the turn. The question recorded the
