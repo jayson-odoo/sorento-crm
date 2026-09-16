@@ -253,3 +253,10 @@ either seed/pick a genuinely-undecided line with a received/redirected inquiry f
 or accept the vitest coverage as sufficient); AC-RL-06 post-confirm on SO314593 remains the same
 open question the prior run raised, now confirmed twice; AC-RL-32 confirmed not exercisable on
 this database, by design, and is pytest's to cover.**
+
+**AC-RL-04 (muted row via `rowClassName`, one-screen re-check at HEAD `2d6c8539f`+) - PASS.**
+Session `oirl-muted`, Order Inquiries, searched `SO314593`: `eval` on the `<tr>` containing
+`OI-000477` / `B2154-NL` / `182` returned class list `hover:bg-muted/40 ... opacity-60 border-b
+...` - `opacity-60` sits on the `<tr>` itself, not a per-cell wrapper. The sibling `220` row for
+the same SO/item carries no `opacity-60`. Screenshot: `AC-RL-04-muted-row-rowClassName.png`. No
+console or network errors.
