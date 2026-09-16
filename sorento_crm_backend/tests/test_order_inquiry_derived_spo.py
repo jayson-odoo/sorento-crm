@@ -143,7 +143,11 @@ def test_a_po_linked_row_gains_a_derived_spo_entry_when_its_po_has_an_open_alloc
 
     real_links = db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).all()
     assert len(real_links) == 1
-    assert str(real_links[0].qty) == "8"
+    # `qty` is `Numeric(15, 4)`, so the column reads back `Decimal("8.0000")` - compare
+    # numerically rather than against the string a person would type.
+    from decimal import Decimal
+
+    assert Decimal(real_links[0].qty) == Decimal("8")
 
 
 # ------------------------------------------------------------------------------ AC-D2
@@ -393,6 +397,42 @@ def test_kind_buy_lists_only_the_unlinked_row(api):
 
     ids = {row["id"] for row in body["data"]}
     assert ids == {seeded["row_unlinked"].id}
+
+
+# ------------------------------------------------------------------------------ AC-D6b
+
+
+def test_linked_spo_includes_the_derived_row_too(api):
+    """AC-D6b: `linked=spo` is WHERE the row is linked (AC-I5), widened by S5 to include
+    a row whose only real link is on a PO but whose PO carries a derived SPO cover -
+    the row genuinely is on both books now, one of them derived."""
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST, params={"linked": "spo"}).json()
+
+    ids = {row["id"] for row in body["data"]}
+    assert seeded["row_po_derived"].id in ids
+    assert seeded["row_full_spo"].id in ids
+    assert seeded["row_unlinked"].id not in ids
+
+
+def test_linked_po_still_lists_the_derived_row_its_real_link_is_still_there(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST, params={"linked": "po"}).json()
+
+    ids = {row["id"] for row in body["data"]}
+    assert seeded["row_po_derived"].id in ids
+
+
+def test_linked_none_excludes_the_derived_row_it_does_hold_a_real_link(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST, params={"linked": "none"}).json()
+
+    ids = {row["id"] for row in body["data"]}
+    assert seeded["row_po_derived"].id not in ids
+    assert seeded["row_unlinked"].id in ids
 
 
 # ------------------------------------------------------------------------------ AC-D9

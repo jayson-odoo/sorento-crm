@@ -17,9 +17,11 @@ import pytest
 from sqlalchemy import text
 
 from app.models.order import Customer, SalesOrder
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiry,
@@ -129,16 +131,30 @@ def _inquiry_for(db, company_id: str, pso: ProjectSalesOrder) -> OrderInquiry:
 
 
 def _row(db, company_id: str, inquiry: OrderInquiry, so_line: ProjectSalesOrderLine, *,
-          item_code: str, qty: str, delivery_date: date, stock_location=None) -> OrderInquiryRow:
+          item_code: str, qty: str, delivery_date: date, stock_location=None,
+          state: str = INQUIRY_RAISED) -> OrderInquiryRow:
     row = OrderInquiryRow(
         id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
         so_line_id=so_line.id, item_code=item_code, qty=Decimal(str(qty)),
-        delivery_date=delivery_date, verb=IV_ORDER, state=INQUIRY_RAISED,
+        delivery_date=delivery_date, verb=IV_ORDER, state=state,
         ack_state="acknowledged", stock_location=stock_location,
     )
     db.add(row)
     db.flush()
     return row
+
+
+def _spo_link(db, company_id: str, row: OrderInquiryRow, product: Product, qty: str):
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}",
+        allocated_quantity=int(Decimal(str(qty))), product_id=product.id,
+    )
+    db.add(allocation)
+    db.flush()
+    db.add(OrderInquiryLink(id=_uid(), company_id=company_id, row_id=row.id,
+                             spo_allocation_id=allocation.id, document=allocation.spo_number,
+                             qty=Decimal(str(qty))))
+    db.flush()
 
 
 def _po_link(db, company_id: str, row: OrderInquiryRow, product: Product, qty: str):
@@ -227,10 +243,14 @@ def _seed(db, company_id: str) -> dict:
                       delivery_date=date(2026, 4, 15), stock_location="ZZTLOCY")
 
     # Isolated year-bucket pair, far enough from everything else that no other
-    # filter/test can accidentally sum it in.
+    # filter/test can accidentally sum it in - its OWN customer and agent too, or the
+    # customer/agent axis tests above would count 4 rows under customer_a/agent_a
+    # instead of the 2 (row_wed, row_mon) they mean to isolate.
     product_year = _product(db, f"ZZT-MATRIX-YEAR-{_uid()[:6]}", f"{MARKER} product year")
-    core_year = _core_order(db, company_id, customer=customer_a, agent=agent_a,
-                             order_date=date(2029, 1, 1))
+    core_year = _core_order(
+        db, company_id, customer=_seeded_customer(db, company_id),
+        agent=_seeded_agent(db, company_id), order_date=date(2029, 1, 1),
+    )
     pso_year = _adopted_pso(db, company_id, core_year)
     line_year = _pso_line(db, company_id, pso_year, product_year)
     inquiry_year = _inquiry_for(db, company_id, pso_year)
@@ -352,6 +372,51 @@ def test_each_cell_carries_buy_po_and_spo_stage_sums(api):
     assert cell["po"] == "8"
     assert cell["buy"] == "10"
     assert cell["spo"] == "0"
+
+
+# --------------------------------------------------------------------------- AC-X5
+
+
+def test_the_matrix_excludes_cancelled_but_includes_actioned_rows(api):
+    """AC-X5: a cancelled row's quantity is not owed any more and must not inflate a
+    cell's `qty`, `rows` or stage sums - but an ACTIONED row (already answered
+    somewhere else) still counts, unlike the `_kinds`/`kind=` reading which drops both
+    (`_NOT_OWED_STATES`). One product, one month, three rows: cancelled (6, ignored),
+    actioned and fully on an SPO (6, spo=6), raised and unlinked (4, buy=4)."""
+    client, db, company_id, seeded = api
+
+    product = _product(db, f"ZZT-MATRIX-X5-{_uid()[:6]}", f"{MARKER} product x5")
+    core = _core_order(
+        db, company_id, customer=seeded["customer_a"], agent=seeded["agent_a"],
+        order_date=date(2026, 6, 1),
+    )
+    pso = _adopted_pso(db, company_id, core)
+    line = _pso_line(db, company_id, pso, product)
+    inquiry = _inquiry_for(db, company_id, pso)
+
+    row_cancelled = _row(
+        db, company_id, inquiry, line, item_code=f"{MARKER}-X5-CANCELLED", qty="6",
+        delivery_date=date(2026, 6, 10), state=INQUIRY_CANCELLED,
+    )
+    row_actioned = _row(
+        db, company_id, inquiry, line, item_code=f"{MARKER}-X5-ACTIONED", qty="6",
+        delivery_date=date(2026, 6, 10), state=INQUIRY_ACTIONED,
+    )
+    _spo_link(db, company_id, row_actioned, product, "6")
+    row_raised = _row(
+        db, company_id, inquiry, line, item_code=f"{MARKER}-X5-RAISED", qty="4",
+        delivery_date=date(2026, 6, 10), state=INQUIRY_RAISED,
+    )
+    db.commit()
+
+    body = client.get(MATRIX, params={"axis": "product", "by": "month"}).json()
+    cell = next(c for c in body["data"] if c["axis_key"] == str(product.id))
+
+    assert cell["rows"] == 2, cell  # the cancelled row is not counted
+    assert cell["qty"] == "10", cell  # 6 (actioned) + 4 (raised), the 6 cancelled dropped
+    assert cell["spo"] == "6", cell
+    assert cell["buy"] == "4", cell
+    assert cell["po"] == "0", cell
 
 
 # ---------------------------------------------------------- axis grouping, parametrized

@@ -24,7 +24,13 @@ from sqlalchemy import text
 
 from app.models.inventory import Warehouse
 from app.models.order import SalesOrder
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
     INQUIRY_RAISED,
@@ -232,6 +238,33 @@ def _spo_link(db, company_id: str, row: OrderInquiryRow, *, spo_number: str,
     return allocation
 
 
+def _open_derived_spo(db, company_id: str, *, spo_number: str, po_number: str,
+                        product: Product, landed: bool = False) -> SPOAllocation:
+    """An SPOAllocation that answers to `spo_number`/`linked=spo` for a PO-linked row's
+    OWN PO purely by derivation (S5, R-E) - `from_po_number == po_number AND
+    product_id == product.id`, open per `spo_supply.open_incoming_clauses` - never
+    itself linked to any row. `landed=True` books it on a shipment that has arrived, so
+    the coordinator's addendum case (a landed shipment is not incoming) can be built
+    with one flag."""
+    shipment_id = None
+    if landed:
+        shipment = InboundShipment(
+            id=_uid(), company_id=company_id, shipment_number=f"ZZT-{_uid()[:8]}",
+            shipment_date=date.today(), actual_arrival_date=date.today(),
+        )
+        db.add(shipment)
+        db.flush()
+        shipment_id = shipment.id
+    allocation = SPOAllocation(
+        id=_uid(), company_id=company_id, spo_number=spo_number, allocated_quantity=5,
+        quantity_received=0, product_id=product.id, from_po_number=po_number,
+        line_status="open", receipt_status="pending", inbound_shipment_id=shipment_id,
+    )
+    db.add(allocation)
+    db.flush()
+    return allocation
+
+
 def _core_order_with_agent(db, company_id: str, agent: SalesAgent | None) -> SalesOrder:
     order = SalesOrder(
         id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}",
@@ -415,6 +448,48 @@ def test_spo_number_prefix_matches_case_insensitively(api):
 
     ids = {row["id"] for row in body["data"]}
     assert ids == {seeded["row_spo_match"].id}
+
+
+def test_spo_number_prefix_also_matches_a_derived_spo_on_the_rows_po(api):
+    """AC-F6b: the row's only REAL link is a purchase order, but that PO carries an
+    open SPO allocation for the same product (S5's derived SPO) - `spo_number` has to
+    reach it, the same way `po_number` reaches an SPO link's `source_po_number`
+    (AC-F5b). Not when the allocation's shipment has already landed."""
+    client, db, company_id, seeded = api
+
+    product = seeded["product"]
+    inquiry_docs = db.get(OrderInquiryRow, seeded["row_po_match"].id).order_inquiry_id
+    row_po_only = _row(
+        db, company_id, db.get(OrderInquiry, inquiry_docs),
+        item_code=f"{MARKER}-DERIVEDSPO",
+    )
+    po = _po_link(
+        db, company_id, row_po_only, po_number=f"ZZT-DERIVED-PO-{_uid()[:6]}",
+        product=product,
+    )
+    _open_derived_spo(
+        db, company_id, spo_number="SPO-2026/09-0099", po_number=po.po_number,
+        product=product,
+    )
+    row_landed = _row(
+        db, company_id, db.get(OrderInquiry, inquiry_docs),
+        item_code=f"{MARKER}-DERIVEDSPO-LANDED",
+    )
+    po_landed = _po_link(
+        db, company_id, row_landed, po_number=f"ZZT-DERIVED-PO-LANDED-{_uid()[:6]}",
+        product=product,
+    )
+    _open_derived_spo(
+        db, company_id, spo_number="SPO-2026/09-0100", po_number=po_landed.po_number,
+        product=product, landed=True,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"spo_number": "SPO-2026/09"}).json()
+
+    ids = {row["id"] for row in body["data"]}
+    assert row_po_only.id in ids
+    assert row_landed.id not in ids
 
 
 # ------------------------------------------------------------------------ AC-F7 query
