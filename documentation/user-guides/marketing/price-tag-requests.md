@@ -41,10 +41,22 @@ talked about.
 
 * The **Lines** rail lists each line with its tags nested underneath. A line with exactly one tag,
   no parts and no open choice group is drawn as a single block instead - click the block itself to
-  select that tag, no separate `1a` row underneath.
+  select that tag, no separate `1a` row underneath. The rail fills the panel, with **Tag Size**
+  pinned at its foot, directly above the resize handle - no dead space between them, whatever the
+  panel's height.
 * The **Tag Size** panel is collapsed by default, showing the current size beside its heading (for
   example *95 x 44.5 mm*). Click the heading to open the preset, width/height and **Apply to all
   lines** controls. It remembers whether you left it open the next time you design.
+* On a combo tag, every layer that reads product data (the photo slot, code, name, specs, a price
+  badge, a barcode, or a text layer with a product or spec token) offers a **Product** select in the
+  Inspector: the parent product first, then each part in package order, labelled by code. Leave it
+  on the parent (the default) for most layers - a single-product tag shows no **Product** select at
+  all, since there's nothing to choose between. A price badge's select carries one extra first
+  entry, **Tag total**, the parent plus every part added together - the default, and what a price
+  badge has always shown. A layer pointed at a part has its name suffixed with that part's code in
+  the **LAYERS** panel, so a scan of the list tells you which product each layer draws. Copying a
+  design onto another tag with **Apply to all** falls a part-pointed layer back to the parent when
+  the target has fewer parts, and names the layer in a toast.
 * A spec merge field such as `{{spec.dim_length}}` now prints the number on its own, with no unit -
   type the unit into the layer text yourself, for example `L{{spec.dim_length}}XW{{spec.dim_width}}XH{{spec.dim_height}}mm`.
 * On a layer whose **Content** holds a merge field, the Inspector shows the rendered text under the
@@ -52,6 +64,29 @@ talked about.
   it off the canvas.
 * On a price badge, the amount now follows the layer's own **Text Colour** setting (it used to stay
   black regardless); the empty placeholder still shows muted grey until a price resolves.
+
+### Which photo prints
+
+A product can have more than one image linked to it. The tag always uses the brochure image (the
+one marked as the product's main photo) first. Failing that, a **Product Photos** image beats a
+**Technical Specifications** drawing, so a product whose only linked photo happens to be a spec
+drawing still gets it - nothing is filtered out, only ordered. The canvas, the portal preview and
+the exported PDF all agree.
+
+## Changing a line's price
+
+The salesperson's own **Promotion** pick or typed price can be wrong, or a promotion can move, by
+the time you look at a request. Open the request and go to the **Lines** tab: in **Selling price**
+mode, every product line carries its own **Promotion** select and **Selling price** cell, the same
+rules as the portal form - pick from the promotions that cover the line, or type a price when none
+does. A change saves on its own, no separate save button.
+
+Changing a line's price re-resolves its tags. If the tag was already pinned (the request has been
+claimed), the change shows up the same way any other product-data move does - see
+[When product data changes](#when-product-data-changes).
+
+These cells are read only once the request is terminal (**Collected**, **Rejected**, **Void**), or
+for a viewer who can't process price tag requests.
 
 ## Working off change requests
 

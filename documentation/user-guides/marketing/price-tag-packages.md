@@ -45,23 +45,22 @@ Nothing is asked of them that they did not already know. They pick the cabinet c
    * **No package defined** - the product is in a guarded class and has no combo on it at all. Somebody has to record one (the steps above), or the tag prints the product alone.
    * **No package chosen** - the product has combos and the salesperson picked none.
    * **Missing: SRTMR502-BL** - the chosen package's parts are not all on the line. The codes and group labels named are the ones missing.
-3. A line with parts, or more than one tag, still splits into rows: the line row, then each tag labelled by its line position and a letter - **1a**, then **1b**, **1c** if it is split - carrying the resolved choice, **Qty**, **List Price**, **Sell Price**, and **Designed** or **No tag**. A line with exactly one tag and no parts is a single row instead - no `1a` label - the line row itself carries the price and status.
-4. Click **Design** on a tag to open the designer on it. The **Lines** rail on the left lists each line with its tags nested underneath; a line with exactly one tag, no parts and no open choice group is drawn as one block instead, since there's nothing to nest.
-5. A tag whose line left a choice group open carries an **Open: Basin** pill and two ways to answer it:
-   * **Split into 4 tags** - the tag stays where it is, keeps its design, and takes the first candidate; the remaining candidates each get their own tag after it, with the design copied. Use this when the customer should see every colour. Toast: *"Split into one tag per basin."*
-   * **Pick one** - a select beside it that resolves the group on this tag alone, leaving the line with a single tag.
-6. Design and arrange as usual. A tag's quantity follows the line the salesperson asked for; once a line is split, each tag keeps its own number, because those are your decisions rather than a copy of theirs. The sheet lays out one tile per tag, times that tag's quantity.
+3. A line with parts, or more than one tag, still splits into rows: the line row, then each tag labelled by its line position and a letter - **1a**, then **1b**, **1c** when the line's choice group was left open. That split happens automatically the moment the line is saved - nobody in the office chooses to split a tag any more. Each tag row carries the resolved choice, **Qty**, **List Price**, **Sell Price**, and **Designed** or **No tag**. A line with exactly one tag and no parts is a single row instead - no `1a` label - the line row itself carries the price and status.
+4. Click **Design** on a tag to open the designer on it. The **Lines** rail on the left lists each line with its tags nested underneath, already split into one row per candidate - there is no **Open** pill and nothing to split or pick one from. A line with exactly one tag, no parts and no open choice group is drawn as one block instead, since there's nothing to nest.
+5. On a combo tag, every layer that reads product data (the photo slot, code, name, specs, a price badge, a barcode, or a text layer with a product or spec token) offers a **Product** select in the Inspector: the parent product first, then each part in package order, labelled by code. Leave it on the parent (the default) for most layers - a single-product tag shows no **Product** select at all, since there's nothing to choose between. A price badge's select carries one extra first entry, **Tag total**, the parent plus every part added together - the default, and what a price badge has always shown. A layer pointed at a part has its name suffixed with that part's code in the **LAYERS** panel, so a scan of the list tells you which product each layer draws. Copying a design onto another tag with **Apply to all** falls a part-pointed layer back to the parent when the target has fewer parts, and names the layer in a toast.
+6. Design and arrange as usual. A tag's quantity follows the line the salesperson asked for; once a line has more than one tag, each keeps its own number, because those are your decisions rather than a copy of theirs. The sheet lays out one tile per tag, times that tag's quantity.
 7. To drop a tag you no longer want to print, use the bin on its row in the rail: it counts down for a few seconds with a **Cancel**, and removes the tag and its tile when the countdown runs out.
 
 A line always keeps at least one tag, so the last tag on a line cannot be taken away - its bin is greyed out and says so. A price override set on a tag shows on the rail as */ Override RM 1,280.00* and on the **Lines** tab as *Override: RM 1,280.00*; it replaces the **selling** price only, so the tag still prints what the package lists at.
 
 ## What prints on the tag
 
-* The parts go into the members block the tag templates already carry, so no template has to be touched. Each resolved part prints as `+ CODE NAME DIMENSIONS`, in part order. A group still open prints as `Basin: SRTBS100-WH / SRTBS100-BL / SRTBS100-GR`.
+* The parts go into the members block the tag templates already carry, so no template has to be touched. Each resolved part prints as `+ CODE NAME DIMENSIONS`, in part order.
 * A custom layout can also pull the parts on their own with the **Parts (codes)** and **Parts (names)** merge fields in the designer's Line group - useful when a template wants just the codes or just the names rather than the whole members block.
-* **List price** on the tag is the host's list price plus the list price of every resolved part. A group still open adds nothing until it is resolved or split.
-* **Selling price** is the promotion engine's answer for each of those products, added up; where the engine has no offer for a product, its list price is used, because a price with no promotion behind it is simply the price. A marketing override on the tag wins over that sum.
+* **List price** on the tag is the host's list price plus the list price of every part.
+* **Selling price** uses the line's own promotion, set on the request's **Price** section or changed later on the request's **Lines** tab: the parent and every part price under that promotion where it offers one, otherwise at that product's list price. A line with a typed price instead of a promotion carries that figure straight through as the tag's selling price. A marketing override set on the tag itself wins over either.
 * A tag with no parts prints exactly what it always did.
+* Each part's photo follows the same pick as the host product - see [Which photo prints](price-tag-requests.md#which-photo-prints) in the main request guide.
 
 ## What's captured
 
@@ -73,7 +72,7 @@ Combo changes on a product are recorded on that product's **Audit Trail** tab.
 
 ## How you'll be notified
 
-Everything here is immediate and in-app: a toast when a combo, part or split saves, and an inline message under the field when a name or a part is refused. No email, no WhatsApp, and nothing runs in the background, so a package is usable on the very next request.
+Everything here is immediate and in-app: a toast when a combo or part saves, and an inline message under the field when a name or a part is refused. No email, no WhatsApp, and nothing runs in the background, so a package is usable on the very next request.
 
 ## Bulk import
 
