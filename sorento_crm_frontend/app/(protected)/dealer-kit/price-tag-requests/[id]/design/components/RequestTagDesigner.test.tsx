@@ -200,12 +200,11 @@ vi.mock('../../../../services/tagTemplateService', () => ({
   publishTemplate: vi.fn(),
 }));
 vi.mock('../../../../services/priceTagRequestService', () => ({
-  // One row per TAG since S3 (D3) - `resolveRequestTags` is gone with the
-  // line-keyed document. The four below it are what the rail's Split / Pick
-  // one actions and the post-split reload call.
+  // One row per TAG since S3 (D3), auto-split at save so no Split / Pick one
+  // action exists any more. The three below it are what the post-save
+  // reload calls.
   resolveRequestTags: vi.fn(),
   getPriceTagRequest: vi.fn(),
-  splitRequestTag: vi.fn(),
   updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
@@ -286,7 +285,6 @@ function requestTag(
     sort_order: 0,
     label: tagLabelFor(lineId),
     quantity,
-    choices: {},
     choices_display: [],
     open_groups: [],
     marketing_price_override: null,
@@ -327,8 +325,6 @@ function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagReques
     doc_number: 'PT-000001',
     debtor_code: null,
     debtor_name: null,
-    promotion_id: null,
-    promotion_name: null,
     needed_by_date: null,
     notes: null,
     status: 'designing',

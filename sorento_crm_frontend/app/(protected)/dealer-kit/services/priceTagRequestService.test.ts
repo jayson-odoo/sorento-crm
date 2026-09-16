@@ -74,3 +74,37 @@ describe('listPriceTagRequests', () => {
     expect(result.data.map((row) => row.id)).toEqual(['b', 'a']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D6 (F5, reviewer S3/S4): open groups now split where tags are built (the
+// tag row builder), so the client never needs a "Split into N" call, and a
+// tag PATCH never carries `choices` - the server rejects that key with 422.
+// The Split/Pick one client entry points are dead weight left over from
+// before this lane's auto-split; this pins their removal so a re-import of
+// either doesn't silently creep back in.
+// ---------------------------------------------------------------------------
+
+describe('D6 - split/choices are retired from the client (F5)', () => {
+  it('does not export splitRequestTag', async () => {
+    const service = await import('./priceTagRequestService');
+    expect('splitRequestTag' in service).toBe(false);
+  });
+
+  it('the tag PATCH payload type no longer carries a choices field', async () => {
+    // `choices` is a TS-only shape (`PriceTagRequestTagUpdate`), erased at
+    // runtime, so vitest cannot ask the compiled module whether the field
+    // still exists on the type the way it can for a retired EXPORT
+    // (`splitRequestTag`, above). This reads the source text instead, the
+    // same technique the repo already leans on for other compile-time-only
+    // guards - the field's declaration line is what the auto-split routing
+    // (D6) makes dead, so its absence from the source is the fact under
+    // test.
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const source = fs.readFileSync(
+      path.join(__dirname, 'priceTagRequestService.ts'),
+      'utf8',
+    );
+    expect(source).not.toMatch(/choices\??:\s*Record<string,\s*string>/);
+  });
+});

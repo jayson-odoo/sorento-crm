@@ -26,7 +26,12 @@ vi.mock('next/navigation', () => ({
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
@@ -40,7 +45,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
   collectRequest: vi.fn(),
-}));
+  };
+});
 
 vi.mock('../lib/portal-client', () => ({
   uploadAttachment: vi.fn(),

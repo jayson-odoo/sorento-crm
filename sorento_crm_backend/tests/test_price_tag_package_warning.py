@@ -475,12 +475,18 @@ def test_line_parts_persist_in_order(db: Session):
     assert not hasattr(PriceTagRequestLine, "alternatives")
 
 
-def test_show_promo_price_stays_derived_from_the_header(db: Session):
-    """The client does not send it, and the server derives it from `price_mode` (r7 D5).
+def test_show_promo_price_is_never_true_at_plain_list(db: Session):
+    """The client does not send it, and the server derives it (r7 D5) -
+    but D3 (PLAN-price-tag-line-promo-combo-subject.md) retires the OLD
+    rule this test used to pin (`price_mode == 'selling'` alone), which
+    printed SP on a line summed at plain list. The rule now is AC-S7-5:
+    Selling AND `sell_price_basis != 'list'` - a line with no covering
+    promotion and no manual price is LP even in Selling mode.
 
-    Spelled out because AC-S2-8 lists `show_promo_price` in the line payload and
-    the r7 review settled it the other way; that decision stands, so a line that
-    sends it must not be able to contradict the header.
+    Spelled out because AC-S2-8 lists `show_promo_price` in the line payload
+    and the r7 review settled it as server-derived, never client-sent; that
+    decision stands, so a line that sends it must not be able to contradict
+    what the server derives.
     """
     contact = _contact(db)
     product = _product(db, "SRTAC100", class_label="Accessories")
@@ -496,7 +502,9 @@ def test_show_promo_price_stays_derived_from_the_header(db: Session):
             "lines": [{"line_type": "product", "product_id": product.id}],
         },
     )
-    assert request.lines[0].show_promo_price is True
+    assert request.lines[0].show_promo_price is False, (
+        "no covering promotion, no manual price - basis is list"
+    )
 
 
 # --------------------------------------------------------------------------- AC-S2-10

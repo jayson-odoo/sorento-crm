@@ -141,11 +141,9 @@ vi.mock('../../../../services/tagTemplateService', () => ({
 
 vi.mock('../../../../services/priceTagRequestService', () => ({
   // One row per TAG since the combos slice - `resolveRequestLines` is gone with
-  // the line-keyed document. The three beside it are what the rail's Split /
-  // Pick one actions and the post-split reload call.
+  // the line-keyed document. The two beside it are what the post-save reload calls.
   resolveRequestTags: vi.fn(),
   getPriceTagRequest: vi.fn(),
-  splitRequestTag: vi.fn(),
   updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
@@ -246,7 +244,6 @@ function requestTag(lineId: string): PriceTagRequestTag {
     sort_order: 0,
     label: '1a',
     quantity: 1,
-    choices: {},
     choices_display: [],
     open_groups: [],
     marketing_price_override: null,
@@ -307,8 +304,6 @@ const REQUEST: PriceTagRequestDetail = {
   doc_number: 'PT-000001',
   debtor_code: null,
   debtor_name: null,
-  promotion_id: null,
-  promotion_name: null,
   needed_by_date: null,
   notes: null,
   status: 'changes_requested',

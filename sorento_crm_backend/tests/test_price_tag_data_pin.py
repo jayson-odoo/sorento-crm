@@ -345,10 +345,12 @@ class TestThePinIsWrittenWhenDesigningStarts:
             products=[product],
             print_by="office",
         )
-        from app.models.price_tag import PriceTagRequest
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 
-        db_only.query(PriceTagRequest).filter(
-            PriceTagRequest.id == request.id
+        # D1: the promotion moved to the LINE - the header column is gone
+        # (ptag_0011), so this seeds it directly on every line of the request.
+        db_only.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.request_id == request.id
         ).update({"promotion_id": promotion.id})
         db_only.commit()
         db_only.expire_all()
@@ -666,7 +668,7 @@ class TestTheDiff:
         flipped, which is exactly how somebody pulls a live offer in a hurry.
         """
         from app.models.marketing import Promotion, PromotionGroup, PromotionProduct
-        from app.models.price_tag import PriceTagRequest
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
         from app.services.dealer_kit import tag_data_service
 
         product = seed.seed_product(db_only, list_price=1000.00)
@@ -710,8 +712,10 @@ class TestTheDiff:
             print_by="office",
             assigned_to_id=seed.MARKETER_ID,
         )
-        db_only.query(PriceTagRequest).filter(
-            PriceTagRequest.id == request.id
+        # D1: the promotion moved to the LINE - the header column is gone
+        # (ptag_0011), so this seeds it directly on every line of the request.
+        db_only.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.request_id == request.id
         ).update({"promotion_id": promotion.id})
         db_only.commit()
         db_only.expire_all()
@@ -811,15 +815,17 @@ class TestTheDiff:
         emitted - which is exactly the real case: a product renamed while a
         promotion is switched off.
         """
-        from app.models.price_tag import PriceTagRequest
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 
         uncovered = seed.seed_product(db_only, list_price=1000.00)
         # The promotion prices a DIFFERENT product, so this line's offer is
         # null before and after.
         promotion = seed.seed_promotion_on(db_only, seed.seed_product(db_only))
         request, _product, _contact = _designing_request(db_only, product=uncovered)
-        db_only.query(PriceTagRequest).filter(
-            PriceTagRequest.id == request.id
+        # D1: the promotion moved to the LINE - the header column is gone
+        # (ptag_0011), so this seeds it directly on every line of the request.
+        db_only.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.request_id == request.id
         ).update({"promotion_id": promotion.id})
         db_only.commit()
 
@@ -846,13 +852,15 @@ class TestTheDiff:
     def test_exactly_one_offer_row_when_the_offer_disappears(self, db_only):
         """One row, not two: the value moving and the promotion ending are the
         same event, and the note is what tells them apart."""
-        from app.models.price_tag import PriceTagRequest
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 
         product = seed.seed_product(db_only, list_price=1000.00)
         promotion = seed.seed_promotion_on(db_only, product, offer="799.00")
         request, _product, _contact = _designing_request(db_only, product=product)
-        db_only.query(PriceTagRequest).filter(
-            PriceTagRequest.id == request.id
+        # D1: the promotion moved to the LINE - the header column is gone
+        # (ptag_0011), so this seeds it directly on every line of the request.
+        db_only.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.request_id == request.id
         ).update({"promotion_id": promotion.id})
         db_only.commit()
         db_only.expire_all()
@@ -893,14 +901,16 @@ class TestTheDiff:
         """
         from datetime import timedelta
 
-        from app.models.price_tag import PriceTagRequest
+        from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
         from app.services.dealer_kit import tag_data_service
 
         product = seed.seed_product(db_only, list_price=1000.00)
         promotion = seed.seed_promotion_on(db_only, product, offer="799.00")
         request, _product, _contact = _designing_request(db_only, product=product)
-        db_only.query(PriceTagRequest).filter(
-            PriceTagRequest.id == request.id
+        # D1: the promotion moved to the LINE - the header column is gone
+        # (ptag_0011), so this seeds it directly on every line of the request.
+        db_only.query(PriceTagRequestLine).filter(
+            PriceTagRequestLine.request_id == request.id
         ).update({"promotion_id": promotion.id})
         db_only.commit()
         db_only.expire_all()

@@ -58,6 +58,23 @@ def staff_viewer() -> ViewerContext:
     return STAFF_VIEWER
 
 
+def contact_viewer(db: Session, contact_id: str) -> ViewerContext:
+    """A portal contact's own audience, as a pricing/promotion viewer (D4).
+
+    Every line-level promotion check that reaches a portal contact's own
+    request - create, update, revise, the line-pricing lookup - reads THIS,
+    never a bare pass-through of ``access_codes`` built ad hoc per call site
+    (or, worse, ``staff_viewer()``, which is ``is_internal_copy=True`` and so
+    never gates on audience at all). One place answers "what can this
+    contact see", matching the rule the old ``lookup_promotions`` audience
+    gate followed.
+    """
+    from app.services.contact_access_type_service import ContactAccessTypeService
+
+    codes = ContactAccessTypeService(db).get_contact_access_codes(contact_id)
+    return ViewerContext(access_codes=frozenset(codes))
+
+
 # ---------------------------------------------------------------------------
 # Formatting
 # ---------------------------------------------------------------------------
@@ -566,16 +583,51 @@ def _resolved_part_products(db: Session, line, tag) -> list:
     return [products[pid] for pid in wanted if pid in products]
 
 
-def _part_row(db: Session, product) -> dict:
-    """One part as the rail, the Lines tab and the tag text read it."""
+def _part_row(
+    db: Session,
+    product,
+    viewer: ViewerContext,
+    promotion_id,
+    cache: dict,
+    *,
+    price_mode: str = "selling",
+) -> dict:
+    """One part as a first-class product (D7/AC-S9-1) - a layer may pick ANY
+    part as its subject, so a part needs everything the host already carries:
+    images, specs, barcode, both prices.
+
+    Resolved through ``product_tag_data``, the SAME resolver the host goes
+    through (via ``_line_product_data``), one read per DISTINCT product on
+    the line - ``cache`` is that line's own dict, shared across every tag the
+    line's parts get read for, so two tags split off one line do not each
+    pay for the same photo/spec read.
+
+    ``sell_price`` is the offer under the line's promotion, or ``None``
+    (AC-S9-1) - never a fall back to list, unlike the LINE's own total: a
+    part printing at list beside its own code is not "on sale", the tag's
+    box total is what decides that. R13: a line can carry a `promotion_id`
+    while its `price_mode` is still `list` (AC-S6-4 only refuses a MANUAL
+    price outside Selling mode, never a promotion pick) - `price_mode` is
+    checked here too, or a part resolved an offer the line itself never
+    prints.
+    """
+    if product.id not in cache:
+        cache[product.id] = product_tag_data(db, product, viewer, promotion_id)
+    data = cache[product.id]
     return {
         # The id rides along so a caller can match a part back to the choice that
         # produced it (`tag_body`'s `choices_display`). Never rendered - the code
         # is what a reader sees (AC-X-2).
         "product_id": product.id,
-        "code": product.product_code,
-        "name": product.product_name,
-        "dimensions": dimensions_text(product),
+        "code": data["code"],
+        "name": data["name"],
+        "dimensions": data["dimensions"],
+        "spec_lines": data["spec_lines"],
+        "specs": data["specs"],
+        "images": data["images"],
+        "barcode": data["barcode"],
+        "list_price": data["list_price"],
+        "sell_price": data["offer_price"] if price_mode == "selling" else None,
     }
 
 
@@ -641,14 +693,21 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
     about it. Since the combos slice that override is a TAG fact.
     """
     viewer = staff_viewer()
-    promotion_id = getattr(request, "promotion_id", None)
     wanted = None if tags is None else {tag.id for tag in tags}
     rows: list[dict] = []
 
     line_data: dict = {}
+    parts_cache_by_line: dict = {}
+    # One `line_pricing` round trip per DISTINCT (line, resolved set), not
+    # per tag: two split siblings that resolved the same candidate ask the
+    # same question, and a 30-tag request paid for 30 engine runs.
+    basis_cache: dict = {}
     for line_index, tag_index, line, tag in ordered_tags(request):
         if wanted is not None and tag.id not in wanted:
             continue
+
+        # D1/S9: the promotion is a LINE fact now, not the request's.
+        promotion_id = line.promotion_id
 
         if line.id not in line_data:
             line_data[line.id] = _line_product_data(db, line, viewer, promotion_id)
@@ -666,13 +725,25 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
 
         open_groups = _open_groups_for(db, line, tag)
         part_products = _resolved_part_products(db, line, tag)
-        part_rows = [_part_row(db, product) for product in part_products]
+        parts_cache = parts_cache_by_line.setdefault(line.id, {})
+        part_rows = [
+            _part_row(
+                db, product, viewer, promotion_id, parts_cache,
+                price_mode=request.price_mode,
+            )
+            for product in part_products
+        ]
 
         # D4. A tag with no parts is exactly today's product tag: the sums below
         # are over an empty list, so both prices and the slot text are the ones
         # this line has always answered with.
         list_price = data["list_price"]
         sell_price = data["offer_price"]
+        # D7: the HOST alone, never the roll-up below - a price badge's
+        # `subjectPart: -1` reads THIS, not `list_price`/`sell_price`, the
+        # moment a combo has priced parts.
+        parent_list_price = data["list_price"]
+        parent_sell_price = data["offer_price"] if line.show_promo_price else None
         if part_products:
             part_prices = resolve_prices(db, part_products, viewer, promotion_id)
             list_price = _sum_prices(
@@ -702,6 +773,40 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         elif open_groups:
             set_members = _package_text([], open_groups)
 
+        # D3/AC-S9-3: a hand-typed line price wins over the engine's sum, the
+        # same as it does at save time (S7's `line_pricing`).
+        if line.manual_sell_price is not None:
+            sell_price = line.manual_sell_price
+
+        # AC-S9-3/R11b: `sell_price_basis`, through the SAME engine
+        # `line_pricing` (S7) uses for the create/update path and the
+        # CRM/portal lookup routes, so the three can never disagree about
+        # what a line is worth - computed per TAG, not cached per line: after
+        # D6 auto-split, two tags off the same line resolve two different
+        # candidates, and only one of them may actually be covered by the
+        # line's promotion (a line-level cache answered both with whichever
+        # tag asked first).
+        if line.product_id:
+            resolved_ids = [line.product_id] + [product.id for product in part_products]
+        elif line.product_set_id:
+            from app.services.price_tag_request_service import PriceTagRequestService
+
+            resolved_ids = PriceTagRequestService._set_member_product_ids(
+                db, line.product_set_id
+            )
+        else:
+            resolved_ids = []
+        sell_price_basis = _tag_sell_price_basis(
+            db, line, resolved_ids, viewer, basis_cache
+        )
+        # R16: derived LIVE from THIS tag's own basis, never echoing
+        # `line.show_promo_price` - that column is written once at save
+        # time, per LINE (D1/D3/AC-S7-5), so a split tag that resolved the
+        # ONE covered candidate would otherwise read the answer for a
+        # sibling that resolved the uncovered one, and a promotion that
+        # expires between save and read would keep printing SP forever.
+        show_promo_price = request.price_mode == "selling" and sell_price_basis != "list"
+
         # The override is a SELLING price and wins over the engine's sum. It
         # never rewrites what the package LISTS at - the tag still shows what the
         # customer is saving against.
@@ -724,7 +829,10 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 "images": images,
                 "list_price": list_price,
                 "sell_price": sell_price,
-                "show_promo_price": line.show_promo_price,
+                "parent_list_price": parent_list_price,
+                "parent_sell_price": parent_sell_price,
+                "sell_price_basis": sell_price_basis,
+                "show_promo_price": show_promo_price,
                 "included_accessories": line.included_accessories or "",
                 # The TAG's own quantity, seeded from the line's at submit and
                 # marketing's to change afterwards.
@@ -734,6 +842,51 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
         )
 
     return rows
+
+
+def _tag_sell_price_basis(
+    db: Session, line, resolved_product_ids: list[str], viewer, cache: dict | None = None
+) -> str:
+    """AC-S9-3/D4/R11b: what THIS TAG's price is based on, through the exact
+    same `line_pricing` engine S7's create/update path and lookup routes use
+    - a tag can never disagree with the lines table about why it prints SP
+    or LP.
+
+    Per TAG (``resolved_product_ids`` is the caller's own resolved set -
+    parent plus THIS tag's chosen candidates, or a set line's members), not
+    per line: a line-level cache answered every split sibling with whichever
+    tag's candidate happened to ask first, even when only one of them was
+    actually covered by the line's promotion.
+    """
+    from app.services.dealer_kit.pricing import line_pricing
+
+    if not resolved_product_ids:
+        return "list"
+    cache = {} if cache is None else cache
+    key = (line.id, tuple(sorted(resolved_product_ids)))
+    if key in cache:
+        return cache[key]
+    row = line_pricing(
+        db,
+        lines=[
+            {
+                "key": "_b",
+                "product_id": None,
+                "part_product_ids": resolved_product_ids,
+                "candidate_product_ids": [],
+                "promotion_id": line.promotion_id,
+                "manual_sell_price": line.manual_sell_price,
+            }
+        ],
+        viewer=viewer,
+        # Owner ruling (review round 2): a SAVED line's basis reads its
+        # STORED promotion only. The auto pick is the lookup route's job -
+        # inherited here, a line nobody put a promotion on printed SP at a
+        # plain list total the moment any promotion covered its product.
+        auto_pick=False,
+    )[0]
+    cache[key] = row["sell_price_basis"]
+    return cache[key]
 
 
 def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict]:
@@ -836,11 +989,10 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
         if needed
         else {}
     )
-    promotion_live = (
-        None
-        if terminal
-        else _promotion_is_live(db, getattr(request, "promotion_id", None))
-    )
+    # D1/S9: a promotion is a LINE fact now, not one read for the whole
+    # request - cached by promotion id, since several lines commonly share
+    # the same promotion.
+    promotion_live_by_id: dict = {}
 
     for line_index, tag_index, line, tag in walk:
         pinned = tag.pinned_tag_data
@@ -849,16 +1001,20 @@ def resolve_request_line_data(db: Session, request) -> list[dict]:
             if not terminal:
                 live = live_rows.get(tag.id)
                 if live is not None:
+                    if line.promotion_id not in promotion_live_by_id:
+                        promotion_live_by_id[line.promotion_id] = _promotion_is_live(
+                            db, line.promotion_id
+                        )
                     # The PIN AS READ, not as stored: the marketing override is
                     # applied to both sides, so the office's own decision is not
                     # read back to it as "master data moved" (S4).
                     row["data_changes"] = diff_pin_against_live(
                         db,
-                        request,
+                        line,
                         row,
                         live,
                         tag.data_change_ack_hash,
-                        promotion_live=promotion_live,
+                        promotion_live=promotion_live_by_id[line.promotion_id],
                     )
                 else:
                     row["data_changes"] = []
@@ -915,8 +1071,25 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     row["line_id"] = line.id
     row["tag_label"] = tag_label
     row["images"] = resign_images(db, pinned.get("images") or [])
+    # D7 gave every PART the host's own photos, and a part's signed link dies
+    # on exactly the same hour. Re-signed here, at the one seam both readers
+    # go through (`resolve_request_line_data` -> the export media map and
+    # `resolve-prices`' own `parts[].images[].url`), or a part-bound layer on
+    # a design opened a day after the pin draws a dead link.
+    if pinned.get("parts"):
+        row["parts"] = [
+            {**part, "images": resign_images(db, part.get("images") or [])}
+            for part in pinned["parts"]
+        ]
     row["quantity"] = tag.quantity
-    row["show_promo_price"] = line.show_promo_price
+    # R16: NOT refreshed from `line.show_promo_price` - that column is a
+    # per-LINE save-time value, and since D6 auto-split two tags off one
+    # line can resolve two different candidates where only one is covered,
+    # so the line's own column is the wrong answer for the other. The
+    # pinned value is THIS tag's own, computed by the (now per-tag) live
+    # resolver at pin time, and stays frozen consistently with the basis
+    # it was derived from until the tag is re-pinned - never echoed from a
+    # column that answers a different question.
     row["included_accessories"] = line.included_accessories or ""
     if tag.marketing_price_override is not None:
         row["sell_price"] = Decimal(str(tag.marketing_price_override))
@@ -992,20 +1165,27 @@ def _money(value) -> Optional[str]:
 
 def diff_pin_against_live(
     db: Session,
-    request,
+    line,
     pinned: dict,
     live: dict,
     ack_hash: Optional[str],
     promotion_live: Optional[bool] = None,
 ) -> list[dict]:
-    """What master data has moved under this tag, field by field (D17).
+    """What master data has moved under this tag, field by field (D17/AC-S9-4).
 
     Silent when the live data matches the pin, and silent when it matches an
     ack somebody has already looked at and chosen to keep. A change AFTER a
     keep asks again, because it is a different change.
 
-    ``promotion_live`` is the request's promotion read ONCE by a caller
-    diffing every line (S11); left out, this reads it itself.
+    ``line`` (D1, S9) - a promotion is a LINE fact now, so "did the offer
+    change because the PROMOTION ended" reads ``line.promotion_id``, not a
+    header the request no longer carries. ``promotion_live`` is that same
+    read, done ONCE by a caller diffing every tag of the request (S11); left
+    out, this reads it itself.
+
+    A PART's own price change diffs under that part's own code (AC-S9-4),
+    so the reader sees exactly which product on the tag moved rather than a
+    figure folded into the tag's own total.
     """
     if ack_hash and data_hash(live) == ack_hash:
         return []
@@ -1042,13 +1222,11 @@ def diff_pin_against_live(
         # had an offer cannot lose one, so a promotion switched off elsewhere
         # says nothing here.
         if promotion_live is None:
-            promotion_live = _promotion_is_live(
-                db, getattr(request, "promotion_id", None)
-            )
+            promotion_live = _promotion_is_live(db, line.promotion_id)
         ended = (
             live_offer is None
             and pinned_offer is not None
-            and bool(getattr(request, "promotion_id", None))
+            and bool(line.promotion_id)
             and not promotion_live
         )
         changes.append(
@@ -1097,6 +1275,46 @@ def diff_pin_against_live(
                 "note": "Photo removed" if gone else None,
             }
         )
+
+    # D7/AC-S9-4: a PART's own price or photo change diffs under THAT part's
+    # code, not folded into the tag's own list_price/sell_price sum above - a
+    # reader has to know which product on the tag moved, and the host's own
+    # figure already covers the host alone.
+    pinned_parts = {
+        part.get("product_id"): part for part in pinned.get("parts") or []
+    }
+    live_parts = {part.get("product_id"): part for part in live.get("parts") or []}
+    for product_id in sorted(set(pinned_parts) | set(live_parts), key=str):
+        before = pinned_parts.get(product_id) or {}
+        after = live_parts.get(product_id) or {}
+        code = after.get("code") or before.get("code") or product_id
+        add(
+            f"part:{code}:list_price",
+            f"{code} list price",
+            _money(before.get("list_price")),
+            _money(after.get("list_price")),
+        )
+        add(
+            f"part:{code}:sell_price",
+            f"{code} offer price",
+            _money(before.get("sell_price")),
+            _money(after.get("sell_price")),
+        )
+        before_images = {
+            image.get("attachment_id") for image in before.get("images") or []
+        }
+        after_images = {
+            image.get("attachment_id") for image in after.get("images") or []
+        }
+        if before_images != after_images:
+            changes.append(
+                {
+                    "field": f"part:{code}:image",
+                    "label": f"{code} photo",
+                    "old": "Photo on the tag" if before_images else None,
+                    "new": "New photo" if after_images else None,
+                }
+            )
 
     return changes
 

@@ -333,6 +333,12 @@ class TestSubmitTwiceStillRefused:
 
 class TestSellingWithoutPromotionNowSubmits:
     def test_submit_selling_without_promotion_succeeds(self, client):
+        """D-P2 owner ruling still holds: Selling with no promotion is a
+        valid end state and submits fine. D3 (this lane) retires the OLD
+        defect this test used to pin (every line printed SP even at plain
+        list): with no covering promotion and no manual price, a line
+        prints LP - `show_promo_price=False` - even in Selling mode
+        (AC-S7-5)."""
         c, db, _contact_id = client
         first = _seed_product(db)
         second = _seed_product(db)
@@ -350,7 +356,7 @@ class TestSellingWithoutPromotionNowSubmits:
                 ],
             },
         ).json()
-        assert created["promotion_id"] is None
+        assert created["lines"][0]["promotion_id"] is None
 
         res = c.post(f"{_BASE}/{created['id']}/submit")
 
@@ -364,7 +370,7 @@ class TestSellingWithoutPromotionNowSubmits:
             .all()
         )
         assert len(rows) == 2
-        assert all(row.show_promo_price is True for row in rows)
+        assert all(row.show_promo_price is False for row in rows)
 
 
 # ---------------------------------------------------------------------------
