@@ -2,7 +2,9 @@ import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
 /**
- * Per-contact portal form visibility override (PLAN-contact-portal-form-override, UAC AC-1/AC-2).
+ * Per-contact portal form visibility override.
+ * PLAN-contact-portal-form-override UAC AC-1/AC-2 (original, price tag only);
+ * PLAN-portal-forms-market-segment (all five kinds gated - D2).
  *
  * ---------------------------------------------------------------------------
  * API CONTRACT - written in Phase 1, built to in Phase 2
@@ -10,12 +12,18 @@ import { extractApiError } from '@/lib/api-client';
  *
  * GET /api/v1/user-management/contacts/{contact_id}/portal-forms
  *   Permission: `user_management.contacts.view`.
- *   200 -> { "forms": [ { "form_type": "price_tag_request", "inherited": false,
- *                          "override": null, "effective": false } ] }
+ *   200 -> { "forms": [
+ *              { "form_type": "complaint", "inherited": true, "override": null, "effective": true },
+ *              { "form_type": "stock_inquiry", "inherited": true, "override": null, "effective": true },
+ *              { "form_type": "purchase_request", "inherited": true, "override": null, "effective": true },
+ *              { "form_type": "sponsorship_form", "inherited": true, "override": null, "effective": true },
+ *              { "form_type": "price_tag_request", "inherited": false, "override": null, "effective": false }
+ *            ] }
  *
- *   One row per GATED form kind only (today: price_tag_request). The four legacy
- *   submission kinds are always on the portal landing and never appear here.
- *   `inherited` = granted by the union of the contact's assigned access types.
+ *   One row per kind in `GRANTABLE_PORTAL_FORM_TYPES` order (all five now -
+ *   PLAN-portal-forms-market-segment D2). `inherited` = base default (the
+ *   four legacy kinds, always true) union the contact's market segment
+ *   grants (today only `price_tag_request` can be granted this way).
  *   `override` = null (no row, inherits) | true (always show) | false (always hide).
  *   `effective` = override if set, else inherited.
  *
@@ -24,7 +32,7 @@ import { extractApiError } from '@/lib/api-client';
  *   body: { "overrides": [ { "form_type": "price_tag_request", "is_enabled": true|false|null } ] }
  *     is_enabled null clears the override row (back to inherit).
  *   200 -> the same shape as GET, recomputed.
- *   422 for a form_type outside the gated set. 404 for an unknown contact.
+ *   422 for a form_type outside the five. 404 for an unknown contact.
  */
 
 export interface ContactPortalFormRow {

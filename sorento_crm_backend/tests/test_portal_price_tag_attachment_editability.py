@@ -79,26 +79,15 @@ def client(monkeypatch):
 
 
 def _contact(db: Session) -> RespondContact:
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()), phone_number=f"+60{uuid.uuid4().hex[:9]}", name="ZZT Contact"
     )
     db.add(contact)
     db.flush()
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
-    db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id,
-            access_type_code=access_type.code,
-        )
-    )
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     db.commit()
     return contact
 

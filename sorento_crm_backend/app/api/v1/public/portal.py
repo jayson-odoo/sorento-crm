@@ -44,7 +44,10 @@ from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.entity_attachment_service import (
     list_attachments_for_entity as _list_attachments_for,
 )
-from app.services.portal_form_visibility_service import resolve_visible_form_types
+from app.services.portal_form_visibility_service import (
+    require_form_visible,
+    resolve_visible_form_types,
+)
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -698,10 +701,11 @@ def _flatten_payload(payload: SubmissionPayload) -> dict:
     return body
 
 
-def _check_kind(kind: str) -> str:
+def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+    require_form_visible(db, token.contact_id, k)
     return k
 
 
@@ -713,7 +717,7 @@ def _check_kind(kind: str) -> str:
 _ATTACHMENT_ONLY_KINDS = ("price_tag_request",)
 
 
-def _check_revisable_kind(kind: str) -> str:
+def _check_revisable_kind(kind: str, db: Session, token: PortalToken) -> str:
     """Kinds the REVISION routes accept - every registered RevisionAdapter.
     As of R3-1 that is SUPPORTED_TYPES' three original kinds plus
     price_tag_request (own dedicated router, sharing this generic revision
@@ -723,6 +727,7 @@ def _check_revisable_kind(kind: str) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES and k not in ADAPTERS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+    require_form_visible(db, token.contact_id, k)
     return k
 
 
@@ -756,27 +761,12 @@ def _revision_submission_detail(
     return detail
 
 
-def _check_attachment_kind(kind: str) -> str:
+def _check_attachment_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+    require_form_visible(db, token.contact_id, k)
     return k
-
-
-def _require_price_tag_request_visible(db: Session, contact_id: str) -> None:
-    """Mirrors ``_assert_visible`` in portal_price_tag.py. The attachment
-    routes are a second surface onto the same form, so revoking a contact's
-    price_tag_request grant has to close both, not just the dedicated CRUD
-    router's own routes."""
-    from app.services.portal_form_visibility_service import resolve_visible_form_types
-
-    visible = resolve_visible_form_types(db, contact_id)
-    if "price_tag_request" not in visible:
-        raise AppException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            message="Price tag request is not available for your account.",
-            code="FORM_TYPE_NOT_VISIBLE",
-        )
 
 
 def _require_own_price_tag_request(
@@ -785,6 +775,7 @@ def _require_own_price_tag_request(
     submission_id: str,
     *,
     require_editable: bool = False,
+    check_visibility: bool = True,
 ) -> None:
     """The contact's own price tag request, or a 404 - mirrors
     ``_require_own_request`` in portal_price_tag.py. The attachment routes check
@@ -800,11 +791,18 @@ def _require_own_price_tag_request(
     so a locked request (review round 2) refuses them with the same 409
     ``_require_editable`` gives the header PUT - reading attachments (list,
     download) does not, since viewing a locked request's files is still fine.
+
+    ``check_visibility=False``: the row-derived attachment lookup
+    (``_attachment_is_on_own_submission``, AC-G2) tries this kind speculatively
+    inside a "not owned, try the next candidate" catch that would otherwise
+    swallow the 403 this raises - it does its own visibility check once
+    ownership is confirmed, outside that catch, instead.
     """
     from app.models.price_tag import PriceTagRequest
 
     submission_id = validate_uuid_path(submission_id, resource="Price tag request")
-    _require_price_tag_request_visible(db, token.contact_id)
+    if check_visibility:
+        require_form_visible(db, token.contact_id, "price_tag_request")
     row = db.query(PriceTagRequest).filter(PriceTagRequest.id == submission_id).first()
     if row is None or str(row.contact_id) != str(token.contact_id):
         raise handle_not_found("Price tag request", submission_id)
@@ -822,7 +820,7 @@ def portal_list_submissions(
     db: Session = Depends(get_db),
 ):
     return {
-        "items": PortalService(db).list_submissions(token, _check_kind(type), q=q),
+        "items": PortalService(db).list_submissions(token, _check_kind(type, db, token), q=q),
     }
 
 
@@ -920,7 +918,7 @@ def portal_get_submission(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    k = _check_kind(kind)
+    k = _check_kind(kind, db, token)
     detail = PortalService(db).get_submission(token, k, submission_id)
     detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
     # One call, no extra round trip (UAC B1).
@@ -948,7 +946,7 @@ def portal_list_revisions(
     """
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_revisable_kind(kind)
+    k = _check_revisable_kind(kind, db, token)
     _require_revisable_ownership(db, token, k, submission_id)
     return {"items": PortalRevisionService(db).list_revisions(k, submission_id)}
 
@@ -971,7 +969,7 @@ def portal_revise_submission(
     """
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_revisable_kind(kind)
+    k = _check_revisable_kind(kind, db, token)
     body = dict(payload.fields or {})
     if payload.products is not None:
         body["products"] = payload.products
@@ -1014,7 +1012,7 @@ def portal_save_revision_draft(
     """Save (or update) an in-progress revision, without sending it."""
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_revisable_kind(kind)
+    k = _check_revisable_kind(kind, db, token)
     body = dict(payload.fields or {})
     if payload.products is not None:
         body["products"] = payload.products
@@ -1038,7 +1036,7 @@ def portal_discard_revision_draft(
     """Discard the in-progress revision, if any. Idempotent."""
     from app.services.portal_revision_service import PortalRevisionService
 
-    k = _check_revisable_kind(kind)
+    k = _check_revisable_kind(kind, db, token)
     service = PortalRevisionService(db)
     service.fetch_owned(token, k, submission_id)  # ownership: 403/404 as elsewhere
     service.discard_draft(k, submission_id)
@@ -1070,7 +1068,7 @@ def portal_submission_neighbours(
     for that kind, dispatching to its own dedicated router's neighbours
     query rather than ``PortalService``, which does not know about it.
     """
-    k = _check_revisable_kind(kind)
+    k = _check_revisable_kind(kind, db, token)
     if k == "price_tag_request":
         from app.api.v1.public.portal_price_tag import price_tag_neighbours
 
@@ -1086,7 +1084,7 @@ def portal_create_draft(
     db: Session = Depends(get_db),
 ):
     return PortalService(db).create_or_update_draft(
-        token, _check_kind(kind), _flatten_payload(payload)
+        token, _check_kind(kind, db, token), _flatten_payload(payload)
     )
 
 
@@ -1099,7 +1097,7 @@ def portal_update_draft(
     db: Session = Depends(get_db),
 ):
     return PortalService(db).create_or_update_draft(
-        token, _check_kind(kind), _flatten_payload(payload), submission_id
+        token, _check_kind(kind, db, token), _flatten_payload(payload), submission_id
     )
 
 
@@ -1110,7 +1108,7 @@ def portal_delete_draft(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    PortalService(db).delete_draft(token, _check_kind(kind), submission_id)
+    PortalService(db).delete_draft(token, _check_kind(kind, db, token), submission_id)
     return None
 
 
@@ -1124,7 +1122,7 @@ def portal_submit(
 ):
     body = _flatten_payload(payload) if payload else None
     return PortalService(db).submit_draft(
-        token, _check_kind(kind), submission_id, body
+        token, _check_kind(kind, db, token), submission_id, body
     )
 
 
@@ -1235,7 +1233,7 @@ def portal_list_attachments(
     token: PortalToken = Depends(get_portal_token),
     db: Session = Depends(get_db),
 ):
-    k = _check_attachment_kind(kind)
+    k = _check_attachment_kind(kind, db, token)
     # Ensures the contact owns this submission.
     if k == "price_tag_request":
         _require_own_price_tag_request(db, token, submission_id)
@@ -1258,13 +1256,19 @@ def _attachment_is_on_own_submission(
         for kind in _kinds_for_entity_type(link.entity_type):
             try:
                 if kind == "price_tag_request":
-                    _require_own_price_tag_request(db, token, link.entity_id)
+                    _require_own_price_tag_request(
+                        db, token, link.entity_id, check_visibility=False
+                    )
                 else:
                     portal.get_submission(token, kind, link.entity_id)
-                return True
             except HTTPException:
                 # Not this contact's (404 / OWNER_MISMATCH) - try the next link.
                 continue
+            # Ownership confirmed for `kind` - AC-G2: the visibility gate raises
+            # its OWN 403 here, outside the catch above, so a hidden kind reads
+            # as "not visible" rather than being swallowed into "not owned".
+            require_form_visible(db, token.contact_id, kind)
+            return True
     return False
 
 
@@ -1308,6 +1312,8 @@ def _attachment_is_in_own_revision_history(
         if str(attachment_id) in service.attachment_ids_in_history(
             entity_type, str(entity_id)
         ):
+            # Ownership confirmed - same gate as the live-link path (AC-G2).
+            require_form_visible(db, token.contact_id, entity_type)
             return True
     return False
 
@@ -1386,7 +1392,7 @@ async def portal_upload_attachment(
     db: Session = Depends(get_db),
 ):
     portal = PortalService(db)
-    k = _check_attachment_kind(kind)
+    k = _check_attachment_kind(kind, db, token)
     if k == "price_tag_request":
         _require_own_price_tag_request(db, token, submission_id, require_editable=True)
     else:
@@ -1492,19 +1498,31 @@ def portal_delete_attachment(
     # sponsorship_form attachments live under entity_type=purchase_request; verify ownership against either type.
     if raw_kind == "purchase_request":
         owns = False
+        owned_kind = None
         for k in ("purchase_request", "sponsorship_form"):
             try:
                 portal.get_submission(token, k, link.entity_id)
                 owns = True
+                owned_kind = k
                 break
             except HTTPException:
                 continue
         if not owns:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+        # AC-G2: ownership resolved which kind this is - the gate raises its
+        # own 403 here rather than folding into the "not owned" 404 above.
+        require_form_visible(db, token.contact_id, owned_kind)
     elif raw_kind == "price_tag_request":
-        _require_own_price_tag_request(db, token, link.entity_id, require_editable=True)
+        # SEC5: ownership first (same ordering the other two arms use), the
+        # visibility gate after - so a link that is not this contact's own
+        # 404s before it ever reveals whether the kind itself is hidden.
+        _require_own_price_tag_request(
+            db, token, link.entity_id, require_editable=True, check_visibility=False
+        )
+        require_form_visible(db, token.contact_id, "price_tag_request")
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
+        require_form_visible(db, token.contact_id, raw_kind)
 
     # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
     # the portal, even by a contact who owns the submission. FE gating alone is

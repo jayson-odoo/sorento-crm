@@ -9,7 +9,13 @@ export interface ContactAccessTypeOption {
   keywords: string[];
 }
 
-/** Full type for admin CRUD (includes is_active, timestamps). */
+/**
+ * Full type for admin CRUD (includes is_active, timestamps).
+ *
+ * `portal_form_types` moved to market segments (PLAN-portal-forms-market-
+ * segment D1) - this type deliberately carries no such field any more, and
+ * the create/update routes ignore the key if a stale caller still sends it.
+ */
 export interface ContactAccessTypeAdmin {
   code: string;
   name: string;
@@ -17,8 +23,6 @@ export interface ContactAccessTypeAdmin {
   is_active: boolean;
   sort_order: number | null;
   keywords: string[];
-  /** Portal forms a contact holding this type may see. Empty = none (D61). */
-  portal_form_types: string[];
   created_at: string;
   updated_at: string;
 }
@@ -60,10 +64,7 @@ export async function createContactAccessType(
 export async function updateContactAccessType(
   code: string,
   body: Partial<
-    Pick<
-      ContactAccessTypeAdmin,
-      'name' | 'description' | 'is_active' | 'sort_order' | 'keywords' | 'portal_form_types'
-    >
+    Pick<ContactAccessTypeAdmin, 'name' | 'description' | 'is_active' | 'sort_order' | 'keywords'>
   >
 ): Promise<ContactAccessTypeAdmin> {
   const response = await apiFetch(`${base}/${encodeURIComponent(code)}`, {

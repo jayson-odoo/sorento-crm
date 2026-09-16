@@ -14,7 +14,7 @@ Reference for the **User Management** module: who can log in, what they're allow
 > * **Backend table name ≠ class name** - every entity below names its real `__tablename__`.
 
 Menu group **User Management** (verbatim):
-[Administrative Users](/user-management/users) · [Roles](/user-management/roles) · [Permissions](/user-management/permissions) · [AI Agents](/user-management/access-agents) · [Teams](/user-management/teams) · [Internal Users](/user-management/contact-access-agents) · [Contact Access Types](/user-management/contact-access-types) · [Account](/user-management/account) · [Logs](/user-management/logs) · [Settings](/user-management/settings)
+[Administrative Users](/user-management/users) · [Roles](/user-management/roles) · [Permissions](/user-management/permissions) · [AI Agents](/user-management/access-agents) · [Teams](/user-management/teams) · [Internal Users](/user-management/contact-access-agents) · [Contact Access Types](/user-management/contact-access-types) · [Market Segments](/user-management/market-segments) · [Account](/user-management/account) · [Logs](/user-management/logs) · [Settings](/user-management/settings)
 
 ---
 
@@ -326,12 +326,61 @@ Menu: **Contact Access Types** (page title *Contact Access Types*). The configur
 
 ---
 
+## Market Segments - `market_segments`
+
+Menu: **Market Segments** (page title *Market Segments*), a top-level entry next to Contact Access Types. A catalog of segments (e.g. Retail, Project) used for two things: narrowing the round-robin pool for inbound WhatsApp routing (via each team member's segment tags), and granting a contact extra forms on the customer portal beyond the base set every contact already gets. A contact's own segments are assigned on the contact record (see **Contact record** below), not here - this page is only the catalog.
+
+**Key fields**
+
+| Field | Meaning |
+|-------|---------|
+| `code` | Primary key (list column **Code**; fixed once the segment is created). |
+| `name` | Display name (list column **Name**). |
+| `description` | Free text (list column **Description**). |
+| `sort_order` | Ordering (list column **Sort order**). |
+| `is_active` | Active flag (list column **Active**). An **inactive** segment grants nothing on the portal even if a contact is still tagged with it. |
+| `is_requestor_selectable` | Whether a contact in this segment can be picked as the requester on a purchase request, sponsorship form or stock inquiry (list column **Requestor picker**, **Included** / **Excluded**). |
+| `portal_form_types` | The portal forms this segment grants **on top of** the four every contact already has by default (list column **Additional portal forms**: one chip per granted kind, "-" when none; edit-dialog field of the same name, a multi-select that only offers kinds beyond the base four - today just **Price Tag Request**). |
+
+**Date columns:** `created_at`, `updated_at`.
+
+Created/edited via **Add segment** / a row's **Edit** action (pencil icon). **Delete** (trash icon) is a deferred action - a countdown with **Cancel**, no confirmation dialog - and the server refuses it while the segment is still assigned to a contact or a team member, surfacing that refusal as the toast's error. A row's **Spec visibility** action (ruler icon) opens a separate policy, documented in [Chatbot - product spec visibility](../system-management/chatbot-spec-visibility.md); it has no effect on portal forms.
+
+**How a contact's portal forms are worked out:** every contact sees **Complaint**, **Stock Inquiry**, **Purchase Request** and **Sponsorship Form** regardless of segment. A segment can only add to that base, never remove from it. A contact's resolved set is the base four, plus the union of **Additional portal forms** across every *active* segment the contact belongs to, and then the contact's own overrides (below) win outright in either direction.
+
+**Example questions**
+* "Which segments currently grant Price Tag Request?" (**Additional portal forms** column)
+* "Is the Project segment eligible as a purchase-request requester?" (**Requestor picker**)
+* "Which segments are inactive, and so grant no extra forms even though contacts are still tagged with them?" (**Active** = Inactive)
+
+---
+
+## Contact record - Market segment and Portal forms
+
+Not a menu entry of their own - both blocks sit on a WhatsApp contact's own record: **User Management → Internal Users** (or **System Management → Respond Contacts**, which lists every contact) → open a contact → **Profile** tab.
+
+* **Market segment** block - which of the segments above the contact belongs to (chips), edited via the pencil icon. Removing an already-assigned segment is a destructive action and is confirmed before it commits (it also changes SLA routing, not portal forms alone). A contact with no segment matches **all** CS members for routing purposes.
+* **Portal forms** block - lists all five kinds (Complaint, Stock Inquiry, Purchase Request, Sponsorship Form, Price Tag Request), each row showing a **Visible** / **Hidden** badge (the resolved, effective value for that contact) and a select with three choices:
+  * **Inherit** - follow the base-plus-segments rule above; no override for this contact.
+  * **Always show** - grant this kind to this contact even if no segment does.
+  * **Always hide** - remove this kind from this contact even though it's a base kind or a segment grants it.
+
+  Each row's choice is independent and takes effect immediately; there is no bulk action across rows or contacts. A kind that resolves to **Hidden** is not offered on that contact's portal landing page, and every one of that kind's portal pages (list, create, edit, submit, attachments) answers with a "not available" message rather than a blank screen. A contact whose every kind is hidden sees an empty portal landing with a "Chat with us on WhatsApp" button instead of a blank page.
+
+**Example questions**
+* "Does this contact see the Complaint form on the portal?" (Portal forms block, that row's badge)
+* "Which contacts have Price Tag Request always shown even though their segment doesn't grant it?" (Portal forms block, **Always show** on that row)
+* "What happens to a contact whose market segment is removed?" (their Portal forms badges recompute on the base four only, unless an override says otherwise)
+
+---
+
 ## Cross-entity notes
 
 * **Permission path:** `users` → `user_role_assignments` → `user_roles` → `user_role_permissions` → `user_permissions`. A user has a permission iff one of their assigned roles grants it. There is **no** direct user→permission table.
 * **SLA routing path:** `access_agents` → `agent_teams` (team-set `code` + `tier` + `policy_id`) → `teams` → `team_members` (round-robin via `sort_order` + `include_in_round_robin`, pool narrowed by `team_member_brands` / `team_member_market_segments`) → `users` (and the user's `tier` + notify toggles). See [SLA - form-SLA configuration](../sla/form-sla-configuration.md).
 * **Access-grant path (conversations):** `respond_contacts` → `contact_agent_access` (Internal Users, time-boxed) → `access_agents` (AI Agents) → `agent_mcp_tools` → `mcp_tools`.
 * **Visibility path (content):** `contact_access_types` (catalog) ↔ `respond_contact_access_types` (a contact's codes) overlapped against a resource's `access_levels` array.
+* **Portal-forms path:** base four kinds (always on) ∪ `market_segments.portal_form_types` for every active segment a contact belongs to, then a `contact_portal_form_overrides` row wins outright either way. Contact Access Types play **no** part in this - that's a market-segment grant, not an access-type one.
 * **Tier is overloaded.** `users.tier` = the user's conversation-SLA policy tier; `agent_teams.tier` = which escalation level a team plays *for one agent's team-set*. They are related concepts but different columns - be explicit which one a question is about.
 
 ## See also

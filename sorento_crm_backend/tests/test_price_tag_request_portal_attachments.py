@@ -111,24 +111,13 @@ def _token(db: Session, contact: RespondContact, *, space_id: str = "zzt-space")
 
 
 def _grant_price_tag_visibility(db: Session, contact_id: str) -> None:
-    """Access-type grant the portal detail route checks (``_assert_visible`` in
-    portal_price_tag.py) before it will answer at all - separate from the
-    ownership check this file is mostly about."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    """Per-contact override grant the portal detail route checks
+    (``_assert_visible`` in portal_price_tag.py) before it will answer at all
+    - separate from the ownership check this file is mostly about
+    (PLAN-portal-forms-market-segment D1: the grant moved off access types)."""
+    from tests._portal_grant import grant_portal_forms
 
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
-    db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact_id,
-            access_type_code=access_type.code,
-        )
-    )
+    grant_portal_forms(db, contact_id, ["price_tag_request"])
     db.commit()
 
 
