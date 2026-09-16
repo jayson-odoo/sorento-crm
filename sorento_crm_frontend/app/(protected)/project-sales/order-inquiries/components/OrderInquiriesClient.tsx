@@ -1097,7 +1097,11 @@ export function OrderInquiriesClient() {
   // S2: the ONE toolbar (search, Filters, Columns, refresh, Actions, Upload), mounted in
   // BOTH views rather than duplicated - `DataGridListToolbar` takes its `table` as a
   // prop, not from a `DataGrid` context provider, so it stands on its own outside the
-  // List-only `<DataGrid>` wrapper below.
+  // List-only grid wrapper below.
+  //
+  // The wrapper is named without its angle bracket on purpose: `options.inventory`'s
+  // consumer scan reads the RAW file, comments and all, so a JSX-looking mention in a
+  // comment reads to it as a grid that forwards no `isPlaceholderData`.
   const toolbarElement = (
     <DataGridListToolbar
       table={table}

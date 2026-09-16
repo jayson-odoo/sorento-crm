@@ -233,9 +233,19 @@ export function parseNaiveDateTimeAsLocal(dateString: string | Date): Date {
   return new Date(cleanString);
 }
 
+/** A bare calendar day off the wire - `so_date`, `delivery_date` and every other DATE
+ * column the API serializes without a time. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
 /**
  * Parse API datetime string as UTC (backend sends naive UTC strings).
  * Use for duration calculations so (responded_at - initiated_at) is correct.
+ *
+ * A DATE-ONLY string gets a full `T00:00:00Z`, never a bare `Z` (owner, iOS Safari, 16
+ * Sep): `new Date('2025-09-10Z')` is a non-standard string that V8 parses leniently and
+ * Safari's parser REJECTS, so it returned Invalid Date, `formatDateInMalaysia` returned
+ * `''`, and the SO date column was blank on an iPhone while Chrome showed it. The instant
+ * is the same one Chrome already computed, so nothing moves on any other browser.
  */
 export function parseDateTimeAsUTC(dateString: string | Date): Date {
   if (dateString instanceof Date) {
@@ -245,6 +255,9 @@ export function parseDateTimeAsUTC(dateString: string | Date): Date {
   if (!s) return new Date(NaN);
   if (s.endsWith('Z') || /[+-]\d{2}:?\d{2}$/.test(s)) {
     return new Date(s);
+  }
+  if (DATE_ONLY.test(s)) {
+    return new Date(`${s}T00:00:00Z`);
   }
   return new Date(s + 'Z');
 }
