@@ -232,24 +232,6 @@ def _build_json_schema() -> dict[str, Any]:
             # above only because live emissions before this prompt version still carry
             # it (`output_exchange._EXEMPT_FROM_REQUIRED`-style tolerance).
             "status": string_or_null,
-            # Cluster 4 (owner ruling, 16 Sep 2026): whether THIS message answers the
-            # open question the user block shows ("Pending: ..." + "Open question
-            # options: ..."). The parser is the only decider (D11); `turn/apply.
-            # _answer_pending` reads exactly this. `resolved` true = the message answers
-            # the shown question (`picks` = the 1-based positions, or "all"); false = it
-            # tries to and fails (re-ask); null = the message is about something else
-            # (the question stays open, the message is planned as normal). Declared in
-            # the schema so the provider EMITS it - the prompt text only explains it.
-            "answers_open_question": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "resolved": {"type": ["boolean", "null"]},
-                    "picks": {"type": ["array", "string", "null"], "items": {"type": "number"}},
-                    "answer": string_or_null,
-                },
-                "required": ["resolved", "picks", "answer"],
-            },
             "anaphora": {
                 "type": "object",
                 "additionalProperties": False,
@@ -294,7 +276,6 @@ def _build_json_schema() -> dict[str, Any]:
             "escalation",
             "document",
             "status",
-            "answers_open_question",
             "anaphora",
         ],
     }

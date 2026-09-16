@@ -208,7 +208,7 @@ def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace
 
     "Would you like me to escalate?" is answered three ways and every one of them is an
     acceptance: a bare "yes" (`is_affirmative`), the parser's own escalation flag, and a
-    NUMBER off a multi-team roster (`answers_open_question.resolved` with a pick). The
+    NUMBER off a multi-team roster (an explicit `reference_positions` entry). The
     third is why this runs before the roster path below: an accepted offer's option is a
     TEAM, not an entity to fetch with, and the roster path turned "yes" into a product
     pick, restored `payload.domain` and re-ran the very lookup that had just missed
@@ -225,14 +225,13 @@ def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace
         # A decline outranks every acceptance signal, and it already has a rule.
         return None
 
-    answers = verdict.get("answers_open_question") or {}
     picked: dict[str, Any] | None = None
     positions = _picked_positions(pending, verdict)
-    if answers.get("resolved") is True or positions:
+    if positions:
         # ONE option, and only a POSITION. "all" (contract 31) expands a menu of things
         # to look up, and there is no such thing as handing one conversation to every
         # team at once - so it is not an acceptance and the menu rules below keep it.
-        if answers.get("picks") == "all" or verdict.get("broaden_axis") == "all":
+        if verdict.get("broaden_axis") == "all":
             return None
         picked = next((o for o in pending.options if o.get("position") in (positions or [])), None)
         if picked is None:
@@ -277,44 +276,72 @@ SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
 }
 
 
+def _positions_by_label(pending: Pending, verdict: dict[str, Any]) -> list[int]:
+    """The offered positions this message named by their own LABEL, exactly.
+
+    Half of the pick rule (owner ruling, hand pass 3): a customer who types
+    "SRTWC286-SH-150" back at a roster that offered it has answered position 2, and the
+    parser emits that as an ENTITY, because an entity is what it is. The comparison is
+    an exact string match against the option's own label, case-insensitive and nothing
+    more: the engine matches labels, it never reads words (D1, AC-1520), so a paraphrase
+    ("the SH one", "the DO list") stays the parser's job and arrives as
+    `reference_positions`.
+
+    Only an entity THIS message named counts. A carried one rides along on every turn of
+    a conversation about it, and reading that as an answer would answer the question in
+    the same breath it was asked.
+    """
+    named = {
+        str(value).strip().lower()
+        for e in (verdict.get("entities") or [])
+        if isinstance(e, dict) and e.get("current_message") is True
+        for value in (e.get("canonical_code"), e.get("raw"))
+        if isinstance(value, str) and value.strip()
+    }
+    if not named:
+        return []
+    return [
+        o["position"]
+        for o in pending.options
+        if o.get("position") is not None
+        and isinstance(o.get("label"), str)
+        and o["label"].strip().lower() in named
+    ]
+
+
 def _picked_positions(pending: Pending, verdict: dict[str, Any]) -> list[int] | None:
     """Which of the open question's positions this message picked, or None for "it did
     not pick".
 
-    `answers_open_question` is the parser's verdict on its own question and it wins
-    (owner ruling, S6 cluster 4): true = these picks, false = it tried and missed.
-    `resolved` null is the parser saying nothing about the question - and the SAME
-    prompt also says a position "still goes to reference_positions as well", which is
-    the only signal an emission from an older prompt version (or a recorded verdict
-    replayed from one) carries at all. Read as the fallback it is, never as a second
-    opinion: a parser that HAS judged its own question is never second-guessed.
+    Owner ruling, hand pass 3 (17 Sep 2026), superseding S6 cluster 4's
+    `answers_open_question`: that key is retired from the schema, the prompt and here,
+    and a message answers the open question in exactly three ways at this seam - a
+    `reference_positions` entry (the parser resolves every paraphrase, every ordinal and
+    every worded label onto a POSITION, which is the one signal every recorded verdict
+    also carries), an entity matching an offered option by exact label, or
+    `broaden_axis: "all"` over a numbered menu. Anything else is not an answer: the
+    question stays open and the message runs as itself.
+
+    A recorded verdict that still carries the retired key is simply not read at all.
     """
-    answers = verdict.get("answers_open_question") or {}
-    resolved = answers.get("resolved")
-    if resolved is True:
-        picks = answers.get("picks")
-        if picks == "all":
-            return [o["position"] for o in pending.options]
-        return [p for p in picks if isinstance(p, int)] if isinstance(picks, list) else []
-    if resolved is False:
-        return []
-    if pending.kind in ESCALATION_OFFER_KINDS:
-        # A handover is the most expensive thing the bot can do with a message, so it
-        # takes the parser's EXPLICIT verdict and nothing weaker. Measured on the
-        # recorded corpus (`console/handpass3-justin-escalation-offer.json` step 4): a
-        # bare "1" typed over an open escalate offer, with the parser saying nothing
-        # about the question, re-ran the order list and left the offer open - reading
-        # the position as an acceptance instead assigned a human to a conversation
-        # nobody had asked to escalate. The fallback below exists for READS.
-        return None
     raw = verdict.get("reference_positions")
     positions = (
         [int(p) for p in raw if isinstance(p, (int, float)) and not isinstance(p, bool)]
         if isinstance(raw, list)
         else []
     )
+    if pending.kind in ESCALATION_OFFER_KINDS:
+        # A handover is the most expensive thing the bot can do with a message, so it
+        # takes an EXPLICIT signal and nothing weaker: a position the customer typed
+        # (which is how a multi-team roster is answered at all, contract 108), or the
+        # plain yes `_answer_offer` reads for itself. A label match and a broaden are
+        # both too weak to hand a conversation to a human on.
+        return positions or None
     if positions:
         return positions
+    labelled = _positions_by_label(pending, verdict)
+    if labelled:
+        return labelled
     if verdict.get("broaden_axis") == "all" and pending.options:
         # Contract 31, R21: "all" over a numbered menu is a pick of EVERY option, not a
         # widening of the search - the parser reads the word as a broaden (`entity_op:
@@ -540,12 +567,21 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
     scope = "both" if "both" in values else next((v for v in values if v), None)
     if scope not in DOCUMENT_BY_SCOPE:
         scope = None
-    if scope is None and pending.kind == "outstanding_scope":
+    named_scope = False
+    if scope is None:
         # The same question, answered in words. The parser emits a named document on its
         # own `document` slot ("sales order outstanding" and a bare "sales orders" are
         # the same emission), so there is no second vocabulary to teach it.
+        #
+        # Read under the DETAIL offer too (owner ruling, hand pass 3 row 5, turn bb233665):
+        # "Sales order" typed after the DO list is a document nobody had asked about, and
+        # reading it only under the scope question left the detail offer to re-print its
+        # own "Reply 1 for the delivery order list" at a customer who had just said which
+        # paper they wanted. A NAMED document is a new scope whichever outstanding
+        # question is open.
         named = tuple(sorted(str(d).strip().upper() for d in (verdict.get("document") or [])))
         scope = SCOPE_BY_DOCUMENT.get(named)
+        named_scope = scope is not None
 
     if scope is None:
         # Not an answer to this question. Every other reading of the turn - the generic
@@ -560,16 +596,21 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
     if asked_for:
         # Contract 121: the answer goes back to the domain the question was asked for.
         focus.domains = [asked_for]
-    trace.rules_fired.append("answer_outstanding")
+    # A document the message NAMED is a new scope, not a pick off the offer: the REPORT
+    # re-runs for that document and the old question goes with it (row 5). A POSITION is
+    # the offer's own answer and keeps contract 39's rule, where the detail offer is the
+    # one kind that survives its own pick.
+    answers_the_offer = pending.kind == "outstanding_detail" and not named_scope
+    trace.rules_fired.append("answer_outstanding" if not named_scope else "outstanding_pending_dropped")
     trace.outstanding = {
         "kind": pending.kind,
         "scope": scope,
         # Contract 39: "1" asks for one of the report's LISTS, which is the same tool
         # call with a `detail` argument. The scope question asks which document the
         # report itself is about, and that is the `document` axis alone.
-        "detail": scope if pending.kind == "outstanding_detail" else None,
+        "detail": scope if answers_the_offer else None,
     }
-    carried = pending if pending.kind == "outstanding_detail" else None
+    carried = pending if answers_the_offer else None
     return focus, carried, None, True
 
 
@@ -596,17 +637,16 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         if accepted is not None:
             return accepted
 
-    answers = verdict.get("answers_open_question") or {}
     positions = _picked_positions(pending, verdict) or []
-    if answers.get("resolved") is True or positions:
+    if positions:
         matched = [o for o in pending.options if o.get("position") in positions]
         if not matched:
-            # The parser said this WAS an answer, but nothing it picked is on the list -
-            # a position off the end, or a label the roster does not carry. Same outcome
-            # as `resolved: false` below: the SAME question is re-printed, state
-            # untouched. Clearing the pending here (which is what fell out of the
-            # `if matched:` guard before) dropped the question silently and left the
-            # customer's next message with nothing to answer.
+            # The message picked a position, but nothing it picked is on the list - a
+            # number off the end of the roster. That IS an attempt at this question, so
+            # the SAME question is re-printed, state untouched. Clearing the pending
+            # instead (which is what fell out of the `if matched:` guard before) dropped
+            # the question silently and left the customer's next message with nothing to
+            # answer.
             trace.rules_fired.append("answer_pending_unresolved")
             return (
                 state.focus,
@@ -626,8 +666,30 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             # for `product_code = <uuid>` and honestly found nothing. A customer option
             # carries both - the account code nobody typed AND the name the roster
             # printed - so the header can say the name while the tool filters on the id.
-            code = option.get("code") or option.get("label")
+            option_payload = option.get("payload") if isinstance(option.get("payload"), dict) else {}
+            # An option that is not a ROW has no uuid to carry, and its own machine value
+            # is on its payload: a tier is "dealer", not a record anything can be fetched
+            # by. Reading the payload first is what makes the value land rather than the
+            # printed label ("end user" against "end_user").
+            code = option.get("code") or (option_payload.get("value") if not uuids else None)
+            code = code or option.get("label")
             name = option.get("name")
+            if not uuids:
+                # Hand pass 2 finding 9 / hand pass 3 row 1: a tier pick built NOTHING,
+                # because the entity was assembled inside the uuid loop and a tier option
+                # has no uuid - so `focus.tier` stayed empty, `narrow_by_tier` re-armed the
+                # very question just answered, and the promotion fetch that should have run
+                # for the carried product never ran at all (turns 9b5e241e / c7cb01fc).
+                built.append(
+                    {
+                        "raw": code,
+                        "hint": option.get("entity_type"),
+                        "canonical_code": code,
+                        "current_message": True,
+                        "confident": True,
+                        **({"name": name} if name else {}),
+                    }
+                )
             for u in uuids:
                 entity: dict[str, Any] = {
                     "raw": code,
@@ -699,37 +761,13 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         trace.rules_fired.append("answer_pending_own_entities")
         return focus, pending, None, False
 
-    if answers.get("resolved") is False:
-        if (
-            pending.kind in ESCALATION_OFFER_KINDS
-            and verdict.get("message_type") not in _CASUAL_TYPES
-            and _names_a_subject(verdict)
-        ):
-            # An escalation offer is answered with a yes, a no or a team number, and a turn
-            # that names a business subject is none of those - it is the question the
-            # customer would rather have answered ("delivery to hanlim" over "which team?").
-            # Re-printing the offer at them is how the owner's 8 Sep turns ended up asking
-            # which team, twice, about an order question. The offer stays open exactly as
-            # it does for a "no" carrying its own entities, two arms above; the message is
-            # planned as itself. A ROSTER keeps the re-print: "no, the SH one" over a
-            # product picker IS an attempt at that question. So does a turn the parser
-            # typed as chat or could not type at all - an echoed entity under `unknown` is
-            # not a competing question, it is the subject the conversation already had.
-            trace.rules_fired.append("answer_pending_own_entities")
-            return focus, pending, None, False
-        # The customer TRIED to answer and missed (a number off the list, a label that
-        # matches nothing offered): the SAME question is re-printed, state untouched.
-        trace.rules_fired.append("answer_pending_unresolved")
-        short_circuit = Plan(domains=[], fetch=[], ask=pending, denied=[], trace=trace)
-        return state.focus, pending, short_circuit, False
-
-    # `resolved` null (or absent): the parser judged this message to be about something
-    # else (cluster 4, owner ruling 16 Sep 2026 - the PARSER decides, no word lists). It
-    # is not an answer, so the question stays open exactly as it was and the message is
-    # planned as any other; the tail keeps the carried pending (`answer.question or
-    # state.pending`). Before this rule every such message fell through to the re-print
-    # above, which is what re-asked the customer on every aside the moment the question
-    # survived a dry run (finding 2a).
+    # NOTHING matched the open question: no position, no offered label, no broaden, no
+    # yes and no no. Owner ruling, hand pass 3 - the question stays open exactly as it
+    # was and the message is planned as itself, whatever it is; the tail keeps the
+    # carried pending (`answer.question or state.pending`). The old "the parser says it
+    # tried and missed" arm went with `answers_open_question`, and with it the re-print
+    # that re-asked the customer on every aside (finding 2a) and that argued with a turn
+    # naming its own business subject over an escalation offer (growth r1).
     trace.rules_fired.append("answer_pending_not_an_answer")
     return focus, pending, None, False
 
@@ -941,8 +979,6 @@ def _is_idle_chat(verdict: dict[str, Any], entities: list[dict[str, Any]]) -> bo
     if verdict.get("is_affirmative") is not None:
         return False
     if any((verdict.get("escalation") or {}).values()):
-        return False
-    if (verdict.get("answers_open_question") or {}).get("resolved") is True:
         return False
     return True
 
@@ -1294,9 +1330,10 @@ def apply(
     trace.lane = _lane(verdict, domains, policy)
 
     # A did-you-mean outranks both the narrower and the lane: an entity nobody could place
-    # is the first thing worth asking about (contract 26, 111).
-    answers = verdict.get("answers_open_question") or {}
-    if answers.get("resolved") is not True:
+    # is the first thing worth asking about (contract 26, 111) - unless this turn ANSWERED
+    # the open question, which is what `domain_locked` records. The answer is about what
+    # the question was about, so there is nothing new to fail to place.
+    if not domain_locked:
         dym = _did_you_mean(entities, policy, new_state, trace, candidates)
         if dym is not None:
             return new_state, Plan(
