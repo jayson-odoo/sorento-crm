@@ -15,11 +15,16 @@ from app.services.chatbot.turn.pending import to_wire
 from app.services.chatbot.turn.state import State, focus_to_wire
 
 
-def persist(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
-    db = getattr(ctx, "db", None)
-    respond_io_id = getattr(ctx, "contact_respond_id", None)
+def session_payload(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
+    """The five-key state this turn leaves behind - what `persist` writes.
 
-    payload = {
+    Split from the write so a DRY RUN can hand the same payload back as
+    `TurnResult.session_patch` without writing it (D14, hand-pass-1 finding 2a): the
+    console and the replay harness carry state from one test turn to the next through
+    that field, and an asking turn whose patch came back None lost its open question on
+    the very next turn.
+    """
+    return {
         "focus": focus_to_wire(state.focus),
         # `pending' = composer.question` exactly (AC-1532) - and when the composer asked
         # nothing, the roster that survived its OWN pick (contract 36) is still open, so
@@ -30,4 +35,10 @@ def persist(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
         "contains_flyer": bool(getattr(ctx, "contains_flyer", False)),
     }
 
-    return overwrite_for_contact(db, respond_io_id=respond_io_id, state=payload)
+
+def persist(state: State, answer: Any, ctx: Any) -> dict[str, Any]:
+    db = getattr(ctx, "db", None)
+    respond_io_id = getattr(ctx, "contact_respond_id", None)
+    return overwrite_for_contact(
+        db, respond_io_id=respond_io_id, state=session_payload(state, answer, ctx)
+    )

@@ -1825,18 +1825,20 @@ def _run_answer(
     stage[0] = "remembered"
     written = False
     with _session(session_factory) as db:
+        tail_ctx = turn_runtime.TurnContext(
+            db=db,
+            contact_respond_id=contact_respond_id,
+            access_levels=list(verdict.get("access_levels") or []),
+            contains_flyer=bool(verdict.get("contains_flyer")),
+            ideation=remembered_before.get("ideation"),
+        )
+        # ONE payload for both kinds of turn: a live turn writes it, a dry run hands it
+        # back as `session_patch` and writes nothing (D14). Same rule `run_tail` applies
+        # for the older lanes, so every asking lane carries its question to the next
+        # console or replay turn the same way (finding 2a).
+        session_payload = turn_tail.session_payload(state, answer, tail_ctx)
         if not dry_run:
-            turn_tail.persist(
-                state,
-                answer,
-                turn_runtime.TurnContext(
-                    db=db,
-                    contact_respond_id=contact_respond_id,
-                    access_levels=list(verdict.get("access_levels") or []),
-                    contains_flyer=bool(verdict.get("contains_flyer")),
-                    ideation=remembered_before.get("ideation"),
-                ),
-            )
+            turn_tail.persist(state, answer, tail_ctx)
             _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
             written = True
         _record_memory_trace(
@@ -1876,7 +1878,7 @@ def _run_answer(
         delegate=None,
         actions=lane_actions,
         reply=reply,
-        session_patch=None,
+        session_patch=session_payload if dry_run else None,
         status="done",
         stage="sent",
     )
