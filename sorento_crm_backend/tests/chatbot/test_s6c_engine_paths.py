@@ -308,19 +308,23 @@ class TestR1DemandQuantityAnswerEndToEnd:
 
         assert result.branch_kind == "stock_denied"
         assert result.delegate is None
-        # CONFIRMED ENGINE DEFECT (kept red, not worked around) - the SAME gap
-        # `test_s3_switch_and_complete_by_body.py::
-        # test_stock_denied_answers_something_instead_of_silence` pins independently,
-        # measured there with a scratch probe: `stock_denied` never reaches the fetch
-        # block at all (`branch_kind in ("business_query", "check_promotion")` gates it,
-        # deliberately excluding `stock_denied`), so nothing composes it a reply -
-        # `result.reply` is `None` today, not the demand-quantity verdict sentence this
-        # test was written to check. Left as the measured, current fact rather than
-        # re-deriving a sentence the engine cannot produce yet.
-        assert result.reply is None, (
-            "if this now fails, the stock_denied silence defect may be fixed - re-derive "
-            "the demand-quantity verdict-sentence assertion this test was originally for"
-        )
+        # FIXED (coder 11, `2453e64d0`): `stock_denied` no longer reaches the turn
+        # silently - `engine.py`'s own "the REFUSAL: a denied stock check is an answer,
+        # not silence" block composes contract 61's refusal sentence
+        # (`canned_lanes.stock_denied_text`, the SAME registered `access_denied`
+        # template every other feature-grant refusal renders, subject "stock") whenever
+        # nothing else answered the turn. This test's own original purpose - the
+        # demand-quantity VERDICT sentence (`answer.py`'s cannot-be-fulfilled rewrite of
+        # the fetched rows) - is a follow-up per the coordinator's own ruling (16 Sep
+        # 2026): `stock_denied` is gated ahead of the fetch entirely (contract 58/61),
+        # so the rows this test's `_wire` stubs are never read on this arm and there is
+        # no verdict to rewrite yet. Measured directly, not guessed.
+        assert result.reply == {
+            "text": "Sorry, you are not allowed to access stock",
+            "quick_replies": None,
+            "attachments_src": None,
+            "result_set": [],
+        }
 
     def test_with_the_switch_off_the_same_message_routes_business_query_unstamped_r1(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch

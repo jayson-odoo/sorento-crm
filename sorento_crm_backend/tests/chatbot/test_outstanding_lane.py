@@ -49,55 +49,44 @@ function name - same latitude `test_s6b_fetch_lane.py` took):
 
 Postgres only (`session_factory`, blank schema). Every row seeded here.
 
-NOT PORTED (AC-1592, 16 Sep 2026, tester triage this session, time-boxed out): all 59
-reds in this file, captain's own queue item 2. Diagnosed with two direct scratch probes
-against real `run_turn` calls (not guessed) before stopping - findings below, not a
-blanket "did not look":
+SESSION-SHAPE PORT DONE (AC-1592, queue item 2c, 16 Sep 2026): the findings below (2-4,
+diagnosed by tester 12/13) are FIXED - coder 11's `2453e64d0`/`57bb7abe8` land "no offer
+on a hit" (finding 2), "the lane's own question wins" (finding 3), and "scope question
+arms" (finding 4). `pending`/`selection_context`/`last_result_set`/`outstanding_filters`
+-> `open_question` (kind/options/payload.filters), `_session_of(session_factory)
+["variables"]` -> a reader of the current flat five-key shape, ported across every call
+site the session-shape rename alone unblocks (this session, tester 13). Two classes of
+finding along the way, both preserved as-measured, not silently forced green:
 
-1. **The session-shape rename is real but only PART of the gap.** `pending` ->
-   `open_question` (`turn/pending.py::to_wire`), `selection_context`/`last_result_set` /
-   `outstanding_filters` were this file's OWN pre-rearch names for what the current
-   `focus`/`open_question` fields now carry (captain's own mapping, this session's
-   brief) - `_session_of(session_factory)["variables"]` needs replacing with a reader of
-   the current flat shape throughout (26 call sites). This part IS mechanical.
-2. **CONFIRMED ENGINE DEFECT, measured, not worked around: the escalate offer renders
-   on a genuine HIT, not only a miss.** Probe: a real sales-order HIT (`REPORT_HIT`,
-   real figures: "Sales orders: 1, Ordered: 10, ...") still composes "Would you like me
-   to escalate?" at the end of the reply - `TestHitArmsOutstandingDetailAndNoEscalateOffer
-   ::test_hit_arms_detail_offer_and_no_escalate_text`'s own assertion ("a hit must never
-   also offer to escalate") is a real, currently-violated contract line, not a stale
-   test.
-3. **CONFIRMED ENGINE DEFECT, measured: the outstanding-report's own "outstanding_detail"
-   pending (the "Reply 1 for the sales order list" offer, present in the rendered TEXT)
-   never reaches `open_question` at all.** The SAME probe's persisted session shows
-   `open_question.kind == "team_pick"` (the compose.py escalate offer, contract 106) as
-   the ONLY open question - a session holds one at a time, and the escalate offer is
-   what survived. A customer who replies "1" expecting the sales-order list this turn's
-   own text just showed them would resolve against the wrong roster (the escalate team
-   picker, not the order-detail picker) - `TestDetailPickRerunsToolWithDetail`'s whole
-   class is built on the assumption this pending survives, which it measurably does not.
-4. **CONFIRMED GAP, measured: the scope-clarifying question ("Sales orders, delivery
-   orders, or both?") never arms on this call path.** Probe (via the full test run, not
-   scratch): `TestBareOutstandingWithKeyArmsScopeQuestion::test_bare_outstanding_with_
-   key_arms_scope_question` - a bare "outstanding" with no so/do/both named calls
-   `crm_outstanding_report` immediately with `scope: "both"`, never asking first.
-   `outstanding_scope` IS a declared `PENDING_KINDS` member with a registered ask header
-   in `turn/compose.py::_ASK_HEADERS` ("Sales orders, delivery orders, or both?") - the
-   COMPOSE-side wiring exists - and `lanes/business/__init__.py:319` DOES construct a
-   `{"kind": "outstanding_scope", ...}` pending somewhere in that (older) module.
-   Whether the CURRENT `turn/apply.py` reconciliation/planning path ever reaches that
-   construction site, or whether it is dead code from before the rearch (the same class
-   of gap `dym_offer`/tier-pick showed in `test_r3_pending_end_to_end.py`, this session)
-   was not traced further - genuine architecture tracing, not a mechanical fix.
+* **`_seed_open_outstanding_detail`/`_seed_open_outstanding_scope`'s hand-written
+  `variables` dict is invisible to the current engine** - `session_state.five_keys()`'s
+  legacy-nest fallback only re-checks the FIVE_KEY names inside `variables`, never
+  these files' own older field names (`selection_context`, `pending`, ...), so a test
+  seeded this way starts every turn with NO prior state at all (measured: `open_question`
+  reads back `{}`). Where a test's own assertion only needed the "before" state to be
+  ABSENT/CLOSED, this is harmless (the port is still correct, just less of a guard than
+  it reads). Where a test's own claim was "X must SURVIVE a later turn", the seed cannot
+  establish X in the first place - two such tests
+  (`TestDetailOfferIsSticky::test_detail_offer_survives_a_casual_turn`/
+  `test_detail_offer_survives_an_out_of_range_pick`) were re-armed with a REAL turn 1
+  instead (the same pattern `TestDetailPickRerunsToolWithDetail::test_a_real_hit_arms_
+  the_pending_and_the_next_1_reruns_with_detail_so` already used) - see each test's own
+  docstring.
+* **Three of the sixteen now reveal a DIFFERENT, still-open gap once armed honestly**:
+  the outstanding lane's own open question does not yet win over a generic business-
+  query/casual read on every call path - a real "1"/"thanks"/"3" turn over a genuinely
+  armed `outstanding_detail` offer still reaches `crm_order_management_orders_list`
+  instead of resolving against the offer. This is the SAME remaining wiring the file's
+  original 43-red group already named (contracts 38/39, coder 12's queue per the
+  coordinator's own routing, 16 Sep 2026) - these three simply reach it via the
+  session-shape port rather than staying masked behind a `KeyError`. Kept red, not
+  worked around; each test's own docstring names the finding.
 
-Given findings 2-4 are real engine defects/gaps (not test staleness) spanning most of
-this file's 59 reds, and the remaining ~26 are a real but LARGE mechanical session-shape
-port entangled with them (many assertions read `pending`/`outstanding_detail` state
-findings 2-3 show is currently broken, so porting the KEY NAME alone would not turn them
-green), this file needs a coder pass before further tester work here is productive -
-same standing precedent this lane has already used for this exact file
-(tester 9's original flag, reaffirmed by every tester session since). Flagged for a
-coder/captain scope call, not silently left red with no diagnosis.
+The REMAINING ~43 reds (answering the open scope/detail question end to end - the actual
+tool re-run with the carried filters, the header/reply text, the picker interplay) are
+still the file's original, larger finding: waiting on coder 12's contract 38/39 wiring,
+per the coordinator's own routing (16 Sep 2026). Tester 9's original flag on this file
+stands for that remaining group; the session-shape rename half is no longer part of it.
 """
 from __future__ import annotations
 
@@ -1130,12 +1119,19 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
         assert "2. Delivery orders (not yet delivered)" in reply, reply
         assert "3. Both" in reply, reply
 
-        stored = _session_of(session_factory)["variables"]
-        assert stored.get("selection_context") == "outstanding_scope", stored.get("selection_context")
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", stored.get("pending")
-        assert len(stored.get("last_result_set") or []) == 3, stored.get("last_result_set")
-        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
-            stored.get("outstanding_filters")
+        # AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
+        # `selection_context`/`pending`/`last_result_set`/`outstanding_filters` were
+        # this file's own pre-rearch names for what `open_question` now carries whole -
+        # `open_question.kind` is both the old `selection_context` and `pending.kind`
+        # (the same string), `open_question.options` is `last_result_set`, and
+        # `open_question.payload.filters` is `outstanding_filters` (measured directly
+        # via a scratch probe, not guessed).
+        stored = _session_of(session_factory)
+        open_question = stored.get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_scope", open_question.get("kind")
+        assert len(open_question.get("options") or []) == 3, open_question.get("options")
+        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == PRODUCT_CODE, (
+            open_question.get("payload")
         )
 
     def test_a_new_bare_outstanding_ask_after_a_hit_asks_the_scope_question(
@@ -1159,7 +1155,7 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
             mcp_response=REPORT_HIT,
         )
         assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
-        assert (_session_of(session_factory)["variables"].get("pending") or {}).get(
+        assert (_session_of(session_factory).get("open_question") or {}).get(
             "kind"
         ) == "outstanding_detail"
 
@@ -1178,8 +1174,10 @@ class TestBareOutstandingWithKeyArmsScopeQuestion:
         )
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" in reply, reply
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", stored.get("pending")
+        stored = _session_of(session_factory)
+        assert (stored.get("open_question") or {}).get("kind") == "outstanding_scope", stored.get(
+            "open_question"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1533,10 +1531,9 @@ class TestHitArmsOutstandingDetailAndNoEscalateOffer:
         assert "would you like me to escalate" not in reply.lower(), (
             f"a hit must never also offer to escalate: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", stored.get("pending")
-        assert stored.get("selection_context") == "outstanding_detail", stored.get("selection_context")
-        labels = {row.get("label") for row in (stored.get("last_result_set") or [])}
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", open_question.get("kind")
+        labels = {row.get("label") for row in (open_question.get("options") or [])}
         assert "Sales order list" in labels, (
             f"only the SO scope was requested/present, so only its option is offered: {labels}"
         )
@@ -1617,9 +1614,9 @@ class TestTotalMissEscalates:
         assert "escalate" in reply.lower(), (
             f"a total miss must reach the existing escalate offer: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"a miss offers no detail list: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "outstanding_detail", (
+            f"a miss offers no detail list: {open_question!r}"
         )
 
     def test_total_miss_keeps_the_report_block_lines_then_offers_escalation(
@@ -1738,7 +1735,15 @@ class TestDetailPickRerunsToolWithDetail:
         """AC-1135 + AC-1138 end to end, two turns, no hand-seeded pending (the gap the
         console check found): turn 1 is a genuine report hit, turn 2 is "1". The
         previously-passing pair seeded `pending.kind = outstanding_detail` directly, so
-        a hit that never armed it still looked green."""
+        a hit that never armed it still looked green.
+
+        Queue item 2c (session-shape rename, 16 Sep 2026): turn 1's own assertions
+        (`open_question.kind`/`payload.filters`) are the mechanical port and pass.
+        Turn 2 ("1") is CONFIRMED, currently red for a real reason, not fixed here:
+        `crm_order_management_orders_list` runs instead of a `crm_outstanding_report`
+        re-run with `detail="so"` - the outstanding lane's own open question does not
+        yet win over the generic business-query read on THIS call path (waiting on
+        coder 12's contract 38/39 wiring, per the coordinator's own routing)."""
         _seed_contact(session_factory, variables={})
         _result1, captured1 = _run_turn(
             session_factory,
@@ -1751,12 +1756,12 @@ class TestDetailPickRerunsToolWithDetail:
             mcp_response=REPORT_HIT,
         )
         assert captured1 and captured1[0][0] == "crm_outstanding_report", captured1
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            f"a real hit must arm the detail pending the next turn reads: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", (
+            f"a real hit must arm the detail pending the next turn reads: {open_question!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
-            f"the hit must carry its own filters forward: {stored.get('outstanding_filters')!r}"
+        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == PRODUCT_CODE, (
+            f"the hit must carry its own filters forward: {open_question.get('payload')!r}"
         )
 
         _result2, captured2 = _run_turn(
@@ -1869,9 +1874,9 @@ class TestDetailPickRerunsToolWithDetail:
             attributes=["sales_orders.outstanding"],
             matches={"SRTWC999": {"uuid": other_uuid, "entity_type": "product", "canonical_code": "SRTWC999"}},
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"a new product code must drop the outstanding_detail pending, not answer it: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "outstanding_detail", (
+            f"a new product code must drop the outstanding_detail pending, not answer it: {open_question!r}"
         )
 
 
@@ -1941,8 +1946,39 @@ class TestDetailOfferIsSticky:
 
     def test_detail_offer_survives_a_casual_turn(self, session_factory, monkeypatch) -> None:
         """"thanks" between the report and "2" must not close the offer - a casual
-        reply names no product and no domain, so it is neither a pick nor a new ask."""
-        _seed_open_outstanding_detail(session_factory)
+        reply names no product and no domain, so it is neither a pick nor a new ask.
+
+        AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
+        `_seed_open_outstanding_detail`'s hand-written `variables` dict predates the
+        rearch's flat five-key shape and its OWN field names (`selection_context`,
+        `last_result_set`, `outstanding_filters`, `pending`) are not among the five
+        `session_state.five_keys()` looks for even in its legacy-nest fallback (which
+        only re-checks the FIVE_KEY names, never these older ones) - the seed is
+        invisible to the current engine (measured: `open_question` reads back `{}`
+        after it). Armed with a REAL turn 1 instead, the same pattern
+        `TestDetailPickRerunsToolWithDetail::test_a_real_hit_arms_the_pending_and_the_
+        next_1_reruns_with_detail_so` already ports this file onto.
+
+        CONFIRMED, currently red for a real reason once armed honestly (not fixed
+        here - the coordinator's queue routes the outstanding lane's remaining
+        answering-the-question wiring to coder 12): a bare "thanks" over the OPEN
+        detail offer still calls `crm_order_management_orders_list` instead of doing
+        nothing, so `open_question` never even survives to the second assertion -
+        the SAME "lane's own question" gap the file's own module docstring already
+        names for the 43 tests still waiting, this one just reached it via the
+        casual arm rather than the business-query arm."""
+        _seed_contact(session_factory, variables={})
+        _result0, captured0 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding_both"),
+            text_body="SRTWT7445 outstanding both",
+            msg_id="ZZT-sticky-casual-0",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured0 and captured0[0][0] == "crm_outstanding_report", captured0
         _result1, captured1 = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
@@ -1953,12 +1989,12 @@ class TestDetailOfferIsSticky:
             attributes=["sales_orders.outstanding"],
         )
         assert not captured1, "a bare 'thanks' must not itself trigger a report re-run"
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            f"the offer must survive a casual turn in between: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", (
+            f"the offer must survive a casual turn in between: {open_question!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("product_code") == PRODUCT_CODE, (
-            f"the filters must survive too: {stored.get('outstanding_filters')!r}"
+        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == PRODUCT_CODE, (
+            f"the filters must survive too: {open_question.get('payload')!r}"
         )
 
         result2, captured2 = _run_turn(
@@ -2104,8 +2140,29 @@ class TestDetailOfferIsSticky:
     def test_detail_offer_survives_an_out_of_range_pick(self, session_factory, monkeypatch) -> None:
         """Only options 1 and 2 are offered; "3" is out of range and must not close
         the offer - a subsequent "1" must still resolve, the same re-ask rule
-        AC-1132 already gives the scope question."""
-        _seed_open_outstanding_detail(session_factory)
+        AC-1132 already gives the scope question.
+
+        AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026): armed
+        with a REAL turn 1 rather than `_seed_open_outstanding_detail`'s hand-written
+        `variables` dict, which is invisible to the current engine (same finding as
+        `test_detail_offer_survives_a_casual_turn`, this class's own sibling port).
+
+        CONFIRMED, currently red for a real reason once armed honestly (not fixed
+        here, same gap as the sibling port names - waiting on coder 12): the
+        out-of-range "3" still reaches `crm_order_management_orders_list` instead of
+        being read as unresolved against the open offer."""
+        _seed_contact(session_factory, variables={})
+        _result0, captured0 = _run_turn(
+            session_factory,
+            monkeypatch,
+            qf=_qf(order_status="outstanding_both"),
+            text_body="SRTWT7445 outstanding both",
+            msg_id="ZZT-sticky-oor-0",
+            attributes=["sales_orders.outstanding"],
+            matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
+            mcp_response=REPORT_HIT,
+        )
+        assert captured0 and captured0[0][0] == "crm_outstanding_report", captured0
         _result1, captured1 = _run_turn(
             session_factory, monkeypatch,
             qf=_parser_output(
@@ -2116,9 +2173,9 @@ class TestDetailOfferIsSticky:
             attributes=["sales_orders.outstanding"],
         )
         assert not captured1, "an out-of-range pick must not run any report"
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            f"an out-of-range pick must not close the offer: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", (
+            f"an out-of-range pick must not close the offer: {open_question!r}"
         )
 
         result2, captured2 = _run_turn(
@@ -2393,10 +2450,17 @@ class TestOutstandingFiltersDoNotOutliveTheAnsweringTurn:
                 "intro": "Here are the results.",
             },
         )
-        stored = _session_of(session_factory)["variables"]
-        assert "outstanding_filters" not in stored, (
-            f"outstanding_filters must not survive past the one turn that answers "
-            f"an open scope/detail ask: {stored}"
+        # AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
+        # `outstanding_filters` is `open_question.payload.filters` now, one-turn-life
+        # with the rest of `open_question` (`turn/pending.py` has no separate carry
+        # for it) - an unrelated later turn that arms no scope/detail question of its
+        # own leaves NO `open_question` at all, the flat equivalent of the old "key
+        # absent" assertion.
+        open_question = _session_of(session_factory).get("open_question")
+        assert not open_question, (
+            f"outstanding_filters (now open_question.payload.filters) must not "
+            f"survive past the one turn that answers an open scope/detail ask: "
+            f"{open_question}"
         )
 
 
@@ -2701,14 +2765,16 @@ class TestCustomerOnlyOutstandingAskReachesTheReport:
         )
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" in reply, reply
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_scope", (
             f"a customer-only outstanding ask must arm the scope question exactly like "
-            f"a product ask does: {stored.get('pending')!r}"
+            f"a product ask does: {open_question!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("customer_ids") == [CUSTOMER_ONLY_UUID], (
+        assert open_question.get("payload", {}).get("filters", {}).get("customer_ids") == [
+            CUSTOMER_ONLY_UUID
+        ], (
             f"the resolved customer must be stored in the carried filter set even with "
-            f"no product: {stored.get('outstanding_filters')}"
+            f"no product: {open_question.get('payload')}"
         )
 
     def test_explicit_scope_word_customer_only_picks_the_report_with_customer_ids(
@@ -3181,12 +3247,12 @@ class TestDateNarrowingUnderAnOpenOffer:
             matches={other_code: {"uuid": other_uuid, "entity_type": "product", "canonical_code": other_code}},
             mcp_response=other_hit,
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail" or (
-            stored.get("outstanding_filters") or {}
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "outstanding_detail" or (
+            open_question.get("payload", {}).get("filters") or {}
         ).get("product_code") != PRODUCT_CODE, (
             f"a different product replaces the offer, it does not extend it: "
-            f"{stored.get('pending')!r} {stored.get('outstanding_filters')!r}"
+            f"{open_question!r}"
         )
         if captured:
             _name, args = captured[0]
@@ -3414,17 +3480,17 @@ class TestOwnerRoundFivePickerAndOfferScope:
             attributes=["sales_orders.outstanding"],
             mcp_response=REPORT_HIT,
         )
-        stored_after_refine = _session_of(session_factory)["variables"]
-        leaked = [
-            e
-            for e in (stored_after_refine.get("entities") or [])
-            if str((e or {}).get("hint") or "").lower() == "warehouse" and not (e or {}).get("uuid")
-        ]
-        assert leaked == [], (
-            f"a refinement's location entity must not outlive the offer in the "
-            f"persisted session `entities` - this is the leak the round-5 trace "
-            f"found: {leaked!r}"
-        )
+        # AC-1592 test triage (queue item 2c, session-shape rename, 16 Sep 2026):
+        # RETIRED, not ported - the OLD top-level `entities` key is gone (never one of
+        # the five), and its check does not translate to `focus.warehouse`: the new
+        # `Focus` model is DESIGNED to carry a warehouse entity forward across turns
+        # (that is what narrowing IS now), so a raw, uuid-less "BRW" sitting in
+        # `focus.warehouse` after this turn is normal, not the round-5 leak (measured:
+        # it is there). The customer-facing half of the SAME concern - a later,
+        # unrelated ask must never have the carried warehouse token misread as a
+        # CUSTOMER search - is what the second turn below actually proves
+        # (`customer_ids == [hanlim_uuid]`, no stray customer search for "BRW"), and
+        # it is unaffected by this retirement.
 
         # A brand-new ask, its own subject, no scope/location word about the earlier
         # refinement at all.
@@ -3455,8 +3521,8 @@ class TestOwnerRoundFivePickerAndOfferScope:
         )
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" in reply, reply
-        stored = _session_of(session_factory)["variables"]
-        filters_out = stored.get("outstanding_filters") or {}
+        open_question = _session_of(session_factory).get("open_question") or {}
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("warehouse_codes") == [], (
             f"a new ask's filter set must not inherit the earlier refinement's "
             f"location: {filters_out}"
@@ -4406,12 +4472,13 @@ class TestOpenOfferCanBeLeft:
         assert "Delivery order list" not in reply, reply
         assert "Reply 1 for" not in reply, reply
         assert reply.strip() != "", "a decline must still get SOME acknowledgement"
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"the offer must be closed, not left open: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question")
+        assert (open_question or {}).get("kind") != "outstanding_detail", (
+            f"the offer must be closed, not left open: {open_question!r}"
         )
-        assert "outstanding_filters" not in stored, (
-            f"the carried filter set dies with the closed offer: {stored.get('outstanding_filters')!r}"
+        assert not open_question, (
+            f"the carried filter set (open_question.payload.filters) dies with the "
+            f"closed offer: {open_question!r}"
         )
 
     def test_stop_under_the_scope_question_closes_it(self, session_factory, monkeypatch) -> None:
@@ -4436,12 +4503,13 @@ class TestOpenOfferCanBeLeft:
         reply = (result.reply or {}).get("text") or ""
         assert "Outstanding for which document?" not in reply, reply
         assert reply.strip() != "", "a decline must still get SOME acknowledgement"
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_scope", (
-            f"the question must be closed, not left open: {stored.get('pending')!r}"
+        open_question = _session_of(session_factory).get("open_question")
+        assert (open_question or {}).get("kind") != "outstanding_scope", (
+            f"the question must be closed, not left open: {open_question!r}"
         )
-        assert "outstanding_filters" not in stored, (
-            f"the carried filter set dies with the closed question: {stored.get('outstanding_filters')!r}"
+        assert not open_question, (
+            f"the carried filter set (open_question.payload.filters) dies with the "
+            f"closed question: {open_question!r}"
         )
 
     def test_a_second_unreadable_turn_closes_the_offer(self, session_factory, monkeypatch) -> None:
@@ -4685,13 +4753,21 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
         reply = (result.reply or {}).get("text") or ""
         assert "Sales order outstanding" not in reply, reply
         assert "Reply 1 for" not in reply, reply
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "outstanding_detail", (
             f"the old offer must be dropped, not answered by an unrelated turn: "
-            f"{stored.get('pending')!r}"
+            f"{open_question!r}"
         )
-        assert "outstanding_filters" not in stored, (
-            f"the old offer's filter set dies with it: {stored.get('outstanding_filters')!r}"
+        # AC-1592 test triage (queue item 2c, 16 Sep 2026): the old blanket "no
+        # outstanding_filters key at all" check over-translates to "no open_question
+        # of ANY kind" - a NEW ask is free to arm its own (measured: this one arms an
+        # unrelated `team_pick` escalate offer, nothing to do with the dropped
+        # outstanding product). The narrower, still-faithful claim is that if a
+        # filter set of the OLD shape survived at all, it does not carry the old
+        # offer's product.
+        assert open_question.get("payload", {}).get("filters", {}).get("product_code") != PRODUCT_CODE, (
+            f"the old offer's product must not survive in a new ask's own filters: "
+            f"{open_question!r}"
         )
 
     def test_a_business_query_under_the_scope_question_is_a_new_ask(
@@ -4732,10 +4808,12 @@ class TestABusinessQueryUnderAnOpenOfferIsANewAsk:
         assert "Outstanding for which document?" not in reply, (
             f"the old scope question must be dropped, not re-asked: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_scope", (
-            stored.get("pending")
-        )
-        assert "outstanding_filters" not in stored, (
-            f"the old question's filter set dies with it: {stored.get('outstanding_filters')!r}"
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "outstanding_scope", open_question
+        # AC-1592 test triage (queue item 2c, 16 Sep 2026): same narrowing as the
+        # sibling test above - a new ask is free to arm its own open_question, the
+        # faithful claim is only that the OLD offer's product does not survive in it.
+        assert open_question.get("payload", {}).get("filters", {}).get("product_code") != PRODUCT_CODE, (
+            f"the old question's product must not survive in a new ask's own "
+            f"filters: {open_question!r}"
         )

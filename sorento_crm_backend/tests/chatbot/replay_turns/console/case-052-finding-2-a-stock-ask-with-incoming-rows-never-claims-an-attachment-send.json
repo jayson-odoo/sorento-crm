@@ -106,6 +106,12 @@
           }
         ]
       },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "variables": {}
+        }
+      },
       "resolutions": {
         "resolutions": [
           {

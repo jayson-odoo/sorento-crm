@@ -160,6 +160,156 @@
           }
         ]
       },
+      "received_session_vars": {
+        "respond_io_id": "440987225",
+        "session_vars": {
+          "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 125\n*Outstanding:* 1\n\n2. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 132\n*Outstanding:* 132\n\n3. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n4. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n5. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTWT908SS-BL-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 251\n*Outstanding:* 0\n\n7. *Product Code:* SRTWT908SS-BL-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n8. *Product Code:* SRTWT908SS-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n9. *Product Code:* SRTWT908SS-GM-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 32\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "date_filter_end": null,
+            "date_filter_start": null,
+            "date_mode": null,
+            "domain_hint": "inventory",
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [
+              {
+                "canonical_code": "SRTWT908SS",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWT908SS"
+              }
+            ],
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "ideation": null,
+            "intent_hint": "check_stock",
+            "last_result_set": [
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 1,
+                "label": "SRTWT908SS",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 2,
+                "label": "SRTWT908SS",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 3,
+                "label": "SRTWT908SS",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 4,
+                "label": "SRTWT908SS",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 5,
+                "label": "SRTWT908SS",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 6,
+                "label": "SRTWT908SS-BL-DIY",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 7,
+                "label": "SRTWT908SS-BL-DIY",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 8,
+                "label": "SRTWT908SS-GM",
+                "product": null,
+                "uuid": null
+              },
+              {
+                "attachment_type": null,
+                "entity_type": null,
+                "filename": null,
+                "idx": 9,
+                "label": "SRTWT908SS-GM-DIY",
+                "product": null,
+                "uuid": null
+              }
+            ],
+            "match_mode": "and",
+            "message_type": "business_query",
+            "pending": null,
+            "query_brands": [],
+            "requested_attributes": [],
+            "response": "Previous turn (inventory): returned 9 records",
+            "routing": {
+              "suggested_agent": "general_enquiries",
+              "suggested_team": "warehouse"
+            },
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWT908SS-BL",
+                  "SRTWT908SS-GM-DIY",
+                  "SRTWT908SS-BL-DIY",
+                  "SRTWT908SS",
+                  "SRTWT908SS-GM"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "labels": [
+                  "SRTWT908SS-BL",
+                  "SRTWT908SS-GM-DIY",
+                  "SRTWT908SS-BL-DIY",
+                  "SRTWT908SS",
+                  "SRTWT908SS-GM"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_roster_plan": null,
+            "selection_context": null,
+            "user_goal": "trying to check stock for SRTWT908SS"
+          }
+        }
+      },
       "resolutions": {
         "resolutions": [
           {

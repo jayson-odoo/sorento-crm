@@ -475,3 +475,43 @@ collapse both clusters together, not just the entity_ids-only one.
 **Not fixed this session** - captain's own priority order puts T4 after B2/B3/B4/S9/S4/
 S1/S10/S2; flagging the wider-than-scoped blast radius rather than jumping the queue
 without a word.
+
+## case-058 steps 5-6, pending options (S6 ruling, 16 Sep 2026)
+
+- console/case-058-d17-parser-driven-word-answers-to-the-open-scope-detail-questions-and-a-new-ask.json: step 5: pending: the outstanding lane's own scope question (`['Sales orders', 'Delivery orders', 'Both']`) now wins over the recorded escalate `team_pick` options (`['orders']`) - the lane's own question is not abandoned in favour of an escalate offer (signed JT 2026-09-16, S6 ruling: the lane's own question wins over the escalate offer)
+- console/case-058-d17-parser-driven-word-answers-to-the-open-scope-detail-questions-and-a-new-ask.json: step 6: pending: same S6 ruling as step 5 - the scope question, re-asked, still wins over the recorded escalate options (signed JT 2026-09-16, S6 ruling: the lane's own question wins over the escalate offer)
+
+## T4 backfilled, residue re-triaged (queue item 4, tester 13, 16 Sep 2026)
+
+`received_session_vars` backfilled via read-only plain SQL against the two source DBs
+(`sorento_ai_automation_focus_full` for `console/*`, `sorento_ai_automation_rearch` for
+`prod_sample/*` and `contract/*`) for all 24 files the "T4 diagnosed" section above
+names - the SAME `_stage(trace, "received").raw.session_vars` read + `_scrub_nested_pii`
+`scripts/chatbot_record_turn.py` uses for a fresh recording, run against each file's own
+`source.turn_id`. All 24 files updated (purely additive JSON diffs, no reformatting);
+none already had a value. `test_turn_replay.py -k <name>` confirms the harness now
+seeds real prior state before step 1 for every one of them (measured: `case-002`'s
+`focus.products` now carries the two container-adjacent codes the customer's real prior
+turn resolved, `case-018`'s prior domain/brand focus is present, etc.).
+
+**Measured effect: the fix changes what each case's replay produces, but does not turn
+any of the 24 green.** Full `test_turn_replay.py`: 127 failed / 74 passed (unchanged in
+total count from before the backfill - these 24 were already red and stay red, just for
+a DIFFERENT reason now). `case-002` re-diagnosed as the representative: BEFORE, the
+recorded call carried 2 `product_ids` this turn's own `resolutions` could not explain
+(the T4 symptom); AFTER, the replay now calls TWO tools (`crm_incoming_stock_list` +
+`crm_inventory_stock_balance_list`, expected only the first) and resolves only 1 of the
+2 carried products, not the recorded 2. Root cause, measured: the carried focus entity
+the backfill now seeds has `canonical_code: null` (an unresolved raw entity from the
+source turn - the customer's prior message named a code the ORIGINAL production
+resolver never confirmed either, or confirmed via a path this capture does not carry).
+When the CURRENT engine tries to re-resolve it this turn, the harness's stub
+`ResolveGateServices.resolve_entity` only knows about THIS turn's own recorded
+`resolutions` (the token the customer typed just now), not a carried entity's own -
+`test_turn_replay.py::_seed_case_customers`'s sibling for a carried PRODUCT token does
+not exist. A carried, already-resolved focus entity (`canonical_code` present) is fine;
+an unresolved one is where this breaks. NOT a T4 mechanism defect - the mechanism
+(seeding real prior session state) is confirmed working; this is a SECOND, narrower gap
+in the harness's resolver stub for turns whose prior focus carries an entity the source
+conversation itself never fully resolved either. Not fixed this session - flagged for
+whoever picks this up next, same as the original T4 finding was.

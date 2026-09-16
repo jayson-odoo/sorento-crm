@@ -164,6 +164,110 @@
           }
         ]
       },
+      "received_session_vars": {
+        "respond_io_id": "477071889",
+        "session_vars": {
+          "user_response": "I have attached the file(s) below.\n\n1. *Product Code:* SRTKS7646-NEW\n*Container:* CMAU9233271\n*ETA:* 2026-08-16\n*Incoming Quantity:* 20\n*Warehouse Allocations:* BRW (20)",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "date_filter_end": null,
+            "date_filter_start": null,
+            "date_mode": null,
+            "domain_hint": "incoming",
+            "dym_candidates": [],
+            "dym_offer": null,
+            "entities": [
+              {
+                "canonical_code": "SRTKS7646-NEW",
+                "current_message": true,
+                "hint": "product",
+                "ordinal": 1,
+                "raw": "SRTKS7646-NEW",
+                "uuid": "4e2867e7-2016-4fd6-9f98-51d21afd34b1"
+              }
+            ],
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "ideation": null,
+            "intent_hint": "check_incoming",
+            "last_result_set": [
+              {
+                "attachment_type": null,
+                "entity_type": "product",
+                "filename": null,
+                "idx": 1,
+                "label": "SRTKS7646-NEW",
+                "product": "SRTKS7646-NEW",
+                "uuid": "4e2867e7-2016-4fd6-9f98-51d21afd34b1"
+              },
+              {
+                "attachment_type": null,
+                "entity_type": "product",
+                "filename": null,
+                "idx": 2,
+                "label": "SRTKS7646",
+                "product": "SRTKS7646",
+                "uuid": "70b9eed6-d4e9-4c44-9ae8-a65c342cef75"
+              }
+            ],
+            "match_mode": "and",
+            "message_type": "business_query",
+            "pending": null,
+            "picker_domain": "incoming",
+            "picker_last_result_set": [
+              {
+                "attachment_type": null,
+                "entity_type": "product",
+                "filename": null,
+                "idx": 1,
+                "label": "SRTKS7646-NEW",
+                "product": "SRTKS7646-NEW",
+                "uuid": "4e2867e7-2016-4fd6-9f98-51d21afd34b1"
+              },
+              {
+                "attachment_type": null,
+                "entity_type": "product",
+                "filename": null,
+                "idx": 2,
+                "label": "SRTKS7646",
+                "product": "SRTKS7646",
+                "uuid": "70b9eed6-d4e9-4c44-9ae8-a65c342cef75"
+              }
+            ],
+            "picker_selection_context": "disambiguation",
+            "query_brands": [],
+            "requested_attributes": [
+              "estimated_arrival_date"
+            ],
+            "response": "Previous turn (incoming): returned 1 records",
+            "routing": {
+              "suggested_agent": "incoming_stock_enquiries",
+              "suggested_team": "purchasing"
+            },
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTKS7646-NEW"
+                ],
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "labels": [
+                  "SRTKS7646-NEW"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_roster_plan": null,
+            "selection_context": "disambiguation",
+            "user_goal": "trying to select the first option from the pending offer"
+          }
+        }
+      },
       "resolutions": {
         "resolutions": [
           {

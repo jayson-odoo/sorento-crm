@@ -104,6 +104,56 @@
           }
         ]
       },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": {
+                "set_at": null,
+                "set_at_turn": 0,
+                "source": "reuse",
+                "value": [
+                  "sorento"
+                ]
+              },
+              "domains": {
+                "set_at": null,
+                "set_at_turn": 0,
+                "source": "reuse",
+                "value": [
+                  "incoming"
+                ]
+              },
+              "products": {
+                "set_at": null,
+                "set_at_turn": 0,
+                "source": "reuse",
+                "value": [
+                  {
+                    "canonical_code": null,
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "product",
+                    "raw": "SRTWC8349-RL"
+                  },
+                  {
+                    "canonical_code": null,
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "product",
+                    "raw": "SRT86-MBT"
+                  }
+                ]
+              }
+            },
+            "ideation": null,
+            "open_question": null
+          }
+        }
+      },
       "resolutions": {
         "resolutions": [
           {
