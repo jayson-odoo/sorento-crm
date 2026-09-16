@@ -1,6 +1,6 @@
 # PLAN: order inquiries worklist, Excel parity batch (16 Sep 2026)
 
-Status: BUILDING. Owner go 16 Sep 2026 08:15 MYT. Lane `feat/oi-worklist-excel-parity`, stack :3086/:8086 on the shared 0907 dev DB (no migration in this lane), pytest DB `sorento_oiwp_ci`. Phase 1 mock committed (`a1c51ca68`, `e8bab3916`); Phase 2 red tests in progress.
+Status: PR OPEN, awaiting owner go. Lane `feat/oi-worklist-excel-parity` (no migration), stack :3086/:8086 on the shared 0907 dev DB, pytest DB `sorento_oiwp_ci`. Phases 1 to 3 done; reviewer re-pass "ready"; guide committed. After merge: Outline push, drop `sorento_oiwp_ci`, worktree-gc, archive.
 
 The purchasing team keeps its order book in `JAN - DEC ORDER 2027.xlsx` (12 sheets, one per
 delivery month, columns SO DATE / S/O NO / ITEM CODE / QTY / TOTAL QTY / DELIVERY DATE /
