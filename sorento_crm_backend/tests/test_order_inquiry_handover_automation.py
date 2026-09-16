@@ -43,6 +43,7 @@ from alembic.operations import Operations
 
 from app.models.base import company_scope
 from app.models.project_so import (
+    INQUIRY_CANCELLED,
     IV_ALREADY_INBOUND,
     IV_CHANGE_SO,
     IV_ORDER,
@@ -72,6 +73,9 @@ from .test_order_inquiry_handshake import (
     _project_line,
     _project_so,
     _raise_one_row,
+    _raise_two_rows,
+    _uid,
+    _warehouse,
     api,
     world,
 )
@@ -487,27 +491,35 @@ def test_change_so_row_carries_source_in_was(api, monkeypatch):
 
 
 def test_subject_scope_single_and_mixed_location(api, monkeypatch):
+    """AC-H7.
+
+    `ProjectSupplyService._restamp_stock_location` overwrites `line.stock_location` with
+    the CONFIRMED core line's own warehouse code (`fact.own_code`, read off
+    `core.warehouse_id` in `_facts_for`) on every confirm - so hand-setting
+    `ProjectSalesOrderLine.stock_location` directly never survives (coder finding, 16
+    Sep). The location has to be driven the way the system actually derives it: give
+    each CORE line its own warehouse and let the confirm's own restamp read it back.
+    """
     client, world = api
     _register(world)
     calls = _captured_dispatches(monkeypatch)
     db = world.db
     supply = ProjectSupplyService(db)
 
-    # One order, two lines, ONE shared location -> "<location> @ <so>".
+    # One order, two lines, ONE shared warehouse -> "<location> @ <so>".
+    shared_wh = _warehouse(db, f"ZZT-OIHE-{_uid()[:8]}")
     core_so = _core_so(db, world.company_id)
     line_a_core = _core_line(
-        db, core_so, world.product, world.warehouse, qty_ordered="10", required_date=WAS
+        db, core_so, world.product, shared_wh, qty_ordered="10", required_date=WAS
     )
     line_b_core = _core_line(
-        db, core_so, world.product, world.warehouse, qty_ordered="6", required_date=WAS
+        db, core_so, world.product, shared_wh, qty_ordered="6", required_date=WAS
     )
     order = _project_so(
         db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
     )
     line_a = _project_line(db, order, line_no=1, product=world.product, core_line=line_a_core)
     line_b = _project_line(db, order, line_no=2, product=world.product, core_line=line_b_core)
-    line_a.stock_location = "PENANG"
-    line_b.stock_location = "PENANG"
     db.commit()
 
     response = _confirm(
@@ -519,29 +531,32 @@ def test_subject_scope_single_and_mixed_location(api, monkeypatch):
 
     matches = _handover_calls(calls)
     assert matches, "the raise must dispatch the handover"
-    assert matches[-1]["context"]["handover"]["subject_scope"] == f"PENANG @ {core_so.so_number}"
+    assert (
+        matches[-1]["context"]["handover"]["subject_scope"]
+        == f"{shared_wh.warehouse_code} @ {core_so.so_number}"
+    )
     calls.clear()
 
-    # Two DIFFERENT orders, two DIFFERENT locations, one commit -> mixed, no location.
+    # Two DIFFERENT orders, two DIFFERENT warehouses, one commit -> mixed, no location.
+    wh_c = _warehouse(db, f"ZZT-OIHE-{_uid()[:8]}")
+    wh_d = _warehouse(db, f"ZZT-OIHE-{_uid()[:8]}")
     core_so_2 = _core_so(db, world.company_id)
     line_c_core = _core_line(
-        db, core_so_2, world.product, world.warehouse, qty_ordered="4", required_date=WAS
+        db, core_so_2, world.product, wh_c, qty_ordered="4", required_date=WAS
     )
     order_2 = _project_so(
         db, world.project, so_id=core_so_2.id, autocount_doc_no=core_so_2.so_number
     )
     line_c = _project_line(db, order_2, line_no=1, product=world.product, core_line=line_c_core)
-    line_c.stock_location = "JOHOR"
 
     core_so_3 = _core_so(db, world.company_id)
     line_d_core = _core_line(
-        db, core_so_3, world.product, world.warehouse, qty_ordered="3", required_date=WAS
+        db, core_so_3, world.product, wh_d, qty_ordered="3", required_date=WAS
     )
     order_3 = _project_so(
         db, world.project, so_id=core_so_3.id, autocount_doc_no=core_so_3.so_number
     )
     line_d = _project_line(db, order_3, line_no=1, product=world.product, core_line=line_d_core)
-    line_d.stock_location = "IPOH"
     db.commit()
 
     supply.confirm(
@@ -562,6 +577,85 @@ def test_subject_scope_single_and_mixed_location(api, monkeypatch):
         mixed[-1]["context"]["handover"]["subject_scope"]
         == f"{core_so_2.so_number} , {core_so_3.so_number}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# AC-H19: a retired row (dropped from the buy list, no settle) still prints    #
+# as a cancelled line; an unrelated raise in the same commit prints beside it #
+# --------------------------------------------------------------------------- #
+
+
+def test_retired_row_prints_cancelled_line(api, monkeypatch):
+    """AC-H19.
+
+    `_retire_uncovered_rows` retires a row whose LINE was dropped from the buy list
+    entirely - CS un-decided it (`ProjectSupplyService.uncover_lines`, the same seam
+    `test_order_inquiry_changed_with_links_automation.py`'s
+    `test_a_dropped_lines_cascade_linked_row_dispatches_when_retired` drives) - not a
+    settle and not a same-line supersede. The retired row must still print as a CANCEL
+    BALANCE line: `qty` "0", `was.qty` the old qty, remark "CANCEL BALANCE <old> NOS".
+
+    The PLAN's revised rule (16 Sep, after AC-H19 was added) is that a retire prints
+    ALWAYS, with no pairing to whatever else the same commit raises - a cross-reference
+    "does this retired row have an exact replacement" would need every raise in the
+    commit indexed by line, which the coder found impractical. So the second half here
+    is a genuinely UNRELATED line raised in the very same write (not a replacement FOR
+    the retired line): both must appear as their own, separate `lines` entries.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _raise_two_rows(api, first_qty="10", second_qty="6")
+    world.db.commit()
+    calls.clear()
+
+    db = world.db
+    supply = ProjectSupplyService(db)
+
+    # A second, unrelated order, raised in the SAME write as the retire below.
+    core_so_fresh = _core_so(db, world.company_id)
+    fresh_core_line = _core_line(
+        db, core_so_fresh, world.product, world.warehouse, qty_ordered="4", required_date=WAS
+    )
+    fresh_order = _project_so(
+        db, world.project, so_id=core_so_fresh.id, autocount_doc_no=core_so_fresh.so_number
+    )
+    fresh_line = _project_line(
+        db, fresh_order, line_no=1, product=world.product, core_line=fresh_core_line
+    )
+    db.flush()
+
+    supply.uncover_lines(
+        fixture["order"],
+        [str(fixture["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    supply.confirm(
+        fresh_order,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(fresh_line.id), buy_qty="4")]),
+        actor_user_id=world.cs_user,
+    )
+    db.commit()
+
+    world.db.refresh(fixture["first"]["row"])
+    assert fixture["first"]["row"].state == INQUIRY_CANCELLED, (
+        "the retire has to have actually cancelled the row for this test to mean anything"
+    )
+
+    matches = _handover_calls(calls)
+    assert matches, "the retire must dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+
+    cancelled = [l for l in lines if l["remark"] == "CANCEL BALANCE 10 NOS"]
+    assert cancelled, f"no cancelled line for the retired row in {lines}"
+    assert cancelled[0]["qty"] == "0"
+    assert cancelled[0]["was"] == {"qty": "10"}
+
+    fresh = [l for l in lines if l["so_number"] == core_so_fresh.so_number]
+    assert fresh, "an unrelated raise in the same commit must print beside the retire, unpaired"
+    assert fresh[0]["remark"] == "ORDER"
 
 
 # --------------------------------------------------------------------------- #
