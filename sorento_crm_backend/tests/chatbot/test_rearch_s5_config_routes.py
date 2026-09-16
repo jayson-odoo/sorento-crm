@@ -426,3 +426,109 @@ class TestPermissionRegistrationAndSweep:
             f"every role holding {VIEW!r} must also hold {MANAGE!r} via the "
             f"provisioning sweep - {len(missing)} role(s) do not: {missing!r}"
         )
+
+    def test_manage_is_held_only_by_superadmin_and_admin_after_s6c(self, pg_db) -> None:
+        """`chatbot_rearch_s6c` (security review fix, AC-1561) took `MANAGE` back off
+        every role but the two administrator ones - `chatbot_rearch_s5`'s own original
+        sweep had derived the grant from `VIEW`, which on the production copy also
+        includes `guest`, `integration_foundryx_esb` and `integration_n8n` (the
+        migration's own docstring). The sibling test above only proves "nobody holding
+        VIEW lost MANAGE"; it does not prove the narrower, corrected invariant s6c
+        exists to enforce - a role holding MANAGE that is neither admin role would pass
+        that test silently. Guard red until this DB's role seed genuinely narrows it."""
+        from sqlalchemy import text
+
+        manage_role_slugs = {
+            row[0]
+            for row in pg_db.execute(
+                text(
+                    "SELECT r.slug FROM user_roles r "
+                    "JOIN user_role_permissions rp ON rp.role_id = r.id "
+                    "JOIN user_permissions p ON p.id = rp.permission_id "
+                    "WHERE p.slug = :slug"
+                ),
+                {"slug": MANAGE},
+            )
+        }
+        extra = manage_role_slugs - {"superadmin", "admin"}
+        assert not extra, (
+            f"{MANAGE!r} must be held only by superadmin/admin after chatbot_rearch_s6c "
+            f"- also held by: {extra!r}"
+        )
+
+
+class TestContactChatbotProfilePutDenial:
+    """`PUT /contacts/{id}/chatbot` needs `user_management.contacts.edit` - the route's
+    own added gate (coordinator fixture item, 16 Sep 2026, same session this file's own
+    `CONTACT_EDIT` constant documents). `TestContactChatbotProfilePut.test_put_chatbot_
+    profile_and_recall_toggle` only proves the grant WORKS; nothing in this file proved
+    its ABSENCE is refused, so a coder who wired the dependency backwards (or dropped
+    it) would pass every existing test in this file."""
+
+    def _seed_contact(self, pg_db) -> str:
+        from sqlalchemy import text
+
+        cid = unique_code("contact")
+        pg_db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST('{}' AS jsonb))"
+            ),
+            {"cid": cid, "phone": f"+60{uuid.uuid4().int % 10**9}"},
+        )
+        pg_db.flush()
+        row = pg_db.execute(
+            text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid"), {"cid": cid}
+        ).first()
+        return row.id
+
+    def test_put_without_contacts_edit_is_403(self, client, pg_db) -> None:
+        contact_id = self._seed_contact(pg_db)
+        _GRANTS.discard(CONTACT_EDIT)
+
+        resp = client.put(
+            f"{CONTACT_CHATBOT_BASE}/{contact_id}/chatbot",
+            json={
+                "chatbot_profile": {"tier": "dealer", "language": "en", "default_ledgers": []},
+                "chatbot_recall_enabled": True,
+            },
+        )
+        assert resp.status_code == 403, resp.text
+
+
+class TestValidateDomainContentGuards:
+    """`_clean_text` (`app/api/v1/system/chatbot_config.py`): control characters are
+    STRIPPED (never rejected - an operator pasting from a spreadsheet meant the
+    letters), the two policy-block markers are REJECTED (422 - no legitimate reason for
+    either to appear in a domain field), and an over-long field is REJECTED (422, > 64
+    chars on `label`/`name`, the default `_TEXT_MAX`)."""
+
+    def test_control_characters_are_stripped_not_rejected(self, client, real_tool_name) -> None:
+        name = unique_code("domain")
+        body = _domain_body(name, tool=real_tool_name)
+        body["label"] = "ZZT\x00Label\x07With\x1fControl\x0cChars"
+        resp = client.post(DOMAINS_BASE, json=body)
+        assert resp.status_code in (200, 201), resp.text
+        assert resp.json().get("label") == "ZZTLabelWithControlChars", resp.json()
+
+    def test_a_policy_block_marker_in_a_field_is_422(self, client, real_tool_name) -> None:
+        from app.services.chatbot_parser_prompt import BLOCKS_BEGIN
+
+        body = _domain_body(unique_code("domain"), tool=real_tool_name)
+        body["label"] = f"ZZT {BLOCKS_BEGIN} escape"
+        resp = client.post(DOMAINS_BASE, json=body)
+        assert resp.status_code == 422, resp.text
+
+    def test_a_field_over_the_length_ceiling_is_422(self, client, real_tool_name) -> None:
+        # `label` gets its own 128-char ceiling (`_validate_domain`'s own
+        # `max_chars=128` override); `name` stays on the default `_TEXT_MAX` (64).
+        body = _domain_body(unique_code("domain"), tool=real_tool_name)
+        body["name"] = "z" * 65
+        resp = client.post(DOMAINS_BASE, json=body)
+        assert resp.status_code == 422, resp.text
+
+    def test_the_label_field_has_its_own_wider_ceiling(self, client, real_tool_name) -> None:
+        body = _domain_body(unique_code("domain"), tool=real_tool_name)
+        body["label"] = "Z" * 129
+        resp = client.post(DOMAINS_BASE, json=body)
+        assert resp.status_code == 422, resp.text

@@ -186,3 +186,167 @@ class TestSearchNeverReturnsAnotherContactsFrames:
         assert not any("someone else's frame" in (s or "") for s in summaries), (
             f"recall() must never return another contact's frame: {summaries!r}"
         )
+
+
+class TestS1RecallOrdersBySimilarityThenRecency:
+    """`turn/memory.py::recall`'s own contract line, AC-1547: "top 3 frames of this
+    contact by vector similarity THEN recency" - `TestSearchNeverReturnsAnotherContacts
+    Frames` above stubs an 8-dim query vector against a REAL 1536-dim `EmbeddingChunk`
+    column, which the cosine-distance query cannot even run (dimension mismatch) - it
+    exercises the RECENCY FALLBACK (`recall`'s own "an embedding failure ... has to keep
+    answering" tolerance), never the real ranking this class pins. A real, matching-
+    dimension query vector is what makes the similarity ORDER (not just the fallback)
+    testable at all.
+    """
+
+    @staticmethod
+    def _seed_embedding(session_factory, *, frame_id: str, vector: list[float]) -> None:
+        import hashlib
+
+        from app.models.embeddings import EmbeddingChunk, EmbeddingDocument
+
+        db = session_factory()
+        source_id = f"zzt_recall:{frame_id}"
+        doc = EmbeddingDocument(
+            source_type="conversation_frame",
+            source_id=source_id,
+            source_key=source_id,
+            title="ZZT recall frame",
+            body_text="ZZT recall frame body",
+            metadata_json={},
+            visibility_scope="internal",
+            source_hash=hashlib.sha256(source_id.encode()).hexdigest(),
+            company_id=None,
+            is_active=True,
+        )
+        db.add(doc)
+        db.flush()
+        db.add(
+            EmbeddingChunk(
+                document_id=doc.id,
+                source_type="conversation_frame",
+                source_id=frame_id,
+                chunk_index=0,
+                chunk_text="ZZT recall chunk",
+                chunk_hash=hashlib.sha256(frame_id.encode()).hexdigest(),
+                embedding=vector,
+                model_name="zzt",
+                model_version="v1",
+                embedding_provider="test",
+                source_hash=doc.source_hash,
+                metadata_json={},
+                company_id=None,
+                is_current=True,
+            )
+        )
+        db.commit()
+
+    def test_the_more_similar_frame_wins_over_the_more_recent_one(
+        self, session_factory, monkeypatch
+    ) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from app.services import embedding_worker as embedding_worker_mod
+        from app.services.chatbot.turn.memory import recall
+
+        query_vector = [1.0] + [0.0] * 1535
+        monkeypatch.setattr(embedding_worker_mod, "_embed_text_chunks", lambda texts: [query_vector])
+
+        db = session_factory()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        similar_but_old = ConversationFrame(
+            contact_id="ZZT-recall-order",
+            contact_respond_id="ZZT-recall-order",
+            space_id="364817",
+            channel="whatsapp",
+            domain="inventory",
+            intent="check_stock",
+            summary="ZZT similar but old",
+            status="closed",
+            started_at=now - timedelta(days=10),
+            closed_at=now - timedelta(days=10),
+        )
+        recent_but_dissimilar = ConversationFrame(
+            contact_id="ZZT-recall-order",
+            contact_respond_id="ZZT-recall-order",
+            space_id="364817",
+            channel="whatsapp",
+            domain="inventory",
+            intent="check_stock",
+            summary="ZZT recent but dissimilar",
+            status="closed",
+            started_at=now,
+            closed_at=now,
+        )
+        db.add_all([similar_but_old, recent_but_dissimilar])
+        db.commit()
+
+        # Identical to the query vector (cosine similarity 1.0) vs orthogonal (0.0) -
+        # the maximum possible separation, so the ranking cannot be a coincidence of
+        # a near-tie.
+        self._seed_embedding(session_factory, frame_id=similar_but_old.id, vector=query_vector)
+        self._seed_embedding(
+            session_factory,
+            frame_id=recent_but_dissimilar.id,
+            vector=[0.0, 1.0] + [0.0] * 1534,
+        )
+
+        v = verdict(anaphora={"backward_reference": True})
+        frames = recall("ZZT-recall-order", v, session_factory())
+
+        summaries = [f.get("summary") for f in frames]
+        assert summaries[0] == "ZZT similar but old", (
+            f"similarity must outrank recency: {summaries!r}"
+        )
+
+    def test_recency_breaks_a_similarity_tie(self, session_factory, monkeypatch) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        from app.services import embedding_worker as embedding_worker_mod
+        from app.services.chatbot.turn.memory import recall
+
+        query_vector = [1.0] + [0.0] * 1535
+        monkeypatch.setattr(embedding_worker_mod, "_embed_text_chunks", lambda texts: [query_vector])
+
+        db = session_factory()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+        older = ConversationFrame(
+            contact_id="ZZT-recall-tie",
+            contact_respond_id="ZZT-recall-tie",
+            space_id="364817",
+            channel="whatsapp",
+            domain="inventory",
+            intent="check_stock",
+            summary="ZZT tie older",
+            status="closed",
+            started_at=now - timedelta(days=5),
+            closed_at=now - timedelta(days=5),
+        )
+        newer = ConversationFrame(
+            contact_id="ZZT-recall-tie",
+            contact_respond_id="ZZT-recall-tie",
+            space_id="364817",
+            channel="whatsapp",
+            domain="inventory",
+            intent="check_stock",
+            summary="ZZT tie newer",
+            status="closed",
+            started_at=now,
+            closed_at=now,
+        )
+        db.add_all([older, newer])
+        db.commit()
+
+        # Both frames carry the IDENTICAL vector - a genuine similarity tie.
+        self._seed_embedding(session_factory, frame_id=older.id, vector=query_vector)
+        self._seed_embedding(session_factory, frame_id=newer.id, vector=query_vector)
+
+        v = verdict(anaphora={"backward_reference": True})
+        frames = recall("ZZT-recall-tie", v, session_factory())
+
+        summaries = [f.get("summary") for f in frames]
+        assert summaries[0] == "ZZT tie newer", (
+            f"a similarity tie must fall back to recency: {summaries!r}"
+        )
