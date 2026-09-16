@@ -8,8 +8,12 @@ purchase-request/sponsorship-approved automations before it (R9, owner ruling 16
 this one has to run from day one for the comparison to mean anything.
 
 Idempotent by ``email_templates.code`` and ``(trigger_type, name)``, same shape as
-``212_seed_pr_sponsorship_approved_automation``. ``role_ids`` seeds every role whose slug
-starts with ``purchasing`` - empty on a database with none (CI's blank schema).
+``212_seed_pr_sponsorship_approved_automation`` - except the template body: a re-run
+UPDATEs subject/body_html/body_text on the existing row rather than skipping, so a
+database that already seeded an earlier revision of this body (the 0915 copy, prod after
+deploy) picks up a fix on the next ``alembic upgrade head`` instead of keeping it stale
+forever. ``role_ids`` seeds every role whose slug starts with ``purchasing`` - empty on a
+database with none (CI's blank schema).
 
 Revision ID: oihe_0001_seed_handover
 Revises: ptag_0011_line_promo
@@ -35,55 +39,65 @@ TRIGGER_TYPE = "order_inquiry_handover"
 
 _SUBJECT = "OI: {{ handover.subject_scope }}"
 
+# Inline, because a mail client carries no stylesheet (production-copy render finding,
+# 16 Sep: a body with only `border-collapse` on the `<table>` and nothing on any cell
+# rendered as a squashed, borderless grid in both the recipient's client and the
+# outbox preview).
+_TH_STYLE = "border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;"
+_TD_STYLE = "border:1px solid #d0d0d5;padding:4px 8px;"
+_TABLE_STYLE = "border-collapse:collapse;font-family:Arial, sans-serif;font-size:13px;"
+
 _BODY_HTML = """\
 <p style="color:#b91c1c;font-weight:bold;">{{ handover.headline }}</p>
-<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;">
+<table style="__TABLE_STYLE__">
   <thead>
-    <tr><th>S/O NO</th><th>CUSTOMER</th><th>PROJECT</th></tr>
+    <tr><th style="__TH_STYLE__">S/O NO</th><th style="__TH_STYLE__">CUSTOMER</th><th style="__TH_STYLE__">PROJECT</th></tr>
   </thead>
   <tbody>
     {% for order in handover.orders %}
     <tr>
-      <td>{{ order.so_number }}</td>
-      <td>{{ order.customer }}</td>
-      <td>{{ order.project }}</td>
+      <td style="__TD_STYLE__">{{ order.so_number | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ order.customer | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ order.project | default("", true) }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
-<table border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;margin-top:12px;">
+<table style="__TABLE_STYLE__margin-top:12px;">
   <thead>
     <tr>
-      <th>SO DATE</th><th>S/O NO</th><th>CUSTOMER</th><th>PROJECT</th>
-      <th>ITEM CODE</th><th>QTY</th><th>DELIVERY DATE</th><th>REMARK</th>
+      <th style="__TH_STYLE__">SO DATE</th><th style="__TH_STYLE__">S/O NO</th><th style="__TH_STYLE__">CUSTOMER</th><th style="__TH_STYLE__">PROJECT</th>
+      <th style="__TH_STYLE__">ITEM CODE</th><th style="__TH_STYLE__">QTY</th><th style="__TH_STYLE__">DELIVERY DATE</th><th style="__TH_STYLE__">REMARK</th>
     </tr>
   </thead>
   <tbody>
     {% for line in handover.lines %}
     <tr>
-      <td>{{ line.so_date }}</td>
-      <td>{{ line.so_number }}</td>
-      <td>{{ line.customer }}</td>
-      <td>{{ line.project }}</td>
-      <td>{{ line.item_code }}</td>
-      <td>{% if line.was and line.was.qty %}<s>{{ line.was.qty }}</s> {% endif %}{{ line.qty }}</td>
-      <td>{% if line.was and line.was.delivery_date %}<s>{{ line.was.delivery_date }}</s> {% endif %}{{ line.delivery_date }}</td>
-      <td>{{ line.remark }}</td>
+      <td style="__TD_STYLE__">{{ line.so_date | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.so_number | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.customer | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.project | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.item_code | default("", true) }}</td>
+      <td style="__TD_STYLE__">{% if line.was and line.was.qty %}<s>{{ line.was.qty }}</s> {% endif %}{{ line.qty | default("", true) }}</td>
+      <td style="__TD_STYLE__">{% if line.was and line.was.delivery_date %}<s>{{ line.was.delivery_date }}</s> {% endif %}{{ line.delivery_date | default("", true) }}</td>
+      <td style="__TD_STYLE__">{{ line.remark | default("", true) }}</td>
     </tr>
     {% endfor %}
   </tbody>
 </table>
 <p>Raised by {{ actor.name if actor else '-' }}{% if actor %} ({{ actor.email }}){% endif %} on {{ today }}.</p>
 <p><a href="{{ handover.link }}">Open in Order Inquiries</a></p>
-"""
+""".replace("__TABLE_STYLE__", _TABLE_STYLE).replace("__TH_STYLE__", _TH_STYLE).replace(
+    "__TD_STYLE__", _TD_STYLE
+)
 
 _BODY_TEXT = """\
 {{ handover.headline }}
 
-{% for order in handover.orders %}{{ order.so_number }} - {{ order.customer }} - {{ order.project }}
+{% for order in handover.orders %}{{ order.so_number | default("", true) }}{% if order.customer %} - {{ order.customer }}{% endif %}{% if order.project %} - {{ order.project }}{% endif %}
 {% endfor %}
 SO DATE | S/O NO | CUSTOMER | PROJECT | ITEM CODE | QTY | DELIVERY DATE | REMARK
-{% for line in handover.lines %}{{ line.so_date }} | {{ line.so_number }} | {{ line.customer }} | {{ line.project }} | {{ line.item_code }} | {% if line.was and line.was.qty %}{{ line.qty }} (was {{ line.was.qty }}){% else %}{{ line.qty }}{% endif %} | {% if line.was and line.was.delivery_date %}{{ line.delivery_date }} (was {{ line.was.delivery_date }}){% else %}{{ line.delivery_date }}{% endif %} | {{ line.remark }}
+{% for line in handover.lines %}{{ line.so_date | default("", true) }} | {{ line.so_number | default("", true) }} | {{ line.customer | default("", true) }} | {{ line.project | default("", true) }} | {{ line.item_code | default("", true) }} | {% if line.was and line.was.qty %}{{ line.qty }} (was {{ line.was.qty }}){% else %}{{ line.qty | default("", true) }}{% endif %} | {% if line.was and line.was.delivery_date %}{{ line.delivery_date }} (was {{ line.was.delivery_date }}){% else %}{{ line.delivery_date | default("", true) }}{% endif %} | {{ line.remark | default("", true) }}
 {% endfor %}
 Raised by {{ actor.name if actor else '-' }} on {{ today }}.
 Open: {{ handover.link }}
@@ -96,6 +110,26 @@ def _seed_template(bind) -> None:
         {"code": TEMPLATE_CODE},
     ).first()
     if existing:
+        # Still idempotent - one row, same code - but not a no-op: the body has already
+        # been revised once after a production-copy render caught real defects (blank
+        # fields printing the word "None", tables with no inline cell borders), so a
+        # database that seeded the FIRST version (the 0915 copy, prod after deploy) must
+        # pick up the fix on the next `alembic upgrade head` rather than keep serving it.
+        bind.execute(
+            sa.text(
+                """
+                UPDATE email_templates
+                SET subject = :subject, body_html = :body_html, body_text = :body_text
+                WHERE code = :code
+                """
+            ),
+            {
+                "code": TEMPLATE_CODE,
+                "subject": _SUBJECT,
+                "body_html": _BODY_HTML,
+                "body_text": _BODY_TEXT,
+            },
+        )
         return
     bind.execute(
         sa.text(
@@ -203,7 +237,21 @@ def downgrade() -> None:
         ),
         {"tt": TRIGGER_TYPE, "name": AUTOMATION_NAME},
     )
+    # Only when nothing else references it (review round 1 nit): `automations.
+    # email_template_id` is `ON DELETE RESTRICT`, and an admin may have pointed a second,
+    # unrelated automation at this same default template after deploy - deleting it
+    # unconditionally would fail the downgrade on that FK rather than leave the template
+    # behind for whoever is still using it.
     bind.execute(
-        sa.text("DELETE FROM email_templates WHERE code = :code"),
+        sa.text(
+            """
+            DELETE FROM email_templates
+            WHERE code = :code
+              AND NOT EXISTS (
+                  SELECT 1 FROM automations
+                  WHERE automations.email_template_id = email_templates.id
+              )
+            """
+        ),
         {"code": TEMPLATE_CODE},
     )
