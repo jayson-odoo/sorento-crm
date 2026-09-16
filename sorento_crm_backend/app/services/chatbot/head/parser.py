@@ -232,6 +232,39 @@ def _build_json_schema() -> dict[str, Any]:
             # above only because live emissions before this prompt version still carry
             # it (`output_exchange._EXEMPT_FROM_REQUIRED`-style tolerance).
             "status": string_or_null,
+            # The SECOND domain a message names, and every one after it (AC-1522,
+            # contract 122). Declared as a list of ASK OBJECTS rather than bare domain
+            # codes because that is the shape every reader already speaks -
+            # `turn/apply.py` reads `a["domain"]` at three sites and the committed S2/S3
+            # fixtures build `[{"domain": ..., "intent": ...}]` - and one wire shape for
+            # one fact is worth more than a shorter one nothing reads.
+            #
+            # `domain` is a free string for the same reason `domain_hint` is: the domain
+            # set lives in `chatbot_domains`, the owner edits it through the Chatbot
+            # Domains screen, and the closed set is taught by the rendered domain block in
+            # the prompt body - an enum here would freeze the schema against that table.
+            #
+            # `null` (or []) for the ordinary one-domain message, which is nearly every
+            # message: this key exists for "incoming and stock for 7445", where answering
+            # one half is answering half the question.
+            "asks": {
+                "type": ["array", "null"],
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "domain": {"type": "string"},
+                        "intent": string_or_null,
+                    },
+                    "required": ["domain", "intent"],
+                },
+            },
+            # The customer changed subject (AC-1525, AC-1546): `turn/apply._focus_rules`
+            # empties every focus axis but the contact's own tier and brand, and
+            # `engine.run_turn` closes the conversation episode on it. Both readers shipped
+            # with no way for the model to set it, so no live turn has ever reset a topic
+            # or written an episode.
+            "topic_reset": {"type": ["boolean", "null"]},
             "anaphora": {
                 "type": "object",
                 "additionalProperties": False,
@@ -276,6 +309,8 @@ def _build_json_schema() -> dict[str, Any]:
             "escalation",
             "document",
             "status",
+            "asks",
+            "topic_reset",
             "anaphora",
         ],
     }
