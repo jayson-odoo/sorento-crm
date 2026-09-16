@@ -16,7 +16,8 @@ location: `OI: SO397450 , SO397460`.
 **Body**, top to bottom:
 
 1. A red headline naming the verb(s) in the mail: **ORDER**, **RESERVE & ORDER**, **ORDER
-   BACK**, **ADVANCE**, **DELAY**, **CHANGE SO NO**, **CANCEL BALANCE**.
+   BACK**, **PRE-ORDERED**, **ALREADY INBOUND**, **ADVANCE**, **DELAY**, **CHANGE SO NO**,
+   **CANCEL BALANCE**.
 2. A sales-order table: **S/O NO**, **CUSTOMER**, **PROJECT**.
 3. A line table: **SO DATE**, **S/O NO**, **CUSTOMER**, **PROJECT**, **ITEM CODE**, **QTY**,
    **DELIVERY DATE**, **REMARK**.
