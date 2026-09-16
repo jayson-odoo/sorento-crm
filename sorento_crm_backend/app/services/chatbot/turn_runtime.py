@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
-from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire, tick as tick_pending
+from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire
 from app.services.chatbot.turn.plan import FetchSpec
 from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile, State, focus_from_wire
 from app.services.chatbot import session_state
@@ -277,16 +277,11 @@ def load_profile(
 
 
 def load_state(session_block: Any, *, profile: Profile, turn_no: int) -> State:
-    """Stage A's `State`: focus and pending off the five session keys, profile beside.
-
-    The open question is TICKED on the way in (AC-816 rule 1): an escalation offer the
-    customer has ignored for three turns is not loaded at all, so nothing downstream can
-    accept it and this turn runs as the fresh message it is.
-    """
+    """Stage A's `State`: focus and pending off the five session keys, profile beside."""
     five = session_state.five_keys(session_block)
     return State(
         focus=focus_from_wire(five.get("focus")),
-        pending=tick_pending(from_wire(five.get("open_question"))),
+        pending=from_wire(five.get("open_question")),
         profile=profile,
         turn_no=turn_no,
     )

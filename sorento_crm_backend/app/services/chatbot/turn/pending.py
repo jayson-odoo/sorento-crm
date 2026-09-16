@@ -126,7 +126,7 @@ def tick(pending: Pending | None) -> Pending | None:
     what says the offer is open and a second key could disagree with it"), and the write
     is automatic: the tail stores the pending the turn CARRIED, which is this ticked one.
     A marker with no count - written by n8n, or before this rule shipped - reads as open
-    and starts its clock here.
+    and starts its clock on this turn.
 
     Only the three ESCALATION offers have a clock. The business questions do not: R22
     ruled `outstanding_scope` / `outstanding_detail` sticky on purpose ("a TTL would
