@@ -1,6 +1,6 @@
 # PLAN - Planning record mirrors every core line on its own (no Re-sync click)
 
-Status: **BUILT 17 Sep 2026, review round 2 pending (B2 ruling open).** Issue #969. UAC: `scm-planning-record-mirror-acceptance-criteria.md`.
+Status: **BUILT 17 Sep 2026, review READY, PR pending.** Issue #969. UAC: `scm-planning-record-mirror-acceptance-criteria.md`.
 Owner ruling 16 Sep 2026 ("i think we should go with the fixes"): code fixes, no backfill script.
 
 ## 0. What the owner hit
@@ -65,6 +65,8 @@ No new table, no flag, no script. Existing gaps heal on the first board read or 
 | PR1 | `test_board_read_mirrors_missing_line_then_confirm_posts` | adopted order, add a core line after adoption, read the board: the late line carries a `project_line_id` and its mirror exists; confirm every returned line: `lines_undecided == 0`, the decision covers it |
 | PR2 | `test_board_list_read_mirrors_for_every_order` | two adopted orders each with one late core line: the multi-order board read heals both (mirrors exist, `project_line_id` set); confirm-all posts both |
 | PR3 | `test_ingest_new_line_on_adopted_order_mirrors_it` | `_upsert_lines` with a payload adding a SKU on an adopted order: a mirror line with `core_sales_order_line_id` exists after the call, line_no = max + 1 |
+| PR3b | `test_esb_ingest_new_line_on_adopted_order_mirrors_it` | the ESB push (`POST /api/v1/external/ingest/sales_orders`, `document_ingest_service._sync_lines`) creates a new core line on an adopted order: a mirror line for it exists in the same transaction, line_no = max + 1, the core line carries `source_system = autocount` |
+| PR3c | `test_outstanding_book_upload_new_line_on_adopted_order_mirrors_it` | the outstanding book upload (`outstanding_import_service.apply`) creates a new core line on an adopted order: a mirror line for it exists in the same transaction, line_no = max + 1 |
 | PR4 | `test_ingest_on_unadopted_order_adds_no_mirror` | same payload on an order with no planning record: no `projects.sales_order_lines` row |
 | PR5 | `test_ingest_prune_and_mirror_in_one_pass` | payload removes one line and adds one: the empty mirror is pruned, the new one mirrored, existing mirrors keep their line_no |
 | PR6 | `test_mirror_is_idempotent_on_board_read` | read the board twice: no duplicate mirror lines |

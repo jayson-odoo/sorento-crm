@@ -1,27 +1,34 @@
 """Planning record mirrors every core line on its own - no Re-sync click (issue #969).
 
 Contract: `documentation/plans/scm/PLAN-scm-planning-record-mirror.md` section 3-4 and
-`documentation/plans/scm/scm-planning-record-mirror-acceptance-criteria.md` AC-PR1..PR7.
+`documentation/plans/scm/scm-planning-record-mirror-acceptance-criteria.md` AC-PR1..PR8.
 
-TEST-FIRST. Today neither confirm path (`POST .../sales-orders/{pso_id}/confirm`,
-`POST .../fulfilment-planning/confirm-all`) nor the line ingest
-(`app/services/scm/sales_order_service.py::_upsert_lines`) calls
-`ProjectSOAdoptionService.mirror_missing_lines` - a core line inserted after an order was
-adopted has no `projects.sales_order_lines` mirror, is invisible to
-`ProjectSupplyService.lines_of()`, and cannot be confirmed at all (the frontend reads its
-board contribution's `project_line_id: null` as the `no_mirror` reason,
-`app/(protected)/project-sales/_shared/lib/fulfilmentBoard.ts`). That label is FE-derived
-from the board contribution; the backend-observable equivalent this file asserts is: (a) the
-mirror row itself exists after the write, and (b) `ConfirmResult.lines_undecided` - computed
-as `len(lines_of(order.id)) - decided` at the end of `confirm()` - counts the line, which it
-cannot do until the self-heal makes `lines_of()` return it.
+Owner ruling 17 Sep 2026 (B2): the heal lives on the BOARD READ, not on confirm. A core
+line inserted after an order was adopted has no `projects.sales_order_lines` mirror, is
+invisible to `ProjectSupplyService.lines_of()`, and cannot be confirmed at all (the frontend
+reads its board contribution's `project_line_id: null` as the `no_mirror` reason,
+`app/(protected)/project-sales/_shared/lib/fulfilmentBoard.ts`). `FulfilmentBoardService
+.build` - the one read that label is derived from, and the read the FE's confirm-all also
+builds from - now runs `ProjectSOAdoptionService.mirror_missing_lines` for every adopted,
+unauthored order it is asked about, before the line list is built, so the SAME response
+already carries a `project_line_id` for the late line. `ProjectSupplyService.confirm` stays
+a pure write and never mirrors on its own (AC-PR8 pins this).
 
-Two halves, two seams:
-- AC-PR1/PR2/PR6 drive the confirm route/confirm-all HTTP surface (reusing the fixture chain
-  from `tests/test_so_supply_confirmation.py`, Postgres via `tests/_pg_fixture.py::blank_session`).
-- AC-PR3/PR4/PR5/PR7 drive `SalesOrderService.update` -> `_upsert_lines` directly (reusing the
-  fixture chain from `tests/scm/test_sales_order_line_upsert.py`, Postgres via
-  `tests/_pg_fixture.py::pg_session`, rolled back).
+Three more writers self-heal on their own, all bypassing `_upsert_lines`'s own self-heal
+(review round 1: it has ONE caller, the manual FE edit) - the ESB push
+(`document_ingest_service.py::_sync_lines`, AC-PR3b) and the Excel book upload
+(`outstanding_import_service.py::apply`, AC-PR3c), each write core lines their own way and
+each mirrors a new one in the same transaction, gated the same way the board read is: an
+adopted, unauthored mirror only.
+
+Two halves:
+- AC-PR1/PR2/PR6/PR8 drive `GET /fulfilment-planning/board` then the confirm route/
+  confirm-all HTTP surface (reusing the fixture chain from
+  `tests/test_so_supply_confirmation.py`, Postgres via `tests/_pg_fixture.py::blank_session`).
+- AC-PR3/PR3b/PR3c/PR4/PR5/PR7 drive `SalesOrderService.update` -> `_upsert_lines`, the ESB
+  ingest route and `outstanding_import_service.apply` directly (reusing the fixture chains
+  from `tests/scm/test_sales_order_line_upsert.py` and `tests/test_ingest_documents.py`,
+  Postgres via `tests/_pg_fixture.py::pg_session`, rolled back).
 
 Every test seeds its own full chain - company, product(s), warehouse, core order and lines,
 adoption mirror - nothing borrowed from an existing row (CI's database is empty).
