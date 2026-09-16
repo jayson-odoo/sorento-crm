@@ -10,7 +10,7 @@ from typing import Any
 
 from app.services.chatbot import contracts
 from app.services.chatbot.turn.narrow import decide as narrow_decide
-from app.services.chatbot.turn.pending import ROSTER_KINDS, Pending, ask as pending_ask, with_answered_positions
+from app.services.chatbot.turn.pending import ROSTER_KINDS, OFFER_KINDS, Pending, ask as pending_ask, with_answered_positions
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.reconcile import apply_reconciliation
@@ -114,6 +114,16 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
 
     if escalation.get("escalation_declined") is True or (is_affirmative is False and not verdict_entities):
         trace.rules_fired.append("answer_pending_decline")
+        if pending.kind in OFFER_KINDS:
+            # The offer was answered with a decline: that IS the turn (contract 42, the
+            # `escalation_declined` lane), named here off the APPLY outcome rather than
+            # off `escalation.escalation_declined` alone, which the parser emits only
+            # for the explicit word - measured: all 19 recorded `escalation_declined`
+            # turns carry `is_affirmative: false` and a null flag. Without this the
+            # cleared pending fell through to a fetch of the carried focus and the
+            # customer who said "no thanks" got the order list again.
+            trace.lane = "escalation_declined"
+            return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 
     if is_affirmative is False and verdict_entities:

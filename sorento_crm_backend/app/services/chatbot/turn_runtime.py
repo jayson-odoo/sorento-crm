@@ -590,6 +590,13 @@ def envelope_of(
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,
         "has_result": has_result,
+        # The TOOL's own verdict, before the rows test above: a report or a refusal
+        # renders as `lane_text` with no figures yet DID find something, and the
+        # composer's miss rule (an offer to escalate) must not read it as a miss.
+        "tool_has_result": bool(fetched.get("has_result")),
+        # The lane's own failure, when the fetch did not complete: neither a hit nor a
+        # miss, so the composer offers nothing on it (the error text is the answer).
+        "error": fragment.get("error") if isinstance(fragment.get("error"), str) else None,
         # The lane's OWN rendered sentence. The composer renders the rows itself
         # (#930's grammar, contract 102); this is what a tool with no rows to render -
         # a report, a refusal, a miss suggestion - has to say instead.
