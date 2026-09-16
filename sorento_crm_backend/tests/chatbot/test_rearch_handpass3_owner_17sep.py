@@ -334,15 +334,20 @@ class TestRow5ADocumentNamedIsANewScopeWhileAnyOutstandingIsOpen:
 
 
 class TestRow7RostersUnderPromotionAndPurchaseOrderCarryStamps:
-    def test_candidates_by_kind_has_no_promo_or_po_stamp_branch_today(self) -> None:
-        """Structural-absence measurement, same shape as hand pass 2's own Finding 8
-        (`test_rearch_handpass2_owner_17sep.py::
-        TestFinding8AMissAfterARosterPickKeepsTheRosterOpen`): `turn_runtime.
-        candidates_by_kind`'s only two stamp sources are `gate['incoming_by_code']`
-        (product) and `customer_bases_with_do` (customer) - grepped this session,
-        zero references to promotion or purchase_order anywhere in the function. A
-        product roster under a promotion or purchase_order ask therefore carries no
-        stamp at all today, whatever probe data is fed in."""
+    def test_candidates_by_kind_carries_the_promo_or_po_stamp_via_the_fourth_argument(
+        self,
+    ) -> None:
+        """LANDED (`bce871c9c`): the same line a product carries under incoming now
+        reaches the promotion / purchase_order rosters too, through a NEW fourth
+        positional argument, `product_stamp: tuple[set[str], str, str] | None` -
+        `(codes measured, has_label, no_label)`, read AFTER the `incoming_by_code`
+        branch and only for `kind == "product"` (`turn_runtime.py::candidates_by_kind`,
+        `_norm_code`-compared). Re-pinned POSITIVE per the coordinator's 17 Sep
+        addendum - the prior "no stamp branch exists" pin passed vacuously once the
+        fix landed, because its 2-positional-argument call has no way to reach the new
+        parameter at all; this call exercises it directly, one code that matches the
+        probed set and one that does not, so a revert of the fourth argument (or its
+        `_norm_code` comparison) fails this test again."""
         from app.services.chatbot.turn_runtime import candidates_by_kind
 
         gate = {"gate_clarification": "x"}
@@ -353,16 +358,22 @@ class TestRow7RostersUnderPromotionAndPurchaseOrderCarryStamps:
                 "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
                 "raw": "SRTWC286-SH",
             },
+            {
+                "entity_type": "product",
+                "canonical_code": "SRTWT7445-LV",
+                "uuid": "1a1ed752-fd6f-4759-ad8f-0b40e0cbc602",
+                "raw": "SRTWT7445-LV",
+            },
         ]
-        # A product with NO incoming stamp (no `incoming_by_code` key at all) and no
-        # promo/PO-shaped kwarg to feed either fact in - the function's signature
-        # itself has nowhere to put a promo/PO probe result.
-        grouped = candidates_by_kind(gate, compatible)
-        products = grouped.get("product", [])
-        assert products and all(p.get("stamp") is None for p in products), (
-            "if this now carries a 'has promo'/'no promo' or 'has PO'/'no PO' stamp, "
-            f"the fix has landed - got {products!r}"
+        grouped = candidates_by_kind(
+            gate,
+            compatible,
+            None,
+            ({"srtwc286-sh"}, "has promo", "no promo"),
         )
+        products = {p["canonical_code"]: p for p in grouped.get("product", [])}
+        assert products["SRTWC286-SH"]["stamp"] == "has promo", products
+        assert products["SRTWT7445-LV"]["stamp"] == "no promo", products
 
 
 # --------------------------------------------------------------------------- #
