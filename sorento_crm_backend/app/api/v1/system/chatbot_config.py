@@ -425,6 +425,20 @@ def update_entity_kind(
     _ = current_user
     row = _find_kind(db, kind)
     _validate_kind(body)
+    if body.kind != kind:
+        # The PATH names the row. A body naming a different kind is either a renamed
+        # entity kind - which is a different row, since `kind` is the primary key and
+        # every domain's `narrowing` map keys on it - or a stale form posted at the wrong
+        # record. Silently taking the body would have renamed the primary key underneath
+        # every domain that referenced it and left those maps pointing at nothing.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This is entity kind {kind!r}; the body names {body.kind!r}. An entity "
+                f"kind's code cannot be changed - create the new kind and move the "
+                f"domains over."
+            ),
+        )
     values = body.model_dump()
     values["label"] = values.get("label") or row.label
     for field, value in values.items():
