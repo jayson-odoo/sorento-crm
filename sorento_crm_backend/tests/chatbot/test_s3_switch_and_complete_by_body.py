@@ -914,16 +914,15 @@ class TestSendActionShape:
         stub_access,
         monkeypatch,
     ):
-        """CONFIRMED ENGINE DEFECT, kept red (not worked around) - measured directly with
-        a scratch probe, not guessed: a real `stock_denied` turn today closes
-        `status="done"` with `reply=None` and `actions=[]`. `stock_denied` never reaches
-        the fetch block (`branch_kind in ("business_query", "check_promotion")` gates it,
-        deliberately excluding `stock_denied`), is not in `canned_lanes.COMPLETED_
-        BRANCH_KINDS` (`test_the_two_halves_are_declared_once_each` pins that set), and is
-        not in `_ASK_BRANCH_KINDS` - so nothing in `run_turn` ever composes it a reply. A
-        customer whose stock check is denied reads total silence, which contradicts every
-        other completed lane's own contract (AC-105/AC-107: even a FAILED turn hands the
-        caller a reply to send) - flagged for a coder pass, not fixed here.
+        """FIXED (coder 11, `2453e64d0`) - was a CONFIRMED ENGINE DEFECT: a real
+        `stock_denied` turn used to close `status="done"` with `reply=None` and
+        `actions=[]` (`stock_denied` reaches neither the fetch block, `canned_lanes.
+        COMPLETED_BRANCH_KINDS`, nor `_ASK_BRANCH_KINDS`, deliberately). `engine.py`'s
+        own "the REFUSAL: a denied stock check is an answer, not silence" block now
+        composes contract 61's refusal sentence whenever nothing else answered the
+        turn - this test's own assertions were already forward-looking (`reply is not
+        None`, a `send_message` action) and pass unchanged against the fix; only this
+        docstring needed updating (queue item 2's coordinator message, 16 Sep 2026).
         """
         from tests.chatbot.test_s3_canned_and_ideate import _enable_stock_denial
 

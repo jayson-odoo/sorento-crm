@@ -475,3 +475,8 @@ collapse both clusters together, not just the entity_ids-only one.
 **Not fixed this session** - captain's own priority order puts T4 after B2/B3/B4/S9/S4/
 S1/S10/S2; flagging the wider-than-scoped blast radius rather than jumping the queue
 without a word.
+
+## case-058 steps 5-6, pending options (S6 ruling, 16 Sep 2026)
+
+- console/case-058-d17-parser-driven-word-answers-to-the-open-scope-detail-questions-and-a-new-ask.json: step 5: pending: the outstanding lane's own scope question (`['Sales orders', 'Delivery orders', 'Both']`) now wins over the recorded escalate `team_pick` options (`['orders']`) - the lane's own question is not abandoned in favour of an escalate offer (signed JT 2026-09-16, S6 ruling: the lane's own question wins over the escalate offer)
+- console/case-058-d17-parser-driven-word-answers-to-the-open-scope-detail-questions-and-a-new-ask.json: step 6: pending: same S6 ruling as step 5 - the scope question, re-asked, still wins over the recorded escalate options (signed JT 2026-09-16, S6 ruling: the lane's own question wins over the escalate offer)
