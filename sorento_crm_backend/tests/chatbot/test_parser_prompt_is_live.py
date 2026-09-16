@@ -109,7 +109,14 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # ("Sales order" over an open detail offer) is that document and never casual - the
 # DOCUMENT section's worked examples were all full sentences, none a bare two-word
 # document name. Net +434. Measured against the coder's landed change, not derived.
-CONSTANT_CHARS = 55227
+# 55227 -> 59247 (17 Sep 2026, coder 20's S4-adjacent slice, `8f1ac903c` and descendants):
+# four prompt edits - the status invariant, `domain_in_message` joining the schema (the
+# `domain_in_message`/entities discriminator table, `turn/decide.py::_subject_reading`),
+# `broaden_to` joining the schema, and `broaden_to`'s own worked examples. Net +4020.
+# Measured against the coder's landed change (`3c19a8533`), not derived. `scope_exclusive`
+# stays DECLARED in both the schema and the prompt per the same ruling (only the engine
+# read is retired), so it does not move this number by itself.
+CONSTANT_CHARS = 59247
 
 
 def _without_growth_r1_addendum(text: str) -> str:
