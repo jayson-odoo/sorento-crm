@@ -1820,6 +1820,42 @@ def _low_stock_report_output(result: Any) -> dict[str, Any]:
     }
 
 
+#: `chatbot_domains.forms.tools[0]` (`policy_rows.py`) - the one tool this domain calls.
+_FORMS_LIST_TOOL = "crm_forms_management_forms_list"
+
+
+def _forms_browse_ask(e: dict[str, Any], ctx: dict[str, Any]) -> dict[str, Any] | None:
+    """Item 1 (17 Sep 2026): a forms BROWSE that found several forms arms a `form_pick`
+    roster beside the numbered list it already prints, so "1" can answer it - the same
+    `outstanding_ask` shape `_outstanding_report_output` hands `envelope_of` (read there
+    as `lane_ask`), built off the MCP presenter's own `id` (`sorento_crm_mcp.presenters.
+    _forms`, `_FORMS_LIST_KEEP_BROWSE`).
+
+    Never when this call already NAMED a form: `ctx["entities"]` carrying a `form` entity
+    means the pick already resolved (the customer's own "1", or the resolver matched a
+    name) and this is the narrowed lookup that answer runs, not a fresh browse to arm
+    another roster over.
+    """
+    if any(
+        isinstance(ent, dict) and ent.get("entity_type") == "form"
+        for ent in jsc.array(ctx.get("entities"))
+    ):
+        return None
+    items = [it for it in (e.get("items") or []) if isinstance(it, dict) and jsc.truthy(it.get("id"))]
+    if len(items) < 2:
+        # One form, or none: nothing to choose between (`narrow.decide`'s own
+        # `_choices() <= 1` rule for a roster policy, read here for the same reason).
+        return None
+    return {
+        "kind": "form_pick",
+        "last_result_set": [
+            {"idx": i + 1, "label": it.get("title"), "value": it["id"]}
+            for i, it in enumerate(items)
+        ],
+        "filters": {},
+    }
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -2390,6 +2426,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     )
     if len(lookup_cos) > 1:
         out["lookup_companies"] = lookup_cos
+    if jsc.js_string(ctx.get("tool") or "") == _FORMS_LIST_TOOL:
+        # Beside `out["answers"]`, never instead of it: the numbered list still prints
+        # through the generic per-row grammar, and `forms_ask` only gives `envelope_of`
+        # something to arm a pick from (item 1).
+        out["forms_ask"] = _forms_browse_ask(e, ctx)
     return out
 
 

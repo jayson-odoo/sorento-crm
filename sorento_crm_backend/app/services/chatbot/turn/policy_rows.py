@@ -86,7 +86,12 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         tools=["crm_forms_management_forms_list"],
         escalation_team_code="marketing_form",
         switch_words=[],
-        narrowing={},
+        # Item 1 (17 Sep 2026): a picked form settles through the SAME policy
+        # `product_attachment.product` uses - a carry already holding a uuid (the
+        # pick) passes straight through, several named forms ask, one bare name
+        # defers to the resolver. Migration `chatbot_rearch_s7` carries it onto a
+        # seeded DB.
+        narrowing={"form": "must_narrow_one"},
         reveal_key=None,
         supported=True,
         ladder=[],

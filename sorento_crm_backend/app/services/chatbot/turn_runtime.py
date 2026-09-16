@@ -1482,7 +1482,12 @@ def envelope_of(
         # here, so the report printed "Reply 1 for the sales order list" and stored the
         # ESCALATE offer instead, and the "1" that came back resolved against the wrong
         # roster.
-        "lane_ask": fetched.get("outstanding_ask"),
+        #
+        # `forms_ask` (item 1, 17 Sep 2026) is the same shape, armed by
+        # `output_structurer` off a forms BROWSE with several rows - the two never both
+        # carry a value on the same envelope (one tool per spec), so reading either is
+        # safe.
+        "lane_ask": fetched.get("outstanding_ask") or fetched.get("forms_ask"),
         # AC-1139: this reply already states the scope it searched, in its own words
         # and its own order (the report's four header lines, and the same four above
         # the scope question). The composer's generic `*orders* for <code>:` line would
