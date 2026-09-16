@@ -1294,3 +1294,40 @@ def test_send_requires_the_write_permission(scm_app):
     )
 
     assert r.status_code == 403, r.text
+
+
+def test_build_open_need_ignores_a_redirected_rows_placement(scm_app):
+    """AC-RL-16e (S5, code review 17 Sep): `_PLACED_ON_LINE_SQL` sums EVERY link on
+    the core line's project mirror with no `redirected_to_pool` exclusion - a
+    redirected row's placement (goods that already shipped to another order,
+    AC-RL-10) still nets the loading plan's own open need down, so purchasing
+    reads less to buy than the line genuinely still needs."""
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    # A trace of stock so the product row survives the "no demand, no stock" drop
+    # (`test_build_no_demand_rows_with_stock_but_zero_quantity_are_left_out_entirely`)
+    # even if the bug under test nets this line's OWN need to zero.
+    w.stock("A", packed=1, cbm=0.1)
+
+    project_line = project_need(db, w, "A", 30)
+    place_on_po(db, w, project_line, 30)
+
+    from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
+    psl = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.core_sales_order_line_id == project_line.id)
+        .one()
+    )
+    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == psl.id).one()
+    row.redirected_to_pool = True
+    db.flush()
+
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
+
+    assert r.status_code == 200, r.text
+    row_out = _row(r.json()["rows"], "A", w)
+    assert row_out["project_qty"] == 30, (
+        "a redirected row's placement must not net this line's own open need"
+    )
+    assert row_out["open_so_need"] == 30

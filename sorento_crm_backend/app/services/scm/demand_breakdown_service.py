@@ -75,6 +75,7 @@ from app.services.scm.customer_label import CUSTOMER_JOIN_ON, CUSTOMER_LABEL_SQL
 from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
     BUY_VERB,
+    NOT_REDIRECTED_SQL,
     ORDER_INQUIRY_ORIGIN,
     PLAN_DEMAND_LINE_SQL,
     PLAN_DEMAND_ORDER_SQL,
@@ -537,6 +538,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
             -- links table it could only be all or nothing.
             WHERE oir.verb = :buy_verb
               AND oir.state = ANY(:unplaced_states)
+              {NOT_REDIRECTED_SQL}
               AND oir.qty > COALESCE(lk.linked, 0)
               AND sol.product_id::text = :pid
               AND sol.warehouse_id::text = ANY(:members)
@@ -633,6 +635,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                                - COALESCE(fsol.qty_delivered, 0), 0) > 0)
               AND oir.verb = ANY(:form_verbs)
               AND oir.state = ANY(:unplaced_states)
+              {NOT_REDIRECTED_SQL}
               AND oir.ack_state = ANY(:planned_ack_states)
               AND oir.qty > 0
               -- Ruling 6 (`PLAN-scm-supplied-with-companions.md`): a bundled unit never

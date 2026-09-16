@@ -190,12 +190,15 @@ def test_a_contribution_names_the_inquiry_raised_for_its_line():
         # is where the supply stands, `ack_state` (and the refusal beside it) is whether
         # purchasing has taken the instruction on. A row nobody has read says `awaiting`
         # and names no refusal, which is exactly what an untouched cell must say.
+        # A row nobody has redirected carries no documents.
         assert contribution["order_inquiry"] == {
             "inquiry_no": inquiry.inquiry_no,
             "state": INQUIRY_PLACED,
             "ack_state": "awaiting",
             "rejected_reason": None,
             "rejected_by_name": None,
+            "redirected": False,
+            "documents": [],
         }
         # Stamped by the model's own listener, not invented here.
         assert inquiry.inquiry_no.startswith("OI-")

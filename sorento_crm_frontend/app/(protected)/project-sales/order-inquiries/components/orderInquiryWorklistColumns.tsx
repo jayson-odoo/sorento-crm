@@ -8,10 +8,18 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
+import { ackStateOf, movedNoteOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -19,12 +27,59 @@ import {
   formatInquiryQty,
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
-import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+import type {
+  OrderInquiryLinkSuggestion,
+  OrderInquiryWorklistRow,
+} from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
 import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
+}
+
+/**
+ * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
+ * `received`, `reallocate`/`unlink`, `used`, `note` - shared ONE pill from here on,
+ * rather than four hand-rolled spellings of `text-2xs text-muted-foreground` (one of
+ * them a literal `text-[var(--color-warning-accent,...)]` colour). The same `Badge`
+ * idiom the `+N` pill beside them already used (`size="sm" appearance="light" asChild`);
+ * `warning` is the design system's own token for the amber marks, never a literal one.
+ */
+function WorklistPill({
+  as = 'span',
+  warning = false,
+  testId,
+  onClick,
+  ariaLabel,
+  children,
+}: {
+  as?: 'span' | 'button';
+  warning?: boolean;
+  testId: string;
+  onClick?: (event: React.MouseEvent) => void;
+  ariaLabel?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Badge asChild size="sm" variant={warning ? 'warning' : 'secondary'} appearance="light">
+      {as === 'button' ? (
+        <button
+          type="button"
+          data-testid={testId}
+          aria-label={ariaLabel}
+          className="shrink-0"
+          onClick={onClick}
+        >
+          {children}
+        </button>
+      ) : (
+        <span data-testid={testId} className="shrink-0">
+          {children}
+        </span>
+      )}
+    </Badge>
+  );
 }
 
 /**
@@ -82,6 +137,25 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
 interface DocumentEntry {
   document: string;
   via: 'po' | 'spo' | null;
+  /**
+   * The FIRST link naming this document is fully received (S1,
+   * `PLAN-oi-replan-received-links.md`, AC-RL-02) - goods that have landed, not a promise
+   * still in transit. `receivedQty`/`qty` back the chip's own title; both are the LINK's
+   * own figures, never the row's.
+   */
+  received: boolean;
+  receivedQty: string | null;
+  qty: string | null;
+  /** The link's own promised arrival - the reallocate lightbox states it beside the
+   * row's own delivery date (AC-RL-24). */
+  expectedDate: string | null;
+  /**
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): the FIRST link
+   * naming this document carries a reallocate/unlink instruction. Never on a received
+   * link (S1's own `received` and S1b's `suggestion` are mutually exclusive by
+   * construction on the wire, but the chip reads whichever the link states).
+   */
+  suggestion: OrderInquiryLinkSuggestion | null;
 }
 
 function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
@@ -103,9 +177,123 @@ function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): Document
     const document = (named ?? '').trim();
     if (!document || seen.has(document)) continue;
     seen.add(document);
-    entries.push({ document, via });
+    entries.push({
+      document,
+      via,
+      received: Boolean(link.received),
+      receivedQty: link.received_qty ?? null,
+      qty: link.qty ?? null,
+      expectedDate: link.expected_date ?? null,
+      suggestion: link.suggestion ?? null,
+    });
   }
   return entries;
+}
+
+/**
+ * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): the muted amber
+ * `reallocate`/`unlink` word beside the PO/SPO chip - one short word, the same "via PO"
+ * pill idiom turned clickable, never an icon (17 Sep ruling: words, never icons).
+ * Purchasing acts in AutoCount; nothing is written from here.
+ */
+function LinkSuggestionMark({
+  suggestion,
+  testId,
+  onOpen,
+}: {
+  suggestion: OrderInquiryLinkSuggestion;
+  testId: string;
+  onOpen: (event: React.MouseEvent) => void;
+}) {
+  const word = suggestion.kind === 'reallocate' ? 'reallocate' : 'unlink';
+  return (
+    <WorklistPill as="button" warning testId={testId} onClick={onOpen}>
+      {word}
+    </WorklistPill>
+  );
+}
+
+/**
+ * `Reallocate to OI-000539 · SO420100 · needed 01/12/2026 · open 90`, or the rest of the
+ * list plain (AC-RL-24, ruling 17 Sep: list every candidate, earliest first, the first
+ * marked). Never "Repoint to" anywhere.
+ */
+function reallocateCandidateLine(
+  candidate: {
+    inquiry_no: string | null;
+    item_code: string | null;
+    so_number: string | null;
+    delivery_date: string;
+    open_qty: string;
+  },
+  isTarget: boolean,
+): string {
+  const prefix = isTarget ? 'Reallocate to ' : '';
+  return (
+    `${prefix}${candidate.inquiry_no ?? 'another inquiry'} · ` +
+    `${candidate.so_number ?? 'unknown SO'} · ` +
+    `needed ${formatDateInMalaysia(candidate.delivery_date)} · ` +
+    `open ${formatInquiryQty(candidate.open_qty)}`
+  );
+}
+
+/**
+ * The lightbox `reallocate`/`unlink` opens (AC-RL-24): headed by the document, item and
+ * quantity, then every candidate earliest first with the footer instruction - or, with
+ * no candidates, `Unlink · no sooner inquiry needs this item`. No reason text, no
+ * "early", no "repoint" anywhere - purchasing re-keys the line in AutoCount, and S5 (our
+ * link follows the book) reacts to that; nothing is written from here.
+ */
+function LinkSuggestionDialog({
+  row,
+  document,
+  qty,
+  expectedDate,
+  suggestion,
+  open,
+  onOpenChange,
+}: {
+  row: OrderInquiryWorklistRow;
+  document: string;
+  qty: string | null;
+  expectedDate: string | null;
+  suggestion: OrderInquiryLinkSuggestion;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg" data-testid={`link-suggestion-${row.id}`}>
+        <DialogHeader>
+          <DialogTitle>{document}</DialogTitle>
+          <DialogDescription>
+            {row.item_code ?? 'this item'} · {formatInquiryQty(qty ?? '0')}
+            {expectedDate ? ` · expected ${formatDateInMalaysia(expectedDate)}` : ''}
+            {row.delivery_date ? ` · needed ${formatDateInMalaysia(row.delivery_date)}` : ''}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogBody className="space-y-3">
+          {suggestion.kind === 'unlink' ? (
+            <p className="text-sm">Unlink · no sooner inquiry needs this item</p>
+          ) : (
+            <>
+              <ul className="space-y-1.5 text-sm">
+                {suggestion.candidates.map((candidate, index) => (
+                  <li key={`${candidate.inquiry_no ?? 'candidate'}-${index}`}>
+                    {reallocateCandidateLine(candidate, index === 0)}
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">
+                Re-key the line to the chosen sales order in AutoCount; the link moves at
+                the next upload
+              </p>
+            </>
+          )}
+        </DialogBody>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 /**
@@ -129,6 +317,7 @@ function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): Document
  */
 function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po' | 'spo' }) {
   const [open, setOpen] = React.useState(false);
+  const [suggestionOpen, setSuggestionOpen] = React.useState(false);
   const numbers = documentsOf(row, kind);
   if (numbers.length === 0) return <Muted>-</Muted>;
   const [first, ...rest] = numbers;
@@ -157,16 +346,48 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       {/* S5, R-E: never a real link - the SAME allocation read the other book's own
           number off (an SPO's `source_po_number`, or the PO's own open shipment). */}
       {first.via ? (
-        <span
-          data-testid={
+        <WorklistPill
+          testId={
             kind === 'spo'
               ? `backing-documents-via-spo-${row.id}`
               : `backing-documents-via-${row.id}`
           }
-          className="shrink-0 text-2xs text-muted-foreground"
         >
           {first.via === 'po' ? 'via PO' : 'via SPO'}
-        </span>
+        </WorklistPill>
+      ) : null}
+      {/* S1, AC-RL-02 (17 Sep rulings): the document is fully received - location
+          stock now, not a promise still in transit. ONE muted pill, same style as
+          the "via" mark beside it, and CLICKABLE like every other mark on this row -
+          opens the SAME lightbox, whose own body states the receipt in full. */}
+      {first.received ? (
+        <WorklistPill
+          as="button"
+          testId={
+            kind === 'spo'
+              ? `backing-documents-received-spo-${row.id}`
+              : `backing-documents-received-${row.id}`
+          }
+          onClick={open_}
+        >
+          received
+        </WorklistPill>
+      ) : null}
+      {/* S1b, AC-RL-24: a reallocate/unlink instruction, mutually exclusive with the
+          `received` mark above (a received link never carries a suggestion). */}
+      {first.suggestion ? (
+        <LinkSuggestionMark
+          suggestion={first.suggestion}
+          testId={
+            kind === 'spo'
+              ? `backing-documents-suggestion-spo-${row.id}`
+              : `backing-documents-suggestion-${row.id}`
+          }
+          onOpen={(event) => {
+            event.stopPropagation();
+            setSuggestionOpen(true);
+          }}
+        />
       ) : null}
       {rest.length ? (
         <Badge asChild size="sm" variant="secondary" appearance="light">
@@ -187,6 +408,17 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       ) : null}
       {open ? (
         <OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={setOpen} />
+      ) : null}
+      {first.suggestion && suggestionOpen ? (
+        <LinkSuggestionDialog
+          row={row}
+          document={first.document}
+          qty={first.qty}
+          expectedDate={first.expectedDate}
+          suggestion={first.suggestion}
+          open
+          onOpenChange={setSuggestionOpen}
+        />
       ) : null}
     </span>
   );
@@ -252,26 +484,65 @@ function BundledDocumentsButton({
 }
 
 /**
- * The Qty cell's own info icon (owner's 9 Sep feedback, live look at the running lane):
- * the same one-line defect slice A fixed for the Outstanding column also sat here - a
- * rejected row's reason or a changed row's Was/Now table rendered as a second line, so
- * those rows read taller than every other one. Rendered ONLY when the row actually has
- * something to say (a rejection, a change stamp, or both); a plain acknowledged row shows
- * the quantity alone.
+ * The Qty cell's own trigger (owner's 9 Sep feedback, live look at the running lane): the
+ * same one-line defect slice A fixed for the Outstanding column also sat here - a rejected
+ * row's reason or a changed row's Was/Now table rendered as a second line, so those rows
+ * read taller than every other one. Rendered ONLY when the row actually has something to
+ * say; a plain acknowledged row shows the quantity alone.
  *
- * The two states stay distinguishable at a glance without adding words to the cell: a
- * REJECTED row's icon reads as a warning (the design system's own warning token, matching
- * `Badge variant="warning"` elsewhere on this screen) because it is the one that needs
- * purchasing to look again; a row that only carries a change stamp reads muted, the same
- * colour every other icon-only trigger on this list uses, because it is informational.
- * Both facts win the warning colour when both apply - a rejection is the more urgent of
- * the two.
+ * A rejected or changed row keeps the info icon (the design system's own warning token for
+ * a rejection, matching `Badge variant="warning"` elsewhere on this screen; muted for a
+ * plain change) - both facts win the warning colour when both apply, a rejection being the
+ * more urgent of the two.
+ *
+ * A row a replan REDIRECTED (AC-RL-04) or one AutoCount's own book pairing MOVED off
+ * entirely (AC-RL-46) reads as a one-word muted pill instead - `used` or `note` - never an
+ * icon (17 Sep ruling: words, never icons, for every mark this list carries). Both open the
+ * SAME dialog this icon does; only the trigger's own shape differs.
  */
 function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
   const [open, setOpen] = React.useState(false);
   const rejected = ackStateOf(row) === 'rejected';
   const changed = Boolean(previousValueOf(row));
-  if (!rejected && !changed) return null;
+  // AC-RL-04 (17 Sep rulings): the row's only coverage had already landed elsewhere by
+  // the time a replan met it - kept here as history, marked `used` rather than the
+  // retired `redirected` pill.
+  const redirected = Boolean(row.redirected_to_pool);
+  // AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): a row the book redirected off is
+  // neither rejected, changed nor redirected-to-pool - a settle never touched it - so the
+  // gate widens to the same note `follow_book_repairing` wrote, the only other fact this
+  // trigger ever shows. Never checked on a `redirected_to_pool` row: that row's own note
+  // reads differently and is handled by the branch above.
+  const moved = !redirected ? movedNoteOf(row) : null;
+  if (!rejected && !changed && !redirected && !moved) return null;
+
+  const openDialog = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setOpen(true);
+  };
+
+  if (redirected || moved) {
+    const word = redirected ? 'used' : 'note';
+    const label = redirected
+      ? `Show why ${row.item_code ?? row.so_number ?? 'this row'} was redirected`
+      : `Show what AutoCount changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
+    return (
+      <>
+        <WorklistPill
+          as="button"
+          testId={`qty-annotation-trigger-${row.id}`}
+          ariaLabel={label}
+          onClick={openDialog}
+        >
+          {word}
+        </WorklistPill>
+        {open ? (
+          <OrderInquiryQtyAnnotationDialog row={row} open onOpenChange={setOpen} />
+        ) : null}
+      </>
+    );
+  }
+
   const label = rejected
     ? `Show why ${row.item_code ?? row.so_number ?? 'this row'} was rejected`
     : `Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
@@ -289,10 +560,7 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
             ? 'text-[var(--color-warning-accent,var(--color-yellow-700))]'
             : 'text-muted-foreground'
         }`}
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen(true);
-        }}
+        onClick={openDialog}
       >
         <Info className="size-3.5" aria-hidden />
       </Button>
@@ -320,8 +588,8 @@ export function useOrderInquiryWorklistColumns({
    */
   selectable?: boolean;
 } = {}): ColumnDef<OrderInquiryWorklistRow>[] {
-  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
-    () => [
+  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(() => {
+    const columns: ColumnDef<OrderInquiryWorklistRow>[] = [
       ...(selectable
         ? [
             buildSelectColumn<OrderInquiryWorklistRow>({
@@ -757,7 +1025,12 @@ export function useOrderInquiryWorklistColumns({
       // No Confirmed column (S1, AC-1.5): there is no manual confirm left to report on,
       // and the two facts that column existed to carry - a rejection and a settle-in-place
       // Was/Now - render in the qty cell above instead.
-    ],
-    [selectable],
-  );
+    ];
+    // REV-S6/S1: a redirected row reads muted via the DataGrid's own `rowClassName`
+    // (OrderInquiriesClient.tsx), not a per-cell wrapper here - a `display: contents`
+    // wrapper has no box, so `opacity-60` on it never applies. The select column was
+    // never touched by that wrapper either: a redirected row still has to be tickable
+    // like any other (AC-A1..: only `cancelled` is ever excluded from selection).
+    return columns;
+  }, [selectable]);
 }

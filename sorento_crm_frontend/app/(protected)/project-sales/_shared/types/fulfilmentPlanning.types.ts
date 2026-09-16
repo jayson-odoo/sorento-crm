@@ -1391,6 +1391,25 @@ export interface BoardLineOrderInquiry {
    */
   rejected_reason?: string | null;
   rejected_by_name?: string | null;
+  /**
+   * AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the instruction - the
+   * winning row's own documents, the SAME reader (`links_for_rows`) the OI worklist
+   * chip uses. Empty on a row nobody has linked.
+   */
+  documents?: BoardLineOrderInquiryDocument[];
+  /**
+   * Whether the winning row was itself redirected off a document that had already
+   * landed (AC-RL-10) - the fulfilment list's inquiry cell reads this for the `used`
+   * word (AC-RL-06).
+   */
+  redirected?: boolean;
+}
+
+/** One document behind a board line's instruction (AC-RL-07). */
+export interface BoardLineOrderInquiryDocument {
+  document: string | null;
+  kind: 'po' | 'spo';
+  received: boolean;
 }
 
 /**

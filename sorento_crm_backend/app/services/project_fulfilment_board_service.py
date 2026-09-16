@@ -1751,6 +1751,12 @@ class FulfilmentBoardService:
                 # decision; the migrated sheet's rows (#875) carry none, and only those
                 # decide a line the board would otherwise propose for again.
                 OrderInquiryRow.supply_decision_id,
+                # AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the
+                # instruction, and whether it was itself redirected off a document that
+                # had already landed (AC-RL-10) - the row id addresses `links_for_rows`
+                # below, `redirected_to_pool` reaches the wire as-is.
+                OrderInquiryRow.id,
+                OrderInquiryRow.redirected_to_pool,
             )
             .select_from(OrderInquiryRow)
             .join(
@@ -1803,7 +1809,7 @@ class FulfilmentBoardService:
         live_entry: Dict[str, Dict[str, Any]] = {}
         for (
             core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name,
-            supply_decision_id,
+            supply_decision_id, row_id, redirected_to_pool,
         ) in rows:
             core_key = str(core_id)
             if (
@@ -1818,6 +1824,8 @@ class FulfilmentBoardService:
                     "ack_state": ack_state,
                     "rejected_reason": None,
                     "rejected_by_name": None,
+                    "_row_id": str(row_id),
+                    "redirected": bool(redirected_to_pool),
                 }
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
@@ -1839,6 +1847,10 @@ class FulfilmentBoardService:
                 "ack_state": None if answered_refusal else ack_state,
                 "rejected_reason": None,
                 "rejected_by_name": None,
+                # AC-RL-07: this ROW's own id (to address `links_for_rows`) and whether
+                # IT was redirected - popped/resolved below, never sent as `_row_id`.
+                "_row_id": str(row_id),
+                "redirected": bool(redirected_to_pool),
             }
             answered_refusal_at[core_key] = rejected_at if answered_refusal else None
         # The REFUSAL is read off the line rather than off its current row, and that is
@@ -1855,7 +1867,7 @@ class FulfilmentBoardService:
         # answer would read as an open refusal on a line somebody had already dealt with.
         for (
             core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name,
-            _decision_id,
+            _decision_id, _row_id, _redirected_to_pool,
         ) in rows:
             if ack_state != ACK_REJECTED:
                 continue
@@ -1876,6 +1888,27 @@ class FulfilmentBoardService:
             out[core_key] = {**live, "_decides_line": True}
         for core_key, entry in out.items():
             entry.setdefault("_decides_line", False)
+        # AC-RL-07 (`PLAN-oi-replan-received-links.md`): what is BEHIND the instruction,
+        # not only its number - the winning row's own documents and whether it was
+        # itself redirected off one that had already landed. Read through `links_for_
+        # rows`, the ONE reader every other surface (the worklist, the SCM sales-order
+        # detail) already uses - no second query shape for "where is this linked".
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        row_ids = [entry["_row_id"] for entry in out.values() if entry.get("_row_id")]
+        links_by_row = (
+            ProjectOrderInquiryService(self.db).links_for_rows(row_ids) if row_ids else {}
+        )
+        for entry in out.values():
+            row_id = entry.pop("_row_id", None)
+            entry["documents"] = [
+                {
+                    "document": link["document"],
+                    "kind": link["kind"],
+                    "received": bool(link.get("received")),
+                }
+                for link in links_by_row.get(row_id, [])
+            ]
         return out
 
     def _frozen_decisions(

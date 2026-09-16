@@ -333,6 +333,13 @@ UNPLACED_INQUIRY_STATE = "raised"
 #: state change, so a row half covered by a purchase order is half of a demand still.
 UNLINKED_INQUIRY_STATES = ("raised", "partly_linked")
 
+#: A REDIRECTED row is not carried by a replan (`PLAN-oi-replan-received-links.md`, S2):
+#: the document it still shows as history has already shipped to somebody else's order,
+#: so it must never net a line's demand a second time on top of the fresh row raised in
+#: its place. Every leg over `projects.order_inquiry_rows` below states this ONE clause,
+#: never six separate spellings of it.
+NOT_REDIRECTED_SQL = "AND oir.redirected_to_pool = FALSE"
+
 #: The one decision state that counts. A superseded or challenged revision's Buy is
 #: history, and counting it would buy the same requirement twice.
 ACTIVE_DECISION_STATE = "active"
@@ -511,6 +518,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      {NOT_REDIRECTED_SQL}
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
       -- PLAN-scm-supplied-with-companions.md ruling 6: a bundled unit never reaches
@@ -588,6 +596,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      {NOT_REDIRECTED_SQL}
       AND oir.ack_state <> '{REJECTED_ACK_STATE}'
       AND oir.qty > 0
       -- Ruling 6, form leg: the same "never reaches reorder planning" rule. No 7.3 cap
@@ -693,6 +702,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      {NOT_REDIRECTED_SQL}
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
       -- Ruling 6: a bundled unit never reaches reorder planning. And 7.3: a row whose
@@ -776,6 +786,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      {NOT_REDIRECTED_SQL}
       AND oir.ack_state IN ({_PLANNED_ACK_SQL})
       AND oir.qty > 0
       -- Ruling 6, form leg: the same rule again, and no 7.3 cap for the same reason the
@@ -843,6 +854,7 @@ WITH legs AS (
     ) lk ON TRUE
     WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      {NOT_REDIRECTED_SQL}
       AND oir.qty > 0
       -- Ruling 6: a fully bundled row is not owed, so it names no date either, and 7.3's
       -- cap reads the same way: a row whose line owes nothing dates nothing.
@@ -877,6 +889,7 @@ WITH legs AS (
                        - COALESCE(fsol.qty_delivered, 0), 0) > 0)
       AND oir.verb IN ('ORDER', 'ORDER_BACK')
       AND oir.state IN ('raised', 'partly_linked')
+      {NOT_REDIRECTED_SQL}
       AND oir.qty > 0
       AND {_OWED_FORM_SQL} > 0
       AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL

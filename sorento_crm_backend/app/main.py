@@ -2,16 +2,41 @@
 import os
 # Load .env with override=True so file values beat any stale shell env
 # (e.g. a STORAGE_DEFAULT_PROVIDER exported earlier in the session).
+# SORENTO_ENV_FILE overrides which dotenv gets loaded, so tests can point at
+# a private file instead of flipping the backend's real .env under a
+# running dev server.
 from pathlib import Path as _Path
-try:
-    from dotenv import load_dotenv as _load_dotenv
+
+
+def _load_env_file() -> None:
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+    except ImportError:
+        return
+    _override_path = os.environ.get("SORENTO_ENV_FILE")
+    if _override_path:
+        _resolved_override = _Path(_override_path)
+        if not _resolved_override.is_absolute():
+            _resolved_override = _Path(__file__).resolve().parent.parent / _resolved_override
+        if not _resolved_override.exists():
+            # A typo here must never fall back to the real .env - that would
+            # point a test run (or anything else setting this) at the live
+            # stack's database with no warning. See app.config's equivalent.
+            raise RuntimeError(
+                f"SORENTO_ENV_FILE={_override_path!r} does not resolve to an "
+                f"existing file (looked for {_resolved_override}); refusing "
+                f"to fall back to .env."
+            )
+        _load_dotenv(_resolved_override, override=True)
+        return
     _env_path = _Path(__file__).resolve().parent.parent / ".env"
     if _env_path.exists():
         _load_dotenv(_env_path, override=True)
     else:
         _load_dotenv(override=True)
-except ImportError:
-    pass
+
+
+_load_env_file()
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder

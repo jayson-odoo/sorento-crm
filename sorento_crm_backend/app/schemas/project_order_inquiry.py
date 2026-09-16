@@ -11,7 +11,7 @@ raw ``verb`` so the screen can colour by verb while printing what purchasing rea
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -74,6 +74,14 @@ class OrderInquiryLinkOut(BaseModel):
     #: print rather than a zero it would have to read as "on time" (AC-D17). Derived
     #: beside `late` from the same two dates, never stored.
     late_days: Optional[int] = None
+    #: The document this link names is FULLY received (`PLAN-oi-replan-received-links.md`
+    #: S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
+    #: 'closed'`, or an SPO allocation that fails `spo_supply.open_incoming_clauses()`.
+    #: Goods that have landed, not a promise still in transit.
+    received: bool = False
+    #: How much of THIS link's own line has been received, stated even when `received`
+    #: itself is false - a partly received document says the figure too.
+    received_qty: Optional[str] = None
     auto: bool = False
     linked_at: Optional[datetime] = None
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
@@ -94,6 +102,15 @@ class OrderInquiryLinkOut(BaseModel):
     #: link (never a link this system made independently), so the PO column marks it
     #: "via SPO".
     derived_po: bool = False
+    #: S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24, 17 Sep rulings): a
+    #: concrete instruction, never a reason - `{"kind": "reallocate", "candidates":
+    #: [{"inquiry_no", "item_code", "so_number", "delivery_date", "open_qty"}, ...]}`
+    #: naming EVERY other linkable row of the same product with open need, delivery
+    #: date ascending then open need descending (the first is the suggested target),
+    #: or `{"kind": "unlink"}` when there is none. Null on a received link or one still
+    #: inside the product's lead-time window. Nothing is written from it - purchasing
+    #: acts in AutoCount, S5 follows.
+    suggestion: Optional[Dict[str, Any]] = None
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -327,6 +344,13 @@ class OrderInquiryWorklistRow(BaseModel):
     #: figures rather than a sentence the screen has to parse back.
     previous_qty: Optional[str] = None
     previous_delivery_date: Optional[date] = None
+    #: A replan met this row's only coverage already fully received and could not carry
+    #: it forward (`PLAN-oi-replan-received-links.md` S2, AC-RL-16): its `qty`/
+    #: `delivery_date`/`links` stand as history, and the fresh need is a separate row.
+    #: Excluded from the Buy / Purchased / Incoming cards and from `taken_from_po` /
+    #: `remaining_open` - declared here because `response_model` silently drops a field
+    #: it has not been told about.
+    redirected_to_pool: bool = False
 
 
 class OrderInquiryMonthTotal(BaseModel):

@@ -202,6 +202,20 @@ class ShippingOrderIngestService(MasterRefResolver):
         # refresh commits, which would land half a batch and defeat the dry-run
         # rollback.
         self.shipment_ids_touched: set[str] = set()
+        # S5 (`PLAN-oi-replan-received-links.md`): every SPO allocation whose
+        # `from_so_line_ref` changed on THIS push - the same shape and the same
+        # reader (`follow_book_repairing`) as `DocumentIngestService.ref_moves`.
+        # `_write_row` captures an in-place move; `_supersede_xlsx_rows` records
+        # the superseded (xlsx-era) row's ref against the NEW allocation it made.
+        #
+        # AC-RL-49 (security review, 17 Sep): published ONLY once `_apply_scoped`
+        # has fully succeeded, the same "stage per record, publish on success"
+        # rule `DocumentIngestService._record_hook_state` follows and for the
+        # same reason - a plain Python list is not part of the record's own
+        # SAVEPOINT, so an append made mid-`_apply_scoped` would otherwise
+        # survive a later failure in the SAME record's own rollback.
+        self.ref_moves: list[dict[str, Optional[str]]] = []
+        self._pending_ref_moves: list[dict[str, Optional[str]]] = []
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -356,6 +370,10 @@ class ShippingOrderIngestService(MasterRefResolver):
             return self._apply_scoped(payload, force_closed)
 
     def _apply_scoped(self, payload: CanonicalShippingOrder, force_closed: bool) -> _Verdict:
+        # AC-RL-49: fresh per record - THIS record's own ref moves, staged until
+        # this method returns successfully, never a previous (possibly failed)
+        # record's leftover.
+        self._pending_ref_moves = []
         # S2 review fix: refused before anything else - a conflicting OPEN
         # claim on this spo_number is a fact about the DOCUMENT, not about
         # any one reference on it, so it is checked before the ladder runs.
@@ -432,6 +450,24 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # the push states LESS than already arrived, and the max
                     # rule would keep the higher stored statement anyway.
                     continue
+                # S5: capture the move BEFORE `_write_row` overwrites `row`'s
+                # own value - the in-place repush half of AC-RL-42. Presence,
+                # never truthiness (`"from_so_line_ref" in values`), so an
+                # explicit `null` is captured too.
+                if "from_so_line_ref" in values:
+                    old_ref = row.from_so_line_ref
+                    new_ref = values["from_so_line_ref"]
+                    if old_ref != new_ref:
+                        # AC-RL-49: staged, not published - see `_pending_ref_moves`'s
+                        # own docstring in `__init__`.
+                        self._pending_ref_moves.append(
+                            {
+                                "target_kind": "spo",
+                                "target_id": str(row.id),
+                                "old_ref": old_ref,
+                                "new_ref": new_ref,
+                            }
+                        )
                 self._write_row(
                     row, values, force_closed,
                     container_number=container_number, warnings=warnings,
@@ -534,6 +570,13 @@ class ShippingOrderIngestService(MasterRefResolver):
         self.db.flush()
         self._write_order_link_claims(payload)
         self.spo_numbers_touched.add(payload.spo_number)
+        # AC-RL-49: THIS record has now fully succeeded (everything above this
+        # point in `_apply_scoped` already ran without raising) - its own staged
+        # ref moves are promoted to the batch-level list the route's hook reads,
+        # and never before.
+        if self._pending_ref_moves:
+            self.ref_moves.extend(self._pending_ref_moves)
+            self._pending_ref_moves = []
         return _Verdict(outcome=outcome, warnings=dedupe_warnings(warnings), line_counts=counts)
 
     def _write_order_link_claims(self, payload: CanonicalShippingOrder) -> None:
@@ -1082,6 +1125,24 @@ class ShippingOrderIngestService(MasterRefResolver):
                 consumed.add(line_plan.index)
                 if target is None:
                     target = row
+                    # S5 (`PLAN-oi-replan-received-links.md`): the superseded
+                    # (xlsx-era) rows never carried a ref - `old_ref` is null -
+                    # so this records THIS push's own ref against the NEW row
+                    # `repoint_allocation_dependants` below is about to move
+                    # every dependant onto, including our own order-inquiry
+                    # links. `follow_book_repairing` reads it the same way as
+                    # an in-place move; presence, never truthiness.
+                    if "from_so_line_ref" in values:
+                        # AC-RL-49: staged, not published - see `_pending_ref_moves`'s
+                        # own docstring in `__init__`.
+                        self._pending_ref_moves.append(
+                            {
+                                "target_kind": "spo",
+                                "target_id": str(row.id),
+                                "old_ref": None,
+                                "new_ref": values["from_so_line_ref"],
+                            }
+                        )
                     # D25c (security round 6): the group's own facts land on
                     # its FIRST line, the same row the links move to - a
                     # rejection and a note are statements somebody made about

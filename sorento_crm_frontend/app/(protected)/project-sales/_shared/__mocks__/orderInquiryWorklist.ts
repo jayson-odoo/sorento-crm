@@ -219,12 +219,103 @@ export const MOCK_WORKLIST_ROWS: OrderInquiryWorklistRow[] = [
     core_sales_order_id: 'so-381895',
     is_adopted: true,
   },
+  {
+    // `PLAN-oi-replan-received-links.md`, S1/S3: OI-000477 line 1 verbatim - the SPO that
+    // shipped 158 to BRW-IR closed and received on 19 Jan 2026, so a replan could not
+    // carry this row forward. It keeps its OLD qty/date/link as history (`redirected_to_
+    // pool: true`) and contributes nothing to any card; the fresh need is row-7 below.
+    id: 'row-6',
+    inquiry_no: 'OI-000477',
+    so_date: '2025-11-20',
+    so_number: 'SO314593',
+    item_code: 'B2154-NL',
+    product_name: null,
+    qty: '182',
+    delivery_date: '2026-06-01',
+    project_customer: 'PTL Supplies / BRW-IR',
+    supplier: null,
+    supplier_id: null,
+    po_number: null,
+    location: 'BRW-IR',
+    agent_code: null,
+    agent_label: null,
+    state: 'partly_linked',
+    raised_at: '2025-11-20T09:00:00',
+    raised_by_name: 'Cindy Lee',
+    verb: 'ORDER',
+    // AC-RL-10's own note shape.
+    note: 'SPO-2026/01-0143 received 19 Jan 2026 in full, goods are BRW-IR stock, released at revision 4',
+    // S3, AC-RL-16: a redirected row's own flow figures read as 0 - what still flows to
+    // reorder planning is the fresh row (row-7), never this one's history.
+    taken_from_po: '0',
+    remaining_open: '0',
+    linked_qty: '158',
+    links: [
+      {
+        id: 'link-5',
+        kind: 'spo',
+        document: 'SPO-2026/01-0143',
+        qty: '158',
+        location: 'BRW-IR',
+        issue_date: '2026-01-19',
+        expected_date: '2026-01-19',
+        tier: 1,
+        auto: true,
+        po_id: null,
+        received: true,
+        received_qty: '158',
+      },
+    ],
+    project_id: null,
+    project_sales_order_id: 'pso-6',
+    core_sales_order_id: 'so-314593',
+    is_adopted: true,
+    redirected_to_pool: true,
+  },
+  {
+    // The fresh Buy the redirect raised (S2, backend - shown here only as what row-6's
+    // replan hands the worklist): the full 220 need, the new 1 Mar 2027 date, no links -
+    // a plain buy, exactly as AC-RL-30 reads it.
+    id: 'row-7',
+    inquiry_no: 'OI-000477',
+    so_date: '2025-11-20',
+    so_number: 'SO314593',
+    item_code: 'B2154-NL',
+    product_name: null,
+    qty: '220',
+    delivery_date: '2027-03-01',
+    project_customer: 'PTL Supplies / BRW-IR',
+    supplier: null,
+    supplier_id: null,
+    po_number: null,
+    location: null,
+    agent_code: null,
+    agent_label: null,
+    state: 'raised',
+    raised_at: '2026-09-16T10:00:00',
+    raised_by_name: 'Cindy Lee',
+    verb: 'ORDER',
+    note: null,
+    taken_from_po: '220',
+    remaining_open: '220',
+    linked_qty: '0',
+    links: [],
+    project_id: null,
+    project_sales_order_id: 'pso-6',
+    core_sales_order_id: 'so-314593',
+    is_adopted: true,
+  },
 ];
 
 export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
-  total_rows: 5,
-  total_qty: '227',
-  by_state: { raised: 1, partly_linked: 1, actioned: 1, cancelled: 1, placed: 1, total: 5 },
+  // `by_month`/`suppliers`/`projects`/`raised_by` below are left exactly as the first
+  // five rows computed them - row-6/row-7 (S1/S3 fixtures, `PLAN-oi-replan-received-
+  // links.md`) are additive facts about the received/redirected marks, not a rebuild of
+  // every axis this fixture drives; `total_rows`/`total_qty`/`by_state`/`kinds` DO count
+  // them, since those are exactly what AC-RL-04 and AC-RL-16 are about.
+  total_rows: 7,
+  total_qty: '629',
+  by_state: { raised: 2, partly_linked: 2, actioned: 1, cancelled: 1, placed: 1, total: 7 },
   by_month: [
     { month: '2026-01', label: 'JAN 26', rows: 2, qty: '120' },
     { month: '2026-03', label: 'MAR 26', rows: 1, qty: '91' },
@@ -243,11 +334,14 @@ export const MOCK_WORKLIST_SUMMARY: OrderInquiryWorklistSummary = {
     { id: 'user-cindy', label: 'Cindy Lee', rows: 2 },
     { id: 'user-johnson', label: 'Johnson Tan', rows: 1 },
   ],
-  // The three cards (AC-I11), over these same five rows: row 5's SPO link 10; row 1's
+  // The three cards (AC-I11), over these same rows: row 5's SPO link 10; row 1's
   // 35 and row 3's 40 + 20 on purchase orders; row 2's whole 85 and row 3's remaining
-  // 31 still to buy. The CANCELLED row 4 contributes nothing at all - its 6 is not owed
-  // any more - which is why the three add to 221 rather than to `total_qty` 227.
-  kinds: { spo: '10', po: '95', buy: '116' },
+  // 31 plus row-7's fresh 220 still to buy. The CANCELLED row 4 contributes nothing at
+  // all, and the REDIRECTED row-6 contributes nothing either (AC-RL-04, AC-RL-16) - its
+  // 182 and its own 158-of-it SPO link are both history now, so the three cards add to
+  // 336 + 95 + 10 = 441 rather than to `total_qty` 629 (which still counts row-6's 182
+  // as demand history plus row-7's fresh 220, since `total_qty` is every visible row).
+  kinds: { spo: '10', po: '95', buy: '336' },
 };
 
 /**
