@@ -77,18 +77,11 @@ born acknowledged as every raise is). No new notification.
   marks are static one-word pills; chips stay truncated with `title`; the row is usable at
   375px and 1280px.
 - **AC-RL-06 [FE]** Given the fulfilment planning list view, When a line's linked inquiry
-  is shown (the existing order-inquiry cell), Then the same `received` word appears when the
-  row's documents are fully received and `used` when the row is redirected, so CS sees the
-  stage before confirming. (Ruling 17 Sep, board too.)
-  - **Amended, 17 Sep review round**: the word reads off `contribution.order_inquiry.
-    documents` / `.redirected` directly, on EVERY line that carries an `order_inquiry`,
-    never gated on `covered && !decision` (`contributionInquiryDecision` in
-    `supplyVocabulary.ts` returns `null` on an uncovered line, which today hides the whole
-    inquiry branch - number and word both - on precisely the shape the owner wants to read
-    before confirming: an uncovered line with a live Buy proposal). The word appears
-    ALONGSIDE that live proposal, never replacing it.
-    Tests: `FulfilmentBoardListView.test.tsx`, "AC-RL-06 amended" cases in the existing
-    `AC-RL-06` describe block.
+  cell renders, Then the inquiry number and the word `received` (every document of the
+  row's inquiry fully received) or `used` (the row is redirected) appear whenever the
+  contribution's `order_inquiry.documents` / `redirected` say so, on a covered line AND on an
+  uncovered line with a live proposal; a line that carries its own decision keeps its
+  decision slot instead (shipped rule, reconciled 17 Sep after review).
 - **AC-RL-07 [BE]** The board contribution's `order_inquiry` dict carries `documents`:
   `[{document, kind, received}]` and `redirected` (bool) for the line's live row(s), read
   through `links_for_rows` (no second query shape).

@@ -233,7 +233,11 @@ Security review (Opus) and code review (Opus, with kill tests) ran once on 23444
 | REV-S8 | `orderInquiryService.ts` contract comment and `orderInquiry.types.ts` still say repoint / redirected | Fix. |
 | REV design | Four marks in three hand-rolled spellings | Fix: one shared pill (`Badge size="sm" appearance="light" asChild`), warning token, no literal colour. |
 | REV design | Date line year vs server sentence "Buy 334 for 15 Mar" | Leave. AC-RL-01 scoped the Date field; server composer unchanged. Noted for a later pass. |
-| REV nits | dead `actor_user_id` param, dead `SalesOrderLine` join, `qty_ordered` null reads as received, redundant `_links_of` | Fix all; `received` requires `qty_ordered > 0`. |
+| REV nits | dead `actor_user_id` param, `qty_ordered` null reads as received, redundant `_links_of` | Fix all; `received` requires `qty_ordered > 0`. |
+| REV nit, pushed back | "dead" `SalesOrderLine` join in `_repoint_candidates_by_product` | Kept: `_UNLINKED_QTY` reads `SalesOrderLine` directly; removing it produced a cartesian join. Reviewer withdrew the nit. |
+| Follow-up B1 | `SORENTO_ENV_FILE` did not reach `app/config.py`, pytest still read `.env` | Fix: `Settings` honours it; a missing file raises. Owner copy checked for residue: none. |
+| Follow-up S1 | `MutedRowCell` used `display: contents`, opacity has no box | Fix: DataGrid `rowClassName`. |
+| Follow-up S3 / S4 / S5 | `company_id` fails open; cap overflow only logged; `actor_user_id: str` | Fix: required keyword; overflow count on the ingest response; `Optional[str]`. |
 | DoD | migration 512 must re-parent onto main's newest head (`ptag_0012_*`) | Before PR: `git fetch origin main`, merge, `./scripts/alembic-reparent.sh`. |
 
 ## Migration
