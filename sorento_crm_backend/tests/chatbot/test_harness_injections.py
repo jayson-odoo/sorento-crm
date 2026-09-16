@@ -100,7 +100,13 @@ class TestHarnessInjectionsG6:
         stub_access()
         envelope = _envelope(
             test_run_id="ZZT-o2-g6",
-            mock_reformulator_output=_mock_output(domain_hint="inventory"),
+            # `asks`/`topic_reset` join DECLARED_KEYS (coder 14's last item, 4427bb6bb) -
+            # `_mock_output`'s base template (`_parser_output`) predates them, so a
+            # harness-supplied emission needs them named explicitly or `assert_emission`
+            # fails the bypassed turn at `understood`.
+            mock_reformulator_output=_mock_output(
+                domain_hint="inventory", asks=None, topic_reset=None
+            ),
         )
         assert envelope.dry_run is True
 
@@ -118,7 +124,11 @@ class TestHarnessInjectionsG6:
     ) -> None:
         stub_access()
         result = engine_mod.run_turn(
-            _envelope(is_test=True, mock_reformulator_output=_mock_output()),
+            _envelope(
+                is_test=True,
+                # Same DECLARED_KEYS gap as the test above.
+                mock_reformulator_output=_mock_output(asks=None, topic_reset=None),
+            ),
             session_factory=session_factory,
         )
         record = _record(_turn_row(session_factory, result.turn_id).trace, "understood")
