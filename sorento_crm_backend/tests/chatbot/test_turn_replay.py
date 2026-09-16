@@ -340,12 +340,34 @@ HANLIM_CUSTOMER_1_ID = "00000000-0000-0000-0000-0000000000a1"
 HANLIM_CUSTOMER_2_ID = "00000000-0000-0000-0000-0000000000a2"
 CHIN_CHUN_CUSTOMER_ID = "00000000-0000-0000-0000-0000000000a3"
 
-_CASE_CUSTOMERS: dict[str, tuple[tuple[str, str], ...]] = {
+HAND_PASS_2_HANLIM_FAMILY: tuple[tuple[str, str, str], ...] = (
+    # (uuid, customer_code, customer_name) - REAL rows, read off the source clone
+    # `sorento_ai_automation_rearch` (AC-1593 hand pass 2, 17 Sep 2026 MYT), so
+    # `entity_ids` assertions can grade the SAME uuids production actually used
+    # rather than synthetic ones. Six ledgers, matching finding 1's own count
+    # ("six-line customer roster, one per ledger").
+    ("3c15f4e4-be46-4fd7-9de8-3430a9b1217a", "300-H030", "HANLIM TRADING SDN BHD"),
+    ("2d0cd958-9f5e-4eee-8b6e-ed31a94bee44", "300-H118", "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)"),
+    ("c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3", "300-H030", "HANLIM TRADING SDN BHD [A/C I]"),
+    ("6f5a419b-840a-4e4d-8107-291971dd3bb8", "300-H070", "HANLIM TRADING SDN BHD [A/C II]"),
+    ("6b52807a-537b-437d-9f55-12f7fda29df8", "300-H118", "HANLIM TRADING SDN BHD [A/C III]"),
+    ("2a4575e0-836b-4a5d-8566-73223465020d", "300-H119", "HANLIM TRADING SDN BHD [A/C IV]"),
+)
+HAND_PASS_2_GOLDEN_WIN: tuple[tuple[str, str, str], ...] = (
+    ("32d49e9b-5b55-4d23-9764-279306de295d", "300-G013", "GOLDEN WIN HARDWARE SDN BHD - [A/C I]"),
+    ("47a7ded5-86ce-4763-b598-d4b0cb16715d", "300-G014", "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]"),
+)
+
+_CASE_CUSTOMERS: dict[str, tuple[tuple[str, str, str], ...]] = {
     "console/handpass3-justin-escalation-offer.json": (
-        (HANLIM_CUSTOMER_1_ID, "HANLIM TRADING SDN BHD [A/C II]"),
-        (HANLIM_CUSTOMER_2_ID, "HANLIM TRADING SDN BHD [A/C I]"),
-        (CHIN_CHUN_CUSTOMER_ID, "CHIN CHUN HARDWARE SDN BHD - [A/C I]"),
+        (HANLIM_CUSTOMER_1_ID, "ZZT-" + HANLIM_CUSTOMER_1_ID[-4:], "HANLIM TRADING SDN BHD [A/C II]"),
+        (HANLIM_CUSTOMER_2_ID, "ZZT-" + HANLIM_CUSTOMER_2_ID[-4:], "HANLIM TRADING SDN BHD [A/C I]"),
+        (CHIN_CHUN_CUSTOMER_ID, "ZZT-" + CHIN_CHUN_CUSTOMER_ID[-4:], "CHIN CHUN HARDWARE SDN BHD - [A/C I]"),
     ),
+    "console/handpass2-owner-17sep-hanlim-delivery-miss-picks.json": HAND_PASS_2_HANLIM_FAMILY,
+    "console/handpass2-owner-17sep-hanlim-rpacc-sticky-pick.json": HAND_PASS_2_HANLIM_FAMILY,
+    "console/handpass2-owner-17sep-outstanding-do-7445-scope.json": HAND_PASS_2_HANLIM_FAMILY,
+    "console/handpass2-owner-17sep-golden-win.json": HAND_PASS_2_GOLDEN_WIN,
 }
 
 
@@ -356,7 +378,7 @@ def _seed_case_customers(session_factory, *, case_id: str) -> None:
     if not rows:
         return
     db = session_factory()
-    for customer_id, name in rows:
+    for customer_id, code, name in rows:
         existing = db.execute(
             text("SELECT 1 FROM customers WHERE id = :id"), {"id": customer_id}
         ).first()
@@ -369,8 +391,98 @@ def _seed_case_customers(session_factory, *, case_id: str) -> None:
             ),
             {
                 "id": customer_id,
-                "code": f"ZZT-{customer_id[-4:]}",
+                "code": code,
                 "name": name,
+                "cid": SORENTO_COMPANY_ID,
+            },
+        )
+    db.commit()
+
+
+# AC-1593 hand pass 2 (17 Sep 2026 MYT): the SRTWT7445 and SRTWC286 product families,
+# real rows off the same source clone - `test_turn_replay.py`'s blank schema seeds no
+# products at all, so a family-listing ruling (finding 3, "purchase cost lists all
+# variants") has nothing to list without this.
+HAND_PASS_2_SRTWC286_FAMILY: tuple[tuple[str, str], ...] = (
+    ("0d0ed752-fd6f-4759-ad8f-0b40e0cbc601", "SRTWC286-SH"),
+    ("78c96bfa-edea-4695-a215-4a02cc0c53a0", "SRTWC286-SH-150"),
+    ("65514803-1609-4fe8-8b60-2e908c8f9bd4", "SRTWC286-SH-200"),
+    ("77a5e4da-877a-462d-a0f8-cc558fdc5a51", "SRTWC286-SH-NEW"),
+    ("13ffa633-91db-4db6-9050-5de7a0deb9b8", "SRTWC286-SH-NEW-150"),
+    ("dcaeb074-6b9f-46bd-9e86-97a16e976b59", "SRTWC286-SH-NEW-200"),
+    ("677b6eb7-f21f-4a65-8195-b969a0a465dd", "SRTWC286-SH-NEW-P"),
+    ("d73a33f3-956b-401f-90c7-0ad6ff792ea1", "SRTWC286-SH-P"),
+    ("7a8f2543-ef3b-4e5f-9dad-e29f6f688485", "SRTWC286-SH-PP"),
+    ("d55d8829-5e3d-4386-ab77-6c93e26d73e7", "SRTWC286-SH-UF"),
+)
+HAND_PASS_2_SRTWT7445_FAMILY: tuple[tuple[str, str], ...] = (
+    ("90afd8db-dbd8-40c2-a3b4-072feb01b08a", "SRTWT7445"),
+    ("b3261772-aae1-4614-b7a8-b89b93734ff7", "SRTWT7445-LV"),
+    ("ed13ab1e-2f13-4f57-800d-1928173ba201", "SRTWT7445-LV-BL"),
+    ("445b035d-5e17-4345-9a1a-d41a6bda4868", "SRTWT7445-LV-BL-NEW"),
+    ("2f949bd7-6426-4cad-8263-41f86f9368e4", "SRTWT7445-LV-GM"),
+    ("e6d87826-d2c4-4332-98ec-7381ea821a9f", "SRTWT7445-LV-NEW"),
+    ("e44a6c78-93ee-4126-9ce8-8c3092dab9de", "SRTWT7445-LV-WEPLS"),
+    ("7ccd90c1-e4d5-4a0c-b6bc-5783cad6c411", "SRTWT7445-NEW"),
+    ("bf98c511-4063-4d1b-8737-eeec2cc00d18", "SRTWT7445-NL"),
+)
+
+_CASE_PRODUCTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "console/handpass2-owner-17sep-purchase-cost-all.json": HAND_PASS_2_SRTWC286_FAMILY,
+    "console/handpass2-owner-17sep-two-domain-asks.json": HAND_PASS_2_SRTWC286_FAMILY,
+    "console/handpass2-owner-17sep-stock-incoming.json": HAND_PASS_2_SRTWC286_FAMILY,
+    "console/handpass2-owner-17sep-outstanding-do-7445-scope.json": HAND_PASS_2_SRTWT7445_FAMILY,
+    "console/handpass2-owner-17sep-incoming-stock-7445.json": HAND_PASS_2_SRTWT7445_FAMILY,
+}
+
+_PRODUCT_SEED_CATEGORY_ID = "00000000-0000-0000-0000-00000000ca01"
+_PRODUCT_SEED_UOM_ID = "00000000-0000-0000-0000-00000000c0a1"
+
+
+def _seed_case_products(session_factory, *, case_id: str) -> None:
+    from sqlalchemy import text
+
+    rows = _CASE_PRODUCTS.get(case_id)
+    if not rows:
+        return
+    db = session_factory()
+    if db.execute(
+        text("SELECT 1 FROM product_categories WHERE id = :id"), {"id": _PRODUCT_SEED_CATEGORY_ID}
+    ).first() is None:
+        db.execute(
+            text(
+                "INSERT INTO product_categories (id, category_code, category_name, company_id) "
+                "VALUES (:id, 'ZZT-CAT', 'ZZT category', :cid)"
+            ),
+            {"id": _PRODUCT_SEED_CATEGORY_ID, "cid": SORENTO_COMPANY_ID},
+        )
+    if db.execute(
+        text("SELECT 1 FROM units_of_measure WHERE id = :id"), {"id": _PRODUCT_SEED_UOM_ID}
+    ).first() is None:
+        db.execute(
+            text(
+                "INSERT INTO units_of_measure (id, uom_code, uom_name, company_id) "
+                "VALUES (:id, 'ZZT-UOM', 'Each', :cid)"
+            ),
+            {"id": _PRODUCT_SEED_UOM_ID, "cid": SORENTO_COMPANY_ID},
+        )
+    db.commit()
+    for product_id, code in rows:
+        existing = db.execute(text("SELECT 1 FROM products WHERE id = :id"), {"id": product_id}).first()
+        if existing is not None:
+            continue
+        db.execute(
+            text(
+                "INSERT INTO products "
+                "(id, product_code, product_name, category_id, base_uom_id, list_price, "
+                "is_active, company_id) "
+                "VALUES (:id, :code, :code, :cat, :uom, 0, true, :cid)"
+            ),
+            {
+                "id": product_id,
+                "code": code,
+                "cat": _PRODUCT_SEED_CATEGORY_ID,
+                "uom": _PRODUCT_SEED_UOM_ID,
                 "cid": SORENTO_COMPANY_ID,
             },
         )
@@ -646,6 +758,7 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
     contact_id = ((turns[0].get("envelope") or {}).get("contact") or {}).get("id") or 999999999
     _seed_contact(session_factory, contact_id=contact_id)
     _seed_case_customers(session_factory, case_id=case_id)
+    _seed_case_products(session_factory, case_id=case_id)
     # T4 (coordinator ruling, 16 Sep 2026): `_seed_contact` above leaves a brand-new
     # contact's `session_vars` at `{}`. A recorded chain's step 1 ran against the
     # SOURCE contact's REAL prior session (never itself a recorded turn in this file)
