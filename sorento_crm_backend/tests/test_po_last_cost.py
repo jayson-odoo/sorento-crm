@@ -1,8 +1,8 @@
 """AC-1..AC-15 (chatbot-last-purchase-cost): the last purchase-order line per product per
 location, and its route.
 
-`documentation/plans/chatbot/PLAN-chatbot-last-purchase-cost.md`;
-`documentation/plans/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
+`documentation/plans/_archive/chatbot/PLAN-chatbot-last-purchase-cost.md`;
+`documentation/plans/_archive/chatbot/chatbot-last-purchase-cost-acceptance-criteria.md`.
 
 Mirrors `tests/test_spo_last_receipt.py`'s own shape (same fixtures, same seeding style,
 same route-test pattern) for the sibling service `app.services.po_last_cost_service.
