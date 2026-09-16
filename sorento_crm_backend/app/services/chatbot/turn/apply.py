@@ -90,7 +90,32 @@ def _domain_of_document(document: list[str]) -> str | None:
     return None
 
 
+#: Focus slots that hold plain CODES, not entity rows (`Focus.tier`, `Focus.brands`).
+#: A pick or a parser entity for one of these kinds writes the code it names, because
+#: that is what every reader of the slot expects - `narrow._candidates` rebuilds rows
+#: from `focus.tier` itself, so writing entity dicts there made a tier the customer had
+#: just picked invisible to the narrower, which asked for it again (hand pass 2 item 9,
+#: turn 142dd695).
+_CODE_ONLY_FIELDS: dict[str, str] = {"tier": "tier", "brand": "brands"}
+
+
+def _code_of_entity(entity: dict[str, Any]) -> str | None:
+    payload = entity.get("payload") if isinstance(entity.get("payload"), dict) else {}
+    value = (
+        entity.get("canonical_code")
+        or entity.get("code")
+        or payload.get("tier")
+        or entity.get("raw")
+    )
+    return str(value) if value else None
+
+
 def _set_kind_field(focus: Focus, kind: str, entities: list[dict[str, Any]]) -> None:
+    code_field = _CODE_ONLY_FIELDS.get(kind)
+    if code_field:
+        codes = [c for c in (_code_of_entity(e) for e in entities) if c]
+        setattr(focus, code_field, codes)
+        return
     attr = KIND_FIELD_MAP.get(kind)
     if attr:
         setattr(focus, attr, entities)
@@ -442,6 +467,12 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         kind_for_focus = matched[0].get("entity_type")
         if kind_for_focus:
             _set_kind_field(focus, kind_for_focus, built)
+            # Item 10: what the customer just picked is settled, whatever the domain's
+            # narrowing policy says about the same rows carried in from earlier. "All"
+            # over a ten-variant roster is an explicit answer, and `narrow_to_code`'s
+            # "ten codes is still ten codes" re-ask (written for a CARRY) printed the
+            # very roster that had just been answered straight back.
+            trace.picked_kinds.append(str(kind_for_focus))
 
         trace.rules_fired.append("answer_pending")
         # Contract 121: a pick never re-domains the turn. The question recorded the
@@ -804,6 +835,7 @@ def _narrow_and_plan(
     ask: Pending | None = None
     fetch: list[FetchSpec] = []
 
+    picked = set(trace.picked_kinds)
     outcomes = []
     for name in domains:
         row = policy.domain(name)
@@ -830,6 +862,7 @@ def _narrow_and_plan(
                 profile=state.profile,
                 attributes=attributes,
                 resolved_candidates=(candidates or {}).get(kind),
+                just_picked=kind in picked,
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:

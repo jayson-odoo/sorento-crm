@@ -126,6 +126,7 @@ def decide(
     profile: Profile,
     attributes: tuple[str, ...] | list[str] = (),
     resolved_candidates: list[dict[str, Any]] | None = None,
+    just_picked: bool = False,
 ) -> NarrowOutcome:
     """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
 
@@ -139,6 +140,17 @@ def decide(
         return NarrowOutcome(None, [], [], None)
 
     candidates = _candidates(focus, kind)
+
+    if just_picked and policy_value in ("narrow_to_code", "must_narrow_one"):
+        # Owner hand pass 2, item 10: this kind was answered by a NUMBERED PICK on this
+        # very turn. Both roster policies below ask about a CARRY - rows that arrived
+        # from an earlier turn and might still be a choice - and neither is a rule about
+        # an answer the customer has just given. Re-asking one printed the roster back
+        # over its own answer (turn 0a181cfd, "All" over a ten-variant product roster).
+        # `narrow_by_tier` is deliberately NOT here: its own branch already reads the
+        # tier the pick just wrote and turns it into the FILTER the promotion fetch
+        # needs, and short-circuiting it would send the tier through as an entity.
+        return NarrowOutcome(None, [], candidates, None, note="just_picked")
 
     # What the RESOLVER matched for the tokens this turn named. It outranks the focus
     # rows for a narrowing decision, because a roster the customer is asked to choose
