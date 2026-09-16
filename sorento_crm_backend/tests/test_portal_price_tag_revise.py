@@ -73,7 +73,8 @@ def _seed_ptag_config(
 
 
 def _seed_contact(db):
-    from app.models.access import ContactAccessType, RespondContact, respond_contact_access_types
+    from app.models.access import RespondContact
+    from tests._portal_grant import link_contact_segment, seed_segment
 
     contact = RespondContact(
         id=str(uuid.uuid4()),
@@ -81,18 +82,9 @@ def _seed_contact(db):
         name=unique_code("ZZT Contact"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id, access_type_code=access_type.code,
-        )
-    )
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     db.commit()
     return contact
 
@@ -680,20 +672,21 @@ class TestPortalRevisionSettingsIncludesPriceTagRequest:
 
 
 def _revoke_grant(db, contact) -> None:
-    """Take price_tag_request off every access type this contact holds -
-    mirrors ``test_portal_price_tag_routes.py::_revoke_the_grant``."""
-    from app.models.access import ContactAccessType, respond_contact_access_types
+    """Hide price_tag_request for this contact regardless of any segment grant
+    (PLAN-portal-forms-market-segment D1: the grant moved off access types) -
+    an ``is_enabled=False`` override wins over the segment union. Mirrors
+    ``test_portal_price_tag_routes.py::_revoke_the_grant``."""
+    import uuid as _uuid
 
-    codes = [
-        row.access_type_code
-        for row in db.execute(
-            respond_contact_access_types.select().where(
-                respond_contact_access_types.c.contact_id == contact.id
-            )
+    from app.models.price_tag import ContactPortalFormOverride
+
+    db.add(
+        ContactPortalFormOverride(
+            id=str(_uuid.uuid4()),
+            contact_id=contact.id,
+            form_type="price_tag_request",
+            is_enabled=False,
         )
-    ]
-    db.query(ContactAccessType).filter(ContactAccessType.code.in_(codes)).update(
-        {"portal_form_types": []}, synchronize_session=False
     )
     db.commit()
 

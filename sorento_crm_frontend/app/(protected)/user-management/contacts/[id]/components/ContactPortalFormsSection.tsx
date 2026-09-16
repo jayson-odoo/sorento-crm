@@ -13,7 +13,11 @@ import {
 type OverrideChoice = 'inherit' | 'show' | 'hide';
 
 const CHOICE_OPTIONS: SearchableSelectOption[] = [
-  { value: 'inherit', label: 'Inherit from access types' },
+  // AC-C3: just "Inherit" - the inherited value is the base four plus
+  // whatever the contact's market segments add (PLAN-portal-forms-market-
+  // segment D3), not one group source, so neither "access types" nor
+  // "market segments" alone would be accurate.
+  { value: 'inherit', label: 'Inherit' },
   { value: 'show', label: 'Always show' },
   { value: 'hide', label: 'Always hide' },
 ];
@@ -33,9 +37,10 @@ function isEnabledFor(choice: OverrideChoice): boolean | null {
 /**
  * Contact Details -> Portal forms.
  *
- * Only GATED form kinds are listed (today: price_tag_request). The four legacy
- * submission kinds are always on the portal landing regardless of access type,
- * so they are never part of this control.
+ * All five kinds are listed (PLAN-portal-forms-market-segment D2): the four
+ * legacy kinds every contact gets by default, plus any kind a market segment
+ * grants on top (today: price_tag_request). Each row's own Inherit / Always
+ * show / Always hide select is independent of the others.
  */
 export default function ContactPortalFormsSection({ contactId }: { contactId: string }) {
   const { data, isLoading, isError } = useContactPortalForms(contactId);
@@ -67,7 +72,7 @@ export default function ContactPortalFormsSection({ contactId }: { contactId: st
     <div>
       <p className="text-sm text-muted-foreground mb-1">Portal forms</p>
       {rows.length === 0 ? (
-        <p className="font-medium text-muted-foreground">No gated forms configured</p>
+        <p className="font-medium text-muted-foreground">No portal forms configured</p>
       ) : (
         <div className="flex flex-col gap-2">
           {rows.map((row) => {

@@ -41,6 +41,10 @@ vi.mock('../lib/price-tag-request-service', async () => {
 
 vi.mock('../lib/portal-client', () => ({
   uploadAttachment: vi.fn(),
+  // D7 r3: PriceTagRequestForm now reads visible_form_types off /me on
+  // mount for a NEW request - granted here so this suite (about save/submit
+  // validation) is unaffected.
+  fetchMe: vi.fn().mockResolvedValue({ visible_form_types: ['price_tag_request'] }),
 }));
 
 vi.mock('@/components/common/SearchableSelect', () => ({

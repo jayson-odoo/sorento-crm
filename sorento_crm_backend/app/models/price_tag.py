@@ -45,10 +45,12 @@ def _uuid_str():
 class ContactPortalFormOverride(Base):
     """Per-contact toggle for portal form type visibility.
 
-    ``is_enabled`` wins over the access-type-level ``portal_form_types`` default.
-    A row here saying ``is_enabled=False`` hides the type even if every access
-    type the contact holds includes it; ``is_enabled=True`` shows it even if none
-    of them do.
+    ``is_enabled`` wins over the base-plus-segment default
+    (PLAN-portal-forms-market-segment D1/D3: every contact holds the four
+    legacy kinds by default, plus whatever its market segments grant on top).
+    A row here saying ``is_enabled=False`` hides the type even if it is a base
+    kind or every segment the contact belongs to grants it; ``is_enabled=True``
+    shows it even if none of them do.
     """
 
     __tablename__ = "contact_portal_form_overrides"

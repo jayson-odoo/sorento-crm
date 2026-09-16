@@ -329,6 +329,7 @@ def test_route_scopes_the_extract_to_the_requests_own_company(monkeypatch):
     from app.models.portal import PortalToken
     from app.services.llm_provider import ChatResult
     import app.services.ai_extract.extract_service as extract_service_mod
+    from tests._portal_grant import grant_portal_forms
 
     with blank_session() as db:
         # SORENTO is the only ACTIVE company - `_resolve_company` (the portal
@@ -360,6 +361,7 @@ def test_route_scopes_the_extract_to_the_requests_own_company(monkeypatch):
         db.flush()
         db.add(RespondContactCompany(id=_uid(), respond_contact_id=contact.id, company_id=SORENTO))
         db.add(RespondContactCompany(id=_uid(), respond_contact_id=contact.id, company_id=other))
+        grant_portal_forms(db, contact.id, ["price_tag_request"])
         db.flush()
 
         code = "SRT6536-DIY"

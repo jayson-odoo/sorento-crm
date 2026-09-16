@@ -34,11 +34,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
-from app.models.access import (
-    ContactAccessType,
-    RespondContact,
-    respond_contact_access_types,
-)
+from app.models.access import RespondContact
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.product_set import ProductSet, ProductSetMember
 from app.models.user import SystemSetting
@@ -69,25 +65,17 @@ def db() -> Session:
 
 
 def _contact(db: Session) -> RespondContact:
+    from tests._portal_grant import link_contact_segment, seed_segment
+
     contact = RespondContact(
         id=_uid(),
         phone_number=f"+60{uuid.uuid4().hex[:9]}",
         name=unique_code("contact"),
     )
     db.add(contact)
-    access_type = ContactAccessType(
-        code=unique_code("at"),
-        name=unique_code("Access Type"),
-        portal_form_types=["price_tag_request"],
-    )
-    db.add(access_type)
     db.flush()
-    db.execute(
-        respond_contact_access_types.insert().values(
-            contact_id=contact.id, access_type_code=access_type.code
-        )
-    )
-    db.flush()
+    segment = seed_segment(db, kinds=["price_tag_request"])
+    link_contact_segment(db, contact.id, segment.code)
     return contact
 
 
