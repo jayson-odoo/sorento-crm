@@ -73,6 +73,10 @@ UAC: `scm-oi-worklist-excel-parity-acceptance-criteria.md`.
   `?view=grid`. "Plan selected" from the sales orders list lands on List.
 - R-K New filters: Location, Agent, SO month, PO number, SPO number. Search also matches link
   documents (`document`, `source_po_number`) and the agent code / name.
+- R-L (16 Sep, from the owner's opening brief "ease their transition") the default column order
+  mirrors the Excel: SO date, S/O no, Item code, Qty, Delivery date, Project / customer,
+  Supplier, PO, SPO, then Agent, Location, Order inquiry, then the rest. Saved personalisation
+  still wins.
 
 ## 2. Slices
 
@@ -143,11 +147,22 @@ Backend:
   qty: allocation open qty, location, expected_date, ...}`. The existing SPO link's
   `source_po_number` is the mirror; the serializer marks it `derived_po: true` so the PO
   column can print "via SPO".
-- `_kinds` becomes stages: per row, `incoming = min(qty, spo_linked + derived_spo_cover)`,
-  `purchased = min(qty - incoming, po_linked - derived_spo_cover)` clipped at 0,
+- `_kinds` becomes stages. Per row (corrected 16 Sep after review, the first formula double
+  counted): `spo_real` = sum of the row's real SPO link qty; `cover` = sum over DISTINCT open
+  allocations derived from the row's PO links (`derived_spo_open_clauses`), EXCLUDING any
+  allocation the row already links to, counted once even when the row holds two PO links on
+  the same PO + product; `derived_cover = least(po_linked, cover)`;
+  `incoming = least(qty, spo_real + derived_cover)`;
+  `purchased = least(qty - incoming, greatest(0, po_linked - derived_cover))`;
   `buy = _UNLINKED_QTY` as today. Sum over the matching set, `_NOT_OWED_STATES` dropped as
-  today. `kind` filter values stay `spo | po | buy` on the wire (URL compatibility) and
-  select rows with a positive stage amount.
+  today. `kind` filter values stay `spo | po | buy` on the wire and select rows with a
+  positive stage amount. The matrix stage sums use the same per-row expressions, computed
+  ONCE per row in a subquery (not three nested correlated aggregates), and drop `cancelled`
+  rows only.
+- The derived-SPO join carries the company predicate
+  (`build_company_predicate(SPOAllocation, get_company_scope(db))`, precedent
+  `spo_last_receipt_service.py`), so the expressions are built per call on the service, not
+  at import time. `links_for_rows` keeps every (PO number, product) pair per row, not the last.
 - `linked` filter values `po` / `spo` / `none` keep their names; `spo` now includes derived.
 - Docstring and error-code cleanup: `order_inquiry_spo_not_order_back` becomes
   `order_inquiry_spo_not_linkable`; the four comment blocks quoting the 25 Aug rule are
@@ -157,7 +172,7 @@ Frontend: cards render Buy / Purchased / Incoming in that order with the stage c
 (red / blue / purple, today's palette). `DocumentsCell` prints a "via PO" / "via SPO" tag
 after a derived number; the lightbox lists derived documents under the same table with a
 "via" column. A PO-linked row with no SPO prints "awaiting shipment" in the SPO column; a row
-with no link prints "–" in both (the "Not found (new order)" string goes, per the owner's
+with no link prints a hyphen in both (the "Not found (new order)" string goes, per the owner's
 "no explanation in the UI" rule; the bundled "Included with" headline stays).
 
 ### S6 Planner: one search, List default (R-J)
