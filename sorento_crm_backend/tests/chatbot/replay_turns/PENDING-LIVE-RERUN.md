@@ -95,8 +95,7 @@ time-boxed per the coordinator's priority order - T4/T3/contract-lines still ahe
 the queue). Re-run `pytest tests/chatbot/test_turn_replay.py -q --tb=short` and re-parse
 after any harness or engine change; the exact list above will shift.
 
-## Clusters E (10, hand pass 2) and F (6, hand pass 3) - browser pass 6 is NOT a
-## drop-in re-record source (tester 17, 17 Sep 2026, queue item 2)
+## Clusters E (10, hand pass 2) and F (6, hand pass 3) - browser pass 6 is NOT a drop-in re-record source (tester 17, 17 Sep 2026, queue item 2)
 
 The coordinator's item 2 asked for the PASS rows in `<coder wt>/documentation/plans/
 chatbot/evidence/turn-rearch/browser-pass-6-18sep.md` (30 fresh turn ids, clone DB
@@ -142,7 +141,26 @@ recorded chain, with its own carried history, now replay clean" - two different
 questions. Left as cluster E/F's 16 files, unsigned, un-re-recorded, for a live
 turn-by-turn diff (ideally itself starting each chain from a genuine `Reset`, not a
 source contact with unknown prior state) once the engine fixes pass 6 found (items 1,
-3, 4, 5-second-half) land.
+3, 4, 5-second-half) land. 15 of the 16 (cluster F's v26 file is listed separately,
+below, with its own more specific reason) are enumerated here so the R-A skip rule
+(tester 20, 17 Sep 2026 - generalized to read every heading, not one hardcoded
+section) can find them:
+
+`console/handpass2-justin-incoming-picker`,
+`console/handpass2-owner-17sep-golden-win`,
+`console/handpass2-owner-17sep-hanlim-delivery-miss-picks`,
+`console/handpass2-owner-17sep-hanlim-rpacc-sticky-pick`,
+`console/handpass2-owner-17sep-incoming-stock-7445`,
+`console/handpass2-owner-17sep-outstanding-do-7445-scope`,
+`console/handpass2-owner-17sep-promo-tier`,
+`console/handpass2-owner-17sep-purchase-cost-all`,
+`console/handpass2-owner-17sep-stock-incoming`,
+`console/handpass2-owner-17sep-two-domain-asks`,
+`console/handpass3-justin-escalation-offer`,
+`console/handpass3-owner-17sep-outstanding-hanlim-detail-sales-order-switch`,
+`console/handpass3-owner-17sep-promo-tier`,
+`console/handpass3-owner-17sep-purchase-cost-po`,
+`console/handpass3-owner-17sep-stock-incoming-multipick-word-number`.
 
 ## Needs a v26 re-record (tester 16, 17 Sep 2026, coder 14's addendum)
 
@@ -162,6 +180,8 @@ source contact with unknown prior state) once the engine fixes pass 6 found (ite
   which is the one thing this corpus must never do) - re-record this case live against
   v26 instead. Not touched this session.
 
+`console/handpass3-owner-17sep-hanlim-chinchun-all-refinement-this-month`.
+
 ## Harness gap: product set resolver (cluster B, 17 files, tester 17, 17 Sep 2026, queue item 5)
 
 Every file below fails on `entity_ids` alone (recording expected the whole product
@@ -179,38 +199,56 @@ scale of work as the 4 existing stubs combined, and real seeded catalogue rows b
 data). Out of mechanical-fix scope; needs either real seeded rows per family (a
 significant corpus-seeding project) or a genuine `resolve_product_set` stub keyed the
 same way `_install_stubs` keys the other four seams - a coder/captain scope call.
+`case-045`'s entry below also carries a second, already-fixed divergence (its
+growth_r1 branch_kind/tools regression, see DIVERGENCES.md's cluster D section) - only
+its entity_ids gap remains live. Seven of the stems below (`case-002` onward) were
+added after signing cluster A's `tools`/`pending` fields (DIVERGENCES.md, "Cluster A
+signed" section) exposed the SAME entity_ids-only gap underneath, unrelated to cluster
+A's own ladder-fanout/settled-carry story. Listed here with full path prefixes
+(tester 20, 17 Sep 2026) so the generalized R-A skip rule can read the whole list as
+one paragraph, not two:
 
 `console/case-001-three-codes-the-third-has-neither-stock-nor-incoming`,
-`case-007-a-document-ask-with-nothing-to-narrow-by-is-refused-not-listed`,
-`case-018-a-code-with-no-stock-is-named-before-the-incoming-block`,
-`case-019-a1-spec-ask-shows-the-compact-specs-line`,
-`case-020-a1-one-key-spec-ask-answers-that-key-only`,
-`case-021-item-8-list-price-of-a-product-reaches-the-base-list-price-field`,
-`case-023-item-8-seat-cover-material-reaches-the-key-that-contains-it`,
-`case-024-e2-catalog-sorento-is-a-resource-attachment-ask-not-promotion`,
-`case-037-a6-the-same-question-in-chinese`,
-`case-045-owner-8-sep-a-delivery-word-plus-a-name-over-an-escalate-offer-is-an-order-ask`
-(step 2 only - the file's growth_r1 branch_kind/tools divergence is separately
-confirmed fixed, see DIVERGENCES.md's cluster D section),
-`case-051-finding-1-a-product-with-many-specs-lists-all-of-them-no-more`,
-`case-053-ac-32a-default-contact-asking-for-m218-s-last-purchase-cost-is-denied`,
-`case-054-ac-32b-granted-contact-gets-the-last-purchase-cost-answer`,
-`case-055-ac-32c-family-ask-returns-one-row-per-member-per-location`,
-`case-056-ac-30-last-in-for-a-family-names-every-member`,
+`console/case-002-a-container-number-is-named-never-its-uuid`,
+`console/case-007-a-document-ask-with-nothing-to-narrow-by-is-refused-not-listed`,
+`console/case-016-a-bare-product-code-under-a-stock-thread-answers-stock-not-incoming`,
+`console/case-018-a-code-with-no-stock-is-named-before-the-incoming-block`,
+`console/case-019-a1-spec-ask-shows-the-compact-specs-line`,
+`console/case-020-a1-one-key-spec-ask-answers-that-key-only`,
+`console/case-021-item-8-list-price-of-a-product-reaches-the-base-list-price-field`,
+`console/case-023-item-8-seat-cover-material-reaches-the-key-that-contains-it`,
+`console/case-024-e2-catalog-sorento-is-a-resource-attachment-ask-not-promotion`,
+`console/case-037-a6-the-same-question-in-chinese`,
+`console/case-044-owner-8-sep-stock-then-po-for-another-code-then-last-in`,
+`console/case-045-owner-8-sep-a-delivery-word-plus-a-name-over-an-escalate-offer-is-an-order-ask`,
+`console/case-051-finding-1-a-product-with-many-specs-lists-all-of-them-no-more`,
+`console/case-052-finding-2-a-stock-ask-with-incoming-rows-never-claims-an-attachment-send`,
+`console/case-053-ac-32a-default-contact-asking-for-m218-s-last-purchase-cost-is-denied`,
+`console/case-054-ac-32b-granted-contact-gets-the-last-purchase-cost-answer`,
+`console/case-055-ac-32c-family-ask-returns-one-row-per-member-per-location`,
+`console/case-056-ac-30-last-in-for-a-family-names-every-member`,
 `contract/line-001-stock-by-location`,
-`prod_sample/business-query-477071889-chain-001-no-run-id`.
-
-Seven more added after signing cluster A's `tools`/`pending` fields (DIVERGENCES.md,
-"Cluster A signed" section) exposed the SAME entity_ids-only gap underneath, unrelated
-to cluster A's own ladder-fanout/settled-carry story: `case-002-a-container-number-is-
-named-never-its-uuid`, `case-016-a-bare-product-code-under-a-stock-thread-answers-
-stock-not-incoming`, `case-044-owner-8-sep-stock-then-po-for-another-code-then-last-
-in`, `case-052-finding-2-a-stock-ask-with-incoming-rows-never-claims-an-attachment-
-send`, `prod_sample/business-query-445239384-chain-001-no-run-id`,
+`prod_sample/business-query-445239384-chain-001-no-run-id`,
+`prod_sample/business-query-477071889-chain-001-no-run-id`,
 `prod_sample/out-of-scope-423755030-chain-001-no-run-id`,
 `prod_sample/out-of-scope-445239384-chain-001-no-run-id`.
 
 Re-measured this session (unchanged from tester 15's original clustering): 16 files
-still fail on entity_ids alone; `case-045` additionally confirmed clean on
+still fail on entity_ids alone; case-045 additionally confirmed clean on
 branch_kind/tools (its growth_r1 regression is fixed, only this entity_ids divergence
 remains).
+
+## Not pending: case-011 and focus-003 (tester 17, 17 Sep 2026, queue item 4)
+
+Two DIFFERENT test_turn_replay.py failures were checked against this file's clustering
+and do NOT belong here - both are genuine, unsigned, already-tracked ENGINE DEFECTS
+(tester 17's classification table), not a recording-staleness problem, so they stay a
+live FAILURE per AC-1591 rather than being swept into this file's skip list:
+`console/case-011-an-out-of-range-tier-pick-keeps-the-product-in-scope` (already-
+tracked Finding 9/Row 1 tier-pick gap - step 2 `branch_kind` resolves to
+`clarify_menu` instead of the recorded `check_promotion`) and
+`console/focus-003-c-roster-survives-a-declined-escalate-offer-ac-1015-ac-1017` (a
+plain "no" over a `team_pick` pending falls through to `business_query` instead of
+`escalation_declined` - step 3 `branch_kind`, the opposite direction from the "no" fix
+signed on `case-069`). Neither is listed in any list-paragraph above, and neither
+should be - this heading is a marker for the next tester, not a pending entry.

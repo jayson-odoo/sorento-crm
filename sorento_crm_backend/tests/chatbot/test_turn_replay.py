@@ -198,45 +198,73 @@ DIVERGENCES = _signed_divergences()
 # SKIPPED here (reason recorded, never silently dropped) so the gate stays honest
 # and CI-green; a case NOT listed here and NOT signed in DIVERGENCES.md still
 # fails, per AC-1591's "every difference is either signed or a failure."
+#
+# Generalized (tester 20, 17 Sep 2026): the file lists pending cases under SEVERAL
+# `## ` headings, not just "Composite / cascading chains" - the parser below reads
+# every heading (one parser, one rule), and the heading a stem was found under
+# becomes that case's skip reason, so a skip always names where it came from. It
+# only reads a "list paragraph" - one whose ENTIRE content (once whitespace is
+# collapsed) is backtick-quoted, comma-separated tokens ending in an optional
+# period - so a case id merely MENTIONED inline inside a prose sentence (an
+# example, a "not pending" note, a field-name backtick) is never mistaken for an
+# enumerated pending entry. A prose paragraph never matches that shape.
 # --------------------------------------------------------------------------- #
 
 PENDING_PATH = REPLAY_ROOT / "PENDING-LIVE-RERUN.md"
 
-_PENDING_SECTION_RE = re.compile(
-    r"## Composite / cascading chains.*?\n\n(.*?)\n\nNot exhaustively", re.S
-)
+_PENDING_HEADING_RE = re.compile(r"^## (?P<title>.+)$", re.M)
 _PENDING_BRACE_RE = re.compile(r"^(?P<prefix>.*)\{(?P<opts>[^}]+)\}$")
-
-PENDING_REASON = (
-    "recorded under the old prompt / composite chain; re-record on v24 "
-    "(tests/chatbot/replay_turns/PENDING-LIVE-RERUN.md, "
-    "\"Composite / cascading chains\")"
+_PENDING_BACKTICK_TOKEN = r"`[^`]+`"
+_PENDING_LIST_PARAGRAPH_RE = re.compile(
+    rf"^{_PENDING_BACKTICK_TOKEN}(?:\s*,\s*{_PENDING_BACKTICK_TOKEN})*\.?$"
 )
 
 
-def _parse_pending_stems(text: str) -> set[str]:
-    """Expand PENDING-LIVE-RERUN.md's own `{a,b,c}` brace-list shorthand under its
-    "Composite / cascading chains" section into one stem per case (e.g.
-    `console/case-{008,010}` -> `{"console/case-008", "console/case-010"}`). A pure
-    function of the file's text so the expansion is unit-testable without touching
-    the real file (same shape as `_parse_divergences` above)."""
-    match = _PENDING_SECTION_RE.search(text)
-    if match is None:
-        return set()
-    paragraphs = match.group(1).split("\n\n")
-    if not paragraphs:
-        return set()
-    list_block = paragraphs[-1].replace("\n", " ")
-    tokens = re.findall(r"`([^`]+)`", list_block)
+def _pending_heading_sections(text: str) -> list[tuple[str, str]]:
+    """Split PENDING-LIVE-RERUN.md into `(heading title, body)` pairs, one per
+    top-level `## ` heading - the file's own section structure, not one heading
+    hardcoded by name. `body` runs to the next `## ` heading or EOF."""
+    headings = list(_PENDING_HEADING_RE.finditer(text))
+    sections: list[tuple[str, str]] = []
+    for i, m in enumerate(headings):
+        start = m.end()
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        sections.append((m.group("title").strip(), text[start:end]))
+    return sections
+
+
+def _pending_list_paragraph_stems(body: str) -> set[str]:
+    """Every stem in `body`'s "pure list" paragraphs, with the file's own
+    `{a,b,c}` brace-list shorthand expanded (e.g. `console/case-{008,010}` ->
+    `{"console/case-008", "console/case-010"}`). A paragraph that mixes prose
+    with a list (an inline example, a "seven more added because..." lead-in)
+    contributes nothing - only a paragraph that IS purely the list counts."""
     stems: set[str] = set()
-    for token in tokens:
-        brace = _PENDING_BRACE_RE.match(token)
-        if brace is None:
-            stems.add(token)
+    for raw_paragraph in re.split(r"\n\s*\n", body):
+        paragraph = " ".join(raw_paragraph.split())
+        if not paragraph or not _PENDING_LIST_PARAGRAPH_RE.match(paragraph):
             continue
-        for opt in brace.group("opts").split(","):
-            stems.add(brace.group("prefix") + opt.strip())
+        for token in re.findall(r"`([^`]+)`", paragraph):
+            brace = _PENDING_BRACE_RE.match(token)
+            if brace is None:
+                stems.add(token)
+                continue
+            for opt in brace.group("opts").split(","):
+                stems.add(brace.group("prefix") + opt.strip())
     return stems
+
+
+def _parse_pending_stems(text: str) -> dict[str, str]:
+    """`{stem: heading title}` for every case stem listed in a pure-list
+    paragraph under ANY `## ` heading in PENDING-LIVE-RERUN.md. A pure function
+    of the file's text so the expansion is unit-testable without touching the
+    real file (same shape as `_parse_divergences` above). First heading to claim
+    a stem wins (document order) if the same stem is somehow listed twice."""
+    out: dict[str, str] = {}
+    for title, body in _pending_heading_sections(text):
+        for stem in _pending_list_paragraph_stems(body):
+            out.setdefault(stem, title)
+    return out
 
 
 def _stem_matches_case(case_stem: str, stem: str) -> bool:
@@ -251,14 +279,21 @@ def _stem_matches_case(case_stem: str, stem: str) -> bool:
     return not case_stem[len(stem)].isdigit()
 
 
-def _pending_case_ids(stems: set[str], case_ids: list[str]) -> dict[str, str]:
-    """`{case_id: reason}` for every real case file whose stem is named in
-    PENDING-LIVE-RERUN.md's composite/cascading-chains list."""
+def _pending_case_ids(stem_reasons: dict[str, str], case_ids: list[str]) -> dict[str, str]:
+    """`{case_id: reason}` for every real case file whose stem is listed under
+    some heading in PENDING-LIVE-RERUN.md. `reason` names the heading, per
+    AC-1591 - a skip always says where it came from, never one blanket reason."""
     out: dict[str, str] = {}
     for case_id in case_ids:
         stem_of_case = case_id[:-5] if case_id.endswith(".json") else case_id
-        if any(_stem_matches_case(stem_of_case, stem) for stem in stems):
-            out[case_id] = PENDING_REASON
+        for stem, heading in stem_reasons.items():
+            if _stem_matches_case(stem_of_case, stem):
+                out[case_id] = (
+                    "recorded under the old prompt / composite chain, or needs a "
+                    "live re-run; re-record "
+                    f'(tests/chatbot/replay_turns/PENDING-LIVE-RERUN.md, "{heading}")'
+                )
+                break
     return out
 
 
@@ -966,23 +1001,35 @@ class TestPendingLiveRerunParsing:
         "## Composite / cascading chains (2 files)\n\n"
         "Every file below fails on 3+ of the 5 comparison fields across many steps.\n\n"
         "`console/case-{008,010}`, `prod_sample/demand-qty-423729473`.\n\n"
-        "Not exhaustively broken down per file this session.\n"
+        "Not exhaustively broken down per file this session.\n\n"
+        "## Some other heading, checked live (tester 20)\n\n"
+        "This prose sentence mentions `console/case-099-not-a-list-item` inline as an "
+        "example - it must NOT be swallowed, only a paragraph that IS purely the list "
+        "counts.\n\n"
+        "`console/case-030-a-second-heading-case`.\n"
     )
 
     def test_expands_brace_list_into_one_stem_per_option(self) -> None:
         stems = _parse_pending_stems(self.SAMPLE)
-        assert stems == {
-            "console/case-008",
-            "console/case-010",
-            "prod_sample/demand-qty-423729473",
-        }
+        assert stems["console/case-008"] == "Composite / cascading chains (2 files)"
+        assert stems["console/case-010"] == "Composite / cascading chains (2 files)"
 
     def test_a_stem_with_no_braces_is_kept_as_is(self) -> None:
         stems = _parse_pending_stems(self.SAMPLE)
         assert "prod_sample/demand-qty-423729473" in stems
 
     def test_missing_section_yields_no_stems(self) -> None:
-        assert _parse_pending_stems("# Some other doc\n\nno matching section here.\n") == set()
+        assert _parse_pending_stems("# Some other doc\n\nno matching section here.\n") == {}
+
+    def test_a_second_heading_is_also_read_not_just_the_first(self) -> None:
+        # Generalization: a stem listed under ANY heading is picked up (one
+        # parser, one rule for the whole file), tagged with THAT heading's title.
+        stems = _parse_pending_stems(self.SAMPLE)
+        assert stems["console/case-030-a-second-heading-case"] == "Some other heading, checked live (tester 20)"
+
+    def test_a_backtick_mention_inside_prose_is_not_a_pending_stem(self) -> None:
+        stems = _parse_pending_stems(self.SAMPLE)
+        assert "console/case-099-not-a-list-item" not in stems
 
     def test_stem_matches_a_real_case_filename_with_a_suffix(self) -> None:
         assert _stem_matches_case("console/case-008-console-abcd1234", "console/case-008") is True
@@ -995,11 +1042,14 @@ class TestPendingLiveRerunParsing:
     def test_stem_matches_an_exact_case_id_with_no_suffix(self) -> None:
         assert _stem_matches_case("console/handbuilt-rp-001", "console/handbuilt-rp-001") is True
 
-    def test_pending_case_ids_maps_every_matching_case_id_to_the_shared_reason(self) -> None:
-        stems = {"console/case-008"}
+    def test_pending_case_ids_maps_every_matching_case_id_to_a_heading_named_reason(self) -> None:
+        stem_reasons = {"console/case-008": "Composite / cascading chains (2 files)"}
         case_ids = ["console/case-008-console-abcd1234.json", "console/case-011-console-zzzz9999.json"]
-        result = _pending_case_ids(stems, case_ids)
-        assert result == {"console/case-008-console-abcd1234.json": PENDING_REASON}
+        result = _pending_case_ids(stem_reasons, case_ids)
+        assert list(result) == ["console/case-008-console-abcd1234.json"]
+        reason = result["console/case-008-console-abcd1234.json"]
+        assert "Composite / cascading chains (2 files)" in reason
+        assert "PENDING-LIVE-RERUN.md" in reason
 
     def test_the_real_pending_file_names_owner_15sep_chain_001_but_not_002(self) -> None:
         # `owner-15sep-chain-002` is explicitly EXCLUDED by PENDING-LIVE-RERUN.md's
@@ -1014,6 +1064,26 @@ class TestPendingLiveRerunParsing:
     def test_a_case_not_named_anywhere_in_pending_live_rerun_is_not_pending(self) -> None:
         assert "console/case-057-console-focus-009.json" not in PENDING_CASES
 
+    def test_case_011_and_focus_003_stay_failures_not_swept_into_the_skip_list(self) -> None:
+        # Both are genuine, unsigned, already-tracked ENGINE DEFECTS (tester 17's
+        # classification, restated under "Not pending" in the real file) - they
+        # must never be silently skipped, per AC-1591.
+        case_011 = "console/case-011-an-out-of-range-tier-pick-keeps-the-product-in-scope.json"
+        focus_003 = "console/focus-003-c-roster-survives-a-declined-escalate-offer-ac-1015-ac-1017.json"
+        assert case_011 not in PENDING_CASES
+        assert focus_003 not in PENDING_CASES
+
+    def test_cluster_e_and_f_handpass_files_are_now_skipped(self) -> None:
+        # These 16 files were the ones the un-generalized (single-section) parser
+        # missed entirely, per the coordinator's brief - confirm the fix reaches
+        # them, tagged with the heading they are actually listed under.
+        handpass2 = "console/handpass2-owner-17sep-golden-win.json"
+        handpass3_v26 = "console/handpass3-owner-17sep-hanlim-chinchun-all-refinement-this-month.json"
+        assert handpass2 in PENDING_CASES
+        assert "Clusters E" in PENDING_CASES[handpass2]
+        assert handpass3_v26 in PENDING_CASES
+        assert "v26" in PENDING_CASES[handpass3_v26]
+
 
 class TestPendingCaseIsSkippedBeforeAnyEngineWork:
     def test_test_replay_skips_a_pending_case_without_touching_its_fixtures(self, monkeypatch) -> None:
@@ -1026,7 +1096,7 @@ class TestPendingCaseIsSkippedBeforeAnyEngineWork:
         # reason.
         with pytest.raises(pytest.skip.Exception) as exc_info:
             test_replay(case_path, session_factory=None, stub_parser=None, monkeypatch=monkeypatch)
-        assert PENDING_REASON in str(exc_info.value)
+        assert "PENDING-LIVE-RERUN.md" in str(exc_info.value)
 
     def test_a_case_not_in_pending_and_not_signed_still_reaches_the_engine(self, monkeypatch) -> None:
         # A case outside PENDING_CASES must NOT hit the `pytest.skip` branch - it
