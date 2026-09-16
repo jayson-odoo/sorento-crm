@@ -56,10 +56,28 @@ if (!window.matchMedia) {
 
 const mockSettingsQuery = vi.fn();
 const mockMutation = vi.fn();
+const mockMemoryQuery = vi.fn();
+const mockMemoryMutation = vi.fn();
+const mockTierOrderQuery = vi.fn();
+const mockTierOrderMutation = vi.fn();
 
 vi.mock('./hooks/useChatbotSettings', () => ({
   useChatbotSettings: () => mockSettingsQuery(),
   useSaveChatbotSettings: () => mockMutation(),
+}));
+
+// The Memory and Tier order cards' own hook module (browser pass 1, 16 Sep 2026,
+// finding: "Switches card has no Save button of its own - the Memory card's Save
+// sits right under it and silently no-ops the switches"). Mocked here (real data,
+// not left inert like the untouched `CrossDomainLadderCard`, whose OWN Save button
+// saves a DIFFERENT resource - `chatbot_domains`, not `system_settings` - and is not
+// part of this consolidation) so both cards render their REAL current Save buttons
+// and the "exactly one Save button" assertion below is a genuine red today.
+vi.mock('./hooks/useChatbotMemoryAndTierOrder', () => ({
+  useChatbotMemorySettings: () => mockMemoryQuery(),
+  useSaveChatbotMemorySettings: () => mockMemoryMutation(),
+  useChatbotTierOrder: () => mockTierOrderQuery(),
+  useSaveChatbotTierOrder: () => mockTierOrderMutation(),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -90,11 +108,31 @@ function renderPage() {
 
 const saveButton = () => screen.getByRole('button', { name: /save/i });
 
+const DEFAULT_MEMORY = {
+  recall_default: false,
+  episode_retention_days: 180,
+  profile_fields: ['tier'],
+  focus_reset_events: ['topic_switch'],
+};
+const DEFAULT_TIER_ORDER = ['dealer', 'office', 'end_user'];
+
 beforeEach(() => {
   mockSettingsQuery.mockReset();
   mockMutation.mockReset();
+  mockMemoryQuery.mockReset();
+  mockMemoryMutation.mockReset();
+  mockTierOrderQuery.mockReset();
+  mockTierOrderMutation.mockReset();
   mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
   mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+  // Left LOADING by default (not the real data above) so every pre-existing test in
+  // this file, which never asserted on Memory/Tier order, keeps seeing exactly the
+  // ONE "Save" button it always has (the Switches/page-bottom one) - only the
+  // consolidated-Save describe block below opts into real data for these two.
+  mockMemoryQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+  mockMemoryMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+  mockTierOrderQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+  mockTierOrderMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
 });
 
 afterEach(() => cleanup());
@@ -144,6 +182,50 @@ describe('ChatbotSettingsPage - Save payload (AC-810)', () => {
       chatbot_ordering_enabled: false,
       chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
     });
+  });
+});
+
+describe('ChatbotSettingsPage - one consolidated Save (browser pass 1 finding, 16 Sep 2026)', () => {
+  it('renders exactly one Save button once Memory and Tier order carry real data', () => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+    renderPage();
+
+    // Today: the Switches/page-bottom Save, the Memory card's own Save AND the Tier
+    // order card's own Save all match - `getByRole` throws "multiple elements found"
+    // before this assertion even runs, which IS the red (not a soft `.length` check
+    // a coder could quietly game by leaving two).
+    expect(saveButton()).toBeInTheDocument();
+  });
+
+  it('clicking the one Save button after toggling a switch AND changing tier order issues both requests', () => {
+    const switchesMutate = vi.fn();
+    const tierOrderMutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate: switchesMutate });
+    mockTierOrderMutation.mockReturnValue({ isPending: false, mutate: tierOrderMutate });
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_stock_denial_enabled: false }),
+      isLoading: false,
+      isError: false,
+    });
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({
+      data: ['dealer', 'office', 'end_user'],
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByLabelText(/stock denial/i));
+    fireEvent.click(screen.getByRole('button', { name: /move office down/i }));
+
+    fireEvent.click(saveButton());
+
+    expect(switchesMutate).toHaveBeenCalledTimes(1);
+    expect(switchesMutate.mock.calls[0][0]).toMatchObject({ chatbot_stock_denial_enabled: true });
+
+    expect(tierOrderMutate).toHaveBeenCalledTimes(1);
+    expect(tierOrderMutate.mock.calls[0][0]).toEqual(['office', 'dealer', 'end_user']);
   });
 });
 
