@@ -487,18 +487,79 @@ async def root():
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
 
+def _git_sha() -> str:
+    """The short sha of the checkout this process is running, read ONCE at import.
+
+    A stack check has to be able to say WHICH code answered it, and the deploy is the
+    only other thing that knows. `GIT_SHA` (set by the container build) wins where there
+    is no git directory at all; a local run reads it from the checkout beside this file.
+    Never per request: this shells out.
+    """
+    from os import environ
+
+    env_sha = (environ.get("GIT_SHA") or "").strip()
+    if env_sha:
+        return env_sha
+    try:
+        import subprocess
+
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=str(_Path(__file__).resolve().parent.parent),
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return (out.stdout or "").strip() or "unknown"
+    except Exception:  # noqa: BLE001 - a health probe never fails over its own metadata
+        return "unknown"
+
+
+GIT_SHA = _git_sha()
+
+
+def _production_prompt_version(db) -> int | None:
+    """The parser prompt version carrying the `production` label, or None.
+
+    Read at REQUEST time, not at import: the label moves while the process runs (every
+    prompt publish does it), and a cached number would tell a stack check the wrong
+    thing exactly when it matters.
+    """
+    from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
+
+    row = (
+        db.query(AIPromptVersion.version)
+        .join(AIPromptLabel, AIPromptLabel.version_id == AIPromptVersion.id)
+        .filter(
+            AIPromptLabel.name == "chatbot_semantic_parser",
+            AIPromptLabel.label == "production",
+        )
+        .first()
+    )
+    return int(row[0]) if row else None
+
+
 @app.get("/health")
 async def health_check():
-    """Readiness probe: 200 only if DB reachable. Blue/green deploy gates color swap on this."""
+    """Readiness probe: 200 only if DB reachable. Blue/green deploy gates color swap on this.
+
+    Also names the code and the prompt that answered, so a stack check can tell a lane
+    running yesterday's commit from one running today's (`scripts/chatbot-stack-check.sh`).
+    """
     try:
         from sqlalchemy import text
         from app.database import SessionLocal
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
+            prompt_version = _production_prompt_version(db)
         finally:
             db.close()
-        return {"status": "healthy"}
+        return {
+            "status": "healthy",
+            "git_sha": GIT_SHA,
+            "prompt_version": prompt_version,
+        }
     except Exception as e:
         return JSONResponse(
             status_code=503,
