@@ -397,7 +397,7 @@ def _drop_question_subject(focus: Focus, pending: Pending, verdict: dict[str, An
     filters = pending.payload.get("filters")
     if not isinstance(filters, dict):
         return
-    if filters.get("product_code"):
+    if filters.get("product_code") or filters.get("product_codes"):
         focus.products = []
     if filters.get("customer_ids"):
         focus.customers = []
@@ -416,7 +416,7 @@ def _drop_question_subject(focus: Focus, pending: Pending, verdict: dict[str, An
         focus.status = None
 
 
-def _settle_question_subject(focus: Focus, pending: Pending) -> None:
+def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None = None) -> None:
     """D10: the ANSWER is about what the QUESTION was about, exactly.
 
     The lane resolved the question's subject when it asked - the code the customer
@@ -431,11 +431,24 @@ def _settle_question_subject(focus: Focus, pending: Pending) -> None:
     filters = pending.payload.get("filters")
     if not isinstance(filters, dict):
         return
-    code = filters.get("product_code")
-    if code:
+    # `product_codes` is the SEVERAL-code form of the same filter ("all" over a product
+    # roster); `product_code` is the one-code case every other ask carries.
+    codes = [c for c in (filters.get("product_codes") or []) if c]
+    if not codes and filters.get("product_code"):
+        codes = [filters["product_code"]]
+    if codes:
         focus.products = [
             {"raw": code, "hint": "product", "canonical_code": code, "current_message": False}
+            for code in codes
         ]
+        if trace is not None:
+            # D10 again, one layer down: a subject the ANSWER settled is not re-resolved
+            # this turn. The rows written here carry a code and no uuid, so the fetch's
+            # own carry hands them back to the resolver, whose prefix probe returns the
+            # whole family - and `_narrow_and_plan` then wrote that family over the very
+            # code the question had been asked about (AC-1119,
+            # `test_the_answer_turn_reports_the_typed_code`).
+            trace.picked_kinds.append("product")
     ids = [u for u in (filters.get("customer_ids") or []) if u]
     if ids:
         focus.customers = [
@@ -501,7 +514,7 @@ def _keeps_subject(verdict: dict[str, Any], pending: Pending, entities: list[dic
     if not isinstance(filters, dict):
         return False
     subject_axes = set()
-    if filters.get("product_code"):
+    if filters.get("product_code") or filters.get("product_codes"):
         subject_axes.add(KIND_FIELD_MAP["product"])
     if filters.get("customer_ids"):
         subject_axes.add(KIND_FIELD_MAP["customer"])
@@ -559,7 +572,7 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
         # turn's own window or location over the top. `detail: None` is what makes it a
         # re-run of the REPORT rather than one of its lists: the customer narrowed the
         # search, they did not ask for a list.
-        _settle_question_subject(focus, pending)
+        _settle_question_subject(focus, pending, trace)
         filters = pending.payload.get("filters")
         scope = (filters or {}).get("scope") if isinstance(filters, dict) else None
         if scope not in DOCUMENT_BY_SCOPE:
@@ -620,7 +633,7 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
         # pending kind and is settled below, in one place.
         return None
 
-    _settle_question_subject(focus, pending)
+    _settle_question_subject(focus, pending, trace)
     focus.document = list(DOCUMENT_BY_SCOPE[scope])
     focus.status = "outstanding"
     if asked_for:
@@ -1182,7 +1195,7 @@ def _narrow_and_plan(
             # at the seam that decides what this fetch is about, and only from what the
             # RESOLVER matched this turn - a carry that was already settled is already
             # in the focus.
-            if outcome.entities and (candidates or {}).get(kind):
+            if outcome.entities and (candidates or {}).get(kind) and kind not in picked:
                 _set_kind_field(focus, kind, list(outcome.entities))
                 trace.rules_fired.append(f"focus_settles_{kind}")
         # Attribute-first (AC-1534): a HAS turn ("which taps have certificates") names

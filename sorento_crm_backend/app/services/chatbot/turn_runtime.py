@@ -844,13 +844,20 @@ def outstanding_carry(
         # numbered list. Not a different question and not a different report.
         out["outstanding_detail_pick"] = detail
 
+    # EVERY carried product, not the first: "all" over a ten-variant roster settles ten
+    # codes onto the focus, and carrying one of them re-ran the report for that one under
+    # a header naming it (turn 0a6f0379 then f8ed3b97, 16 Sep 2026).
+    carried_codes: list[str] = []
     for entity in focus.products:
         if not isinstance(entity, dict):
             continue
         code = entity.get("canonical_code") or entity.get("code") or entity.get("raw")
-        if code:
-            out["outstanding_carried_product_code"] = str(code)
-        break
+        if code and str(code) not in carried_codes:
+            carried_codes.append(str(code))
+    if carried_codes:
+        out["outstanding_carried_product_code"] = carried_codes[0]
+        if len(carried_codes) > 1:
+            out["outstanding_carried_product_codes"] = carried_codes
     ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and e.get("uuid")]
     if ids:
         out["outstanding_carried_customer_ids"] = ids
@@ -1181,7 +1188,7 @@ def _answered_unfiltered(
 def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
     """A plan entity in the shape the gate's own rows use.
 
-    `code` is the name every code reader downstream (`fetch.outstanding_product_code`,
+    `code` is the name every code reader downstream (`fetch.outstanding_product_codes`,
     the low-stock prune, the report's typed-code match) reads first: a spec entity that
     reaches the tool without it is a product with no code at all.
     """

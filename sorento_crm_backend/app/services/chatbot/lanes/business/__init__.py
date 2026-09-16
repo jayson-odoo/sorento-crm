@@ -92,7 +92,7 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
     # AC-1119 / console run 4 finding 5: the SAME rule the tool arguments use - the code
     # the customer typed wins over a family sibling. Shared, because the question, its
     # answer and the header all have to name one product.
-    product_code = fetch_mod.outstanding_product_code(entities, semantic_input)
+    product_codes = fetch_mod.outstanding_product_codes(entities, semantic_input)
     customer_ids: list[Any] = []
     for e in entities or []:
         if not isinstance(e, dict):
@@ -111,7 +111,10 @@ def _outstanding_filters_from(entities: Any, semantic_input: dict[str, Any]) -> 
             uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
         ]
     return {
-        "product_code": product_code,
+        "product_code": product_codes[0] if product_codes else None,
+        # Only when there are SEVERAL: one code keeps the single key every reader
+        # already speaks, so an ordinary ask's stored filters are unchanged.
+        **({"product_codes": product_codes} if len(product_codes) > 1 else {}),
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
@@ -244,7 +247,17 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
     the report named the ledger rows. AC-1163's distinct, first-seen rule comes with
     it, because it lives in that one function.
     """
-    product_code = jsc.js_string(filters.get("product_code") or "").strip()
+    # The `Product:` line names every code the question is about, the way the `Customer:`
+    # line names every ledger: "all" over a ten-variant roster is one question about ten
+    # products, and naming one of them read as a report about that one (turn 0a6f0379).
+    product_codes = [
+        jsc.js_string(c).strip() for c in jsc.array(filters.get("product_codes")) if jsc.truthy(c)
+    ]
+    product_code = (
+        ", ".join(product_codes)
+        if product_codes
+        else jsc.js_string(filters.get("product_code") or "").strip()
+    )
 
     codes = [jsc.js_string(c) for c in jsc.array(filters.get("warehouse_codes")) if jsc.truthy(c)]
     token = jsc.js_string(filters.get("location_token") or "").strip()
@@ -961,8 +974,17 @@ def run_fetch(
         # D10: an ANSWERING turn ("1"/"2"/a scope word) carries the product the offer was
         # made about, and that wins outright - re-resolving the carried token is what let a
         # family sibling or another product in the resolver's scope take its place.
+        carried_codes = [
+            jsc.js_string(c)
+            for c in jsc.array(parse_output.get("outstanding_carried_product_codes"))
+            if jsc.truthy(c)
+        ]
         carried_code = parse_output.get("outstanding_carried_product_code")
-        if jsc.truthy(carried_code):
+        if carried_codes:
+            # The SEVERAL-code form of the same carry: `outstanding_product_codes` reads
+            # this list, so the answering turn re-runs for every code the question named.
+            semantic_input["outstanding_product_codes"] = carried_codes
+        elif jsc.truthy(carried_code):
             semantic_input["outstanding_product_code"] = jsc.js_string(carried_code)
         else:
             typed_codes = {

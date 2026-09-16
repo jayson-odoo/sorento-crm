@@ -567,10 +567,15 @@ def entity_ids_transformer(
         out.pop("product_ids", None)
         out.pop("warehouse_ids", None)
         # AC-1119: one rule for which code this report is about, shared with both filter
-        # builders (`outstanding_product_code`).
-        picked_code = outstanding_product_code(entities, semantic_input)
-        if jsc.truthy(picked_code):
-            out["product_code"] = picked_code
+        # builders (`outstanding_product_codes`).
+        picked_codes = outstanding_product_codes(entities, semantic_input)
+        if len(picked_codes) == 1:
+            out["product_code"] = picked_codes[0]
+        elif picked_codes:
+            # The SEVERAL-code form, only when there are several: one code keeps the
+            # argument it has always travelled under, so an ordinary outstanding ask is
+            # byte-identical to before.
+            out["product_codes"] = picked_codes
         scope = jsc.get(semantic_input, "outstanding_scope")
         if jsc.truthy(scope):
             out["scope"] = jsc.js_string(scope)
@@ -1591,24 +1596,33 @@ def _outstanding_offer_from_text(text: str) -> list[dict[str, Any]]:
     return rows
 
 
-def outstanding_product_code(entities: Any, semantic_input: Any) -> Any:
-    """WHICH product this report is about, in one place (AC-1119, reviewer N5 +
+def outstanding_product_codes(entities: Any, semantic_input: Any) -> list[str]:
+    """WHICH products this report is about, in one place (AC-1119, reviewer N5 +
     console run 4 finding 5).
 
     `run_fetch` matches the gate's products against the codes the customer TYPED and
-    stamps the winner as `semantic_input.outstanding_product_code`; that one wins.
+    stamps the winner as `semantic_input.outstanding_product_code`; that one wins, alone.
     Only when no candidate equalled a typed code (a prefix or spec-search hit, where the
-    family member is the only answer there is) does the first product entity stand.
+    family member is the only answer there is) do the product entities themselves stand.
+
+    A LIST, since hand pass 3: "all" over a ten-variant product roster picks ten codes,
+    and the old rule took the FIRST entity and reported on one of them under a header
+    that named it (turn 0a6f0379, 16 Sep 2026). One entity gives a list of one and
+    behaves exactly as before.
 
     Every caller that names the product goes through here - the tool arguments, the
     detail offer's stored filters and the scope question's stored filters - so the
-    question, the answer and the header can never disagree about which code was asked
+    question, the answer and the header can never disagree about which codes were asked
     about, which is exactly what console run 4 read on the scope-question arm.
     """
     si = semantic_input if isinstance(semantic_input, dict) else {}
+    carried = [jsc.js_string(c) for c in jsc.array(si.get("outstanding_product_codes")) if jsc.truthy(c)]
+    if carried:
+        return carried
     typed = si.get("outstanding_product_code")
     if jsc.truthy(typed):
-        return jsc.js_string(typed)
+        return [jsc.js_string(typed)]
+    codes: list[str] = []
     for e in jsc.array(entities):
         if not isinstance(e, dict) or jsc.js_string(e.get("entity_type")) != "product":
             continue
@@ -1616,8 +1630,9 @@ def outstanding_product_code(entities: Any, semantic_input: Any) -> Any:
         # `compatible_entities`; a caller that hands entities straight in (this module's
         # own tests) still spells it `canonical_code`.
         code = e.get("code") or e.get("canonical_code")
-        return jsc.js_string(code) if jsc.truthy(code) else None
-    return None
+        if jsc.truthy(code) and jsc.js_string(code) not in codes:
+            codes.append(jsc.js_string(code))
+    return codes
 
 
 #: The offer BLOCK the presenter appended, in either form: R9's single sentence, or the
@@ -1649,7 +1664,7 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
     if isinstance(semantic_input, str):
         semantic_input = _safe_json(semantic_input)
     semantic_input = semantic_input if isinstance(semantic_input, dict) else {}
-    product_code = outstanding_product_code(ctx.get("entities"), semantic_input)
+    product_codes = outstanding_product_codes(ctx.get("entities"), semantic_input)
     customer_ids: list[Any] = []
     for e in jsc.array(ctx.get("entities")):
         if not isinstance(e, dict):
@@ -1666,7 +1681,10 @@ def _outstanding_filters_from_ctx(ctx: dict[str, Any]) -> dict[str, Any]:
             uid for uid in jsc.array(semantic_input.get("outstanding_carried_customer_ids")) if uid
         ]
     return {
-        "product_code": product_code,
+        "product_code": product_codes[0] if product_codes else None,
+        # Only when there are SEVERAL: one code keeps the single key every reader
+        # already speaks, so an ordinary ask's stored filters are unchanged.
+        **({"product_codes": product_codes} if len(product_codes) > 1 else {}),
         "date_filter_start": semantic_input.get("date_filter_start"),
         "date_filter_end": semantic_input.get("date_filter_end"),
         "customer_ids": customer_ids,
