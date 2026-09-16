@@ -323,6 +323,28 @@ Chatbot Domains list and modal, Entity kinds list and modal, the three Settings 
 APPLY and Memory panels in the turn drawer, the Contact Chatbot card. Existing Dialog / Sheet
 entry and exit presets apply; nothing else animates.
 
+
+### Hand pass 3 rulings (17 Sep 2026, owner go)
+
+- `answers_open_question` is RETIRED from the parser schema, the prompt and APPLY. A message
+  answers the open question when a `reference_positions` entry or a named entity matches an
+  offered option by exact label, when `is_affirmative` answers an offer, or when
+  `broaden_axis` is `all`; otherwise the question stays open and the message runs as itself.
+  The engine matches labels, it never reads words. Supersedes the S6 cluster-4 wording; the
+  behaviour (carry, never re-print) stands.
+- The parser's user block gains one line, "Current subject", built from the focus every
+  turn (domains, customers, products, document, status, date window), so refinements and
+  domain switches are judged with context. `entity_op` remains the parser's call.
+- A pick settles only the kind it picked; every other carried entity stays on the fetch.
+- The answer header names each customer family once; "all" over a customer roster fetches
+  every family's ledgers.
+- A document named in the message is a new scope while ANY outstanding question is open.
+- The outstanding detail list carries the same filter header as the summary.
+- Rosters under promotion and purchase_order carry stamps (has promo / no promo, has PO /
+  no PO) from the same probe seam as incoming and DO; the PO picker stays.
+- Word numbers ("eight") are positions; the prompt says so.
+- Hand pass 3 row 4 withdrawn: the parser returned the date window; only the header was wrong.
+
 ## Appendix A - Compatibility contract (129 lines, signed 15 Sep 2026)
 
 Source: architecture page section 9. `main` = live on prod today; `lane` = on
