@@ -22,6 +22,7 @@ here instead, one function per seam:
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -32,7 +33,7 @@ from app.services.chatbot import jsc
 from app.services.chatbot.contracts import DEFAULT_SUGGESTED_AGENT, DEFAULT_SUGGESTED_TEAM
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire
 from app.services.chatbot.turn.plan import FetchSpec
-from app.services.chatbot.turn.state import Focus, Profile, State, focus_from_wire
+from app.services.chatbot.turn.state import KIND_FIELD_MAP, Focus, Profile, State, focus_from_wire
 from app.services.chatbot import session_state
 
 logger = logging.getLogger(__name__)
@@ -675,21 +676,65 @@ def _tier_gate(spec: FetchSpec) -> dict[str, Any] | None:
     return {"tier_pick": tier, "tier_pick_domain": spec.domain, "access_levels_recomposed": [tier]}
 
 
+def with_carried_entities(parse_output: dict[str, Any], focus: Focus) -> dict[str, Any]:
+    """What the RESOLVER is asked about on a turn that named nothing (contract 33, 35).
+
+    "incoming", typed after an inventory answer about ten SRTWC286 variants, names no
+    product at all - so the resolver was never asked, the narrower had only the carried
+    rows to go on, and the fetch reached the tool with a token no `*_ids` param could be
+    built from. The conversation's own subject is handed over instead: the same entity
+    shape the parser emits, flagged `current_message: false` so every downstream reader
+    that distinguishes "typed this turn" from "carried" (the low stock prune, the
+    outstanding report's typed-code match) still can.
+
+    A turn that names its own entities is untouched - this is the EMPTY case only.
+    """
+    if parse_output.get("entities"):
+        return parse_output
+    carried: list[dict[str, Any]] = []
+    for kind, attr in KIND_FIELD_MAP.items():
+        for row in getattr(focus, attr, []) or []:
+            if not isinstance(row, dict):
+                continue
+            code = row.get("canonical_code") or row.get("raw")
+            if not jsc.truthy(code):
+                continue
+            entity: dict[str, Any] = {
+                "raw": row.get("raw") or code,
+                "hint": kind,
+                "canonical_code": code,
+                "current_message": False,
+                "confident": True,
+            }
+            if row.get("uuid"):
+                entity["uuid"] = row["uuid"]
+            carried.append(entity)
+    if not carried:
+        return parse_output
+    return {**parse_output, "entities": carried}
+
+
+def _code_of(entity: dict[str, Any]) -> str:
+    """The CODE a row carries, whichever of the three names it spells it under.
+
+    `gate.py` renames the resolver's `canonical_code` to `code` when it builds
+    `compatible_entities`; the parser, the focus and a picked option all say
+    `canonical_code`; a bare parser entity has only its `raw` token. Reading one
+    spelling and not the others is what made the match below fall through for EVERY
+    spec that named an entity (every compatible row answered `"null"`).
+    """
+    return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
+
+
 def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The resolver's own rows for the kinds this spec narrowed to, else the spec's."""
     kinds = {e.get("hint") for e in spec.entities if e.get("hint")}
-    codes = {
-        jsc.js_string(e.get("canonical_code") or e.get("raw")).strip().lower()
-        for e in spec.entities
-    }
+    codes = {_code_of(e) for e in spec.entities}
     picked = [
         e
         for e in compatible
         if (not kinds or e.get("entity_type") in kinds)
-        and (
-            not codes
-            or jsc.js_string(e.get("canonical_code") or e.get("raw")).strip().lower() in codes
-        )
+        and (not codes or _code_of(e) in codes)
     ]
     if picked:
         return picked
@@ -697,11 +742,43 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
         {
             "entity_type": e.get("hint"),
             "uuid": e.get("uuid") or e.get("canonical_code"),
+            # `code` is the name the gate's own rows use, and every code reader
+            # downstream (`fetch.outstanding_product_code`, the low-stock prune, the
+            # report's typed-code match) reads it first: a spec entity that reaches the
+            # tool through this fallback has to answer to the same name, or a picked
+            # product is a product with no code at all.
+            "code": e.get("canonical_code") or e.get("raw"),
             "canonical_code": e.get("canonical_code") or e.get("raw"),
             "raw": e.get("raw"),
+            **({"display_name": e["name"]} if e.get("name") else {}),
         }
         for e in spec.entities
     ]
+
+
+#: A uuid is an internal identity and never a subject a person reads (the frontend's own
+#: "no UUIDs in the UI" rule, here at the seam the answer text is built from): browser
+#: pass 2 read `*incoming stock* for 65514803-1609-4fe8-8b60-2e908c8f9bd4:`.
+_UUID_TEXT = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE
+)
+
+
+def _answer_subject(entity: dict[str, Any]) -> str:
+    """What the answer's header CALLS this entity - a name, else a code, never a uuid.
+
+    The resolver's own human label wins where it has one (`display_name`, written for
+    customers only, `gate._display_name`: an account code is not what the roster printed
+    and not what the customer typed). Everything else is its code.
+    """
+    for key in ("display_name", "name", "code", "canonical_code", "raw"):
+        value = entity.get(key)
+        if not jsc.truthy(value):
+            continue
+        label = jsc.js_string(value).strip()
+        if label and not _UUID_TEXT.match(label):
+            return label
+    return ""
 
 
 def domain_denial_text(db: Session, domain: str) -> str | None:
@@ -742,11 +819,7 @@ def envelope_of(
     # never said - the tool was still never called, so nothing leaked, but the customer
     # was told nothing either.
     refused = fragment.get("outcome") == "access_denied"
-    codes = [
-        jsc.js_string(e.get("canonical_code") or e.get("raw"))
-        for e in entities
-        if jsc.truthy(e.get("canonical_code") or e.get("raw"))
-    ]
+    codes = [name for name in (_answer_subject(e) for e in entities) if name]
     rows = fetched.get("answers")
     figures = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
     files = fetched.get("attachments")

@@ -104,17 +104,29 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         built: list[dict[str, Any]] = []
         for option in matched:
             uuids = option.get("uuids") or ([option["uuid"]] if option.get("uuid") else [])
+            # ONE rule for what a picked option becomes (browser pass 2, turns 4 / 8 / 6):
+            # the CODE is the entity's `canonical_code` and the uuid is its `uuid`, which
+            # is the same shape a resolver-matched entity reaches the fetch in
+            # (`turn_runtime.candidates_by_kind`). Writing the uuid into `canonical_code`
+            # sent it everywhere a code belongs: the answer's header named
+            # `*incoming stock* for 65514803-...`, and the outstanding report was asked
+            # for `product_code = <uuid>` and honestly found nothing. A customer option
+            # carries both - the account code nobody typed AND the name the roster
+            # printed - so the header can say the name while the tool filters on the id.
+            code = option.get("code") or option.get("label")
+            name = option.get("name")
             for u in uuids:
-                built.append(
-                    {
-                        "raw": option.get("label"),
-                        "hint": option.get("entity_type"),
-                        "canonical_code": u,
-                        "uuid": u,
-                        "current_message": True,
-                        "confident": True,
-                    }
-                )
+                entity: dict[str, Any] = {
+                    "raw": code,
+                    "hint": option.get("entity_type"),
+                    "canonical_code": code,
+                    "uuid": u,
+                    "current_message": True,
+                    "confident": True,
+                }
+                if name:
+                    entity["name"] = name
+                built.append(entity)
         kind_for_focus = matched[0].get("entity_type")
         if kind_for_focus:
             _set_kind_field(focus, kind_for_focus, built)
@@ -279,6 +291,64 @@ _CASUAL_TYPES = frozenset({"casual", "unknown", "confirmation"})
 _HELP_EXEMPT_DOMAINS = frozenset({"portal_link", "ideate"})
 
 
+#: Every structured signal that makes a message a QUESTION rather than idle chat. A
+#: casual-typed turn carrying any one of them is still narrowing a live business ask -
+#: "hanlim" (an entity), "1" (a reference position), "more" (a continuation) - and must
+#: be planned, not swallowed. Listed by name, from the parser's own schema, so the rule
+#: reads as what it is: nothing in the message but the greeting.
+_IDLE_CHAT_DISQUALIFIERS = (
+    "entities",
+    "intent_hint",
+    "domain_hint",
+    "asks",
+    "requested_attributes",
+    "reference_positions",
+    "reference_target",
+    "document",
+    "status",
+    "scope_intent",
+    "broaden_axis",
+    "group_by",
+    "top_n",
+    "demand_qty",
+    "date_mode",
+    "date_filter_start",
+    "date_filter_end",
+    "person_mention",
+    "correction",
+    "continuation",
+    "contains_flyer",
+)
+
+
+def _is_idle_chat(verdict: dict[str, Any], entities: list[dict[str, Any]]) -> bool:
+    """A message that carries no question of its own - not even a subject.
+
+    Every part of this is the PARSER's own structured verdict, never the words: a casual
+    (or unknown / confirmation) message type and not one signal in the emission. The
+    carried focus is what the CONVERSATION is about; it is not a question this message
+    asked, so a greeting plans no fetch and the focus is left exactly as it was (owner
+    ruling, S6 cluster 4, 16 Sep 2026 - browser pass 2 turn 9 replayed the previous
+    business answer back, byte for byte, at a customer who had said "hello").
+    """
+    if verdict.get("message_type") not in _CASUAL_TYPES:
+        return False
+    if entities:
+        return False
+    if any(verdict.get(key) for key in _IDLE_CHAT_DISQUALIFIERS):
+        return False
+    # A yes, a no, or a pick ENGAGES the open question - "yes" to "shall I list the
+    # DOs?" is the fetch, not idle chat. (`resolved: true` never reaches here anyway:
+    # the locked-domain branch runs first.)
+    if verdict.get("is_affirmative") is not None:
+        return False
+    if any((verdict.get("escalation") or {}).values()):
+        return False
+    if (verdict.get("answers_open_question") or {}).get("resolved") is True:
+        return False
+    return True
+
+
 def _lane(verdict: dict[str, Any], domains: list[str], policy: Policy) -> str | None:
     """Which NON-business lane this turn belongs to, or None for a business question.
 
@@ -354,6 +424,7 @@ def _did_you_mean(
         {
             "position": i + 1,
             "label": e.get("raw"),
+            "code": e.get("canonical_code") or e.get("raw"),
             "uuid": e.get("canonical_code") or e.get("raw"),
             "uuids": [e.get("canonical_code") or e.get("raw")],
             "entity_type": kind,
@@ -413,6 +484,17 @@ def _narrow_and_plan(
             entities.extend(outcome.entities)
             if outcome.filter_value is not None:
                 filters[kind] = outcome.filter_value
+            # The focus carries what the ANSWER was about, not what the customer typed
+            # (contract 33 / 35, browser pass 2 turn 2). "check stock srtwc286" is one
+            # raw token and ten real variants: leaving the token in the focus meant the
+            # next turn ("incoming", no product) narrowed against a word nobody could
+            # fetch, and asked a one-option roster naming the family root. Written HERE,
+            # at the seam that decides what this fetch is about, and only from what the
+            # RESOLVER matched this turn - a carry that was already settled is already
+            # in the focus.
+            if outcome.entities and (candidates or {}).get(kind):
+                _set_kind_field(focus, kind, list(outcome.entities))
+                trace.rules_fired.append(f"focus_settles_{kind}")
         # Attribute-first (AC-1534): a HAS turn ("which taps have certificates") names
         # its scope with a `product_type`/`category` entity, not a `product` one - the
         # resolver's own class-word match is what carries the real product candidates
@@ -444,6 +526,7 @@ def _narrow_and_plan(
                 {
                     "position": i + 1,
                     "label": tier.replace("_", " "),
+                    "code": tier,
                     "uuid": tier,
                     "uuids": [tier],
                     "entity_type": "tier",
@@ -552,8 +635,18 @@ def apply(
         domains = [a["domain"] for a in asks if a.get("domain")]
     elif verdict.get("domain_hint"):
         domains = [verdict["domain_hint"]]
-    elif focus.domains:
+    elif focus.domains and not _is_idle_chat(verdict, entities):
         domains = list(focus.domains)
+    elif focus.domains:
+        # S6 cluster 4 (owner ruling, 16 Sep 2026): the pending is carried unchanged and
+        # the MESSAGE is planned as ITSELF. "hello" typed while an offer is open names
+        # nothing, asks nothing and answers nothing, so it plans no fetch - the carried
+        # focus is what the conversation is ABOUT, not what this turn asked for. Before
+        # this the greeting re-fetched the carried domain and the customer got the
+        # previous answer back, byte for byte (browser pass 2, turn 9). The focus itself
+        # is untouched: the next real question still resumes from it.
+        domains = []
+        trace.rules_fired.append("idle_chat_plans_nothing")
     else:
         # D6: nothing named a domain and nothing is carried, but the focus knows what
         # DOCUMENT the conversation is about, and a document belongs to one domain.
