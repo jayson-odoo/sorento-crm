@@ -83,8 +83,11 @@ contact access types, and the owner ruled the group source should be market segm
   `LANDING_KINDS` is the one list and every entry is gated. `SUBMISSION_KINDS` stays for the
   shared `[type]` route shape guards. `GATED_FORM_TYPES` on the BE admin route becomes
   `GRANTABLE_PORTAL_FORM_TYPES`.
-- D7 No FE page-level grant guard is added; the server 403 is rendered inline (AC-L4). Same as
-  price tag today, one less layer.
+- D7 No new fetch for a grant guard. A detail/edit page renders the server 403 inline (AC-L4).
+  A `/new` page makes no request on load, so it reads `visible_form_types` from the `me`
+  payload the portal shell already holds and renders the same inline message when the kind is
+  absent (r3, coder finding 16 Sep). The server remains the enforcement; the page check only
+  avoids an empty form.
 - D8 Tests: a shared helper `tests/_portal_grant.py` with `grant_portal_forms(db, contact_id,
   kinds)` writing override rows, and `seed_segment(db, kinds)` + `link_contact_segment` for
   inheritance tests. `_ptag_r9_seed.seed_portal_contact` switches from an access type to a
