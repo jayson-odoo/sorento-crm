@@ -57,9 +57,24 @@ import pytest
 from tests.chatbot._turn_helpers import build_policy, verdict
 
 
-def _decide(v: dict, *, stock_denial_enabled: bool, custom_fields: list) -> str:
+def _decide(
+    v: dict,
+    *,
+    stock_denial_enabled: bool,
+    session_factory=None,
+    stock_allowed: bool | None = None,
+    no_contact_row: bool = False,
+) -> str:
     """The real seam engine.py::run_turn calls (measured this session): contract
-    58/61/62 short-circuit ROUTE from the contact's own record, ahead of `route()`."""
+    58/61/62 short-circuit ROUTE from the contact's own record, ahead of `route()`.
+
+    S6 ruling (coordinator, 16 Sep 2026): the "contact's own record" is now
+    `respond_contacts.chatbot_stock_allowed`, not the envelope's `custom_fields` (the
+    envelope is IGNORED by `_stock_check_denied` entirely - a console/borrowed
+    envelope's own custom_fields were never a reliable read). `session_factory` +
+    `stock_allowed` seed/update that row; `no_contact_row=True` skips seeding
+    entirely, to prove the fail-OPEN default for a contact with no row at all.
+    """
     from app.services.chatbot.contracts import Envelope
     from app.services.chatbot.engine import _demand_qty_missing, _stock_check_denied
     from app.services.chatbot.turn.apply import apply
@@ -67,7 +82,7 @@ def _decide(v: dict, *, stock_denial_enabled: bool, custom_fields: list) -> str:
     from app.services.chatbot.turn.state import Focus, Profile, State
 
     envelope = Envelope(
-        contact={"id": "ZZT-1", "custom_fields": custom_fields},
+        contact={"id": "ZZT-1"},
         message={
             "event_type": "message.received",
             "contact": {"id": "ZZT-1"},
@@ -80,8 +95,36 @@ def _decide(v: dict, *, stock_denial_enabled: bool, custom_fields: list) -> str:
             },
         },
     )
-    if stock_denial_enabled and _stock_check_denied(envelope, v):
-        return "demand_qty" if _demand_qty_missing(v) else "stock_denied"
+    db = None
+    if stock_denial_enabled:
+        assert session_factory is not None, "stock_denial_enabled=True needs session_factory"
+        db = session_factory()
+        if not no_contact_row:
+            from sqlalchemy import text
+
+            existing = db.execute(
+                text("SELECT 1 FROM respond_contacts WHERE respond_io_id = 'ZZT-1'")
+            ).first()
+            if existing is None:
+                db.execute(
+                    text(
+                        "INSERT INTO respond_contacts (id, respond_io_id, phone_number, "
+                        "session_vars, chatbot_stock_allowed) VALUES (gen_random_uuid()::text, "
+                        "'ZZT-1', '+60000000001', CAST('{}' AS jsonb), :allowed)"
+                    ),
+                    {"allowed": True if stock_allowed is None else stock_allowed},
+                )
+            else:
+                db.execute(
+                    text(
+                        "UPDATE respond_contacts SET chatbot_stock_allowed = :allowed "
+                        "WHERE respond_io_id = 'ZZT-1'"
+                    ),
+                    {"allowed": True if stock_allowed is None else stock_allowed},
+                )
+            db.commit()
+        if _stock_check_denied(db, envelope, v):
+            return "demand_qty" if _demand_qty_missing(v) else "stock_denied"
     state = State(focus=Focus(), pending=None, profile=Profile())
     _state2, plan = apply(state, v, build_policy())
     return route(plan)
@@ -99,53 +142,60 @@ def _stock_verdict(**over) -> dict:
 
 class TestStockDenialGate:
     def test_off_by_default_the_lane_is_unreachable(self) -> None:
-        branch = _decide(
-            _stock_verdict(),
-            stock_denial_enabled=False,
-            custom_fields=[{"name": "is_allowed_stock", "value": "false"}],
-        )
+        branch = _decide(_stock_verdict(), stock_denial_enabled=False)
         assert branch == "business_query"
 
     def test_off_the_predicate_is_never_even_evaluated(self) -> None:
-        branch = _decide(_stock_verdict(), stock_denial_enabled=False, custom_fields=[])
+        branch = _decide(_stock_verdict(), stock_denial_enabled=False)
         assert branch == "business_query"
 
-    def test_on_a_contact_without_stock_access_is_denied(self) -> None:
+    def test_on_a_contact_without_stock_access_is_denied(self, session_factory) -> None:
         branch = _decide(
             _stock_verdict(demand_qty=5),
             stock_denial_enabled=True,
-            custom_fields=[{"name": "is_allowed_stock", "value": "false"}],
+            session_factory=session_factory,
+            stock_allowed=False,
         )
         assert branch == "stock_denied"
 
-    def test_on_a_missing_quantity_asks_for_one(self) -> None:
+    def test_on_a_missing_quantity_asks_for_one(self, session_factory) -> None:
         branch = _decide(
             _stock_verdict(),
             stock_denial_enabled=True,
-            custom_fields=[{"name": "is_allowed_stock", "value": "false"}],
+            session_factory=session_factory,
+            stock_allowed=False,
         )
         assert branch == "demand_qty"
 
-    def test_on_a_contact_WITH_stock_access_is_answered_normally(self) -> None:
+    def test_on_a_contact_WITH_stock_access_is_answered_normally(self, session_factory) -> None:
         branch = _decide(
             _stock_verdict(),
             stock_denial_enabled=True,
-            custom_fields=[{"name": "is_allowed_stock", "value": "true"}],
+            session_factory=session_factory,
+            stock_allowed=True,
         )
         assert branch == "business_query"
 
-    def test_on_a_missing_field_is_denied_not_thrown(self) -> None:
-        """Was `test_on_a_missing_field_still_throws_exactly_as_live_does` - the new
-        seam is guarded (`jsc.get` on a None row), so absence now reads as denied
-        rather than raising. Safer, so the assertion flips instead of dropping."""
-        branch = _decide(_stock_verdict(demand_qty=5), stock_denial_enabled=True, custom_fields=[])
-        assert branch == "stock_denied"
+    def test_on_no_contact_row_at_all_is_allowed_not_denied(self, session_factory) -> None:
+        """Was `test_on_a_missing_field_is_denied_not_thrown` (an envelope with no
+        `is_allowed_stock` custom field denied, under the OLD envelope-based gate). S6
+        ruling (coordinator, 16 Sep 2026) reverses this: the gate is now
+        `respond_contacts.chatbot_stock_allowed`, and a contact with NO ROW AT ALL fails
+        OPEN (allowed) - the owner's default is on for everyone, same as
+        `turn_runtime.load_profile`'s own missing-row default."""
+        branch = _decide(
+            _stock_verdict(demand_qty=5),
+            stock_denial_enabled=True,
+            session_factory=session_factory,
+            no_contact_row=True,
+        )
+        assert branch == "business_query"
 
 
 class TestIdeateNeverShadowedByHelpRequest:
     def test_a_request_for_help_with_ideate_domain_hint_routes_to_ideate(self) -> None:
         v = verdict(message_type="request_for_help", domain_hint="ideate", intent_hint="submit_idea")
-        branch = _decide(v, stock_denial_enabled=False, custom_fields=[])
+        branch = _decide(v, stock_denial_enabled=False)
         assert branch == "ideate", (
             "a domain_hint of 'ideate' must route to the ideate lane even when the "
             f"parser also stamped message_type request_for_help; got {branch!r}"
@@ -155,7 +205,7 @@ class TestIdeateNeverShadowedByHelpRequest:
 class TestBroadenAllNeverReadAsLowSignal:
     def test_a_casual_broaden_all_reply_routes_to_clarify_menu_not_low_signal(self) -> None:
         v = verdict(message_type="casual", domain_hint=None, scope_intent="broaden")
-        branch = _decide(v, stock_denial_enabled=False, custom_fields=[])
+        branch = _decide(v, stock_denial_enabled=False)
         assert branch == "clarify_menu", (
             "message_type casual + scope_intent broaden must route to clarify_menu, "
             f"not be swallowed by the casual shortcut; got {branch!r}. turn/apply.py::"
@@ -172,7 +222,7 @@ class TestAFilterModificationIsNeverLowSignal:
             domain_hint="order",
             entities=[{"raw": "hanlim", "hint": "customer", "current_message": True, "confident": True}],
         )
-        branch = _decide(v, stock_denial_enabled=False, custom_fields=[])
+        branch = _decide(v, stock_denial_enabled=False)
         assert branch == "business_query", (
             "a turn narrowing a live business question (member_offer_filter_"
             "modification in the old ladder) must be answered, not swallowed by the "

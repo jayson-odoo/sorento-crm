@@ -586,13 +586,26 @@ class TestStockDenialGateEndToEnd:
     def _stock_envelope(*, message_id: str) -> Envelope:
         envelope = _envelope()
         envelope.message["message"]["messageId"] = message_id
-        # A contact without stock access - not one missing the field outright, which is
-        # the OTHER covered property (test_route_unit's "still throws exactly as live does").
+        # S6 ruling (coordinator, 16 Sep 2026): stock allowance moved OFF the envelope's
+        # own custom_fields onto `respond_contacts.chatbot_stock_allowed` - the envelope
+        # is now IGNORED entirely by `_stock_check_denied`, so `custom_fields` here is
+        # deliberately plain (the gate is set on the contact ROW instead, see
+        # `_deny_stock_access` below).
         envelope.contact["custom_fields"] = [
             {"name": "is_human_intervened", "value": "false"},
-            {"name": "is_allowed_stock", "value": "false"},
         ]
         return envelope
+
+    @staticmethod
+    def _deny_stock_access(session_factory, *, contact_id) -> None:
+        from sqlalchemy import text
+
+        db = session_factory()
+        db.execute(
+            text("UPDATE respond_contacts SET chatbot_stock_allowed = false WHERE respond_io_id = :c"),
+            {"c": str(contact_id)},
+        )
+        db.commit()
 
     def test_off_by_default_a_stock_check_still_answers_business_query(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access
@@ -622,6 +635,7 @@ class TestStockDenialGateEndToEnd:
         setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
         setting.chatbot_stock_denial_enabled = True
         db.commit()
+        self._deny_stock_access(session_factory, contact_id=CONTACT_ID)
 
         stub_parser(
             _parser_output(

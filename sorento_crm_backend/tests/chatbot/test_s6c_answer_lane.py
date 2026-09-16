@@ -1615,13 +1615,21 @@ class TestR1DemandQuantityAnswer:
     }
 
     @staticmethod
-    def _decide(ctx: dict, *, stock_denial_enabled: bool) -> str:
+    def _decide(ctx: dict, *, stock_denial_enabled: bool, session_factory=None) -> str:
         """AC-1592 port: `head.route.decide` is deleted. Contract 61/62 (stock_denied /
         demand_qty) are decided from the CONTACT's own record before a plan exists at
         all (`turn/route.py`'s own docstring), which the rearch settles in
         `engine.py::run_turn` via `_stock_check_denied`/`_demand_qty_missing` - the
         real seam this test now targets, not a hand-rolled reimplementation of the
-        rule."""
+        rule.
+
+        S6 ruling (coordinator, 16 Sep 2026): the contact's record is now
+        `respond_contacts.chatbot_stock_allowed`, read via a real db session - the
+        envelope's `custom_fields` (still set on `ctx["contact"]` above for the OTHER
+        assertions this class makes) is no longer read by `_stock_check_denied` at all.
+        """
+        from sqlalchemy import text
+
         from app.services.chatbot.contracts import Envelope
         from app.services.chatbot.engine import _demand_qty_missing, _stock_check_denied
 
@@ -1637,17 +1645,29 @@ class TestR1DemandQuantityAnswer:
             },
         })
         verdict = ctx["parse"]["output"]
-        if stock_denial_enabled and _stock_check_denied(envelope, verdict):
-            return "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
+        if stock_denial_enabled:
+            assert session_factory is not None, "stock_denial_enabled=True needs session_factory"
+            db = session_factory()
+            db.execute(
+                text(
+                    "INSERT INTO respond_contacts (id, respond_io_id, phone_number, "
+                    "session_vars, chatbot_stock_allowed) VALUES (gen_random_uuid()::text, "
+                    ":cid, '+60000000001', CAST('{}' AS jsonb), false)"
+                ),
+                {"cid": str(ctx["contact"]["id"])},
+            )
+            db.commit()
+            if _stock_check_denied(db, envelope, verdict):
+                return "demand_qty" if _demand_qty_missing(verdict) else "stock_denied"
         return "business_query"
 
     def test_with_the_switch_on_the_arm_stamps_and_the_answer_is_the_quantity_verdict(
-        self,
+        self, session_factory
     ) -> None:
         from app.services.chatbot.lanes.business.answer import validator
 
         ctx = self._ctx(5)
-        branch_kind = self._decide(ctx, stock_denial_enabled=True)
+        branch_kind = self._decide(ctx, stock_denial_enabled=True, session_factory=session_factory)
         assert branch_kind == "stock_denied"
 
         payload = self._lane(ctx, branch_kind)["payload"]
