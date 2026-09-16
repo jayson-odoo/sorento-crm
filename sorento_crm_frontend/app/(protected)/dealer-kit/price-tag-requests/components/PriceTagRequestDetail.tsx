@@ -28,7 +28,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiFetch } from '@/lib/api';
 import {
   Download,
@@ -109,11 +109,10 @@ import {
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
 import ProductDataReviewDialog from '@/components/dealer-kit/ProductDataReviewDialog';
 import {
-  listTagDataChanges,
   recheckTagDataChanges,
   resolveTagPin,
-  updateAllTagPins,
 } from '../../services/priceTagDataService';
+import { useTagDataChanges, tagDataChangesKey } from '../hooks/useTagDataChanges';
 import {
   changedTagCount,
   type TagDataChangeSet,
@@ -187,8 +186,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const [exportLoading, setExportLoading] = useState(false);
   /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
   const [editOpen, setEditOpen] = useState(false);
-  /** What master data has changed under the pinned tags (r9 S5/D18). */
-  const [dataChanges, setDataChanges] = useState<TagDataChangeSet[]>([]);
   const [reviewTagId, setReviewTagId] = useState<string | null>(null);
   const [pinBusy, setPinBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -255,25 +252,20 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     };
   }, [requestId]);
 
-  const loadDataChanges = useCallback(() => {
-    listTagDataChanges(requestId)
-      .then(setDataChanges)
-      .catch(() => {
-        // A diff that will not load leaves the page saying nothing changed,
-        // which is what it said before this feature existed.
-      });
-  }, [requestId]);
-
-  useEffect(() => {
-    loadDataChanges();
-  }, [loadDataChanges]);
+  // What master data has changed under the pinned tags (r9 S5/D18), polled
+  // every 30s (AC-C1/AC-C3) instead of loaded once on mount - a product
+  // edited in another tab reaches this pill with no reload.
+  const queryClient = useQueryClient();
+  const { data: dataChanges = [] } = useTagDataChanges(requestId, {
+    enabled: !!request && !isTerminalPriceTagStatus(request.status, request.print_by),
+  });
 
   const decideTagPin = useCallback(
     async (tagId: string, action: 'update' | 'keep') => {
       setPinBusy(true);
       try {
         await resolveTagPin(requestId, tagId, action);
-        loadDataChanges();
+        await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(requestId) });
         toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
       } catch {
         toast.error('Could not apply that decision');
@@ -281,7 +273,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         setPinBusy(false);
       }
     },
-    [requestId, loadDataChanges],
+    [requestId, queryClient],
   );
 
   /**
@@ -293,7 +285,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   const recheckDataChanges = useCallback(async () => {
     try {
       const rows = await recheckTagDataChanges(requestId);
-      setDataChanges(rows);
+      queryClient.setQueryData(tagDataChangesKey(requestId), rows);
       const changed = rows.filter((set) => set.changes.length > 0).length;
       toast.success(
         changed > 0
@@ -303,23 +295,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
     } catch {
       toast.error('Could not check product data');
     }
-  }, [requestId]);
-
-  const updateAllPins = useCallback(async () => {
-    const ids = dataChanges
-      .filter((set) => set.changes.length > 0)
-      .map((set) => set.tag_id);
-    setPinBusy(true);
-    try {
-      await updateAllTagPins(requestId, ids);
-      loadDataChanges();
-      toast.success(`${ids.length} tags updated`);
-    } catch {
-      toast.error('Could not update the tags');
-    } finally {
-      setPinBusy(false);
-    }
-  }, [dataChanges, requestId, loadDataChanges]);
+  }, [requestId, queryClient]);
 
   const handleClaim = useCallback(async () => {
     setActionLoading(true);
@@ -589,7 +565,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         // makes after a write.
         const data = await getPriceTagRequest(request.id);
         setRequest(data);
-        loadDataChanges();
+        await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(request.id) });
         toast.success('Price basis updated');
       } catch (e) {
         toast.error(e instanceof Error ? e.message : 'Failed to update the price');
@@ -597,7 +573,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         setSavingLinePrice(null);
       }
     },
-    [request, loadDataChanges],
+    [request, queryClient],
   );
 
   const choosePromotion = useCallback(
@@ -781,17 +757,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   >
                     Product data changed · {changedCount}
                   </span>
-                )}
-                {changedCount > 1 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={pinBusy}
-                    onClick={() => void updateAllPins()}
-                  >
-                    <RefreshCw className="size-3.5 mr-1" />
-                    Update all
-                  </Button>
                 )}
               </div>
               {/* Read-only metadata lives in the header, never in a card body. */}
