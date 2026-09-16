@@ -688,8 +688,20 @@ class PriceTagRequestService:
                     code="INVALID_PART",
                 )
 
+        # Onto the LINE's own collection, not just the session. `db.add` alone
+        # writes the row at the next flush and leaves `line.parts` unloaded,
+        # and the very next reader is `_add_line_tags`, whose whole job is to
+        # find this line's open groups. `SessionLocal` is built
+        # `autoflush=False` (`app/database.py:23`), so that lazy load SELECTs
+        # BEFORE these rows exist and comes back empty: every request made
+        # through the running app minted one tag with empty `choices` while
+        # every route test passed, because `blank_session()` autoflushes and
+        # therefore wrote the parts out ahead of the read. Appending makes the
+        # in-memory line authoritative for every reader in this unit of work,
+        # whatever the session's flush policy is; the cascade on `parts` still
+        # does the insert.
         for position, part in enumerate(cleaned):
-            db.add(
+            line.parts.append(
                 PriceTagRequestLinePart(
                     line_id=line.id,
                     product_id=part["product_id"],
