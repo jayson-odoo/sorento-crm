@@ -94,7 +94,7 @@ def ledger_family_key(text: str) -> str:
     return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
 
 
-def _ledger_family_label(text: str) -> str:
+def ledger_family_label(text: str) -> str:
     """What the family is CALLED: the row's own name without its ledger marker."""
     cleaned = " ".join(_without_brackets(text).split()).strip().strip("-").strip()
     return cleaned or text
@@ -169,7 +169,7 @@ def _options(
             # [A/C I]" and "- [A/C II]" are the same shop), and the pick still reaches
             # every ledger because `uuids` is the union.
             key = family
-            label = _ledger_family_label(str(name or label or ""))
+            label = ledger_family_label(str(name or label or ""))
         else:
             key = str(label).strip().casefold() if label else str(identity)
         merged = by_label.get(key)

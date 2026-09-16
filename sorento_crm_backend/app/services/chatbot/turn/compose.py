@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot.turn.fetch import envelope_missed
+from app.services.chatbot.turn.narrow import ledger_family_key, ledger_family_label
 from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import State
@@ -147,6 +148,33 @@ def _lane_question(envelopes: list[dict[str, Any]], turn_no: int | None = None):
     return None
 
 
+def _header_subjects(entities: list[Any]) -> list[str]:
+    """Every subject the answer is FOR, each named once.
+
+    Owner ruling, hand pass 3 row 2 (turn 463413b0): "All" over a customer roster fetched
+    fifteen ledgers, correctly, and the header then said one trading name once per ledger
+    of it - "CHIN CHUN HARDWARE SDN BHD - [A/C I]" six times over, "JIMMY - I, JIMMY - I".
+    Ledgers of one trading name are ONE customer, which is the rule `narrow` already
+    groups a roster by, so the header groups by the same one and prints the family's own
+    name rather than any one ledger's.
+
+    A code with no family (every product code) keys on itself, so the only thing this
+    collapses there is a genuine repeat.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in entities:
+        text = str(value).strip()
+        if not text:
+            continue
+        key = ledger_family_key(text) or text.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(ledger_family_label(text))
+    return out
+
+
 def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: Any) -> Answer:
     sections: list[Section] = []
     seen_rows: set[tuple] = set()
@@ -183,7 +211,7 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             missed_domains.append(domain)
 
         label = row.label if row else domain
-        codes = ", ".join(str(e) for e in entities)
+        codes = ", ".join(_header_subjects(entities))
         # A counted-set answer (AC-1316/AC-1317, "10 taps have certificates. Showing
         # 5.") carries its OWN header, computed off the qualifying total and the
         # class word rather than the domain label - it wins over the generic
