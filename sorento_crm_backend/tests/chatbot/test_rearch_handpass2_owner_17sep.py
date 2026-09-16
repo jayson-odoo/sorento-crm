@@ -21,8 +21,15 @@ correction that were not chased further this session (time-boxed, flagged not si
 worked around).
 
 Findings 4 and 7 are explicitly excluded per the brief (4 = coder 12 in flight already;
-7 = blocked on the coder's own tool-output measurement). Findings 2 and 12 are now
-ported (tester 14 session) - see their own classes below.
+7 = blocked on the coder's own tool-output measurement, since folded into engine.py -
+"measured as not a defect", coordinator 17 Sep). Findings 1, 2, 3, 5, 6, 8, 9, 10, 11, 12
+all ported and GREEN (tester 14 session, 13 tests, 0 failing) as coder 12 landed each
+fix - findings 1 and 2 were re-pinned once each after their FIRST port targeted a seam
+(`gate.run_gate` / `annotate_customer` + the old 2-arg `candidates_by_kind`) that turned
+out not to be the one the landed fix actually used (`turn/narrow.py`'s new
+`family_grouping` parameter, and `candidates_by_kind`'s new third parameter fed by a
+brand-new `probe_customer`/`customer_bases_with_do` pair) - re-running this file after
+every merge from `origin/feat/chatbot-turn-rearch` is what caught both, not a guess.
 """
 from __future__ import annotations
 
@@ -50,64 +57,45 @@ class TestFinding1FamilyGroupingOnTheCustomerRoster:
     ONE customer family by default - no picker for hanlim, all the family's uuids are
     fetched in one go, never a six-line roster asking which ledger.
 
-    CONFIRMED structural gap, not guessed: `turn/policy.py::DomainKind.family_grouping`
-    is a real field (`"ledger_family"` on the customer kind row, `policy_rows.py:312`),
-    but `family_grouping` has ZERO readers anywhere outside `policy.py`/`policy_rows.py`
-    (grepped `app/services/chatbot/lanes/` and `turn/apply.py`, `turn/narrow.py` this
-    session) - nothing ever GROUPS a resolver's per-ledger matches by it. The mechanism
-    the ruling asks for does not exist yet; this pins the CONTRACT it should honour once
-    it does, against the real six HANLIM ledger rows the recording seeded
-    (`test_turn_replay.py::HAND_PASS_2_HANLIM_FAMILY`)."""
+    LANDED by coder 12 (`9a81d6551`, tester 14 session), at `turn/narrow.py` - NOT the
+    `gate.run_gate` seam this class originally traced (the resolver still legitimately
+    returns six rows; the grouping is entirely the NARROWER's job, downstream, via the
+    new `family_grouping` parameter `decide()`/`_choices()`/`_options()` gained). Re-
+    pinned at the real landed seam after re-running this class post-merge caught the
+    stale one (same class of catch as finding 2's own re-pin note)."""
 
     def test_six_ledgers_of_one_trading_name_are_one_family_not_six_options(self) -> None:
         """A resolver that returned all six real HANLIM ledger rows (seeded off the
         source clone, `test_turn_replay.py::HAND_PASS_2_HANLIM_FAMILY`) for a bare
-        "hanlim" ask must collapse to ONE customer, not six separate roster options -
-        measured directly against the real `gate.run_gate` seam, no compose/fetch
-        machinery needed to grade it."""
-        from app.services.chatbot.lanes.business.gate import run_gate
+        "hanlim" ask must settle (not ask) when handed to the narrower with
+        `family_grouping="ledger_family"` - the customer kind row's own seeded value -
+        and every ledger's uuid rides out on the settled `entities`."""
+        from app.services.chatbot.turn.narrow import decide
+        from app.services.chatbot.turn.state import Focus, Profile
 
         hanlim = [
-            ("3c15f4e4-be46-4fd7-9de8-3430a9b1217a", "300-H030", "HANLIM TRADING SDN BHD"),
-            ("2d0cd958-9f5e-4eee-8b6e-ed31a94bee44", "300-H118", "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)"),
-            ("c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3", "300-H030", "HANLIM TRADING SDN BHD [A/C I]"),
-            ("6f5a419b-840a-4e4d-8107-291971dd3bb8", "300-H070", "HANLIM TRADING SDN BHD [A/C II]"),
-            ("6b52807a-537b-437d-9f55-12f7fda29df8", "300-H118", "HANLIM TRADING SDN BHD [A/C III]"),
-            ("2a4575e0-836b-4a5d-8566-73223465020d", "300-H119", "HANLIM TRADING SDN BHD [A/C IV]"),
+            {"uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a", "canonical_code": "300-H030", "name": "HANLIM TRADING SDN BHD", "entity_type": "customer"},
+            {"uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44", "canonical_code": "300-H118", "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)", "entity_type": "customer"},
+            {"uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3", "canonical_code": "300-H030", "name": "HANLIM TRADING SDN BHD [A/C I]", "entity_type": "customer"},
+            {"uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8", "canonical_code": "300-H070", "name": "HANLIM TRADING SDN BHD [A/C II]", "entity_type": "customer"},
+            {"uuid": "6b52807a-537b-437d-9f55-12f7fda29df8", "canonical_code": "300-H118", "name": "HANLIM TRADING SDN BHD [A/C III]", "entity_type": "customer"},
+            {"uuid": "2a4575e0-836b-4a5d-8566-73223465020d", "canonical_code": "300-H119", "name": "HANLIM TRADING SDN BHD [A/C IV]", "entity_type": "customer"},
         ]
-        parser = {
-            "domain_hint": "order",
-            "intent_hint": "check_order",
-            "entities": [{"raw": "hanlim", "hint": "customer", "current_message": True}],
-        }
-        resolver = {
-            "tokens": ["hanlim"],
-            "resolutions": [
-                {
-                    "token": "hanlim",
-                    "resolved": False,
-                    "ambiguous": True,
-                    "matches": [
-                        {
-                            "uuid": u,
-                            "entity_type": "customer",
-                            "canonical_code": code,
-                            "display": {"customer_name": name},
-                        }
-                        for u, code, name in hanlim
-                    ],
-                }
-            ],
-            "unresolved_tokens": [],
-        }
-        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
-        assert len(out["compatible_entities"]) == 1, (
-            "six ledgers of ONE trading name must gate to one family, not one option "
-            f"per ledger - got {len(out['compatible_entities'])}: "
-            f"{out['compatible_entities']!r}. `policy.py::DomainKind.family_grouping` "
-            "('ledger_family' on the customer kind row) has no reader anywhere in "
-            "gate.py/pickers.py yet (grepped this session) - the grouping mechanism "
-            "the ruling asks for does not exist."
+        outcome = decide(
+            kind="customer",
+            policy_value="must_narrow_one",
+            focus=Focus(),
+            profile=Profile(),
+            resolved_candidates=hanlim,
+            family_grouping="ledger_family",
+        )
+        assert outcome.ask_kind is None, (
+            "six ledgers of ONE trading name must settle, never ask - "
+            f"got ask_kind={outcome.ask_kind!r} options={outcome.ask_options!r}"
+        )
+        assert {e["uuid"] for e in outcome.entities} == {h["uuid"] for h in hanlim}, (
+            "every ledger's uuid must ride out on the settled entities (all fetched) - "
+            f"got {outcome.entities!r}"
         )
 
 
@@ -283,19 +271,16 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
     """Ruling 2 (turns 7c60b2e6, d369447b): "Customer rosters carry has DO / no DO
     stamps like product rosters carry incoming."
 
-    Traced through the REAL pipeline, no invented field name for the assertion itself:
-    `pickers.annotate_customer` (real function, real probe rows) followed by
-    `turn_runtime.candidates_by_kind` (real function) - the exact two calls
-    `turn_runtime.resolve_kinds` chains for a product roster via `annotate_incoming` /
-    `incoming_by_code` (`turn_runtime.py:522-539`, `:601`). CONFIRMED structural gap,
-    not guessed: `candidates_by_kind`'s only stamp source is
-    `gate.get("incoming_by_code")` (`turn_runtime.py:601`, one reader, grepped this
-    session) - `annotate_customer` computes its own `with_do` set (`pickers.py:224-230`)
-    but never exposes it as gate DATA the way `annotate_incoming` exposes
-    `incoming_by_code` (`pickers.py:118-126`), so a customer candidate can never carry a
-    `stamp` regardless of what the probe found. `narrow.py::_options` already renders
-    whatever `stamp` a candidate carries (`narrow.py:74,103` - kind-agnostic), so the
-    gap is entirely upstream of the narrower, at the annotate/candidates_by_kind seam."""
+    LANDED by coder 12 (`c09f12183`, tester 14 session): the chosen seam is NOT
+    `annotate_customer`'s gate-mutation path this class originally traced (that path
+    stays display-only, kept display-only on purpose per `pickers.py`'s own module
+    docstring) - it is a NEW, separate probe (`resolve_gate.probe_customer`,
+    `pickers.customer_bases_with_do`) feeding `turn_runtime.candidates_by_kind`'s new
+    THIRD parameter directly. Re-pinned at the REAL landed seam (was calling the old
+    2-arg `candidates_by_kind` signature, which now silently defaults
+    `customer_bases_with_do=None` and would have kept passing for the wrong reason -
+    caught by re-running this class after merging `c09f12183`, not by chasing a
+    guessed shape)."""
 
     def test_candidates_by_kind_stamps_customer_rosters_like_it_stamps_product_rosters(
         self,
@@ -303,11 +288,16 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
         from app.services.chatbot.lanes.business import pickers
         from app.services.chatbot.turn_runtime import candidates_by_kind
 
+        # Two DIFFERENT customer families, not two ledgers of the same one -
+        # `pickers.customer_base` strips bracket/paren suffixes on purpose (finding 1's
+        # own grouping rule), so two HANLIM ledgers would collapse to ONE base and
+        # confound the has/no-DO distinction this test is about; measured directly
+        # once, below, in the ledgers-share-one-stamp test.
         gate = {
             "gate_clarification": (
                 "Which customer do you mean? Please choose:\n"
                 "1. HANLIM TRADING SDN BHD [A/C I]\n"
-                "2. HANLIM TRADING SDN BHD [A/C II]"
+                "2. GOLDEN WIN SDN BHD"
             ),
             "compatible_entities": [
                 {
@@ -319,16 +309,16 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
                 },
                 {
                     "entity_type": "customer",
-                    "canonical_code": "300-H070",
+                    "canonical_code": "300-G001",
                     "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8",
-                    "display_name": "HANLIM TRADING SDN BHD [A/C II]",
-                    "raw": "hanlim",
+                    "display_name": "GOLDEN WIN SDN BHD",
+                    "raw": "golden win",
                 },
             ],
         }
-        # Ledger I has a shipped DO, ledger II does not - the exact shape
+        # HANLIM has a shipped DO, GOLDEN WIN does not - the exact row shape
         # `test_resolve_gate_unit.py::test_an_order_with_no_delivery_order_is_not_
-        # counted_as_one` already proves `annotate_customer` measures correctly.
+        # counted_as_one` already proves the probe-rows shape measures correctly.
         probe_rows = [
             {
                 "title": "DO-1",
@@ -340,30 +330,105 @@ class TestFinding2CustomerRosterCarriesHasDoStamps:
             {
                 "title": "SO-2",
                 "fields": [
-                    {"label": "Customer", "value": "HANLIM TRADING SDN BHD [A/C II]"},
+                    {"label": "Customer", "value": "GOLDEN WIN SDN BHD"},
                     {"label": "Actual Delivery Date", "value": None},
                 ],
             },
         ]
-        annotated = pickers.annotate_customer(
-            dict(gate), probe={"answers": probe_rows}, parser={}
-        )
-        # The real function already measures the fact correctly (proven by
-        # test_resolve_gate_unit.py) - confirm this recording's own fixture agrees
-        # before blaming the downstream seam for a fixture mistake.
-        assert annotated["customer_probe_hits"] == 1, annotated["escalate_message"]
-
-        grouped = candidates_by_kind(annotated, gate["compatible_entities"])
+        customer_bases = pickers.customer_bases_with_do({"answers": probe_rows})
+        grouped = candidates_by_kind(gate, gate["compatible_entities"], customer_bases)
         customers = grouped.get("customer", [])
         stamped = {c.get("name"): c.get("stamp") for c in customers}
         assert stamped == {
             "HANLIM TRADING SDN BHD [A/C I]": "has DO",
-            "HANLIM TRADING SDN BHD [A/C II]": "no DO",
-        }, (
-            f"got {stamped!r} - candidates_by_kind only reads gate['incoming_by_code'] "
-            "(turn_runtime.py:601); annotate_customer's own 'with_do' set never "
-            "reaches the gate as data, so no customer candidate ever carries a stamp "
-            "today, whatever the probe found."
+            "GOLDEN WIN SDN BHD": "no DO",
+        }, stamped
+
+    def test_two_ledgers_of_one_family_share_the_same_stamp(self) -> None:
+        """The has/no-DO stamp is keyed by FAMILY BASE (`pickers.customer_base` strips
+        the `[A/C n]` suffix), same as finding 1's own grouping rule - a DO on ledger I
+        is a DO for the family, and ledger II (no order of its own) reads it too."""
+        from app.services.chatbot.lanes.business import pickers
+        from app.services.chatbot.turn_runtime import candidates_by_kind
+
+        gate = {"gate_clarification": "x"}
+        compatible = [
+            {
+                "entity_type": "customer",
+                "canonical_code": "300-H030",
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                "display_name": "HANLIM TRADING SDN BHD [A/C I]",
+                "raw": "hanlim",
+            },
+            {
+                "entity_type": "customer",
+                "canonical_code": "300-H070",
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                "display_name": "HANLIM TRADING SDN BHD [A/C II]",
+                "raw": "hanlim",
+            },
+        ]
+        probe_rows = [
+            {
+                "title": "DO-1",
+                "fields": [
+                    {"label": "Customer", "value": "HANLIM TRADING SDN BHD [A/C I]"},
+                    {"label": "Actual Delivery Date", "value": "2026-09-01"},
+                ],
+            },
+        ]
+        customer_bases = pickers.customer_bases_with_do({"answers": probe_rows})
+        grouped = candidates_by_kind(gate, compatible, customer_bases)
+        stamped = {c.get("name"): c.get("stamp") for c in grouped.get("customer", [])}
+        assert stamped == {
+            "HANLIM TRADING SDN BHD [A/C I]": "has DO",
+            "HANLIM TRADING SDN BHD [A/C II]": "has DO",
+        }, stamped
+
+    def test_annotate_customer_stays_display_only_the_real_stamp_path_is_the_new_probe(
+        self,
+    ) -> None:
+        """Guards against re-chasing the WRONG seam a second time: the old 2-arg
+        `candidates_by_kind(gate, compatible)` call (no `customer_bases_with_do`)
+        must produce NO stamp on a customer row even when `annotate_customer` ran
+        over the same gate - the two paths are genuinely independent, not one
+        silently reading the other's output."""
+        from app.services.chatbot.lanes.business import pickers
+        from app.services.chatbot.turn_runtime import candidates_by_kind
+
+        gate = {
+            "gate_clarification": "Which customer do you mean? Please choose:\n1. ACME SDN BHD",
+            "compatible_entities": [
+                {
+                    "entity_type": "customer",
+                    "canonical_code": "300-A1",
+                    "uuid": "aaaaaaaa-0000-0000-0000-000000000001",
+                    "display_name": "ACME SDN BHD",
+                    "raw": "acme",
+                },
+            ],
+        }
+        probe = {
+            "answers": [
+                {
+                    "title": "DO-1",
+                    "fields": [
+                        {"label": "Customer", "value": "ACME SDN BHD"},
+                        {"label": "Actual Delivery Date", "value": "2026-09-01"},
+                    ],
+                }
+            ]
+        }
+        annotated = pickers.annotate_customer(dict(gate), probe=probe, parser={})
+        assert annotated["customer_probe_hits"] == 1, annotated["escalate_message"]
+
+        # The OLD 2-arg call - customer_bases_with_do defaults to None, so the new
+        # elif branch (turn_runtime.py's candidates_by_kind) never fires.
+        grouped = candidates_by_kind(annotated, gate["compatible_entities"])
+        customers = grouped.get("customer", [])
+        assert all(c.get("stamp") is None for c in customers), (
+            f"annotate_customer's own gate mutation must NOT leak a stamp through the "
+            f"2-arg call: {customers!r}"
         )
 
 

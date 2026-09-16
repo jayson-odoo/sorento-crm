@@ -84,7 +84,14 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # (`{resolved, picks, answer}`) - the parser now says whether THIS message answers a
 # still-open question rather than the engine inferring it. Measured against the coder's
 # landed change (`72eabc6a0`), not derived.
-CONSTANT_CHARS = 50724
+# +1589 chars (17 Sep 2026, hand pass 2 item 12, `71109d8d3`): a `== DOCUMENT ==` section
+# - the closed set (SO/DO/PO/SPO/GRN), current message only, default `[]`, worked examples
+# including turn c45e2929 - plus an OUTPUT line describing the key. Owner report: the
+# `document` key was declared in the schema and explained nowhere, so the model had the
+# field and no rule for filling it; `focus.document` and `outstanding_scope_ask_candidate`
+# already read it correctly (no engine change, prompt-only fix). Measured against the
+# coder's landed change, not derived.
+CONSTANT_CHARS = 52313
 
 
 def _without_growth_r1_addendum(text: str) -> str:

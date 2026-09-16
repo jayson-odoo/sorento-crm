@@ -151,3 +151,47 @@ unregistered-divergence) were measured on run 1 (`c815e5bd7`) and not re-counted
 the merged head - the delta between the two runs is exactly the 4 fixture-grant
 fixes (all in files outside those three themes), so the theme counts are still
 accurate to within that same 4.
+
+## Tester 14 session close-out, 17 Sep 2026
+
+Command: `pytest tests/chatbot -q -p no:cacheprovider --tb=line -W ignore` (same
+private test DB). Head `db5c58111` (this session's own final commit, merged forward
+from `origin/feat/chatbot-turn-rearch` at `99b97c8fb` mid-session): **187 failed,
+3385 passed, 214 skipped, 5 xfailed** (3791 collected, 545s). `pytest tests/chatbot
+--collect-only -q`: **3791 tests collected, 0 errors.** `npx vitest run` (frontend,
+independent of the backend DB): **1046 passed / 1 skipped files, 11651 passed / 2
+skipped tests** - clean.
+
+Net this session (from tester 13's end-of-session baseline, `222 failed, 3352
+passed`, head `dc50b246b`): **-35 failed, +33 passed.** Driven by coder 12 landing
+all 12 hand-pass-2 items (contracts 38/39, items 1/2/3/5/6/8/9/10/11/12; 4 was
+contracts 38/39 itself, 7 measured not a defect) plus this session's own test-side
+work: hand-pass-2 findings 1/2/12 ported and all 13 re-pinned green at their REAL
+landed seams (two re-pins caught after an initial port targeted the wrong seam -
+see `test_rearch_handpass2_owner_17sep.py`'s own commit history); the outstanding
+lane's remaining session-shape reads ported (17 -> 15 -> 10, two commits); three
+`test_outstanding_lane.py` reds retired per the S6 cluster-4 ruling (item c) and one
+premise fixed (item d); `case-057`/`focus-009`'s recorder-lag `pending` divergence
+signed; `handpass3` step 5's duplicate header fixed; the parser char-count guard and
+S4 golden re-pinned for hand-pass-2 items 3/6/12; four new S1 vitest files (29
+tests) for AC-1510/1511/1512/1516.
+
+**Remaining 187, by file** (`grep FAILED`, file-level, complete):
+
+| file | failed | class / next action |
+| --- | --- | --- |
+| `test_turn_replay.py` | 145 | Already triaged in-line this session and prior sessions via `replay_turns/DIVERGENCES.md` (T4 backfill, recorder-lag `pending` signings, composite-chain findings) - not re-aggregated here, that file is the live source of truth for this one. |
+| `test_outstanding_lane.py` | 10 | Triaged this session, module docstring names each: 6 R15-refinement (a coder is wiring it, coordinator ruling), 2 scope-question Customer-line family grouping, 2 `TestOpenOfferCanBeLeft`'s own "offer does not win" gap. ENGINE DEFECT, not a tester-owned fix. |
+| `test_r3_pending_end_to_end.py` | 7 | Not touched this session - UNCLASSIFIED, out of the assigned queue's scope. |
+| `test_s5_escalation_lane.py` | 4 | Not touched this session - UNCLASSIFIED. |
+| `test_rearch_port_growth_r1_review_fixes.py` | 3 | Triaged this session (queue item 4) - `TestOwner8SepANewAskIsNeverAnEscalationYes::test_a_business_ask_over_an_open_offer_is_not_a_confirmation` (`turn/apply.py::_answer_offer` has no defusing check for a decisive intent + current entity riding a hallucinated `is_escalation_confirmation`) and `TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk`'s two tests (`turn/apply.py` has zero `switch_word`/`DOMAIN_SWITCH_WORDS` references, so `_lane()` routes a switch-word-bearing `request_for_help` straight to escalation with no widened-guard exception). Confirmed regressions, ENGINE DEFECT, routed to the coordinator this session. |
+| `test_pass5_item2_member_offer_business_query_filter_route.py` | 3 | Not touched this session - UNCLASSIFIED. |
+| `test_s5_escalation_seams.py` | 2 | Not touched this session - UNCLASSIFIED (was 2 on the pre-merge run too, per the table above - likely pre-existing, not new this session). |
+| `test_rearch_s3_attribute_first.py` | 2 | Not touched this session - UNCLASSIFIED. |
+| 11 files at 1 each (`test_spec_visibility_projection.py`, `test_s8_switches_in_settings.py`, `test_s6c_engine_paths.py`, `test_s6b_fetch_lane.py`, `test_rearch_s4_prompt_blocks.py`, `test_rearch_s3_journey_chain.py`, `test_pass4_item4_issue708_partial_pick_scope.py`, `test_pass4_item3_last_month_under_member_offer.py`, `test_pass4_item1b_marketing_ambiguous_clarify.py`, `test_import_boundary.py`, `test_dry_run_isolation.py`) | 11 | `test_rearch_s4_prompt_blocks.py`'s one failure IS triaged this session (`TestMigrationPublishesFirstRearchVersionUnlabelled` - `chatbot_rearch_s6d` updates `chatbot_domains.narrowing` directly without republishing an `ai_prompt_versions` row, so no unlabelled version's stored template/hash matches today's render; a migration-authoring decision, flagged for the coordinator). The other 10 were already in this doc's own "long tail" list on the pre-merge run (same file names) - not re-touched this session, still UNCLASSIFIED. |
+
+**Every number above is measured on this session's own final head (`db5c58111`),
+not carried forward from an earlier run.** Files this session did not touch are
+listed as UNCLASSIFIED rather than guessed at - the pre-merge "long tail" section
+above is the closest prior triage for most of them, not re-verified against the
+current head this session.
