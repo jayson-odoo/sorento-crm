@@ -22,6 +22,7 @@ import { TURN_STAGES } from './types/chatbotTurn.types';
 const STAGE_LABELS: Record<TurnStage, string> = {
   received: 'Received',
   understood: 'Understood',
+  answered: 'Answered',
   access: 'Access',
   routed: 'Routed',
   looked_up: 'Looked up',
@@ -30,7 +31,7 @@ const STAGE_LABELS: Record<TurnStage, string> = {
   sent: 'Sent',
 };
 
-/** Failure points that sit outside the eight-stage timeline. */
+/** Failure points that sit outside the nine-stage timeline. */
 const OFF_TIMELINE_STAGE_LABELS: Record<string, string> = {
   intake: 'Intake',
   queued: 'Queue',

@@ -29,12 +29,23 @@ import type {
  */
 export function TurnDetailDrawer({
   turnId,
+  shadowTurnId = null,
   onOpenChange,
 }: {
   turnId: string | null;
+  /**
+   * AC-1029. The shadow parse of the SAME message, when the Shadow filter is on and a
+   * shadow row exists. Fetched only while the drawer is open, and only for the Parse
+   * section: nothing else on a shadow turn differs, because it sends nothing and writes
+   * no session.
+   */
+  shadowTurnId?: string | null;
   onOpenChange: (open: boolean) => void;
 }) {
   const { data: turn, isLoading, isError } = useChatbotTurn(turnId);
+  const { data: shadowTurn, isError: shadowFailed } = useChatbotTurn(
+    turnId && shadowTurnId ? shadowTurnId : null,
+  );
 
   return (
     <Sheet open={Boolean(turnId)} onOpenChange={onOpenChange}>
@@ -61,21 +72,43 @@ export function TurnDetailDrawer({
               Could not load this turn. Reload to try again.
             </p>
           )}
-          {turn && <Sections detail={turn.trace_detail} />}
+          {turn && (
+            <Sections
+              detail={turn.trace_detail}
+              shadowParse={shadowTurn?.trace_detail.parse ?? null}
+              shadowAsked={Boolean(shadowTurnId)}
+              shadowFailed={shadowFailed}
+            />
+          )}
         </div>
       </SheetContent>
     </Sheet>
   );
 }
 
-function Sections({ detail }: { detail: TurnDetail }) {
+function Sections({
+  detail,
+  shadowParse = null,
+  shadowAsked = false,
+  shadowFailed = false,
+}: {
+  detail: TurnDetail;
+  shadowParse?: TurnDetail['parse'];
+  shadowAsked?: boolean;
+  shadowFailed?: boolean;
+}) {
   return (
     <>
       <Section title="Stages" testId="section-stages" defaultOpen>
         <StagesSection stages={detail.stages} />
       </Section>
       <Section title="Parse" testId="section-parse">
-        <ParseSection parse={detail.parse} />
+        <ParseSection
+          parse={detail.parse}
+          shadowParse={shadowParse}
+          shadowAsked={shadowAsked}
+          shadowFailed={shadowFailed}
+        />
       </Section>
       <Section title="Decay" testId="section-decay">
         <DecaySection decay={detail.decay} />
@@ -173,8 +206,48 @@ function StagesSection({ stages }: { stages: TurnDetail['stages'] }) {
   );
 }
 
-function ParseSection({ parse }: { parse: TurnDetail['parse'] }) {
+/**
+ * The turn's own parse, and - once a shadow version is running - the second parse beside
+ * it (AC-1029).
+ *
+ * TWO COLUMNS, not a computed diff. The owner is reading a whole emission to judge a
+ * prompt, and a diff would decide for them which keys matter; at 375px the columns stack,
+ * which is the same reading order one after the other.
+ */
+function ParseSection({
+  parse,
+  shadowParse = null,
+  shadowAsked = false,
+  shadowFailed = false,
+}: {
+  parse: TurnDetail['parse'];
+  shadowParse?: TurnDetail['parse'];
+  shadowAsked?: boolean;
+  shadowFailed?: boolean;
+}) {
   if (!parse) return <Empty>No parse recorded.</Empty>;
+  if (!shadowAsked) return <ParseColumn parse={parse} />;
+  return (
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2" data-testid="parse-columns">
+      <div className="min-w-0">
+        <div className="mb-1 text-2xs uppercase tracking-wide text-muted-foreground/70">live</div>
+        <ParseColumn parse={parse} />
+      </div>
+      <div className="min-w-0">
+        <div className="mb-1 text-2xs uppercase tracking-wide text-muted-foreground/70">shadow</div>
+        {shadowFailed ? (
+          <p className="text-xs text-destructive">The shadow parse could not be loaded.</p>
+        ) : shadowParse ? (
+          <ParseColumn parse={shadowParse} />
+        ) : (
+          <Empty>No shadow parse for this turn.</Empty>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ParseColumn({ parse }: { parse: NonNullable<TurnDetail['parse']> }) {
   return (
     <div className="space-y-2 text-xs">
       <dl className="grid grid-cols-[auto_1fr] gap-x-2.5 gap-y-0.5">

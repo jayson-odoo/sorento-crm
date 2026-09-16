@@ -114,11 +114,17 @@ class TestEndToEndThroughTheMemberPickArm:
         parent_input = {
             "latest_user_message": message,
             "previous_conversation_state": {
-                "selection_context": "member_offer",
-                "last_result_set": [
-                    {"idx": 1, "uuid": "ZZT-uuid-1", "label": "Aisyah Rahman"},
-                    {"idx": 2, "uuid": "ZZT-uuid-2", "label": "Boon Keat"},
-                ],
+                "open_question": {
+                    "kind": "member_offer",
+                    "options": [
+                        {"idx": 1, "uuid": "ZZT-uuid-1", "label": "Aisyah Rahman"},
+                        {"idx": 2, "uuid": "ZZT-uuid-2", "label": "Boon Keat"},
+                    ],
+                    "expects": "yes_no",
+                    "asked_at_turn": 1,
+                    "asked_at": None,
+                    "payload": {},
+                },
                 "routing": {"suggested_team": "customer_service"},
             },
         }

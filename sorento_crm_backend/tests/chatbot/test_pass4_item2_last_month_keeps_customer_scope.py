@@ -78,7 +78,7 @@ from app.services.chatbot import engine as engine_mod
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
 from tests.chatbot.test_engine_company_scope import _wire_real_resolve_entity
-from tests.chatbot.test_r3_pending_end_to_end import _stub_parser
+from tests.chatbot._shared_turn_helpers import _stub_parser
 
 CUSTOMER_LABEL = "L. A. W. Transport (K.L.) Sdn. Bhd. (SRT)"  # roster label, brand-decorated
 CUSTOMER_NAME = "L. A. W. Transport (K.L.) Sdn. Bhd."  # the REAL customers.customer_name column
@@ -162,70 +162,45 @@ def _seed_customers_and_orders(session_factory) -> tuple[str, str]:
 def _seed_prior_disambiguation_state(
     session_factory, *, customer_id: str, company_id: str
 ) -> None:
-    """The state a real "3" pick over a 5-name customer picker persists - the FULL shape
-    production turn 0d9332a0's `previous_conversation_state` carries (round 12, `LAW-t3`),
-    not a trimmed-down guess: `current_message: true` on the pick (the customer picker
+    """The state a real "3" pick over a 5-name customer picker persists, in the five-key
+    shape (D8/S3d) - the picked customer, `current_message: true` (the customer picker
     keeps the ACTIVE pick current on the turn right after it, only the NEXT topic change
-    clears it), `picker_last_result_set` / `picker_domain` / `picker_selection_context`
-    alongside the plain `last_result_set` / `selection_context` pair. A trimmed seed missing
-    these took a DIFFERENT, already-fixed path (the domain/date-continuity nulling captured
-    in the earlier `cc0075ae` turn) instead of the one this chain is about."""
-    roster = [
-        {"idx": 1, "uuid": "ZZT-law-roster-1", "label": "ZZT Roster One", "entity_type": "customer", "product": "ZZT-1"},
-        {"idx": 2, "uuid": "ZZT-law-roster-2", "label": "ZZT Roster Two", "entity_type": "customer", "product": "ZZT-2"},
-        {"idx": 3, "uuid": customer_id, "label": CUSTOMER_NAME, "entity_type": "customer", "product": "301-C001"},
-        {"idx": 4, "uuid": "ZZT-law-roster-4", "label": "ZZT Roster Four", "entity_type": "customer", "product": "ZZT-4"},
-        {"idx": 5, "uuid": "ZZT-law-roster-5", "label": "ZZT Roster Five", "entity_type": "customer", "product": "ZZT-5"},
-    ]
+    clears it), alive under `focus.customer`, and the domain under `focus.domains`. The
+    legacy roster / `picker_*` / `pending` mirrors this used to carry alongside them are
+    gone with the 34-key bag; nothing downstream of `focus` reads them any more."""
+    company_id  # kept for signature parity with the caller; unused now `routing_company` /
+    # `routing_companies` are gone from the seed.
+    # D8/S3d: the six carries (and the resolve-gate seam this chain exercises) read
+    # `focus` now, never the legacy 34-key bag - the picked customer under
+    # `focus.customer.value`, the domain under `focus.domains.value`. No product entity
+    # and no date window survive from the original capture (both were empty/null there
+    # too), so neither slot is seeded.
     variables = {
-        "message_type": "business_query",
-        "intent_hint": "check_order",
-        "domain_hint": "order",
-        "user_goal": "trying to select an item from the previous list",
-        "query_brands": [],
-        "access_levels": [],
-        "entities": [
-            {
-                "raw": CUSTOMER_LABEL,
-                "hint": "customer",
-                "ordinal": 3,
-                "current_message": True,
-                "uuid": customer_id,
-                "canonical_code": "301-C001",
-            }
-        ],
-        "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
-        "escalation": {"is_escalation_confirmation": False},
-        "response": "Previous turn (order): returned 1 records",
-        "last_result_set": roster,
-        "selection_context": "disambiguation",
-        "date_filter_start": None,
-        "requested_attributes": ["delivery"],
-        "date_filter_end": None,
-        "date_mode": None,
-        "match_mode": "and",
-        "contains_flyer": False,
-        "dym_offer": None,
-        "dym_candidates": [],
+        "focus": {
+            "customer": {
+                "value": {
+                    "raw": CUSTOMER_LABEL,
+                    "hint": "customer",
+                    "ordinal": 3,
+                    "current_message": True,
+                    "uuid": customer_id,
+                    "canonical_code": "301-C001",
+                },
+                "set_at_turn": 1,
+                "set_at": None,
+                "source": "pick",
+            },
+            "domains": {
+                "value": ["order"],
+                "set_at_turn": 1,
+                "set_at": None,
+                "source": "reuse",
+            },
+        },
+        "open_question": None,
         "ideation": None,
-        "picker_last_result_set": roster,
-        "picker_families": {},
-        "picker_domain": "order",
-        "picker_selection_context": "disambiguation",
-        "routing_roster_plan": None,
-        "routing_brand": None,
-        "routing_brand_source": None,
-        "routing_company": company_id,
-        "routing_companies": [
-            {
-                "company_id": company_id,
-                "company_name": "ZZT LAW Co",
-                "brand_code": None,
-                "codes": ["301-C001"],
-                "labels": [CUSTOMER_NAME],
-            }
-        ],
-        "pending": None,
+        "access_levels": [],
+        "contains_flyer": False,
     }
     db = session_factory()
     db.execute(
@@ -280,14 +255,17 @@ def _wrong_debtor_code_sibling(name: str, uuid: str) -> dict[str, Any]:
     }
 
 
-class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
+class TestACarriedCustomerPickIsPinnedAtTheGateBothWaysNow:
     """Issue #715 (H77/AC-825), closed by `gate.py`'s own "PINNED PICK WINS OVER FUZZY
-    RE-RESOLUTION" mechanism - NOT by an AND-mode `entity_pins`, which stays refused by
-    PR #456's own contract (references.py:1650-1655: an AND-mode intersection has no
-    per-token view to narrow, and a zero-intersection AND request retries under
-    `force_mode='or'`, where a pin would suddenly start applying). `resolve_entity_body`
-    is unchanged and still omits `entity_pins` in AND mode - asserted below, so this
-    class cannot silently start relying on a pin that was never sent.
+    RE-RESOLUTION" mechanism - which stays the fix for a NEAR-MISS pin (a did-you-mean
+    pick pinning a row an exact AND-mode probe cannot contain at all; see the class
+    below for that shape). What changed in S7 follow-up (owner-found on :3081): AND
+    mode's own `entity_pins` REFUSAL is gone - `resolve_entity_body` now sends the pin
+    in every mode, and the route narrows a pinned token's own candidates to the pinned
+    uuid before intersecting, rather than 400ing. `_the_picked_uuid_replaces...` below
+    still covers the case the ROUTE narrowing cannot reach (the picked uuid absent from
+    the resolver's own bare re-search entirely) - that is still `gate.py`'s job, not
+    the route's.
 
     The mechanism already existed for a CURRENT-turn pick (`pins`, `current_message is
     True`) and was already entered on a CARRIED one (`pins_all`, exec 13705266's own
@@ -308,10 +286,10 @@ class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
     tractable scale (3 siblings, not 99) because the MECHANISM being tested has no
     dependency on the count."""
 
-    def test_resolve_entity_body_still_never_sends_a_pin_in_and_mode(self) -> None:
-        """The companion fact the class docstring states: nothing upstream of the gate
-        changed. If this ever starts asserting an `entity_pins` key, the "REPLACE at
-        the gate, never intersect at the resolver" account above is stale."""
+    def test_resolve_entity_body_now_sends_a_pin_in_and_mode_too(self) -> None:
+        """The ruling reversed (S7 follow-up, owner-found on :3081): the lane sends
+        `entity_pins` in every mode now, AND included. RED today: `resolve_entity_body`
+        still omits it whenever `match_mode == "and"`."""
         from app.services.chatbot.lanes.business.resolve_gate import resolve_entity_body
 
         ctx = {
@@ -349,7 +327,7 @@ class TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver:
         }
         body = resolve_entity_body(ctx)
         assert body["tokens"] == ["301-C001"], body["tokens"]
-        assert "entity_pins" not in body, body.get("entity_pins")
+        assert body["entity_pins"] == {"301-C001": PICKED_UUID}, body.get("entity_pins")
 
     def test_the_picked_uuid_replaces_the_resolvers_wrong_debtor_code_siblings(self) -> None:
         from app.services.chatbot.lanes.business.gate import run_gate

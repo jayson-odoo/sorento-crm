@@ -1,0 +1,391 @@
+# UAC - Chatbot focus + multi-domain
+
+Plan: `PLAN-chatbot-focus-multi-domain.md`. Numbering: AC-10xx. Lane 1 (dialogue state) is
+AC-1001 to AC-1039; lane 2 (multi-domain fan-out) is AC-1040 onward. Each criterion names its
+evidence (pytest / vitest / world / replay / agent-browser run). "Contact" = a Respond.io
+contact through `/api/v1/external/chat/turn`; "dealer" = a contact with no field reveal
+grants. Supersedes section D (AC-940 to AC-953) of `chatbot-growth-r1-acceptance-criteria.md`;
+the mapping is at the bottom.
+
+## Journey
+
+Actor: a dealer on WhatsApp, arriving from the Respond.io channel mid-conversation. The system
+already knows the contact, their grants (stock visibility, field reveals), what they asked in
+the last few turns (focus), and whether the bot is waiting on an answer (open question).
+
+1. Dealer types "SRTWT2634 stock and eta". Bot resolves the product once. Ambiguous: ONE
+   numbered picker, nothing else. Clear: one reply with a Stock section, then an Incoming
+   section, in the order the dealer said them, then one escalate offer naming the team or
+   teams.
+2. Dealer types "SRTWT2635" (bare code). The same two domains rerun for the new code.
+3. Dealer types "PO?". Domains switch to purchase order, product kept.
+4. Dealer types "promo for CWCX7605". Domains and product both switch.
+5. Dealer types "1" on a picker. The pick resolves the product, then every domain in focus
+   reruns for it. Numbers never collide: only one question is ever open.
+6. Dealer says yes to escalate where two teams apply: the bot asks which team, with buttons.
+   One team: assignment straight away.
+7. A slot older than the TTL dies. The bot asks "which product?" rather than guess.
+8. Dealer types "1" with nothing open. The clarifier, knowing what is alive, asks for the
+   missing piece; the dealer's answer lands in the business lane with the alive domains.
+
+Told automatically: the escalation team gets the assignment and the SLA clock. The owner sees
+every focus rule, every open-question resolution and every shadow parse per turn in the
+console.
+
+## Measured (origin/main, 12 Sep 2026)
+
+- 337 distinct real messages in the replay corpus; 3 name two domains at once. Fan-out is an
+  owner ask, not a corpus pressure.
+- Every domain in `DOMAIN_SPEC` declares exactly one intent (13 domains, 13 intents), so
+  `intent_hint` carries nothing `domain_hint` does not.
+- The low-signal clarifier receives the whole 34-key session bag, except when the parser
+  labels the message `casual` or `unknown`, where it receives nothing. A bare "1" lands in the
+  blanked case.
+- n8n is off the turn path: the CRM is the only reader and writer of
+  `respond_contacts.session_vars`. Outside the chatbot package only the console and the
+  ideation lane (`ideation` key only) read it.
+- Slice B of growth-r1 exists as an UNPUSHED local branch `feat/chatbot-growth-dialogue`
+  (14 commits, worktree `.claude/worktrees/chatbot-growth-dialogue`, 48 main commits
+  behind). Lane 1 builds on it; the plan's "Lane 1 base" table lists the deltas.
+
+## Lane 1 - dialogue state
+
+### A. Focus slots
+
+- AC-1001 [BE][T] After any completed turn, `respond_contacts.session_vars` holds exactly the
+  keys `focus`, `open_question`, `ideation`, `access_levels`, `contains_flyer`. None of the 34
+  legacy keys is written. `SessionVars` is `extra=forbid` over those five. Evidence: pytest
+  asserting the JSONB keys after a business turn, a picker turn and a casual turn.
+- AC-1002 [BE] `focus` carries the slots `domains` (list of domain names, dealer order),
+  `products`, `customer`, `transporter`, `warehouse`, `date_window`, `attributes`, `tier`,
+  `brands`. Every slot is `{value, set_at_turn, set_at, source}`; `source` is the rule name
+  that set it (`current_message`, `reuse`, `pick`, `quoted`). Evidence: pytest on the
+  contract.
+- AC-1003 [BE][T] No counter and no TTL exists anywhere (no turn count, no wall clock, no
+  settings field). A focus slot is cleared only by (a) a current-message entity of the same
+  axis replacing it, (b) `topic_reset`, or (c) the Respond.io "conversation closed" event:
+  the existing SLA close path clears `focus` and `open_question` on the contact directly,
+  idempotently, under its last-open-sibling gate (ruling 13 Sep: eager clear, no marker, no
+  next-turn arm; `clearing.apply` has no conversation-closed branch). Causes (a) and (b)
+  write a `decay` trace line `{slot, reason}` per slot. Evidence: pytest per cause; a world
+  per cause.
+- AC-1004 [BE][T] After a business turn, a run of five casual or low-signal messages leaves
+  every focus slot and the open question exactly as they were. Evidence: world.
+- AC-1005 [BE][T] `dialogue/focus.py` holds the carry rules as named functions, each with its
+  own test, applied in this order: `replace_same_axis`, `reset_on_topic`, `reuse_alive`,
+  `domains_from_asks`, `date_restated_only`, `anaphora_reuses`, `confident_guard`. Evidence:
+  test names match rule names.
+- AC-1006 [T] A product asked at turn N and never replaced still carries at turn N+10;
+  after the conversation is closed in Respond.io the next message with no product asks
+  which product. Evidence: two multi-turn worlds.
+- AC-1007 [T] "incoming?" after a stock answer keeps the products and sets
+  `focus.domains = [incoming]`; "what about Y" after that replaces the product and keeps
+  `incoming`. Evidence: world.
+- AC-1008 [T] "别的" / "another one" clears product, customer, date and domains, keeps tier
+  and brands. Evidence: pytest on `reset_on_topic`.
+- AC-1009 [T] After a DO result, "for customer ABC instead" replaces the customer slot and
+  reruns the order tool; "last month" then replaces only the date window. Evidence: world.
+- AC-1010 [T] "that one" (anaphora) with the product slot empty asks which product; with the
+  slot set it reuses it. Evidence: pytest.
+- AC-1011 [T] An entity with `confident=false` never replaces an alive product slot without a
+  picker. Evidence: pytest.
+- AC-1012 [T] A domain word with no product ("PO?") REPLACES `focus.domains` with the named
+  domain; it never appends. Evidence: pytest on `domains_from_asks`.
+
+### B. One open question
+
+- AC-1013 [BE] `open_question` is one slot or null: `{kind, expects, options, asked_at_turn,
+  asked_at, payload}`. `kind` is one of `product_pick`, `customer_pick`,
+  `tier_pick`, `team_pick`, `company_pick`, `member_offer`. `expects` is `pick`, `yes_no`,
+  `pick_or_yes_no` or `free`. `options` are frozen rows `{idx, label, uuid, code, domain, ...}`
+  with `idx` numbered from 1 across the whole roster. Evidence: pytest on the contract; one
+  handler per kind in `dialogue/open_question.py`.
+- AC-1014 [T] A picker of 3 products is offered; "2" resolves to the second frozen option even
+  if the product list would resolve differently today. "2" again after the pick RE-RESOLVES
+  against the same frozen roster (owner 13 Sep 2026, D19, sticky roster - restoring ruling K
+  rule 1 / 7 Sep deviation 5 and superseding this AC's own earlier close-on-answer clause): the
+  roster stays open until it is replaced, reset, a new subject is named, or the conversation
+  closes. The one-team escalate offer that follows a pick's own rerun-miss RIDES on the roster
+  question instead of replacing it: a number re-picks (rule 1 above), "yes" runs the
+  escalation and consumes the whole question, "no" declines and the roster stays with the
+  offer removed. Evidence: world.
+- AC-1015 [T] Escalate offer with one team, then "yes" runs the escalation lane; "no" renders
+  the declined copy; "SRTWC8517 stock?" instead is a new ask: the offer is cleared with a
+  trace line at `received` and the stock is answered. Evidence: three worlds.
+- AC-1016 [T] A quoted reply (`replyTo.id`) to an older picker resolves against THAT
+  message's frozen options, not the alive open question. Evidence: pytest.
+- AC-1017 [T] Issue #708: a numbered pick over a partial-miss roster keeps the
+  already-resolved siblings via `payload.keep`. Evidence: the existing #708 test passes
+  against the `product_pick` handler.
+- AC-1018 [T] A pick resolves the entity and then reruns every alive domain in
+  `focus.domains` for it. Evidence: world (one domain in lane 1; AC-1049 covers many).
+- AC-1019 [T] `member_offer` follows the same clearing rule as every other kind (its TTL 3
+  is gone); the five legacy `pending` kinds, `dym_offer`, `selection_context` and `picker_*`
+  no longer exist as state. A non-roster question (`team_pick` clarify, `company_pick`,
+  `member_offer`) is cleared when it is answered; a ROSTER question (`product_pick`,
+  `customer_pick`, `tier_pick`) stays open when answered by a pick (D19). Evidence: grep in
+  review + the worlds that exercised them.
+- AC-1020 [T] While a question is open: a casual or low-signal message leaves it open; a
+  message naming a subject (a current-message entity) that does not answer it clears it with
+  a trace line and is handled as a new ask; a newer question replaces it. A domain word alone
+  ("stock?") over an open picker is NOT a new ask: the picker stays so the next "1" resolves
+  (measured 13 Sep on the pick-reruns world; every intent hint is decisive, so an intent
+  cannot be the signal). It never answers silently. Evidence: pytest per case.
+
+### C. Parser v3 and the clarifier
+
+- AC-1021 [BE][T] Parser v3 (`chatbot_semantic_parser`, new registry version) emits a strict
+  schema with `asks: [{domain, entities[]}]` in the order the message names them,
+  `answers_open_question: {resolved, picks[], yes_no, free_text}`, `anaphora`, `topic_reset`.
+  It has no `domain_hint`, no `intent_hint`, no top-level `entities`. The engine flattens
+  `asks` at intake into `domains[]` (order kept), `entities[]` (union, order kept) and a
+  per-turn `{domain: [entity refs]}` binding. Evidence: schema test; flatten test.
+- AC-1022 [T] Parser v3 never re-emits an entity absent from the current message. Evidence:
+  corpus replay assertion over every capture.
+- AC-1023 [BE][T] The parser prompt receives `focus_hints` (alive slots only, typed) and
+  `open_question_hint` (kind, expects, option labels), never the previous reply text and
+  never a "continue the previous turn" instruction. Evidence: pytest on the rendered prompt.
+- AC-1024 [BE][T] The low-signal clarifier receives the same `focus_hints` plus
+  `open_question: none` for `low_signal` and `unknown` messages; a `casual` message gives it
+  nothing. Evidence: pytest on the rendered clarifier prompt.
+- AC-1025 [T] "eta?" with `focus.domains` set and no product (cleared by "another one")
+  makes the clarifier ask for the missing product; the dealer's "SRTWT2635" then runs the
+  business lane over the set domains without a re-ask. Evidence: two-turn world.
+- AC-1026 [T] `intent_hint` appears nowhere in the parser schema, `SessionVars`, the trace or
+  the prompts; every lane that still needs the word derives it from
+  `DOMAIN_SPEC[domain].intents[0]`. The 1:1 guardrail test stays. Evidence: grep in review.
+
+### D. Shadow parse, visible in the console
+
+- AC-1027 [BE][T] `system_settings.chatbot_parser_shadow_version` (nullable string, default
+  null, value `chatbot_semantic_parser@<version>`, validated on PUT against existing
+  versions). When set, every real turn also runs that registry version of the parser AFTER
+  the live reply is sent (never on the customer's request path) and stores
+  a `chatbot.turns` row with `shadow_of` = the live turn's `message_id`, the shadow parse in
+  its trace, and no reply, no session write, no send, no escalation. When null nothing extra
+  runs. A shadow failure never fails the live turn. Evidence: pytest with a fake provider.
+- AC-1028 [FE][BE][E2E] System > Settings > Chatbot shows "Parser shadow version" as a
+  clearable select over the registry versions of `chatbot_semantic_parser`, beside the
+  existing chatbot switches, usable at 375px and 1280px. Evidence: vitest, pytest on both
+  builders, agent-browser run.
+- AC-1029 [FE][E2E] The chat-history list has a "Shadow" filter. A shadow row shows a drift
+  badge when its `branch_kind` or its flattened `domains` differ from the live turn's. The
+  turn drawer's Parser drift panel shows the live parse and the shadow parse side by side.
+  Evidence: vitest on badge logic, agent-browser run.
+- AC-1030 [FE][BE] With the Shadow filter on, the list header shows one line: shadow turns
+  counted, branch parity percent, asks parity percent, over the filtered range. Evidence:
+  pytest on the summary endpoint, vitest on the line.
+- AC-1031 [T] Promotion is the existing registry promote. The PR carries the shadow summary
+  from AC-1030 for the window the owner ran. Evidence: PR body.
+
+### E. Deletions and guardrails
+
+- AC-1032 [T] `output_exchange.py` no longer contains rules K2, K4, the switch-word override,
+  the AXIS BROADEN restore, `_query_brands_carried`, `_tier_carried`, or the date /
+  attribute / `is_active` carry arms; each survives only as a named function in
+  `dialogue/focus.py`. Evidence: grep in review + test names.
+- AC-1033 [T] No persisted mirrors. `SESSION_VAR_KEYS` is the five names of AC-1001. The world
+  grader maps legacy expectations onto the new shape in ONE function in
+  `tests/chatbot/worlds.py` (`pending` to `open_question.kind` and `team`, `last_result_set`
+  and `dym_last_result_set` to `open_question.options`, `entities` to `focus.products`,
+  `domain_hint` to `focus.domains[0]`, `query_brands` to `focus.brands`, dates to
+  `focus.date_window`). Every world grades green, or its divergence is registered in
+  `divergences.py` with a reason. Evidence: `test_worlds.py`.
+- AC-1034 [BE][T] `GET` and `PUT /api/v1/external/conversation-variables` carry the shape the
+  engine stores: `{variables: {focus, open_question, ideation, access_levels, contains_flyer}}`
+  with `extra=forbid` inside `variables`; a GET body PUT back round-trips; a legacy key or a
+  flat five-key body without `variables` is a 422. No compatibility shim. Evidence: pytest
+  including the round-trip.
+- AC-1035 [BE][T] `trace_detail` keeps its nine keys; `focus[]` entries are
+  `{slot, before, after, rule, source}` and `open_question` is
+  `{before, answer, after, handler, outcome}`, written by the dialogue module. The drawer's
+  Focus and Open question panels render them, and render "No focus rule fired this turn"
+  when empty. Evidence: pytest on the trace, vitest on the panels.
+- AC-1036 [T] The ideation lane still reads and writes only `session_vars.ideation`.
+  Evidence: existing ideation tests green.
+- AC-1037 [UX] No new motion. The settings field, the Shadow filter chip, the drift badge and
+  the drawer panels use existing primitives and presets only. Evidence: review.
+
+## Lane 2 - multi-domain fan-out
+
+- AC-1040 [T] "SRTWT2634 stock and eta" renders ONE message: a Stock section, then an
+  Incoming section, in that order, then one escalate line. Two tool calls, two `tool` trace
+  events. Evidence: world.
+- AC-1041 [T] "stock for A and eta for B" renders Stock listing A only and Incoming listing B
+  only. The binding lasts one turn: a bare "C" next turn runs C through both domains.
+  Evidence: two-turn world.
+- AC-1042 [T] "stock and eta for A and B" renders each section listing both products.
+  Evidence: world.
+- AC-1043 [T] After a fan-out answer, a bare code reruns every alive domain for the new code.
+  Evidence: world.
+- AC-1044 [T] After a fan-out answer, "PO?" sets `focus.domains = [purchase_order]`, keeps
+  the product, renders one section. Evidence: world.
+- AC-1045 [T] "promo for CWCX7605" after a fan-out answer replaces both domains and product.
+  Evidence: world.
+- AC-1046 [T] Sections render in the dealer's order (the `asks` order), never a canonical
+  order. Evidence: world "eta and stock for X" renders Incoming first.
+- AC-1047 [T] Nothing prints twice, by one general deduper keyed `(entity id, domain)` shared
+  by every section and every ladder rung, for any domain in `DOMAIN_SPEC`; a later renderer
+  skips a printed key and a section with every key printed is omitted. "stock and eta for X", no stock,
+  incoming exists: one Stock section reading "No stock for X, but there is incoming: ...";
+  no Incoming section. Both empty: the ladder climbs past the asked set to PO and the closing
+  line appears once. The trace lists the consumed pairs. Evidence: three worlds.
+- AC-1048 [T] A domain the contact is not granted renders its section as the existing
+  one-line denial copy; the other sections render; no ladder runs for the denied domain.
+  Evidence: world with a dealer lacking `purchase_orders.placed`.
+- AC-1049 [T] An ambiguous product on a fan-out ask offers ONE `product_pick` and nothing
+  else; the pick then fans out over every alive domain. Evidence: two-turn world.
+- AC-1050 [T] When a `tier_pick` (promotion) and a `product_pick` would both arise, the
+  product is asked first; the tier is asked on the following turn. Evidence: world.
+- AC-1051 [T] The escalate offer opens only when at least one section missed (today's
+  conditions, per section); every section found means no offer. Teams are the deduped set of
+  `DOMAIN_SPEC[d].escalation_team` over the MISSED domains: no stock but incoming found offers
+  Warehouse only. One team: today's yes/no offer. Two or more: "Would you like me to escalate
+  to Warehouse or Purchasing?" with one numbered quick reply per team plus "No it's okay",
+  stored as `team_pick` with those options. "1" picks the first team; a team label picks by
+  equality; a bare "yes" re-asks with the same buttons; "no" renders the declined copy.
+  Evidence: six worlds.
+- AC-1052 [T] The date window applies only to domains that take one; "stock and DO last
+  month" filters the order section and leaves stock unfiltered. Evidence: world.
+- AC-1053 [T] No cap: a four-domain ask makes four tool calls and four trace events.
+  Evidence: pytest with a fake MCP.
+- AC-1054 [FE][E2E] The turn drawer shows one `tool` entry per domain, the consumed pairs
+  under Cross-domain, and the Focus panel lists `domains` in order. Evidence: agent-browser
+  run over a fan-out console turn.
+
+## Owner merge test, 15 Sep 2026 (AC-1060 to AC-1070)
+
+Added after the owner's console pass on the merged head (`d4ae8203b`), which found six
+defects at the pick seam and one pre-existing arm. The plan's "Found during owner merge
+test" table carries the diagnosis; these are the independently-verifiable criteria.
+
+- AC-1060 [T] KEEP ACROSS A PICK. A message that resolves an ambiguous entity AND another
+  entity of a different axis freezes the second one on the roster it arms, and the pick
+  answers with BOTH. "delivery for chin chun product wc286" then "1" fetches the picked
+  customer scoped to WC286, not `Product: all products`; "photo for srtwc286" then "4"
+  answers with the Product Photos of the picked SKU rather than re-asking for the
+  attachment type. A second reading of the SAME word is not a sibling and does not
+  survive: "7445", which matches products by code and customers by phone, offers the
+  products and keeps no customer. Evidence: `run_gate` unit (both shapes) + capture
+  `rs09-t1` unmoved on content.
+- AC-1061 [T] THE OFFER RIDES A ROSTER BORN BESIDE IT. A reply that carries a numbered
+  roster AND the frozen "Would you like me to escalate to <team> team?" persists ONE
+  question: the roster's kind and rows, `expects: pick_or_yes_no`, and
+  `payload.offer.team` naming the team the sentence named. A number re-picks; a bare "yes"
+  escalates to THAT team and consumes the whole question; "no" declines and leaves the
+  roster with the offer stripped. "check stock srtwt2643" then "yes" reaches the WAREHOUSE
+  team, never customer service. Evidence: `test_sticky_roster_tail` + a console chain.
+- AC-1062 [T] A DETAIL PICK IS NOT A NEW ASK. With an `outstanding_scope` or
+  `outstanding_detail` question open, a turn that picks one of its frozen options re-runs
+  the report with the stored filters whatever `domain_hint` the parser stamped on it, on
+  both numbered channels (`reference_positions` and `answers_open_question.picks`). A turn
+  that picks nothing and names its own entity is still a new ask and still drops the
+  pending. Evidence: `test_outstanding_lane`, both channels.
+- AC-1063 [T] THE HEADER NAMES THE CUSTOMER. After a customer pick the scope header reads
+  `Customer: <company name>` - the label the customer was shown - never the debtor code.
+  The picked entity carries the label as `raw` and the code as `canonical_code`; product
+  picks are unchanged, where the code is the name the customer reads. Evidence:
+  `test_open_question` + capture `b56-pick-turn`.
+- AC-1064 [T] A PICK REACHES EVERY LEDGER ITS LINE PROMISED. A roster line that names two
+  ledgers ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") carries `family_uuids`, the pick copies
+  them onto the entity, and the tool call's `customer_ids` covers every account of that
+  family. The family rides the PIN, not the question, so it survives the roster being
+  replaced by a later question (the 2026-08-24 ruling that the family outlives the
+  roster). A family member that is not a uuid is skipped exactly as a bad entity id is.
+  Evidence: `test_owner_regressions_15sep` (pick-time copy + tool-call expansion).
+
+- AC-1065 [T] A NARROWING IS NOT A NEW ASK, WHATEVER WORD THE MODEL STAMPED. With an
+  outstanding question open, a turn that picks nothing and names only entities on axes this
+  report can never take as its SUBJECT - a location, a date - re-runs the SAME report with
+  the stored filters overlaid and re-arms the same question. "only BRW" narrows even when
+  the parser emits it as `message_type: business_query` with `domain_hint: "order"`, which
+  the live v20 model does. The question's own carried subject riding `entities` with
+  `current_message: false` is what a refinement KEEPS and never counts against it. A turn
+  that names a product or a customer of its own - either can BE this report's subject - is
+  still a new ask and still drops the pending ("delivery status for hanlim" under a
+  product-subject offer). Evidence: `test_outstanding_lane`, both the `domain_hint: null`
+  and the live `domain_hint: "order"` shapes.
+- AC-1066 [T] A YES ANSWERS THE OFFER UNDER EVERY PROMPT VERSION, AND ON EVERY ARM. Wherever
+  a reply carries "Would you like me to escalate to <team> team?" and names a real team, the
+  offer is recorded on whatever question that turn leaves open - standalone, after a
+  cross-domain ladder, beside a did-you-mean roster, beside a multiple-matches picker, beside
+  a customer picker, beside an outstanding scope or detail question, beside a tier menu - and
+  a bare "yes" consumes it and routes to THAT team, a "no" strips it and leaves whatever else
+  was armed, and a number re-picks. The team is never a routing default while an offer is
+  open, and it is read from the printed sentence so the promise and the record cannot differ.
+  The yes/no is recognised from the parser's own flags, so it works on the live v1-shaped
+  prompt and not only under v3. A `member_offer` keeps its own re-prompt, and a roster with no
+  offer resolves nothing from an affirmative (D19). Evidence: the owner chain
+  cca6b365 -> 570610f0, plus the parametrized arm reds.
+- AC-1067 [T] THE PARSER IS SHOWN THE ROWS IT HAS TO COUNT. A question whose answer is a
+  POSITION states its frozen rows to the parser in the user block, on every turn it is
+  open - the numbered pickers, the did-you-mean roster, the tier menu, the outstanding
+  scope and detail questions, and the member offer. It has to be the block and not the
+  state, because the PROMOTED prompt is v1-shaped and sees no `Focus:` / `Open question:`
+  section at all, so a roster it is not told about does not exist: the live chain
+  `incoming wc286` -> "8" -> two casual turns -> "10" came back `casual` with
+  `reference_positions: []` while the question itself was perfect. Nothing new is stored -
+  the rows come off the question, the same frozen list the position is resolved against -
+  and the line is ADDITIVE: the block the promoted prompt already reads does not move.
+  The same turn records `understood.facts.open_question_options`, so "it was never told"
+  and "it was told and did not take it" stay separable. A question carrying a riding
+  escalate offer is STILL that question: it keeps its rows, and the `Pending:` line names
+  the roster rather than the yes/no on it (D19 rule 3 - a number re-picks, a yes answers
+  the offer), which is what the second round of this criterion was about. A plain one-team
+  offer numbers nothing and sends no rows. Evidence: turns ab73f52b / 8440c1ff / 3fd0d37c
+  and 34000918, the per-kind block reds over 0, 1 and 2 casual turns with an offer riding,
+  and the v1 parity test.
+- AC-1068 [T] A RE-PROMPT KEEPS ITS FROZEN OPTIONS AND ITS RECORDED TEAM. When a turn asks
+  the question that is already open again - any kind, expecting the same answer - the rows
+  the customer was shown and the team they were promised survive it: the re-prompt derives
+  a LABEL only, so the rows beside it are this turn's (empty when no lane ran, the ANSWER's
+  own rows when one did) and the team is re-derived from this turn's routing. Measured on
+  the member offer: one casual turn came back `options: []` with `payload.team` flipped
+  from warehouse to customer service, so a "2" over a numbered people roster picked nobody
+  and a "yes" would have gone to the wrong team. The clock does not restart either. A live
+  question with no rows still re-prompts with none. Evidence: the sticky-roster reds over
+  0, 1 and 2 intervening casual turns, on every kind.
+
+- AC-1069 [T] A POSITION IS READ BY WHOEVER OWNS THE QUESTION, AND ONLY ONCE. Under a
+  question the HEAD resolves - the outstanding report's scope and detail asks, which have
+  no handler in `dialogue/open_question.resolve` by design - a position is mapped to a
+  SCOPE and never converted into an entity: those rows are menu labels ("Sales orders",
+  "Delivery order list"), and minting one into the turn's entities sent it to the resolver,
+  where "list" matched every SPECIALIST customer and the report re-ran over companies
+  nobody had named. What a turn taken under one of those questions MEANS is decided by what
+  the message NAMES, never by a position the model volunteered beside it: a message naming
+  only axes this report can never take as its subject is the refinement it looks like; a
+  pick that lands on a row still answers, with any off-subject filter the same message
+  named overlaid ("2 in 2026", "2, only BRW"); and a subject-capable entity is a new ask.
+  Evidence: live turn 0b610e47, the four parametrized R-M reds, and
+  `TestScopeAnswerRunsReportWithCarriedFilters`.
+- AC-1070 [T] WHOEVER PRINTS THE OFFER SENTENCE RECORDS THE OFFER. Every composer that
+  appends "Would you like me to escalate to <team> team?" (or the lower-case and
+  "or 'yes' to escalate to X." variants) records the team where it prints it, and the
+  recorded offer is what a "yes" routes against - so the promise and the record cannot
+  differ, and a reply that also quotes the customer's own words back cannot be misread as
+  promising what they typed. This has to be the composer and not the text: an ANSWERED turn
+  prints the sentence with no branch flag set (a partial-promo or entitlement miss), and the
+  echoed token lands either side of the bot's own sentence. There is NO text fallback: a
+  composer that prints without recording un-arms its own offer, which is what the
+  per-composer parity guards exist to catch. Evidence: one guard per top-level composer
+  (printed == recorded, and a "yes" routes there), plus the eight arms of AC-1066.
+
+## Supersession map (growth-r1 section D)
+
+| growth-r1 | here |
+|---|---|
+| AC-940 | AC-1006 |
+| AC-941 | AC-1010, AC-1003 (TTL reversed: no counter, owner 12 Sep) |
+| AC-942 | AC-1007 |
+| AC-943 | AC-1008 |
+| AC-944 | AC-1014 |
+| AC-945 | AC-1015 |
+| AC-946 | AC-1009 |
+| AC-947 | AC-1016 |
+| AC-948 | AC-1017 |
+| AC-949 | AC-1022 |
+| AC-950 | AC-1032 |
+| AC-951 | reversed by AC-1033 (owner, 12 Sep 2026: no mirrors) |
+| AC-952 | AC-1027 to AC-1031 |
+| AC-953 | AC-1011 |

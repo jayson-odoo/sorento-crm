@@ -55,3 +55,16 @@ def default_unsupported_domains() -> list[str]:
     from app.services.chatbot.contracts import DEFAULT_UNSUPPORTED_DOMAINS
 
     return list(DEFAULT_UNSUPPORTED_DOMAINS)
+
+
+def resolve_shadow_version(db, configured: str) -> str:
+    """The prompt version id `chatbot_parser_shadow_version` names, or `ValueError`.
+
+    The same doorway reason as every function above: `PUT /settings/general` is CORE and
+    may not import `app/services/chatbot/` (AC-002), and the setting it is validating is
+    read by exactly one thing on the module's side. `shadow.resolve_version_id` is the
+    implementation and stays the one place the format and the lookup are written down.
+    """
+    from app.services.chatbot.shadow import resolve_version_id
+
+    return resolve_version_id(db, configured)

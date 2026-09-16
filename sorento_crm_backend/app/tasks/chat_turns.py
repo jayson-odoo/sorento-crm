@@ -49,3 +49,37 @@ def run_turn_job(envelope: dict[str, Any]) -> dict[str, Any]:
         result.stage,
     )
     return payload
+
+
+def run_shadow_parse_job(
+    envelope: dict[str, Any],
+    shadow_version: str,
+    contact_respond_id: str,
+    live_message_id: str | None,
+) -> None:
+    """Parse one live message again under the shadow version, on the worker (AC-1027).
+
+    The same doorway shape as `run_turn_job` above and for the same reason: the argument is
+    the envelope as JSON, and every decision lives in `app.services.chatbot.shadow`.
+
+    Returns NOTHING and is waited on by nobody. A shadow parse is an observation the owner
+    reads in the console afterwards; the customer's turn answered before this job started
+    and must never depend on it.
+    """
+    from app.database import SessionLocal
+    from app.services.chatbot import shadow
+    from app.services.chatbot.contracts import Envelope
+
+    shadow.run_for(
+        Envelope(**envelope),
+        session_factory=SessionLocal,
+        shadow_version=shadow_version,
+        contact_respond_id=contact_respond_id,
+        live_message_id=live_message_id,
+    )
+    logger.info(
+        "chatbot shadow parse ran on the worker for %s under %s",
+        contact_respond_id,
+        shadow_version,
+    )
+

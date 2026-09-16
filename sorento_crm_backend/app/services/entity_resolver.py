@@ -3988,6 +3988,7 @@ def resolve_references_intersection(
     *,
     allowed_entity_types: Optional[Iterable[str]] = None,
     domain_hint: Optional[str] = None,
+    entity_pins: Optional[dict[str, str]] = None,
 ) -> IntersectionResolutionResult:
     """AND-mode resolver. Returns rows matching EVERY token in the concatenated
     searchable columns of each entity type. Skips code-only types.
@@ -3996,6 +3997,11 @@ def resolve_references_intersection(
     surviving probe sees every token. Positional pairing (token[i] vs
     allowed_entity_types[i]) is no longer auto-triggered on equal-length lists;
     callers that need 1:1 pairing must issue one resolve call per pair.
+
+    `entity_pins` says "this token IS this row" and is honoured here as it is in
+    OR mode (`_apply_entity_pins`), in the shape AND mode has: there is no
+    per-token candidate list to narrow, so the narrowing lands on the
+    INTERSECTION - see `_apply_intersection_pins`.
     """
     raw_tokens = list(tokens or [])
     pair_map = _build_token_type_map(raw_tokens, allowed_entity_types)
@@ -4072,6 +4078,11 @@ def resolve_references_intersection(
     if blocked:
         hits = [m for m in hits if (m.entity_type, str(m.uuid)) not in blocked]
         alternatives = [a for a in alternatives if (a.entity_type, str(a.uuid)) not in blocked]
+
+    # AFTER company scope, exactly as OR mode applies its pins: a pin may only ever
+    # narrow to a row the caller is allowed to see.
+    if entity_pins:
+        hits = _apply_intersection_pins(hits, clean_tokens, entity_pins)
 
     elapsed = (time.perf_counter() - t0) * 1000.0
     return IntersectionResolutionResult(
@@ -4603,6 +4614,60 @@ def _canonical_pin_uuid(value: Any) -> Optional[str]:
 
 def _pin_key_norm(token: str) -> str:
     return (token or "").strip().lower()
+
+
+def _apply_intersection_pins(
+    hits: list["ResolvedEntity"], tokens: list[str], entity_pins: dict[str, str]
+) -> list["ResolvedEntity"]:
+    """AND mode's half of the pin contract: the pinned row, not its namesakes.
+
+    A pin means "this token IS this row", and AND mode used to REFUSE one on the
+    grounds that an intersection has no per-token view to narrow. It has no per-token
+    view, but it has the answer the pin is about, and refusing left the caller worse
+    off than either alternative: the chatbot dropped the pin rather than fail the turn,
+    so a customer who had just picked `SRTWC286-SH-NEW` off a numbered roster was
+    answered about its three `SRTWC286-SH-NEW-*` siblings as well - the prefix ambiguity
+    they had closed by picking (owner, 13 Sep 2026).
+
+    So the narrowing lands on the intersection: a pinned uuid's own entity type keeps
+    exactly that row, every other type intersects untouched.
+
+    **A pin the intersection does not contain is LEFT ALONE here, and that is the one
+    place this contract is weaker than OR mode's** - deliberately, and measured. OR mode
+    raises `EntityPinMismatch` because the pin is checked against the very candidate list
+    the caller picked from. AND mode's is a different list: its probes are exact
+    "row contains every token" matches with no fuzzy neighbours, so a did-you-mean pick -
+    token `SRTKS8091`, pinned to the uuid of the near-miss `SRTKS8050` the customer chose
+    off the roster - names a row the intersection cannot contain by construction. Raising
+    there turns a turn that works today into a 400
+    (`test_pass4_item4_issue708_partial_pick_scope`, measured 13 Sep). Silence is what
+    that case already gets - the pin used to be dropped before it reached here - so this
+    is strictly more honoured than before and never less. A key that binds to no token
+    still raises, because that is a caller mistake in any mode.
+    """
+    by_key: dict[str, tuple[str, str]] = {
+        _pin_key_norm(key): (key, value) for key, value in entity_pins.items()
+    }
+    token_keys = {_pin_key_norm(t) for t in tokens}
+    for norm_key, (orig_key, raw_pin) in by_key.items():
+        if norm_key not in token_keys:
+            raise EntityPinMismatch(orig_key, raw_pin)
+
+    kept = list(hits)
+    for orig_key, raw_pin in by_key.values():
+        pin_norm = _canonical_pin_uuid((raw_pin or "").strip())
+        if pin_norm is None:
+            raise EntityPinMismatch(orig_key, raw_pin)
+        pinned = next(
+            (h for h in kept if _canonical_pin_uuid(h.uuid) == pin_norm),
+            None,
+        )
+        if pinned is None:
+            continue  # not this intersection's row; see the docstring
+        # Only the pinned row's OWN type is narrowed: a turn that pinned a product and
+        # named a customer in the same breath still intersects on the customer.
+        kept = [h for h in kept if h.entity_type != pinned.entity_type or h is pinned]
+    return kept
 
 
 def _apply_entity_pins(

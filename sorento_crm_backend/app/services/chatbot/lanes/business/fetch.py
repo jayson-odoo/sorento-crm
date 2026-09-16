@@ -516,6 +516,26 @@ def entity_ids_transformer(
         bucket = params.setdefault(param, [])
         if uuid not in bucket:  # `Set.add` - insertion-ordered and deduped
             bucket.append(uuid)
+        # R-F (owner merge test, 15 Sep 2026): a PICKED customer stands for its whole
+        # ACCOUNT FAMILY. One roster line can name accounts in several ledgers - the
+        # picker prints them all ("CHIN CHUN HARDWARE SDN BHD (MCH, SRT)") - and the pick
+        # has to reach every one of them or the answer covers one ledger under a line that
+        # promised two. The family rides on the entity as `family_uuids`, put there by the
+        # roster row and copied at the pick (`dialogue/open_question._entity_of`); it used
+        # to be a `picker_families` session map, which the five-key session dropped.
+        #
+        # Held to the SAME uuid test as the entity's own id, and added to the SAME bucket,
+        # so a family member that is not a uuid is skipped exactly as a bad entity id is
+        # and nothing but an id can reach the wire.
+        for member in jsc.array(jsc.get(e, "family_uuids")):
+            if not jsc.truthy(member) or not _UUID_RE.match(jsc.js_string(member)):
+                skipped.append({"code": jsc.js_string(member), "reason": "missing_or_bad_uuid"})
+                continue
+            if member in seen_uuids:
+                continue
+            seen_uuids.add(member)
+            if member not in bucket:
+                bucket.append(member)
 
     out: dict[str, Any] = {}
     truncated: list[dict[str, Any]] = []

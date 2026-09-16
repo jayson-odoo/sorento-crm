@@ -64,6 +64,16 @@ export interface DataGridProps<TData extends object> {
   children?: ReactNode;
   onRowClick?: (row: TData) => void;
   /**
+   * Which rows `onRowClick` actually opens. Absent means all of them, which is every
+   * list that has ever used the handler.
+   *
+   * It exists because a row that LOOKS clickable and opens nothing is worse than a row
+   * that does not: the reader presses it, nothing happens, and they cannot tell a broken
+   * screen from a row with nothing behind it. A row this returns false for gets no
+   * pointer, no press cue and no handler - the cell says why instead.
+   */
+  isRowClickable?: (row: TData) => boolean;
+  /**
    * Makes every body row a link to the record's own page.
    *
    * Return the bare detail path (`/order-management/orders/${row.id}`); the grid

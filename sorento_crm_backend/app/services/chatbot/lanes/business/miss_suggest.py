@@ -32,6 +32,7 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc
+from app.services.chatbot.dialogue import open_question as open_question_mod
 
 logger = logging.getLogger(__name__)
 
@@ -1268,6 +1269,89 @@ def _sibling_gate(*, gate: Any, build_result: Any) -> bool:
     return jsc.get(build_result, "has_result") is False
 
 
+def _attach_question(
+    item: dict[str, Any], *, parser: Any, gate: Any
+) -> dict[str, Any]:
+    """Freeze the offer this lane just composed as the ONE open question (AC-1013).
+
+    OUT OF BAND, and that is the whole of why it is here rather than inside
+    `build_suggest_offer`: that node's output is graded byte for byte by 76 captures, so it
+    may not grow a key. This runs immediately after it, on the item the LANE returns, which
+    no capture compares - the same channel `CompiledState.result_set` and
+    `parse_block["_focus"]` already use.
+
+    The rows are the ones the reply NUMBERED (`suggest_last_result_set`), frozen as the
+    customer saw them, so "2" resolves against the second line they read and never against
+    a fresh lookup.
+
+    `payload.keep` is issue #708 / AC-1017: the entities that ALREADY resolved this turn,
+    minus the token the picker was raised for. Taken from `gate.compatible_entities` - the
+    resolver's own answer, on this turn - rather than read back out of the session, which
+    is one hop closer to the truth and needs no linkage table.
+    """
+    if item.get("suggest_offer") is not True:
+        return item
+    rows = item.get("suggest_last_result_set")
+    if not isinstance(rows, list) or not rows:
+        return item
+
+    offer = item.get("dym_offer") if isinstance(item.get("dym_offer"), dict) else {}
+    offered_for = set()
+    for candidate in jsc.array(offer.get("candidates")):
+        for key in ("for_canonical", "for_raw"):
+            value = jsc.get(candidate, key) if jsc.truthy(candidate) else None
+            if jsc.truthy(value):
+                offered_for.add(_norm(value))
+
+    # FROZEN AS ENTITIES, which is the shape the scope speaks. The gate's rows are
+    # `{uuid, entity_type, code}` and `focus.products` / the entity executor read `hint`
+    # and `canonical_code`, so handing the gate's shape straight through meant the pick
+    # kept a sibling nothing downstream recognised as a product - issue #708 again, one
+    # layer further in. `current_message` is True for the same reason it is on the pick
+    # itself: the pick set IS this turn's scope.
+    # THE GATE ANSWERS THIS DIRECTLY when it narrowed (R-C / R-D, 15 Sep 2026): a picker arm
+    # publishes the sibling on `keep_entities`, in this exact shape, because its
+    # `compatible_entities` holds only the rows it offered. This lane's own roster comes off
+    # a MISS, where the gate narrowed nothing and the conversion below is still the answer -
+    # so the published key wins when present and the conversion stays for every other turn.
+    published = [e for e in jsc.array(jsc.get(gate, "keep_entities")) if isinstance(e, dict)]
+    keep = [dict(e) for e in published] or [
+        {
+            "raw": jsc.get(entity, "code"),
+            "hint": jsc.get(entity, "entity_type") or "product",
+            "canonical_code": jsc.get(entity, "code"),
+            "uuid": jsc.get(entity, "uuid") or None,
+            "current_message": True,
+            "confident": True,
+        }
+        for entity in jsc.array(jsc.get(gate, "compatible_entities"))
+        if jsc.truthy(entity) and _norm(jsc.get(entity, "code")) not in offered_for
+    ]
+    domain = jsc.get(parser, "domain_hint") if jsc.truthy(parser) else None
+    kind = (
+        "customer_pick"
+        if all(
+            jsc.js_string(jsc.get(row, "entity_type")).lower() == "customer"
+            for row in rows
+            if jsc.truthy(row)
+        )
+        else "product_pick"
+    )
+    item["open_question"] = open_question_mod.ask(
+        kind,
+        options=rows,
+        turn_no=0,
+        domain=jsc.js_string(domain) if jsc.truthy(domain) else None,
+        payload={
+            "domain": jsc.js_string(domain) if jsc.truthy(domain) else None,
+            "keep": keep,
+            "offer_id": offer.get("id"),
+            "picked": list(jsc.array(offer.get("picked"))),
+        },
+    )
+    return item
+
+
 def run_miss_lane(
     not_found_item: dict[str, Any] | None,
     *,
@@ -1280,6 +1364,7 @@ def run_miss_lane(
     space_id: Any = None,
     execution_id: Any = None,
     dry_run: bool = False,
+    offer_rec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """`sub-miss-suggest` end to end, from `not-found-error-message`'s payload to the exit.
 
@@ -1308,7 +1393,7 @@ def run_miss_lane(
 
     def _compose(exit_item: dict[str, Any]) -> dict[str, Any]:
         fragment = exit_item.get("outcome_fragment") or {}
-        return build_suggest_offer(
+        item = build_suggest_offer(
             exit_item,
             parser=parser,
             resolved=resolved,
@@ -1317,7 +1402,9 @@ def run_miss_lane(
             sibling_probe=fragment.get("sibling-probe"),
             sibling_transform=fragment.get("sibling-transform"),
             execution_id=execution_id,
+            offer_rec=offer_rec,
         )
+        return _attach_question(item, parser=parser, gate=gate)
 
     payload = not_found_item if isinstance(not_found_item, dict) else {}
 

@@ -1,0 +1,404 @@
+"""Owner-found regressions on the merged head (feat/chatbot-focus, d4ae8203b), 15 Sep 2026.
+
+Coder a1f1112d's diagnosis, from a live capture pair
+(nodes/clone-spine-RS/compile-current-state/b56-pick-turn.json,
+nodes/sub-miss-suggest-live/miss-suggest-result/ms-14993042.json) plus the console-check
+evidence in `documentation/plans/chatbot/evidence/focus-l1/console-check-merged-d4ae8203b.md`.
+
+R-C/R-D/R-E are one defect (the pick seam), tested here at the two seats it actually lives
+in: the ARMING side (`gate.run_gate`'s `require_specific` narrowing, `opt_uuids` at
+`lanes/business/gate.py:753-754`, which the pick's own KEEP mechanism depends on -
+`_keep_beside`'s own docstring in `tail/compile_state.py` already documents this as the
+reason `keep` comes back empty on every `require_specific` turn today) and the CUSTOMER-PICK
+side (`dialogue/open_question.py::_customer_pick` ignoring `payload.keep` and
+`_entity_of`'s `raw`/`canonical_code` swap - see `tests/chatbot/test_open_question.py`,
+flipped in this same round). R-A is tested in `tests/chatbot/test_sticky_roster_tail.py`
+(`TestTheOfferRidesOnABornDisambiguationRoster`, flipped in this same round). R-F (the
+picked family's `family_uuids`, NOT `open_question.payload.families` - design revised
+15 Sep 2026 per the 2026-08-24 "family outlives the roster" ruling) is tested here at its
+two seats, `dialogue/open_question.py::_entity_of` and
+`lanes/business/fetch.py::entity_ids_transformer`. R-B is a separate mechanism, tested in
+`tests/chatbot/test_outstanding_lane.py`.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from app.services.chatbot.dialogue import open_question as oq
+from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.lanes.business.gate import run_gate
+from app.services.chatbot.head import output_exchange as ox
+
+
+def _answer(**kw: Any) -> dict[str, Any]:
+    return {**ox.NO_OPEN_QUESTION_ANSWER, **kw}
+
+
+def _ambiguous_product_matches(*codes: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "uuid": f"uuid-{code}",
+            "entity_type": "product",
+            "canonical_code": code,
+            "match_tier": "trgm",
+            "company_name": "Sorento",
+        }
+        for code in codes
+    ]
+
+
+class TestRCTheArmingSideFreezesCoResolvedSiblings:
+    """`_keep_beside` (`tail/compile_state.py:439-466`) subtracts the picker's own
+    candidates from `gate.compatible_entities` - the rule is right, but `gate.run_gate`'s
+    OWN `require_specific` narrowing (`opt_uuids`, lines 753-754) has already thrown away
+    everything that is not one of the picker's own candidates by the time `_keep_beside`
+    runs, so "already resolved" and "on offer" read as the same set and the subtraction
+    leaves nothing - exactly what the docstring says happens "today", stated as a fact
+    about the current code rather than a fixed one. These two tests exercise `run_gate`
+    directly and prove the co-resolved sibling is gone from `compatible_entities` before
+    `_keep_beside` (or `miss_suggest._attach_question`'s identical construction) ever sees
+    it - the seat coder a1f1112d's fix has to close.
+    """
+
+    def test_a_co_resolved_product_survives_the_customers_own_picker(self) -> None:
+        """"delivery for chin chun product wc286": "chin chun" is ambiguous (several
+        real customer accounts), "wc286" resolves to exactly one product. The customer
+        picker's narrowing must not drop the product a `customer_pick` roster is
+        entitled to `keep` beside it."""
+        resolver = {
+            "tokens": ["chin chun", "wc286"],
+            "resolutions": [
+                {
+                    "token": "chin chun",
+                    "resolved": False,
+                    "matches": [
+                        {
+                            "uuid": "cust-1",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C043",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                        {
+                            "uuid": "cust-2",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C044",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                    ],
+                },
+                {
+                    "token": "wc286",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "prod-wc286",
+                            "entity_type": "product",
+                            "canonical_code": "WC286",
+                            "match_tier": "exact",
+                            "company_name": "Sorento",
+                        }
+                    ],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [
+                {"hint": "customer", "raw": "chin chun", "current_message": True},
+                {"hint": "product", "raw": "wc286", "current_message": True},
+            ],
+        }
+
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+
+        assert out["require_specific"] is True
+        # THE GENERAL RULE, 15 Sep 2026: the gate publishes what ANOTHER TOKEN resolved
+        # on its own key, and `compatible_entities` goes back to being exactly the rows
+        # on offer. Asserting the sibling on `compatible_entities` (as this test did
+        # while the fix was a widening) asks the gate to say two things with one list -
+        # which is what numbered the ten hidden WC286 rows into a three-row customer
+        # roster and flipped its kind off `customer_pick`.
+        assert [e["entity_type"] for e in out["compatible_entities"]] == [
+            "customer", "customer",
+        ], (
+            f"compatible_entities is the rows ON OFFER - the picker's own two customer "
+            f"candidates and nothing else: {out['compatible_entities']!r}"
+        )
+        keep_types = {e.get("hint") or e.get("entity_type") for e in (out.get("keep_entities") or [])}
+        assert "product" in keep_types, (
+            f"the co-resolved product the pick's `payload.keep` is meant to freeze must "
+            f"reach the tail on the gate's own keep channel: {out.get('keep_entities')!r}"
+        )
+        kept = next(
+            e for e in (out.get("keep_entities") or [])
+            if (e.get("hint") or e.get("entity_type")) == "product"
+        )
+        # A SINGLE-match token keeps the resolved entity, uuid and all.
+        assert kept.get("uuid") == "prod-wc286", kept
+        assert kept.get("canonical_code") == "WC286", kept
+
+    def test_a_co_resolved_attachment_type_survives_the_products_own_picker(self) -> None:
+        """"photo for srtwc286": "srtwc286" is a real family (several real SKUs),
+        "photo" resolves to exactly one attachment type. Picking a product off the
+        10-row picker must not drop the attachment type the SAME message named - the
+        live defect: picking "4" (SRTWC286-SH) re-asked "Please provide the attachment
+        type" instead of answering with the photo."""
+        resolver = {
+            "tokens": ["srtwc286", "photo"],
+            "resolutions": [
+                {
+                    "token": "srtwc286",
+                    "resolved": False,
+                    "matches": _ambiguous_product_matches(
+                        "SRTWC286-SH", "SRTWC286-SH-P", "SRTWC286-SH-200"
+                    ),
+                },
+                {
+                    "token": "photo",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "attach-photo",
+                            "entity_type": "attachment_type",
+                            "canonical_code": "Product Photos",
+                            "match_tier": "exact",
+                            "company_name": None,
+                        }
+                    ],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+        parser = {
+            "domain_hint": "product_attachment",
+            "entities": [
+                {"hint": "product", "raw": "srtwc286", "current_message": True},
+                {"hint": "attachment_type", "raw": "photo", "current_message": True},
+            ],
+        }
+
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+
+        assert out["require_specific"] is True
+        assert {e["entity_type"] for e in out["compatible_entities"]} == {"product"}, (
+            f"compatible_entities is the three product rows the picker offers: "
+            f"{out['compatible_entities']!r}"
+        )
+        keep_types = {e.get("hint") or e.get("entity_type") for e in (out.get("keep_entities") or [])}
+        assert "attachment_type" in keep_types, (
+            f"there is no focus axis for an attachment type, so the gate's keep channel "
+            f"is the only thing that carries it forward to the pick turn: "
+            f"{out.get('keep_entities')!r}"
+        )
+        kept = next(
+            e for e in (out.get("keep_entities") or [])
+            if (e.get("hint") or e.get("entity_type")) == "attachment_type"
+        )
+        assert kept.get("raw") == "Product Photos", kept
+        assert kept.get("canonical_code") == "Product Photos", kept
+        assert kept.get("uuid") == "attach-photo", kept
+
+    def test_a_co_resolved_multi_match_product_survives_the_customers_own_picker(
+        self,
+    ) -> None:
+        """R-D, live regression on the FIXED head (9d5b66dd1, coder a1f1112d, 15 Sep
+        2026): R-D's earlier red seeded "wc286" as a SINGLE resolved product uuid,
+        which is not the live shape - "delivery for chin chun product wc286" on
+        sorento_ai_automation_focus_full (two newest chatbot.turns rows for contact
+        437264483, 06:57:23 / 06:57:25 UTC) resolves "chin chun" to an ambiguous
+        3-company customer roster (armed reply "Which customer do you mean?") AND
+        "wc286" to a MULTI-MATCH product token - ten real SRTWC286/WC286-family SKUs,
+        none exact, no single uuid, exactly the parser's own un-resolved entity shape
+        `{raw: "wc286", hint: "product", canonical_code: null, current_message: true}`.
+        Picking "1" (the live pick turn's own emission carries ONLY the resolved
+        customer entity - no product at all, current_message: false or absent; the
+        product has to survive via the ARMED state, not this turn's own entities) came
+        back "Product: all products" - measured directly against `run_gate`, its
+        `compatible_entities` carries only the 3 customer rows, the ten WC286
+        candidates are gone entirely. R-C/R-E/R-F are fixed on this head (name +
+        family widen correctly); this is the remaining gap: the customer-ambiguity
+        `require_specific` arm (`lanes/business/gate.py` ~941-949) REPLACES
+        `compatible_entities` wholesale with only its own roster rows, the same class
+        of defect R-C's product-ambiguity arm had, now on the OTHER arm, and for a
+        token with NO exact match at all (nothing to freeze as a resolved entity -
+        the family/prefix itself has to survive, however the fix represents it)."""
+        resolver = {
+            "tokens": ["chin chun", "wc286"],
+            "resolutions": [
+                {
+                    "token": "chin chun",
+                    "resolved": False,
+                    "matches": [
+                        {
+                            "uuid": "060f4eaf-88ca-486a-a203-b0b61eeb9cd8",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C043",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                        {
+                            "uuid": "13eb525b-985c-44a5-abc4-4be5c7db6cd6",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C124",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                        {
+                            "uuid": "fa32b334-fc47-4bec-96db-f0f59a4bcb0f",
+                            "entity_type": "customer",
+                            "canonical_code": "300-C001",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        },
+                    ],
+                },
+                {
+                    "token": "wc286",
+                    "resolved": False,
+                    "matches": _ambiguous_product_matches(
+                        "SRTWC286-SH", "SRTWC286-SH-P", "SRTWC286-SH-200",
+                        "SRTWC286-SH-NEW", "SRTWC286-SH-NEW-P", "SRTWC286-SH-NEW-200",
+                        "SRTWC286-S-150-RL", "SRTWC286A-P-RL", "SRTWC286A-RL-320",
+                        "SRTWC286-P",
+                    ),
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [
+                {"hint": "customer", "raw": "chin chun", "current_message": True},
+                {"hint": "product", "raw": "wc286", "current_message": True},
+            ],
+        }
+
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+
+        assert out["require_specific"] is True, out.get("gate_reason")
+        assert [e["entity_type"] for e in out["compatible_entities"]] == [
+            "customer", "customer", "customer",
+        ], (
+            f"exactly the three customer rows the reply numbers - the ten WC286 "
+            f"candidates are NOT on offer and must not be numbered into the roster: "
+            f"{out['compatible_entities']!r}"
+        )
+        keep = out.get("keep_entities") or []
+        raws = {str(e.get("raw") or "").lower() for e in keep}
+        assert "wc286" in raws, (
+            f"a token with NO exact match has nothing to freeze as a resolved entity, so "
+            f"what survives is the customer's OWN WORD - live: the delivery report "
+            f"answered 'Product: all products' instead of scoping to wc286: {keep!r}"
+        )
+        kept = next(e for e in keep if str(e.get("raw") or "").lower() == "wc286")
+        assert (kept.get("hint") or kept.get("entity_type")) == "product", kept
+        assert kept.get("canonical_code") is None, (
+            f"the word resolved to ten products and none of them exactly, so it carries "
+            f"no canonical code: {kept!r}"
+        )
+        assert kept.get("current_message") is True, kept
+
+
+class TestRFAPickedMultiLedgerRowKeepsEveryLedger:
+    """R-F (coder a1f1112d diagnosis, 15 Sep 2026, design revised same day - NO
+    `open_question.payload.families`, per the 2026-08-24 ruling that a family outlives
+    the roster): a customer roster row that spans two ledgers - "CHIN CHUN HARDWARE SDN
+    BHD (MCH, SRT)" - must fetch BOTH ledgers' uuids when picked. The family travels ON
+    the roster ROW and the PICKED ENTITY as `family_uuids` - a row field `gate.run_gate`
+    composes (`lanes/business/gate.py:956-966`'s picker-row construction) and
+    `dialogue/open_question.py::_entity_of` copies onto the entity it builds for
+    `focus.customer`. Neither exists today: `_entity_of` (573-586) builds `{raw, hint,
+    canonical_code, uuid, current_message, confident}` and nothing else, so a
+    `family_uuids` key on the row is silently dropped at the pick. Two seats, two tests:
+    the pick-time copy (`_entity_of`, `dialogue/open_question.py`), and the tool-call
+    expansion (`entity_ids_transformer`, `lanes/business/fetch.py`) that has to turn
+    `focus.customer.family_uuids` into every uuid the `customer_ids` argument carries -
+    today it reads only `e.get("uuid")`, one value per entity."""
+
+    # Real customer uuids (sorento_ai_automation_focus_full): CHIN CHUN HARDWARE SDN BHD
+    # - [A/C I] (300-C043) and CHIN CHUN HOMEMART SDN BHD - [CERAMIC] (300-C125), the two
+    # ledgers a "(MCH, SRT)"-style multi-company roster row spans. `entity_ids_transformer`
+    # is uuid-format-only (`_UUID_RE`, fetch.py:329/504 - it SKIPS any entity whose `uuid`
+    # does not match `^[0-9a-f]{8}-...\Z` before any family logic ever runs), so a synthetic
+    # id like "uuid-mch" would make test 2 pass for the WRONG reason (both real tests below
+    # need genuine uuid4 strings, not a synthetic label).
+    ROW_UUID = "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
+    FAMILY_UUID = "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
+
+    def test_a_picked_row_carries_its_family_uuids_onto_the_entity(self) -> None:
+        outcome = oq.resolve(
+            "customer_pick",
+            _answer(resolved=True, picks=[1]),
+            [
+                {
+                    "idx": 1,
+                    "label": "CHIN CHUN HARDWARE SDN BHD (MCH, SRT)",
+                    "code": "300-C043",
+                    "uuid": self.ROW_UUID,
+                    "entity_type": "customer",
+                    # `gate.run_gate`'s own row field (956-966): every uuid this
+                    # roster row's family spans, computed on the ARMING turn.
+                    "family_uuids": [self.ROW_UUID, self.FAMILY_UUID],
+                }
+            ],
+            {},
+        )
+
+        assert outcome.focus["customer"].get("family_uuids") == [
+            self.ROW_UUID,
+            self.FAMILY_UUID,
+        ], (
+            f"_entity_of must copy the row's family_uuids onto the picked entity so "
+            f"the report fetches both ledgers, not just the row's own uuid: "
+            f"{outcome.focus.get('customer')!r}"
+        )
+
+    def test_the_tool_call_expands_family_uuids_into_every_ledger(self) -> None:
+        trigger = {
+            "tool": "crm_order_management_orders_list",
+            "entities": [
+                {
+                    "entity_type": "customer",
+                    "uuid": self.ROW_UUID,
+                    "code": "300-C043",
+                    "family_uuids": [self.ROW_UUID, self.FAMILY_UUID],
+                }
+            ],
+            "semantic_input": {},
+        }
+
+        args = fetch_mod.entity_ids_transformer(trigger)
+
+        # Confirms the entity itself is NOT silently skipped by the uuid-format gate
+        # before we ever get to grading the family expansion (the bug this whole round
+        # is chasing hides behind a false green exactly this way).
+        assert not (args.get("_diagnostics") or {}).get("skipped"), (
+            f"the row uuid itself must pass entity_ids_transformer's uuid-format gate: "
+            f"{args.get('_diagnostics')!r}"
+        )
+        assert sorted(args.get("customer_ids") or []) == sorted([self.ROW_UUID, self.FAMILY_UUID]), (
+            f"the tool call must carry every ledger the picked row's family spans, "
+            f"not only the row's own uuid: {args.get('customer_ids')!r}"
+        )
+
+
+def test_every_class_in_this_file_names_the_coder_diagnosis() -> None:
+    """A cheap guard against this file's own bit-rot: every class here traces to the
+    15 Sep coder a1f1112d diagnosis by name, so a reader can find the source of truth."""
+    import inspect
+    import sys
+
+    module = sys.modules[__name__]
+    classes = [
+        obj
+        for name, obj in vars(module).items()
+        if inspect.isclass(obj) and name.startswith("Test")
+    ]
+    assert classes, "this file defines no test classes"
+    for cls in classes:
+        assert cls.__doc__ and "a1f1112d" in cls.__doc__, (
+            f"{cls.__name__} does not cite the coder diagnosis it comes from"
+        )

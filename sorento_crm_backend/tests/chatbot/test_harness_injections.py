@@ -24,6 +24,7 @@ from sqlalchemy import text
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod
+from app.services.chatbot import trace as trace_mod
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     CONTACT_ID,
     _envelope,
@@ -36,7 +37,7 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
 
 
 def _record(trace: list[dict[str, Any]], stage: str) -> dict[str, Any]:
-    rows = [r for r in trace if r["stage"] == stage]
+    rows = [r for r in trace_mod.stage_records(trace) if r["stage"] == stage]
     assert len(rows) == 1, f"expected exactly one {stage!r} record, got {len(rows)}: {trace}"
     return rows[0]
 

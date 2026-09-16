@@ -27,6 +27,29 @@ import { extractApiError } from '@/lib/api-client';
  *   422 when `chatbot_completed_lanes` names a lane this build cannot complete; the
  *   message names it. The screen offers exactly the vocabulary above, so that 422 is
  *   the backstop for a direct call rather than how an operator finds out.
+ *
+ * ---------------------------------------------------------------------------
+ * `chatbot_parser_shadow_version` (L1-S0, AC-1027 / AC-1028) - LIVE
+ * ---------------------------------------------------------------------------
+ *
+ *   GET  /api/v1/user-management/settings
+ *     `settings.chatbot_parser_shadow_version`: string | null
+ *
+ *   POST /api/v1/user-management/settings/general
+ *     `chatbot_parser_shadow_version`: string | null   (null clears it)
+ *
+ * The VALUE is `"<prompt key>@<version>"` - `chatbot_semantic_parser@18` - built from the
+ * versions `GET /api/v1/system/chatbot/console/prompt-versions` returns (newest first).
+ * NOT the version's uuid: the value is read back on the settings screen and again on every
+ * shadow turn's trace, and a name plus a number says which prompt and which version of it
+ * without a lookup. The select renders "v18 - full - production".
+ *
+ * Null means no shadow parse runs at all. Set, every real turn ALSO runs that version and
+ * writes a second `chatbot.turns` row with `ingress = "shadow"`; a shadow failure never
+ * fails the live turn.
+ *
+ * Both dict builders owe it (`GET /settings`'s hand-written response dict and
+ * `SystemSettingUpdate`), or it never reaches this page.
  */
 
 export interface ChatbotLane {
@@ -45,6 +68,12 @@ export interface ChatbotSettings {
   /** S7 mode: the CRM orders turns per contact and owns the tail. */
   chatbot_ordering_enabled: boolean;
   chatbot_unsupported_domains: string[];
+  /**
+   * AC-1027. The `chatbot_semantic_parser` version every real turn ALSO runs, in the
+   * background, so the owner can watch a new parser's answers beside the live one before
+   * promoting it. `"<prompt key>@<version>"`, or null for no shadow parse at all.
+   */
+  chatbot_parser_shadow_version: string | null;
 }
 
 /**
@@ -68,7 +97,9 @@ const FALLBACKS: ChatbotSettings = {
   chatbot_business_lane_enabled: false,
   chatbot_ordering_enabled: false,
   chatbot_unsupported_domains: [],
+  chatbot_parser_shadow_version: null,
 };
+
 
 function pickChatbotSettings(row: Record<string, unknown> | null | undefined): ChatbotSettings {
   return {
@@ -81,6 +112,8 @@ function pickChatbotSettings(row: Record<string, unknown> | null | undefined): C
     chatbot_unsupported_domains: Array.isArray(row?.chatbot_unsupported_domains)
       ? (row.chatbot_unsupported_domains as string[])
       : FALLBACKS.chatbot_unsupported_domains,
+    chatbot_parser_shadow_version:
+      (row?.chatbot_parser_shadow_version as string | null | undefined) ?? null,
   };
 }
 
