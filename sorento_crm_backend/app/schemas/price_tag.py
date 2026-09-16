@@ -1147,6 +1147,10 @@ class ProductTagData(BaseModel):
     # none, which the layer renders as an editor placeholder / nothing on
     # print.
     barcode: Optional[str] = None
+    # AC-A10: `products.currency`, defaulted the same way `resolve_prices`
+    # already defaults it - the text-slot price prints a bare figure now
+    # (Slice A), so the currency travels as its own field.
+    currency: str = "MYR"
 
 
 class ProductSetMemberTagData(BaseModel):
@@ -1165,6 +1169,8 @@ class ProductSetTagData(BaseModel):
     list_price: Optional[float] = None
     offer_price: Optional[float] = None
     promotion_id: Optional[str] = None
+    # AC-A11: the first member's currency.
+    currency: str = "MYR"
 
 
 class ResolvePreviewIn(BaseModel):
@@ -1253,6 +1259,8 @@ class TagPartData(BaseModel):
     #: (AC-S9-1): a part printing at list beside its own code is not "on
     #: sale", the tag's box total is what decides that.
     sell_price: Optional[float] = None
+    # AC-A11: this part's OWN product's currency, not the host's.
+    currency: str = "MYR"
 
 
 class ResolvedLineData(BaseModel):
@@ -1289,6 +1297,8 @@ class ResolvedLineData(BaseModel):
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
+    # AC-A11/A12: the tag's own currency (response_model gate).
+    currency: str = "MYR"
     # What master data has moved under this line since it was pinned (r9 D17).
     # Declared here or `response_model` drops it without a word, which is how
     # the CRM designer's own red dot went missing while the detail page's did

@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.models.product import Product
 from app.models.product_set import ProductSet, ProductSetMember
-from app.services.dealer_kit.pricing import resolve_prices
+from app.services.dealer_kit.pricing import DEFAULT_CURRENCY, resolve_prices
 from app.services.dealer_kit.product_images import gallery_images
 from app.services.dealer_kit.viewer import ViewerContext
 
@@ -359,6 +359,10 @@ def product_tag_data(
         # non-empty AutoCount sync. Null renders an editor placeholder and
         # nothing on print (S7).
         "barcode": product.barcode or None,
+        # AC-A10: the product's own currency column, defaulted the same way
+        # `resolve_prices` already defaults it - a text layer prints the bare
+        # figure now (Slice A), so the currency has to travel as its own field.
+        "currency": prices.currency if prices else DEFAULT_CURRENCY,
     }
 
 
@@ -394,6 +398,15 @@ def product_set_tag_data(
     )
 
     set_price = resolve_set_price(product_set)
+
+    # AC-A11: the first member's currency, off the SAME resolved prices this
+    # function already fetched - not a second read of the member's product row.
+    set_currency = DEFAULT_CURRENCY
+    for product in member_products:
+        view = prices.get(product.id)
+        if view is not None:
+            set_currency = view.currency
+            break
 
     offer_total = Decimal("0")
     any_offer = False
@@ -444,6 +457,7 @@ def product_set_tag_data(
             else None
         ),
         "promotion_id": promotion_id if (any_offer and every_member_priced) else None,
+        "currency": set_currency,
     }
 
 
@@ -628,6 +642,8 @@ def _part_row(
         "barcode": data["barcode"],
         "list_price": data["list_price"],
         "sell_price": data["offer_price"] if price_mode == "selling" else None,
+        # AC-A11: this part's OWN product's currency, not the host's.
+        "currency": data["currency"],
     }
 
 
@@ -838,6 +854,7 @@ def resolve_tags_live(db: Session, request, tags=None) -> list[dict]:
                 # marketing's to change afterwards.
                 "quantity": tag.quantity,
                 "barcode": barcode,
+                "currency": data["currency"],
             }
         )
 
@@ -914,6 +931,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "set_members": _set_member_text(data["members"]),
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
+            "currency": data["currency"],
         }
     if line.product_id:
         product = get_product(db, line.product_id)
@@ -931,6 +949,7 @@ def _line_product_data(db: Session, line, viewer, promotion_id) -> Optional[dict
             "set_members": "",
             "list_price": data["list_price"],
             "offer_price": data["offer_price"],
+            "currency": data["currency"],
         }
     return None
 

@@ -360,6 +360,7 @@ def test_product_tag_data_keeps_every_field(api):
         "offer_price",
         "promotion_id",
         "barcode",
+        "currency",
     }
     assert body["code"] == product.product_code
     assert body["name"] == product.product_name
@@ -377,6 +378,9 @@ def test_product_tag_data_keeps_every_field(api):
     assert body["offer_price"] == 599.0
     assert body["promotion_id"] == promotion.id
     assert body["barcode"] == "1234567890123"
+    # AC-A12: `currency` rides the wire - `response_model` drops an
+    # undeclared field silently.
+    assert body["currency"] == "MYR"
 
 
 def test_unknown_product_is_404(api):
@@ -409,6 +413,7 @@ def test_product_set_tag_data_keeps_every_field(api):
         "list_price",
         "offer_price",
         "promotion_id",
+        "currency",
     }
     assert set(body["members"][0]) == {
         "product_id",
@@ -422,6 +427,8 @@ def test_product_set_tag_data_keeps_every_field(api):
         second.product_code,
     ]
     assert body["list_price"] == 1200.0
+    # AC-A12: the set row carries `currency` too (the first member's).
+    assert body["currency"] == "MYR"
 
 
 # ---------------------------------------------------------------------------
@@ -545,6 +552,8 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
     assert row["dimensions"] == "800 x 500 x 220 mm"
     assert row["spec_lines"] == "One line\nAnother line"
     assert row["barcode"] == "4567891234567"
+    # AC-A12: a line tag row carries `currency` too (response_model gate).
+    assert row["currency"] == "MYR"
 
 
 # ---------------------------------------------------------------------------

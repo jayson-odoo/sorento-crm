@@ -127,6 +127,7 @@ function productFromLineParent(line: LineTagData): ProductTagData {
       : null,
     promotion_id: null,
     barcode: line.barcode,
+    currency: line.currency,
   };
 }
 
@@ -146,6 +147,7 @@ function productFromPart(part: TagPartData): ProductTagData {
     offer_price: part.sell_price ?? null,
     promotion_id: null,
     barcode: part.barcode ?? null,
+    currency: part.currency,
   };
 }
 
@@ -209,7 +211,10 @@ export function resolveSlotText(
   if (layer.slot_binding === 'list_price' || layer.slot_binding === 'sell_price') {
     const { listPrice, offerPrice } = priceBadgeInput(subject);
     const amount = layer.slot_binding === 'list_price' ? listPrice : offerPrice;
-    return amount == null ? null : formatTagPrice(amount);
+    // AC-A1/A2: a TEXT layer prints the bare figure. The BADGE (`price_badge`
+    // props, drawn through `priceBadgeInput`/`formatTagPrice`'s default arg)
+    // still prints `RM` - this branch only ever serves a text-slot binding.
+    return amount == null ? null : formatTagPrice(amount, false);
   }
 
   if (subject.kind === 'line') {
