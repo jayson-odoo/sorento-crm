@@ -166,6 +166,8 @@ SEMANTIC_PARSER_PROMPT ="You are the Sorento Semantic Parser. You are given:\n- 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover - a type-only import, never at runtime
+    from collections.abc import Mapping
+
     from sqlalchemy.orm import Session
 
 # --------------------------------------------------------------------------- #
@@ -185,6 +187,44 @@ BLOCKS_BEGIN = "<<<CHATBOT POLICY BLOCKS>>>"
 BLOCKS_END = "<<<END CHATBOT POLICY BLOCKS>>>"
 
 
+_DOMAIN_LINE_COLUMNS = (
+    "name, label, intents, switch_words, narrowing, takes_date_filter, "
+    "escalation_team_code"
+)
+
+
+def domain_line(row: "Mapping[str, object]") -> str:
+    """One domain's paragraph, exactly as the published prompt carries it.
+
+    Its own function so the Chatbot Domains modal's "Prompt block" tab can render THE
+    line rather than a lookalike: the modal used to build its own preview in TypeScript,
+    which is a second copy of this wording that nothing keeps in step with this one.
+    """
+    intents = ", ".join(row["intents"] or []) or "(none)"
+    words = ", ".join(row["switch_words"] or []) or "(none)"
+    parts = [f'Domain {row["name"]} ("{row["label"]}"): intents {intents}. Switch words: {words}.']
+    narrowing = row["narrowing"] or {}
+    if narrowing:
+        clauses = "; ".join(f"{kind} narrows {narrowing[kind]}" for kind in sorted(narrowing))
+        parts.append(f"{clauses}.")
+    if row["takes_date_filter"]:
+        parts.append("Takes a date window.")
+    if row["escalation_team_code"]:
+        parts.append(f'Escalates to {row["escalation_team_code"]}.')
+    return " ".join(parts)
+
+
+def domain_block(db: "Session", name: str) -> str | None:
+    """`domain_line` for one row by name, or None when no such domain exists."""
+    from sqlalchemy import text as sql
+
+    row = db.execute(
+        sql(f"SELECT {_DOMAIN_LINE_COLUMNS} FROM chatbot_domains WHERE name = :name"),
+        {"name": name},
+    ).mappings().first()
+    return domain_line(row) if row is not None else None
+
+
 def render_prompt_blocks(db: "Session") -> str:
     """The domain and entity-kind paragraphs, one per line, deterministic.
 
@@ -197,23 +237,11 @@ def render_prompt_blocks(db: "Session") -> str:
     lines: list[str] = []
     domains = db.execute(
         sql(
-            "SELECT name, label, intents, switch_words, narrowing, takes_date_filter, "
-            "escalation_team_code FROM chatbot_domains ORDER BY sort_order, name"
+            f"SELECT {_DOMAIN_LINE_COLUMNS} FROM chatbot_domains ORDER BY sort_order, name"
         )
     ).mappings().all()
     for row in domains:
-        intents = ", ".join(row["intents"] or []) or "(none)"
-        words = ", ".join(row["switch_words"] or []) or "(none)"
-        parts = [f'Domain {row["name"]} ("{row["label"]}"): intents {intents}. Switch words: {words}.']
-        narrowing = row["narrowing"] or {}
-        if narrowing:
-            clauses = "; ".join(f"{kind} narrows {narrowing[kind]}" for kind in sorted(narrowing))
-            parts.append(f"{clauses}.")
-        if row["takes_date_filter"]:
-            parts.append("Takes a date window.")
-        if row["escalation_team_code"]:
-            parts.append(f'Escalates to {row["escalation_team_code"]}.')
-        lines.append(" ".join(parts))
+        lines.append(domain_line(row))
 
     lines.append("")
 

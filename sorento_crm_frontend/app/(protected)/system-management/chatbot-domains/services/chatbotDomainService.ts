@@ -6,6 +6,7 @@
  *
  *   GET    /api/v1/system/chatbot/domains            list, `system.chat_history.view`
  *   GET    /api/v1/system/chatbot/domains/{id}        one row
+ *   GET    /api/v1/system/chatbot/domains/{id}/prompt-block  its parser paragraph
  *   POST   /api/v1/system/chatbot/domains             create, `system.chatbot_config.manage`
  *   PUT    /api/v1/system/chatbot/domains/{id}         update, `system.chatbot_config.manage`
  *   DELETE /api/v1/system/chatbot/domains/{id}         hard delete (D7), same grant
@@ -87,3 +88,20 @@ export async function updateChatbotDomain(
 // action (`chatbot_domain.delete`), so `/api/v1/pending-actions` parks it and the server
 // calls `DELETE /system/chatbot/domains/{id}` itself when the window lapses. A second
 // client-side delete path would be a way to bypass the grace window.
+
+/**
+ * The domain's paragraph as the published parser prompt carries it. Rendered by the
+ * backend (`chatbot_parser_prompt.domain_line`, the same function the publish uses), not
+ * rebuilt here: a preview that guesses the wording is a second copy of it.
+ */
+export async function getChatbotDomainPromptBlock(id: string): Promise<string> {
+  const response = await apiFetch(
+    `${BASE}/${encodeURIComponent(id)}/prompt-block`,
+    { method: 'GET' },
+  );
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the prompt block'));
+  }
+  const body = (await response.json()) as { block: string };
+  return body.block ?? '';
+}

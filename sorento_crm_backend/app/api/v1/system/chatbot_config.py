@@ -297,6 +297,30 @@ def get_domain(
     return _domain_out(_find_domain(db, domain_id))
 
 
+class ChatbotDomainPromptBlock(BaseModel):
+    block: str
+
+
+@router.get("/domains/{domain_id}/prompt-block", response_model=ChatbotDomainPromptBlock)
+def get_domain_prompt_block(
+    domain_id: str,
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """This domain's paragraph, exactly as the published parser prompt carries it.
+
+    Rendered by `chatbot_parser_prompt.domain_line` - the SAME function
+    `render_prompt_blocks` calls for the published body - rather than by the modal
+    rebuilding the wording in TypeScript, which was a second copy of the sentence that
+    nothing kept in step with the first.
+    """
+    _ = current_user
+    from app.services.chatbot_parser_prompt import domain_block
+
+    row = _find_domain(db, domain_id)
+    return ChatbotDomainPromptBlock(block=domain_block(db, row.name) or "")
+
+
 @router.post("/domains", response_model=ChatbotDomainResponse, status_code=status.HTTP_201_CREATED)
 def create_domain(
     body: ChatbotDomainBody,
