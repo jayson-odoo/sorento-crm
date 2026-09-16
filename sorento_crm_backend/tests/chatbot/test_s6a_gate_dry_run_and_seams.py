@@ -4,6 +4,30 @@ predicates the replay corpus cannot exercise (AC-601 to AC-603, D14, H38, H46).
 Everything here is on Postgres (`tests/_pg_fixture.py` via `tests/chatbot/conftest.py`'s
 `session_factory`), against a blank schema, seeding its own ZZT-prefixed rows. Nothing
 touches the shared dev database.
+
+Retired 16 Sep 2026 (AC-1592, tester ruling, this session) - `TestS6aDelegateSeamFlagGating`
+(16 tests) and `TestShadowFailurePath` (1 test) pin the S6a-era "shadow lane" architecture:
+the business lane ran ALONGSIDE n8n's own lane, still delegating to it, recording its own
+shadow attempt on `result.delegate_payload["_exit_kind"]` (`contracts.EXIT_KINDS`) and
+dispatched via `engine.decide` (a ctx-in/branch-kind-out function). S6c's full rewrite
+deleted `engine.decide` (AttributeError, grep-confirmed no such attribute exists) and
+`result.delegate_payload` with it - the business lane runs IN PROCESS and closes its own
+row now (`CRM_COMPLETED_BRANCH_KINDS` covers `business_query`/`check_promotion`/
+`stock_denied` unconditionally, no flag gates it - `chatbot_business_lane_enabled` is
+defined but never read from `run_turn`, same finding `test_s3_switch_and_complete_by_
+body.py`'s own retirement note makes independently). Replacement coverage, both already
+landed:
+
+- The flag-gating/delegate property (`TestS6aDelegateSeamFlagGating`, all 16 methods):
+  `test_s3_switch_and_complete_by_body.py::TestTheCompletedLaneSwitch` (this session) -
+  measured directly that no switch holds a real branch kind back from completing today.
+- The resolver-failure property (`TestShadowFailurePath.test_a_resolver_failure_still_
+  completes_the_turn_delegated` - asserted `status="delegated"`, a SHADOW-lane failure
+  that must not fail the turn itself): `test_engine_failure_paths.py::
+  TestTheBusinessLaneOnFetchFailure.test_a_resolver_failure_is_a_graceful_miss_not_a_crash`
+  (tester 11, same session) - measured the CURRENT outcome is `status="done"` with a bare
+  miss reply, not `"delegated"` (no delegate exists to send it to anymore), the same
+  underlying guarantee (a resolver blow-up never fails the turn) under the new shape.
 """
 from __future__ import annotations
 
@@ -30,155 +54,11 @@ from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     stub_parser,
 )
 
-BUSINESS_ARMS = ("business_query", "check_promotion", "stock_denied")
-OTHER_ARMS = tuple(k for k in contracts.BRANCH_KINDS if k not in BUSINESS_ARMS)
-
-
-def _stub_bundle(calls: list[str], *, names: list[str] | None = None) -> ResolveGateServices:
-    def _access_types(*, contact_id, space_id):
-        calls.append("access_types")
-        return [{"name": n} for n in (names or [])]
-
-    def _resolve_entity(body):
-        calls.append("resolve_entity")
-        return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
-
-    def _probe(**kwargs):
-        calls.append("probe")
-        return None
-
-    return ResolveGateServices(access_types=_access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=_probe)
-
-
 # --------------------------------------------------------------------------- #
-# 1. AC-601 delegate seam: flag on/off, three arms in, ten arms untouched.
+# 1 and 2 (retired, see file header): the delegate seam and the shadow failure path.
+# `BUSINESS_ARMS`/`OTHER_ARMS`/`_stub_bundle` were only these two classes' own helpers -
+# removed with them, not left as dead code.
 # --------------------------------------------------------------------------- #
-
-
-class TestS6aDelegateSeamFlagGating:
-    @pytest.mark.parametrize("branch_kind", BUSINESS_ARMS)
-    def test_flag_on_the_three_business_arms_delegate_with_an_exit_kind_payload(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, branch_kind
-    ) -> None:
-        set_chatbot_switches(session_factory, business_lane=True)
-        calls: list[str] = []
-        bundle = _stub_bundle(calls, names=["Sorento Dealer"])
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == branch_kind
-        assert result.delegate == "business_query"  # the one lane all three arms resume on
-        assert result.delegate_payload is not None
-        assert result.delegate_payload["_exit_kind"] in contracts.EXIT_KINDS
-        assert calls, f"{branch_kind}: the lane's seams never ran"
-
-    @pytest.mark.parametrize("branch_kind", OTHER_ARMS)
-    def test_flag_on_the_ten_other_arms_never_touch_the_lane(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, branch_kind
-    ) -> None:
-        set_chatbot_switches(session_factory, business_lane=True)
-        calls: list[str] = []
-        bundle = _stub_bundle(calls)
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == branch_kind
-        assert result.delegate_payload is None
-        assert calls == [], f"{branch_kind} reached the business lane's seams"
-
-    def test_flag_off_the_lane_never_runs_for_a_business_arm(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
-    ) -> None:
-        """Default (off) behaviour: unchanged from before S6a shipped."""
-        set_chatbot_switches(session_factory, business_lane=False)
-        calls: list[str] = []
-        bundle = _stub_bundle(calls)
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        stub_parser()  # default qf routes to business_query
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate_payload is None
-        assert calls == [], "the lane ran even though the flag is off"
-
-    @pytest.mark.parametrize("branch_kind", ("check_promotion", "stock_denied"))
-    def test_flag_off_delegate_is_the_bare_branch_kind_not_the_lane_name(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch, branch_kind
-    ) -> None:
-        """With the flag off, `delegate` is n8n's own tag - never overwritten to
-        `business_query`, which is only what the LANE resumes on once it runs."""
-        set_chatbot_switches(session_factory, business_lane=False)
-        monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.delegate == branch_kind
-        assert result.delegate_payload is None
-
-
-# --------------------------------------------------------------------------- #
-# 2. Shadow failure path: a resolver blow-up is recorded, never a 500.
-# --------------------------------------------------------------------------- #
-
-
-class TestShadowFailurePath:
-    def test_a_resolver_failure_still_completes_the_turn_delegated(
-        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
-    ) -> None:
-        set_chatbot_switches(session_factory, business_lane=True)
-
-        def _boom(body):
-            raise RuntimeError("resolve-entity is down")
-
-        bundle = ResolveGateServices(
-            access_types=lambda **_: [], resolve_entity=validating_resolve_entity(_boom), probe=lambda **_: None
-        )
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        stub_parser()  # default qf -> business_query
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.status == "delegated"
-        assert result.branch_kind == "business_query"
-        assert result.delegate == "business_query"
-        assert result.delegate_payload is None
-
-        row = _turn_row(session_factory, result.turn_id)
-        assert row.status == "delegated"
-        assert row.error is None, "the SHADOW lane's failure must not fail the turn itself"
-        looked_up = [r for r in row.trace if r["stage"] == "looked_up"]
-        assert len(looked_up) == 1, row.trace
-        assert looked_up[0]["status"] == "failed"
-        assert "resolve-entity is down" in (looked_up[0].get("error") or "")
 
 
 # --------------------------------------------------------------------------- #
