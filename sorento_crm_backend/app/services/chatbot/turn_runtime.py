@@ -444,6 +444,65 @@ def lane_parse_output(
 # --------------------------------------------------------------------------- #
 
 
+def _token_key(value: Any) -> str:
+    return jsc.nullish_str(value).strip().casefold()
+
+
+def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
+    """The tokens THIS message named that the resolver could not place, lower-cased.
+
+    `unresolved_tokens` is the resolver's own verdict and the only honest one: a token it
+    lists there has no match, whatever it may also have returned under that token's name.
+    Measured on turn 7cf56afe ("stock wc287 wc2867 7445"): `wc2867` is in
+    `unresolved_tokens` and the same resolution carries ten `spec_search` rows matched on
+    the CLASS word it read out of the whole message ("Sorento water closet."), none of
+    which is the thing the customer typed.
+    """
+    named: dict[str, str] = {}
+    for entity in jsc.array(entities):
+        raw = jsc.nullish_str(jsc.get(entity, "raw")).strip()
+        key = _token_key(raw)
+        if key and key not in named:
+            named[key] = raw
+    missed = {_token_key(x) for x in jsc.array(jsc.get(resolved, "unresolved_tokens"))}
+    # Keyed on the folded token, valued with the word the CUSTOMER typed, so the answer
+    # can quote it back rather than a normalised copy of it.
+    return {key: raw for key, raw in named.items() if key in missed}
+
+
+def _without_guesses(
+    compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
+) -> list[dict[str, Any]]:
+    """`compatible` minus the rows that ONLY a guess matched.
+
+    A guess is a resolution for a token the resolver itself could not place, or for a
+    token nobody asked about - the whole message, which the resolve route adds as a
+    phrase of its own. "stock for srttwc286" came back with a resolution under the token
+    `stock for srttwc286` carrying 200 products at `match_tier: spec_search`,
+    `similarity: 0.0`, and the inventory fetch ran for every one of them (turn 11476016).
+    A row a REAL token also matched stays, because then it is that token's answer and the
+    guess merely agreed.
+    """
+    asked = {_token_key(t) for t in jsc.array(jsc.get(resolved, "tokens"))} - {""}
+    placed: set[str] = set()
+    guessed: set[str] = set()
+    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
+        token = _token_key(jsc.get(resolution, "token"))
+        # `asked` is only evidence when the answer carries it: a stub or an older
+        # recording that lists no `tokens` at all must not turn every resolution it
+        # DOES carry into a guess.
+        phrase = bool(asked) and token not in asked
+        bucket = guessed if (token in unplaced or phrase) else placed
+        for match in jsc.array(jsc.get(resolution, "matches")):
+            uuid = jsc.nullish_str(jsc.get(match, "uuid")).strip()
+            if uuid:
+                bucket.add(uuid)
+    drop = guessed - placed
+    if not drop:
+        return compatible
+    return [e for e in compatible if jsc.nullish_str(e.get("uuid")).strip() not in drop]
+
+
 def resolve_kinds(
     db: Session,
     *,
@@ -460,10 +519,13 @@ def resolve_kinds(
     list[dict[str, Any]],
     dict[str, Any] | None,
     dict[str, list[dict[str, Any]]],
+    dict[str, str],
 ]:
     """Ask the resolver what each named token actually IS (AC-1527).
 
-    Returns `({raw: {kind: hits}}, compatible_entities, predicate, candidates_by_kind)`.
+    Returns `({raw: {kind: hits}}, compatible_entities, predicate, candidates_by_kind,
+    unplaced_tokens)`, where the last is `{folded token: the word the customer typed}`
+    for every token this message named that the resolver could not place.
     The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
     which `turn/narrow.py` now decides from the policy instead.
@@ -488,7 +550,7 @@ def resolve_kinds(
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
-        return {}, [], None, {}
+        return {}, [], None, {}, {}
     services = business_services.production_services(db)
     try:
         payload = resolve_gate.run(
@@ -502,7 +564,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return {}, [], None, {}
+        return {}, [], None, {}, {}
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -518,6 +580,8 @@ def resolve_kinds(
 
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
+    unplaced = unplaced_tokens(entities, resolved)
+    compatible = _without_guesses(compatible, resolved, unplaced)
     # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
     # question described, and the count is what the answer's own header says. It rides
     # the gate to the tool trigger, where `fetch.output_structurer` prepends it.
@@ -599,6 +663,7 @@ def resolve_kinds(
         compatible,
         predicate,
         candidates_by_kind(stamps_from, compatible, customer_bases, product_stamp),
+        unplaced,
     )
 
 
@@ -820,6 +885,7 @@ def make_tool_runner(
     focus: Focus,
     compatible_entities: list[dict[str, Any]],
     predicate: dict[str, Any] | None,
+    unplaced: dict[str, str],
     space_id: str | None,
     dry_run: bool,
     turn_trace: Any,
@@ -832,6 +898,7 @@ def make_tool_runner(
     the lane is asked once PER DOMAIN, from a plan, instead of once per turn.
     """
     from app.services.chatbot.lanes import business
+    from app.services.chatbot.lanes.business import fetch as business_fetch
     from app.services.chatbot.lanes.business import services as business_services
 
     def runner(domain: str, spec: FetchSpec) -> dict[str, Any]:
@@ -872,6 +939,23 @@ def make_tool_runner(
             trace=turn_trace,
             db=db,
         )
+        if _answered_unfiltered(fragment, entities, unplaced):
+            # Every subject this fetch had is a token the resolver could not place, so
+            # there was nothing to filter by - and a tool called with no filter answers
+            # about everything. "stock for srttwc286" reached
+            # `crm_inventory_stock_balance_list` with every entity skipped
+            # `for_bad_uuid` and replied "5,783 products have stock. Showing 5." (turns
+            # 11476016 / 5cf452cd / 9de8ac20, 16 Sep 2026). A miss is the honest answer:
+            # the composer names the token and offers the escalation exactly as it does
+            # for a code that exists and has nothing to show.
+            #
+            # Read off the fragment rather than short-circuited before the lane, because
+            # the lane answers in more ways than by calling a tool - the gate's own
+            # customer and incoming pickers come back from here with no tool at all, and
+            # refusing to call it would have swallowed the picker too.
+            fragment = {
+                "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO}
+            }
         return envelope_of(
             fragment,
             spec,
@@ -882,6 +966,7 @@ def make_tool_runner(
                 else None
             ),
             ran_with=lane_out,
+            unplaced=unplaced,
         )
 
     return runner
@@ -1068,6 +1153,31 @@ def _code_of(entity: dict[str, Any]) -> str:
     return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
 
 
+def _answered_unfiltered(
+    fragment: dict[str, Any], entities: list[dict[str, Any]], unplaced: dict[str, str]
+) -> bool:
+    """Did a TOOL answer this fetch when every subject it had was an unplaced token?
+
+    "Unfiltered" means the tool had nothing to narrow BY. A tool that takes entity ids
+    gets none from a token the resolver could not place - every row is skipped
+    `missing_or_bad_uuid` - and answers about the whole catalogue. The outstanding report
+    is the exception and is named as one: it filters on the product CODE the customer
+    typed rather than on an id, states that code in its own scope header, and is
+    therefore narrowed by exactly the token in question (`case-071`, `case-058`, whose
+    recorded tool args carry `product_code` for a token their own resolver stub reports
+    as unresolved).
+    """
+    if not entities or not unplaced:
+        return False
+    if not all(_code_of(e) in unplaced for e in entities):
+        return False
+    fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
+    if fetched.get("outstanding_report"):
+        return False
+    tool = fetched.get("tool") if isinstance(fetched.get("tool"), dict) else {}
+    return bool(tool.get("name"))
+
+
 def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
     """A plan entity in the shape the gate's own rows use.
 
@@ -1111,7 +1221,9 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     picked = [
         e
         for e in compatible
-        if e.get("entity_type") not in kinds or not codes or _code_of(e) in codes
+        if e.get("entity_type") not in kinds
+        or not codes
+        or _code_of(e) in codes
     ]
     answered = {e.get("entity_type") for e in picked}
     return picked + [e for e in map(_spec_row, spec.entities) if e["entity_type"] not in answered]
@@ -1171,6 +1283,7 @@ def envelope_of(
     *,
     denial_text: str | None = None,
     ran_with: dict[str, Any] | None = None,
+    unplaced: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531).
 
@@ -1203,6 +1316,12 @@ def envelope_of(
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
         "miss": [] if has_result else codes,
         "has_result": has_result,
+        # The tokens THIS MESSAGE named that the resolver could not place. The composer
+        # says so beside the answer, so a message naming three codes of which one is a
+        # typo does not quietly answer for two (hand pass 2 item 6, turn 7cf56afe "stock
+        # wc287 wc2867 7445"). Turn-wide rather than per-entity: they are the tokens no
+        # fetch could be about, which is why none of them is in `entities`.
+        "unresolved": list(unplaced.values()) if unplaced else [],
         # The TOOL's own verdict, before the rows test above: a report or a refusal
         # renders as `lane_text` with no figures yet DID find something, and the
         # composer's miss rule (an offer to escalate) must not read it as a miss.

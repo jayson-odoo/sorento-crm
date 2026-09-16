@@ -1013,12 +1013,18 @@ def group_axis(ctx: Any) -> str:
     return jsc.js_string(si.get("group_by") or "").strip()
 
 
+#: What an answer says when the tool found nothing. Named so a caller that decides NOT to
+#: call a tool (`turn_runtime.make_tool_runner`'s unfiltered-fetch guard) says it in the
+#: same words, rather than printing a header with nothing under it.
+NO_RESULT_INTRO = "No matching results found."
+
+
 def _extract_envelope(j: Any) -> dict[str, Any]:
     empty = {
         "items": [],
         "attachments": [],
         "action_links": [],
-        "intro": "No matching results found.",
+        "intro": NO_RESULT_INTRO,
         "has_result": False,
     }
     p = _find_payload(j)

@@ -282,6 +282,21 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
 
     text = "\n\n".join(text_parts)
 
+    # A token nobody could place is named, never dropped in silence (hand pass 2 item 6,
+    # turn 7cf56afe "stock wc287 wc2867 7445": `wc2867` resolved to nothing, the other two
+    # resolved, and the answer listed twenty-four codes without a word about the third).
+    # Said ONCE for the turn rather than once per section, because it is a fact about the
+    # message and not about any one domain - and only when something WAS answered: a turn
+    # that missed everything already names the token in its own header, and saying it
+    # twice reads as two separate failures.
+    unplaced: list[str] = []
+    for env in envelopes:
+        for token in env.get("unresolved") or []:
+            if isinstance(token, str) and token and token not in unplaced:
+                unplaced.append(token)
+    if unplaced and text.strip() and len(missed_domains) < len(envelopes):
+        text += "\n" + f"I could not find {_join_words(unplaced)}."
+
     offer = None
     # ONE open question per turn, and when a lane asked one it is the lane's: a domain
     # that has just asked "which document?" or offered its detail lists is waiting for

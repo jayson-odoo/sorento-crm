@@ -1430,6 +1430,7 @@ def _run_stages(  # noqa: PLR0915
         compatible_entities: list[dict[str, Any]] = []
         predicate: dict[str, Any] | None = None
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
+        unplaced_tokens: dict[str, str] = {}
         if plan.fetch or plan.ask is not None:
             # The RESOLVER's own ctx: a roster has to list things that exist, with the
             # stamps the picker probe measures ("SRTWC286-SH-NEW-P - has incoming"), and
@@ -1456,7 +1457,7 @@ def _run_stages(  # noqa: PLR0915
                     ),
                 },
             }
-            resolved_kinds, compatible_entities, predicate, resolved_candidates = (
+            resolved_kinds, compatible_entities, predicate, resolved_candidates, unplaced_tokens = (
                 turn_runtime.resolve_kinds(
                     db,
                     ctx=resolver_ctx,
@@ -1607,6 +1608,7 @@ def _run_stages(  # noqa: PLR0915
                     focus=state_out.focus,
                     compatible_entities=compatible_entities,
                     predicate=predicate,
+                    unplaced=unplaced_tokens,
                     space_id=space_id_for_turn,
                     dry_run=dry_run,
                     turn_trace=turn_trace,
