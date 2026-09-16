@@ -42,7 +42,10 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
         code = c.get("canonical_code") or c.get("raw")
         identity = c.get("uuid") or code
         family = c.get("uuids")
-        label = c.get("raw") or code
+        # `name` is the resolver's human label, present only where the code is not what
+        # a person would recognise (customers, `turn_runtime.candidates_by_kind`); the
+        # pick still resolves through `uuid`, so the label is free to be the name.
+        label = c.get("name") or c.get("raw") or code
         stamp = c.get("stamp")
         option: dict[str, Any] = {
             "position": i + 1,
@@ -148,6 +151,13 @@ def decide(
         # this branch is `narrow_to_code` only now.
         if candidates and not all(c.get("uuid") for c in candidates):
             return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
+        if candidates:
+            # R6 (captain ruling, 16 Sep 2026): a SETTLED carry - every candidate holds
+            # a uuid, the resolver matched it or the customer picked it - is the thing
+            # to fetch, not nothing. Returning `[]` here left the incoming fetch with no
+            # entity after the pick that narrowed it (contract 33 / 35: the follow-up
+            # without repeating the product, the domain switch that keeps it).
+            return NarrowOutcome(None, [], candidates, None, note="settled_carry")
         return NarrowOutcome(None, [], [], None)
 
     if policy_value in _TYPE_POLICIES:

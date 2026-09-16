@@ -376,6 +376,14 @@ def candidates_by_kind(
         family = row.get("uuids")
         if isinstance(family, list) and family:
             built["uuids"] = list(family)
+        # Finding 3 (owner, hand-pass 1): the gate carries the resolver's own human
+        # label as `display_name` - for customers only, by `gate._display_name`'s rule,
+        # because a customer's `canonical_code` is an ACCOUNT code the customer never
+        # typed while a product code IS its name. Carried onto the candidate as `name`
+        # so a roster prints "HANLIM TRADING SDN BHD", not "300-H030".
+        display = row.get("display_name")
+        if isinstance(display, str) and display.strip():
+            built["name"] = display.strip()
         if code in stamps:
             built["stamp"] = "has incoming" if stamps[code] else "no incoming"
         grouped.setdefault(kind, []).append(built)

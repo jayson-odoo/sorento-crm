@@ -55,7 +55,10 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         tools=["crm_master_product_attachments_list", "crm_certificates_list"],
         escalation_team_code="marketing_product",
         switch_words=[],
-        narrowing={"attachment_type": "narrow_by_type"},
+        # S6b (owner ruling, hand-pass 1 finding 4): a document ask naming several
+        # products asks which one, the same `must_narrow_one` the order domain applies
+        # to its customer. Migration `chatbot_rearch_s6b` carries it onto a seeded DB.
+        narrowing={"attachment_type": "narrow_by_type", "product": "must_narrow_one"},
         reveal_key=None,
         supported=True,
         ladder=[],
