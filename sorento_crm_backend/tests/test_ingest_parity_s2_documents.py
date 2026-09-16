@@ -7,9 +7,9 @@ carrying a stale "not yet" name; a handful of real gaps remain and are still red
 found with no guard at all, e.g. the SO push half of customer_segment/region
 never actually threading through to a back-create).
 
-UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
+UAC: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S2, AC-P2-1 .. AC-P2-7.
-PLAN: documentation/plans/autocount/PLAN-ingest-parity-standardisation.md sections 2.2, 2.6, 2.7.
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md sections 2.2, 2.6, 2.7.
 
 Two substrates, chosen per AC by what each driver actually needs:
 

@@ -1,8 +1,8 @@
 """RED tests for ingest parity standardisation, Phase S3 (shipping order rules).
 
-UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
+UAC: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S3, AC-P3-1 .. AC-P3-8.
-PLAN: documentation/plans/autocount/PLAN-ingest-parity-standardisation.md sections 2.5, 2.6.
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md sections 2.5, 2.6.
 
 Substrate: `blank_session()` throughout. Unlike Phase S2's outstanding-upload
 tests, none of the drivers used here (`SPOAllocationService.upsert_allocation`,
