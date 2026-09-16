@@ -328,6 +328,55 @@ def _seed_contact(session_factory, *, contact_id: Any) -> None:
         db.commit()
 
 
+# handpass3's own finding (coordinator, 16 Sep 2026): a bare customer-name token ("hanlim",
+# "chin chun") resolves against the recorded case's empty `resolutions` stub to NOTHING -
+# `tests/_mc_lookup_seed.py::customer`'s precedent (real `customers` rows, real names) is
+# what a genuine narrow needs, but `_fake_resolve_entity` never queries the DB at all, so a
+# seeded row alone changes nothing UNLESS the case's own `resolutions` field is corrected to
+# name it. Fixed UUIDs (not `mc_customer`'s random ones) so the JSON can reference them by a
+# stable value run to run - `handpass1-003-delivery-to-hanlim-customer-roster.json`'s own
+# "known_gap_not_corrected_here" note names this exact same gap for the same token.
+HANLIM_CUSTOMER_1_ID = "00000000-0000-0000-0000-0000000000a1"
+HANLIM_CUSTOMER_2_ID = "00000000-0000-0000-0000-0000000000a2"
+CHIN_CHUN_CUSTOMER_ID = "00000000-0000-0000-0000-0000000000a3"
+
+_CASE_CUSTOMERS: dict[str, tuple[tuple[str, str], ...]] = {
+    "console/handpass3-justin-escalation-offer.json": (
+        (HANLIM_CUSTOMER_1_ID, "HANLIM TRADING SDN BHD [A/C II]"),
+        (HANLIM_CUSTOMER_2_ID, "HANLIM TRADING SDN BHD [A/C I]"),
+        (CHIN_CHUN_CUSTOMER_ID, "CHIN CHUN HARDWARE SDN BHD - [A/C I]"),
+    ),
+}
+
+
+def _seed_case_customers(session_factory, *, case_id: str) -> None:
+    from sqlalchemy import text
+
+    rows = _CASE_CUSTOMERS.get(case_id)
+    if not rows:
+        return
+    db = session_factory()
+    for customer_id, name in rows:
+        existing = db.execute(
+            text("SELECT 1 FROM customers WHERE id = :id"), {"id": customer_id}
+        ).first()
+        if existing is not None:
+            continue
+        db.execute(
+            text(
+                "INSERT INTO customers (id, customer_code, customer_name, company_id, is_active) "
+                "VALUES (:id, :code, :name, :cid, true)"
+            ),
+            {
+                "id": customer_id,
+                "code": f"ZZT-{customer_id[-4:]}",
+                "name": name,
+                "cid": SORENTO_COMPANY_ID,
+            },
+        )
+    db.commit()
+
+
 _SWITCH_FIELDS = (
     "chatbot_stock_denial_enabled",
     "chatbot_business_lane_enabled",
@@ -596,6 +645,7 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
 
     contact_id = ((turns[0].get("envelope") or {}).get("contact") or {}).get("id") or 999999999
     _seed_contact(session_factory, contact_id=contact_id)
+    _seed_case_customers(session_factory, case_id=case_id)
     # T4 (coordinator ruling, 16 Sep 2026): `_seed_contact` above leaves a brand-new
     # contact's `session_vars` at `{}`. A recorded chain's step 1 ran against the
     # SOURCE contact's REAL prior session (never itself a recorded turn in this file)
