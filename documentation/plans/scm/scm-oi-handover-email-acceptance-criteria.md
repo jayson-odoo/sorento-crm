@@ -50,6 +50,8 @@ actions (confirm, reject, link) send nothing.
 | AC-H24 | [BE] | The committed-transaction marker on `Session.info` is written only when a handover is pending on that session, and every concluded transaction is pruned from it on every exit path (a long import session with thousands of savepoints holds no markers). |
 | AC-H25 | [BE] | `_record_handover` looks up order facts and the actor at most once per sales order and once per user per session (a 341-line confirm issues a handful of lookups, not one per line), and adds no per-row flush. |
 | AC-H26 | [BE] | Given a dispatch resolving to N recipients including the actor, then exactly ONE email is enqueued carrying all N addresses (no per-recipient copies), with the actor LAST so the delivery puts the first purchasing address in To and everyone else, the actor included, in Cc. Reply-all threads across purchasing and CS, as the manual mail does (R5). Measured 16 Sep on the production copy: one confirm produced seven single-address copies. |
+| AC-H27 | [BE] | Given one write that confirms two orders, each inside its own savepoint (the planning-change apply shape), and one root commit, then exactly ONE dispatch happens after the root commit, with both SOs in `handover.orders`. Nothing is dispatched at a savepoint release. |
+| AC-H28 | [BE] | Given a line recorded inside a savepoint that is released, and the root transaction then rolls back, then nothing is dispatched and the session's pending queue is empty. An inner savepoint that rolls back discards only its own lines; the sibling's lines still go out at the root commit. |
 | AC-H12 | [BE] | `order_inquiry_handover` is registered in the trigger catalog with an empty `config_schema`; the catalog endpoint lists it. |
 
 ### Context shape (the template contract)
@@ -70,7 +72,7 @@ actions (confirm, reject, link) send nothing.
 | id | tag | Given / When / Then |
 | --- | --- | --- |
 | AC-H13 | [BE] | The migration seeds `email_templates.code = order_inquiry_handover_default` and one `automations` row (`trigger_type = order_inquiry_handover`, name `Order inquiry to purchasing`, `enabled = true`, `group_matches = false`, `recipient_config = {role_ids: <ids of user_roles whose slug starts with purchasing>, include_actor: true, user_ids: [], extra_emails: []}`), idempotently (re-run creates nothing). Downgrade removes both. |
-| AC-H14 | [BE] | Rendering the seeded template with a fixture context yields: subject `OI: <subject_scope>`; HTML with the headline, an SO table (S/O NO, CUSTOMER, PROJECT), a line table (SO DATE, S/O NO, CUSTOMER, PROJECT, ITEM CODE, QTY, DELIVERY DATE, REMARK) where every set `was.*` prints as `<s>old</s> new`; text body prints the same cell as `new (was old)`; the worklist link is present. |
+| AC-H14 | [BE] | Rendering the seeded template with a fixture context yields: subject `OI: <subject_scope>`; HTML with the headline, an SO table (S/O NO, CUSTOMER, PROJECT), a line table (SO DATE, S/O NO, CUSTOMER, PROJECT, ITEM CODE, QTY, DELIVERY DATE, REMARK) where every set `was.*` prints as `<s>old</s> new`; text body prints the same cell as `new (was old)`; the worklist link is present. A null value prints blank, never the word None, and the text SO summary line omits the segment. Every td and th carries inline `border:1px solid` and `padding:` (mail clients have no stylesheet); header cells carry a background colour. The "Raised by" date prints dd/mm/yyyy like every other date. |
 
 ## Out of scope (recorded, not built)
 

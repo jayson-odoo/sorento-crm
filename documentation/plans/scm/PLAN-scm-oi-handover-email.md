@@ -224,6 +224,18 @@ handshake is missing (AC-H22). S5 named line re-confirmed at a new qty printed a
 the silently cancelled old row now prints cancelled beside it (AC-H23). Nits: `today` in
 Asia/Kuala_Lumpur, docstring at the recorder, dead `IV_RELEASE` vocabulary.
 
+## 6c. Review round 2 (16 Sep, Opus): READY, one ruling
+
+Ruling (captain, 16 Sep 23:30): the drain fires ONLY when the ROOT transaction commits, never at
+a savepoint release. Reason: `planning_change_service.apply` gives each order its own savepoint,
+so firing at release sent one mail per order (R2 says one per write) and could send a mail for
+rows a later parent rollback removed. Lines recorded under a released savepoint wait for the root
+commit; an inner rollback still discards only its own lines (C2 rule). AC-H27 / AC-H28.
+Also ruled: the migration goes back to skip-when-present (Alembic never re-runs an applied
+revision, so the UPDATE branch could only overwrite an admin's hand edit; AC-H13 unchanged);
+"Raised by" date dd/mm/yyyy (AC-H14). Noted, not built: a carried line holding two owed rows
+compares against one of them (N2); the edit form resends `group_matches` (inert here, N4).
+
 ## 7. After merge
 
 Owner types `purchasing@` and the CS manager into the automation's extra emails. Replay on the
