@@ -5,7 +5,7 @@ this file has an implementation yet:
 
 * `app.services.project_supply_undo_service` does not exist - importing `undo_last_confirm`
   raises `ModuleNotFoundError`, this file's "right reason" for most tests here.
-* `app.services.record_actions` does not register `fulfilment_planning.undo_confirm` yet -
+* `app.services.record_actions` does not register `project_sales_order.undo_confirm` yet -
   `get_action(...)` returns `None`, and `POST /api/v1/pending-actions` answers 400 "Unknown
   action" rather than 202.
 * `so_supply_decisions.undo_journal` does not exist either (S1's own column), so a decision
@@ -79,7 +79,13 @@ SNAPSHOT_TABLES = [
 
 
 def _snapshot(db, tables=SNAPSHOT_TABLES) -> dict:
-    """Every row of `tables`, keyed by table then primary key, `updated_at` dropped."""
+    """Every row of `tables`, keyed by table then primary key, `updated_at` dropped.
+
+    `undo_journal` is dropped too (UAC AC-UC-16, amended 17 Sep): R3 clears the
+    REINSTATED decision's own journal on undo, so byte-equality on that one column is
+    wrong by design - AC-UC-22 (which passes) is the test that pins the clearing itself.
+    Only `so_supply_decisions` carries the column; popping it elsewhere is a no-op.
+    """
     out: dict = {}
     for table in tables:
         pk_cols = [c.name for c in table.primary_key.columns]
@@ -88,6 +94,7 @@ def _snapshot(db, tables=SNAPSHOT_TABLES) -> dict:
         for row in rows:
             row_dict = dict(row)
             row_dict.pop("updated_at", None)
+            row_dict.pop("undo_journal", None)
             key = "|".join(str(row_dict[c]) for c in pk_cols)
             keyed[key] = row_dict
         out[f"{table.schema}.{table.name}" if table.schema else table.name] = keyed
@@ -623,7 +630,7 @@ def test_the_record_action_is_registered_reversible_with_confirms_permission_and
     from app.services.form_action_registry import get_action
     from app.services.form_action_service import FormActionService
 
-    action = get_action("fulfilment_planning.undo_confirm")
+    action = get_action("project_sales_order.undo_confirm")
     assert action is not None, "the record action must be registered"
     assert action.entity_types == ("project_sales_order",)
     assert action.window == WINDOW_REVERSIBLE
@@ -651,7 +658,7 @@ def test_the_record_action_is_registered_reversible_with_confirms_permission_and
     park = client.post(
         "/api/v1/pending-actions",
         json={
-            "action_key": "fulfilment_planning.undo_confirm",
+            "action_key": "project_sales_order.undo_confirm",
             "entity_type": "project_sales_order",
             "entity_id": str(order.id),
             "payload": {"decision_id": str(decision.id)},
@@ -757,7 +764,7 @@ def test_a_view_only_user_cannot_create_the_undo_action(api):
         response = client.post(
             "/api/v1/pending-actions",
             json={
-                "action_key": "fulfilment_planning.undo_confirm",
+                "action_key": "project_sales_order.undo_confirm",
                 "entity_type": "project_sales_order",
                 "entity_id": str(order.id),
                 "payload": {"decision_id": str(decision.id)},
@@ -833,7 +840,7 @@ def test_another_companys_user_gets_404_on_undo():
         finally:
             _restore(originals)
 
-        action = get_action("fulfilment_planning.undo_confirm")
+        action = get_action("project_sales_order.undo_confirm")
         assert action is not None, "the record action must be registered"
 
         with company_scope(db, frozenset({sorento_id})):
@@ -845,10 +852,15 @@ def test_another_companys_user_gets_404_on_undo():
             assert exc_info.value.status_code == 404
 
         db.expire_all()
-        untouched = (
-            db.query(SOSupplyDecision)
-            .filter(SOSupplyDecision.project_sales_order_id == other_order.id)
-            .one()
-        )
-        assert untouched.state == "active"
-        assert untouched.revision_no == 1
+        # The read has to run inside the OWNING company's own scope, the same as the
+        # seed above: a fail-closed scope filter (no scope active at all) returns zero
+        # rows for every company, and `.one()` would raise regardless of whether the
+        # 404 above left the decision untouched or not.
+        with company_scope(db, frozenset({other_id})):
+            untouched = (
+                db.query(SOSupplyDecision)
+                .filter(SOSupplyDecision.project_sales_order_id == other_order.id)
+                .one()
+            )
+            assert untouched.state == "active"
+            assert untouched.revision_no == 1
