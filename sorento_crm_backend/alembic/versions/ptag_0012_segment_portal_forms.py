@@ -1,21 +1,26 @@
 """Portal form grant moves from contact access types to market segments
-(PLAN-portal-forms-market-segment D1/D4, r2/r3).
+(PLAN-portal-forms-market-segment D1/D4, r4 expand-only).
 
-Schema only - no data statements. D3's base default (every contact sees the
-four legacy kinds regardless of segment or override) makes a seed/backfill
-unnecessary: nobody loses a form at deploy, and `price_tag_request` stays
-opt-in exactly as it is today (the one existing override row survives
-untouched).
+Expand only - no data statements, no column drop. D4 r4 (security review):
+blue/green deploy runs `alembic upgrade head` in the NEW container while the
+OLD image still serves traffic and still selects
+`contact_access_types.portal_form_types` (old resolver + every ORM load of
+`ContactAccessType`), so dropping it here 500s the portal and the Respond.io
+ingest path for the whole swap window. This migration therefore only ADDS
+`market_segments.portal_form_types` - the model stops mapping the
+access-type column now (unmapped column, still physically present), and the
+column drop lands as its own migration next release (issue #965).
 
-1. Add `market_segments.portal_form_types` JSONB NOT NULL default `'[]'`.
-2. Drop `contact_access_types.portal_form_types` (access types no longer
-   carry any portal-form grant).
+D3's base default (every contact sees the four legacy kinds regardless of
+segment or override) makes a seed/backfill unnecessary: nobody loses a form
+at deploy, and `price_tag_request` stays opt-in exactly as it is today (the
+one existing override row survives untouched).
 
-Both steps are idempotent: a second run, or a legacy create_all database
-already missing/carrying one side, converges without error.
+Idempotent: a second run, or a legacy create_all database already carrying
+the column, converges without error.
 
-Downgrade drops the segment column and restores the access-type column with
-the same default - data is not restored (D4).
+Downgrade drops the segment column only - it never touched the access-type
+column, so there is nothing to restore there.
 
 Revision ID: ptag_0012_seg_forms
 Revises: ptag_0011_line_promo
@@ -57,25 +62,9 @@ def upgrade() -> None:
                 ),
             )
 
-    if _has_table(bind, "contact_access_types"):
-        if "portal_form_types" in _columns(bind, "contact_access_types"):
-            op.drop_column("contact_access_types", "portal_form_types")
-
 
 def downgrade() -> None:
     bind = op.get_bind()
-
-    if _has_table(bind, "contact_access_types"):
-        if "portal_form_types" not in _columns(bind, "contact_access_types"):
-            op.add_column(
-                "contact_access_types",
-                sa.Column(
-                    "portal_form_types",
-                    postgresql.JSONB(astext_type=sa.Text()),
-                    nullable=False,
-                    server_default=sa.text("'[]'::jsonb"),
-                ),
-            )
 
     if _has_table(bind, "market_segments"):
         if "portal_form_types" in _columns(bind, "market_segments"):
