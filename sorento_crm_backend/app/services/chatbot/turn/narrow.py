@@ -60,8 +60,9 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
     label differ (an account code nobody typed, against the name the roster printed),
     so both are kept.
     """
-    built = []
-    for i, c in enumerate(candidates):
+    built: list[dict[str, Any]] = []
+    by_label: dict[str, dict[str, Any]] = {}
+    for c in candidates:
         code = c.get("canonical_code") or c.get("raw")
         identity = c.get("uuid") or code
         family = c.get("uuids")
@@ -71,12 +72,28 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
         name = c.get("name")
         label = name or c.get("raw") or code
         stamp = c.get("stamp")
+        uuids = list(family) if isinstance(family, list) and family else ([identity] if identity else [])
+        # ONE LINE PER LABEL, and the line carries every row behind it (contract 103's
+        # own rule, read one level up from the code): a family is one code across
+        # several ledgers, and a customer is one NAME across several ledgers - browser
+        # pass 3 turn 10 printed one trading name once per account and asked the customer
+        # to choose between rows they cannot tell apart. The pick still yields every
+        # member, because `uuids` is the union.
+        key = str(label).strip().casefold() if label else str(identity)
+        merged = by_label.get(key)
+        if merged is not None:
+            for u in uuids:
+                if u not in merged["uuids"]:
+                    merged["uuids"].append(u)
+            if stamp and not merged.get("stamp"):
+                merged["stamp"] = stamp
+            continue
         option: dict[str, Any] = {
-            "position": i + 1,
+            "position": len(built) + 1,
             "label": label,
             "code": code,
             "uuid": identity,
-            "uuids": list(family) if isinstance(family, list) and family else ([identity] if identity else []),
+            "uuids": uuids,
             "entity_type": kind,
             "payload": {},
         }
@@ -84,6 +101,7 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
             option["name"] = name
         if stamp:
             option["stamp"] = stamp
+        by_label[key] = option
         built.append(option)
     return built
 

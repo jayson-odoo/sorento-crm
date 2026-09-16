@@ -1433,6 +1433,10 @@ def _run_stages(  # noqa: PLR0915
                     branch_kind="business_query",
                     space_id=space_id_for_turn,
                     dry_run=dry_run,
+                    # The roster about to be printed is an INCOMING one: it carries the
+                    # has/no-incoming stamp whether the customer named the family this
+                    # turn or the conversation carried it (browser pass 3, turn 2).
+                    stamp_incoming=plan.ask is not None and "incoming" in plan.domains,
                 )
             )
             if resolved_kinds or resolved_candidates:
@@ -1551,6 +1555,7 @@ def _run_stages(  # noqa: PLR0915
                     dry_run=dry_run,
                     turn_trace=turn_trace,
                 ),
+                granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
                 contains_flyer=bool(verdict.get("contains_flyer")),
             )

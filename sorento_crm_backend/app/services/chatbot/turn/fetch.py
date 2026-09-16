@@ -66,6 +66,35 @@ def _ladder_of(ctx: Any, domain: str) -> list[str]:
     return [r for r in (getattr(row, "ladder", ()) or ()) if isinstance(r, str) and r]
 
 
+def _rung_grant_missing(ctx: Any, rung: str) -> str | None:
+    """The reveal key this RUNG needs and this contact does not hold, or None.
+
+    Owner ruling, 8 Sep 2026: what is ON ORDER is a per-contact reveal
+    (`purchase_orders.placed`), so the PO rung does not probe for a contact nobody
+    granted it - no probe, no PO lines - while the DIRECT ask for purchase orders keeps
+    its own gating. A rung is the bot volunteering a document nobody asked for, which is
+    the difference.
+
+    `answer._CROSSDOMAIN_RUNG_GRANT` is that rule, and it is READ here rather than
+    copied: it is the one place it has ever been written down
+    (`test_crossdomain_ladder.py` pins its contents), and two copies would let the ladder
+    that probes and the gate that refuses disagree about the same rung. Deliberately NOT
+    the rung domain's own `reveal_key`: that column carries per-FIELD reveals too
+    (`inventory.sellable` hides a column, it does not refuse the domain), so reading it
+    here would silently stop the inventory rung for every contact who may still see
+    stock. Imported inside the function to keep this module's import graph the pure one
+    its header describes.
+    """
+    from app.services.chatbot.lanes.business.answer import _CROSSDOMAIN_RUNG_GRANT
+
+    need = _CROSSDOMAIN_RUNG_GRANT.get(rung)
+    if not need:
+        return None
+    raw = getattr(ctx, "granted_reveals", None)
+    granted = set(raw) if isinstance(raw, (list, tuple, set, frozenset)) else set()
+    return None if need in granted else need
+
+
 def run_fetch(plan: Plan, ctx: Any) -> list[dict[str, Any]]:
     envelopes: list[dict[str, Any]] = []
 
@@ -88,8 +117,8 @@ def _climb(
     The ladder is `chatbot_domains.ladder`, walked IN ORDER, and it stops at the first
     rung with rows - the customer asked one question, so they get one answer, from
     whichever domain has it. Every rung goes through the SAME `tool_runner` the primary
-    fetch used (same gate, same grants, same trace event), so a rung the contact is not
-    granted refuses exactly as a named domain would.
+    fetch used (same gate, same trace event), and a rung this contact was never granted
+    is skipped before the probe runs (`_rung_grant_missing`).
 
     A rung that answers is appended as its own envelope and the composer prints it as a
     second section under the primary's miss line (contract 122, one section per domain).
@@ -104,8 +133,15 @@ def _climb(
         return
 
     tried: list[str] = []
+    skipped: list[dict[str, str]] = []
     answered: str | None = None
     for rung in rungs:
+        missing = _rung_grant_missing(ctx, rung)
+        if missing:
+            # Not tried and not a miss: the contact was never offered this rung, so it is
+            # not one of the domains the miss line names either.
+            skipped.append({"rung": rung, "needs": missing})
+            continue
         tried.append(rung)
         rung_envelope = _fetch_one(ctx, rung, replace(spec, domain=rung))
         rung_envelope["crossdomain_rung"] = spec.domain
@@ -118,7 +154,11 @@ def _climb(
 
     trace = getattr(ctx, "trace", None)
     if trace is not None:
-        trace.add(
-            "crossdomain",
-            {"domain": spec.domain, "rungs_tried": list(tried), "answered": answered},
-        )
+        event: dict[str, Any] = {
+            "domain": spec.domain,
+            "rungs_tried": list(tried),
+            "answered": answered,
+        }
+        if skipped:
+            event["skipped"] = list(skipped)
+        trace.add("crossdomain", event)
