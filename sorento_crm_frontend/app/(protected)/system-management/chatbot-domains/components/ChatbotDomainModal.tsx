@@ -266,10 +266,6 @@ export default function ChatbotDomainModal({
             </TabsContent>
 
             <TabsContent value="narrowing" className="mt-4 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                Per entity kind present under this domain: what the reader must narrow before
-                the answer can fetch.
-              </p>
               {(entityKinds ?? []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No entity kind is defined yet.</p>
               ) : (
@@ -304,9 +300,6 @@ export default function ChatbotDomainModal({
             </TabsContent>
 
             <TabsContent value="ladder" className="mt-4 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                When this domain&apos;s answer is zero or short, climb in this order.
-              </p>
               <OrderableList
                 items={draft.ladder}
                 labelFor={(name) => domainLabelByName.get(name) ?? name}
