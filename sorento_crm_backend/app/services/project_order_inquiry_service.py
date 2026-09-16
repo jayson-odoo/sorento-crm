@@ -2158,6 +2158,9 @@ class ProjectOrderInquiryService:
                 PurchaseOrder.issue_date,
                 PurchaseOrderLine.expected_date,
                 PurchaseOrderLine.source_ref,
+                # S5, R-D: the PO line's own product - what a derived SPO allocation has
+                # to match, beside the PO number, before it can stand in for this link.
+                PurchaseOrderLine.product_id,
                 Warehouse.warehouse_code,
                 SPOAllocation.spo_number,
                 SPOAllocation.spo_line_number,
@@ -2206,6 +2209,10 @@ class ProjectOrderInquiryService:
             self.db, [link.linked_by for link, *_rest in rows if link.linked_by]
         )
         out: Dict[str, List[Dict[str, Any]]] = {}
+        # S5, R-D: every PO-kind link's own (po_number, product_id) - what a derived SPO
+        # allocation has to match. Collected while the loop is on the real links anyway,
+        # so the second query below runs once for the whole page rather than once per row.
+        po_pairs_by_row: Dict[str, Tuple[str, str]] = {}
         for (
             link,
             stock_location,
@@ -2215,6 +2222,7 @@ class ProjectOrderInquiryService:
             po_issue_date,
             po_expected_date,
             po_source_ref,
+            po_product_id,
             warehouse_code,
             spo_number,
             spo_line_number,
@@ -2225,6 +2233,8 @@ class ProjectOrderInquiryService:
             spo_purchase_order_id,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
+            if not is_spo and po_number and po_product_id:
+                po_pairs_by_row[link.row_id] = (po_number, str(po_product_id))
             location = warehouse_code or (spo_location_code if is_spo else None)
             tier, _sub = link_location_tier(stock_location, location, pools)
             arrives = spo_expected_date if is_spo else po_expected_date
@@ -2278,9 +2288,91 @@ class ProjectOrderInquiryService:
                     # guess. `from_po_line_ref` (the resolver key) is never sent - it is
                     # not a thing a buyer reads.
                     "source_po_number": spo_from_po_number if is_spo else None,
+                    # S5, R-E: the mirror of the derived SPO entry below - this real link
+                    # names the PO through an SPO allocation the book itself sourced it
+                    # from, so the PO column marks the number "via SPO" rather than
+                    # treating it as a link this system made independently.
+                    "derived_po": bool(is_spo and spo_from_po_number),
                 }
             )
+        self._append_derived_spo_entries(out, po_pairs_by_row)
         return out
+
+    def _append_derived_spo_entries(
+        self, out: Dict[str, List[Dict[str, Any]]], po_pairs_by_row: Dict[str, Tuple[str, str]]
+    ) -> None:
+        """S5 (R-D, R-E; coordinator's 16 Sep addendum): a SYNTHETIC `spo`-kind entry per
+        row, for every OPEN SPO allocation the row's own PO link's PO has for the same
+        product - `from_po_number = po_number AND product_id = po_line.product_id`. OPEN
+        is `spo_supply.open_incoming_clauses()` (line open, not received, shipment not
+        landed) AND `retired_at IS NULL` AND `allocated_quantity > coalesce(quantity_
+        received, 0)` - a landed shipment has already measured out, not incoming any
+        more. Two open allocations on the same PO and product both appear; there is no
+        tie-break to pick between them (the owner's ruling, 16 Sep).
+
+        Written nowhere: this never creates an `order_inquiry_links` row, so
+        `committed_v` and every demand read stay on real links only.
+        """
+        if not po_pairs_by_row:
+            return
+        from sqlalchemy import and_, tuple_
+
+        pairs = list(set(po_pairs_by_row.values()))
+        allocations = (
+            self.db.query(
+                SPOAllocation.spo_number,
+                SPOAllocation.from_po_number,
+                SPOAllocation.product_id,
+                SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received,
+                SPOAllocation.location_code,
+                SPOAllocation.expected_date,
+                SPOAllocation.id,
+                Warehouse.warehouse_code,
+            )
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+            .filter(
+                tuple_(SPOAllocation.from_po_number, SPOAllocation.product_id).in_(pairs),
+                SPOAllocation.retired_at.is_(None),
+                SPOAllocation.allocated_quantity
+                > func.coalesce(SPOAllocation.quantity_received, 0),
+                *spo_supply.open_incoming_clauses(),
+            )
+            .all()
+        )
+        if not allocations:
+            return
+        by_pair: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+        for (
+            spo_number,
+            from_po_number,
+            product_id,
+            allocated,
+            received,
+            location_code,
+            expected_date,
+            allocation_id,
+            warehouse_code,
+        ) in allocations:
+            open_qty = _dec(allocated) - _dec(received)
+            by_pair.setdefault((from_po_number, str(product_id)), []).append(
+                {
+                    "id": f"derived-{allocation_id}",
+                    "kind": "spo",
+                    "derived": True,
+                    "document": spo_number,
+                    "qty": _qty_str(open_qty),
+                    "location": warehouse_code or location_code,
+                    "expected_date": expected_date,
+                }
+            )
+        for row_id, pair in po_pairs_by_row.items():
+            entries = by_pair.get(pair)
+            if entries:
+                out.setdefault(row_id, []).extend(entries)
 
     def _context_for(
         self, rows: Sequence[OrderInquiryRow]
@@ -2896,10 +2988,10 @@ class ProjectOrderInquiryService:
     # Linking never makes the document SUPPLY - `on_order_v` still reads `spo_allocations`
     # alone - it retires the DEMAND that document is already covering.
     #
-    # **An SPO allocation is a candidate for an ORDER BACK row and for nothing else**
-    # (captain, 25 August; `PLAN-scm-purchasing-uat-journey.md` section 4b). A normal ORDER
-    # is a NEW purchase and links to purchase order lines; an order back is a shortfall
-    # against something already ordered or already shipped, and may name either.
+    # **Both PO lines and SPO allocations are candidates for every linkable row** (R5,
+    # 27 August, widening the 25 August rule; `PLAN-scm-oi-worklist-excel-parity.md` S5).
+    # An ORDER, a RESERVE & ORDER and an ORDER BACK row may all name either book -
+    # `_SPO_LINKABLE_VERBS` equals `_LINKABLE_VERBS` below, not a narrower set.
     #
     # **Location ranks a candidate, it never filters one out** (Q5, ruled 25 August). Same
     # location, then the same ownership group at another site, then the site pools, then a
@@ -3565,7 +3657,9 @@ class ProjectOrderInquiryService:
         OTHER link on the same line, which is why two rows can never be pointed at the same
         quantity.
 
-        SPO allocations are read only for an ORDER BACK row. Their open test is the one
+        SPO allocations are read for every linkable row (R5, 27 August - `spo_allowed`
+        below reads `_SPO_LINKABLE_VERBS`, which equals `_LINKABLE_VERBS`, not an
+        ORDER-BACK-only set). Their open test is the one
         copy in `app.services.scm.spo_supply` (`open_incoming_clauses`): open line status, a
         receipt status that is not received, no landed shipment - and, per the captain's
         26 August ruling, a promised date in the PAST does not remove a row. The book is
@@ -4661,13 +4755,16 @@ class ProjectOrderInquiryService:
             if qty <= _ZERO:
                 continue
             if spo_allocation_id and row.verb not in _SPO_LINKABLE_VERBS:
+                # R5 (27 August) widened `_SPO_LINKABLE_VERBS` to every linkable verb, so
+                # `_assert_linkable` already refuses an unlinkable one before this branch
+                # is ever reached - kept as a second guard, not a narrower rule.
                 raise AppException(
                     status_code=409,
                     message=(
-                        "Only an ORDER BACK row can be linked to an SPO allocation - an "
-                        "ORDER is a new purchase, and it goes on a purchase order."
+                        "This row's instruction cannot be linked to a document - it is "
+                        "not one of the linkable verbs."
                     ),
-                    code="order_inquiry_spo_not_order_back",
+                    code="order_inquiry_spo_not_linkable",
                 )
             target_id = spo_allocation_id or po_line_id
             if not target_id:
