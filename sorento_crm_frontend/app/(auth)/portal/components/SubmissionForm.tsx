@@ -533,13 +533,26 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     let cancelled = false;
     fetchMe()
       .then((c) => {
-        if (!cancelled) setContact(c);
+        if (cancelled) return;
+        setContact(c);
+        // D7 r3: a `/new` page makes no request of its own to check
+        // visibility - it reuses this same `/me` fetch (already needed for
+        // form defaults) and renders the same inline blocked message the
+        // edit page's real 403 uses below. The server remains the
+        // enforcement; this only avoids an empty form (AC-L4).
+        if (
+          !submissionId &&
+          Array.isArray(c.visible_form_types) &&
+          !c.visible_form_types.includes(kind)
+        ) {
+          setError(`${SUBMISSION_LABELS[kind]} is not available for your account.`);
+        }
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [submissionId, kind]);
 
   const defaultsFromContact = useMemo(() => {
     const name = contact?.name?.trim() ?? '';

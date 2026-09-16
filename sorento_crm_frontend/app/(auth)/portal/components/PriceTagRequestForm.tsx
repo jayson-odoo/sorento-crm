@@ -103,6 +103,7 @@ import type { AIExtractedProductLine } from '../lib/portal-client';
 import {
   uploadAttachment,
   getPriceTagDesign,
+  fetchMe,
   fetchSubmissionNeighbours,
   type PortalAttachment,
   type PortalSubmissionNeighbours,
@@ -776,6 +777,30 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     // line asks `lookupLinePricing` for the ones that cover IT (S1 effect
     // below).
   }, []);
+
+  // D7 r3 (PLAN-portal-forms-market-segment): a `/new` page makes no request
+  // of its own to check visibility - it reads `visible_form_types` off the
+  // same `/me` payload every other portal page already fetches, and renders
+  // the same inline blocked message the edit page's real 403 uses below.
+  // The server remains the enforcement; this only avoids an empty form.
+  useEffect(() => {
+    if (!isNew) return;
+    let cancelled = false;
+    fetchMe()
+      .then((c) => {
+        if (cancelled) return;
+        if (
+          Array.isArray(c.visible_form_types) &&
+          !c.visible_form_types.includes('price_tag_request')
+        ) {
+          setLoadError('Price Tag Request is not available for your account.');
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew]);
 
   // ---- Load existing request ----
   useEffect(() => {
