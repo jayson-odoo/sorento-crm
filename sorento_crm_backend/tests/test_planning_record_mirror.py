@@ -440,3 +440,159 @@ def test_ingest_leaves_a_mirror_with_a_decision_or_link_untouched(db, world):
     reloaded_mirror = db.get(ProjectSalesOrderLine, mirror_linked.id)
     assert reloaded_mirror is not None, "a mirror carrying an allocation is untouched, not pruned"
     assert db.get(SOLineAllocation, allocation.id) is not None
+
+
+# =============================================================================================
+# AC-PR3b / AC-PR3c - the two line writers that BYPASS `_upsert_lines`
+#
+# Lane B review (17 Sep 2026): `_upsert_lines` has ONE caller, the manual FE edit
+# `PUT /sales-orders/{so_id}`. Every one of the 394 unmirrored lines on the 0915 copy is
+# `source_system = autocount`, written by `document_ingest_service._sync_lines` (the ESB push,
+# `POST /api/v1/external/ingest/sales_orders`), and the Excel book upload writes its own rows
+# at `outstanding_import_service._write_change` (`db.add(bind.line(**fields))`). Neither
+# passes through `_upsert_lines`, so the AC-PR3 self-heal there never sees them.
+# =============================================================================================
+
+
+def test_esb_ingest_new_line_on_adopted_order_mirrors_it():
+    """AC-PR3b: the ESB push (`DocumentIngestService.ingest` -> `_sync_lines`) creates a
+    core line on an adopted order - a mirror line for it must exist after the call with
+    `line_no` = previous max + 1, and the core line is stamped `source_system = autocount`.
+
+    Drives the real route exactly as `tests/test_ingest_documents.py` AC-A3-2 does: first
+    push creates the header + one line; the order is then adopted (mirror header + one
+    mirror line, the shape `adopt` leaves); the second push re-states the kept line by its
+    own `source_ref` and adds one more.
+    """
+    from sqlalchemy import text
+
+    from tests.test_ingest_documents import INGEST_SO, _so_line, _so_record, env as _env_fixture
+
+    # The `env` fixture is a generator fixture; drive it by hand so this module keeps its
+    # own `db`/`world` fixtures for the `_upsert_lines` half without a name clash.
+    gen = _env_fixture.__wrapped__()
+    env = next(gen)
+    try:
+        keep = _so_line(env, qty_ordered=10)
+        record = _so_record(env, lines=[keep])
+        first = env.post(INGEST_SO, [record])
+        assert first.status_code == 200, first.text
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+
+        header = env.header("sales_orders", record["source_ref"])
+        kept_line_id = str(env.db.execute(
+            text("SELECT id FROM sales_order_lines WHERE sales_order_id = :h AND source_ref = :r"),
+            {"h": str(header["id"]), "r": keep["source_ref"]},
+        ).scalar())
+
+        # Adopted after the first push: mirror header + one mirror line, as `adopt` leaves it.
+        project_so = ProjectSalesOrder(
+            id=_u(), project_id=None, provisional_ref=unique_code(MARKER),
+            status=SO_STATUS_ADOPTED, so_id=str(header["id"]), company_id=env.company_a,
+        )
+        env.db.add(project_so)
+        env.db.flush()
+        env.db.add(ProjectSalesOrderLine(
+            id=_u(), project_sales_order_id=project_so.id, core_sales_order_line_id=kept_line_id,
+            line_no=1, qty=10, company_id=env.company_a,
+        ))
+        env.db.commit()
+
+        # The late line arrives on the next weekly sync.
+        added = _so_line(env, product_ref=env.product2_ref, qty_ordered=7)
+        second = env.post(INGEST_SO, [dict(record, lines=[keep, added])])
+        assert second.status_code == 200, second.text
+        assert second.json()["records"][0]["outcome"] == "updated", second.text
+
+        new_core = env.db.execute(
+            text("SELECT id, source_system FROM sales_order_lines "
+                 "WHERE sales_order_id = :h AND source_ref = :r"),
+            {"h": str(header["id"]), "r": added["source_ref"]},
+        ).mappings().first()
+        assert new_core is not None, "the ESB push must have created the new core line"
+        assert new_core["source_system"] == "autocount", dict(new_core)
+
+        mirror = env.db.execute(
+            text("SELECT line_no FROM projects.sales_order_lines "
+                 "WHERE project_sales_order_id = :p AND core_sales_order_line_id = :c"),
+            {"p": project_so.id, "c": str(new_core["id"])},
+        ).mappings().first()
+        assert mirror is not None, (
+            "the core line the ESB push created on an adopted order must gain a mirror in "
+            "the same transaction (document_ingest_service._sync_lines never calls "
+            "mirror_missing_lines)"
+        )
+        assert mirror["line_no"] == 2, "line_no must be the previous max (1) + 1"
+    finally:
+        gen.close()
+
+
+def test_outstanding_book_upload_new_line_on_adopted_order_mirrors_it(db):
+    """AC-PR3c: the Excel book upload (`outstanding_import_service.apply` ->
+    `_write_change`, `db.add(bind.line(**fields))`) creates a core line on an adopted
+    order - a mirror line for it must exist after the call with `line_no` = previous
+    max + 1.
+
+    Seeded exactly as `tests/scm/test_outstanding_import_service.py` does (`make_codes` +
+    `seed_catalogue`); book A lands one line, the order is adopted, book B re-states that
+    line and adds `item_new` on the same order, the shape `week2` uses.
+    """
+    from datetime import date
+
+    from sqlalchemy import text
+
+    from app.services.scm import outstanding_import_service as svc
+    from app.services.scm.outstanding_reader import SO
+    from tests.scm._outstanding_workbooks import (
+        PROJECT_LABEL,
+        _row,
+        make_codes,
+        seed_catalogue,
+        workbook,
+    )
+
+    codes = make_codes()
+    seed_catalogue(db, codes)
+    so_date = date(2026, 5, 4)
+    kept_row = _row(PROJECT_LABEL, codes.project_so, so_date, "300-T012", codes.item_rl, 135,
+                    date(2026, 7, 1), codes.loc_project)
+
+    first = svc.apply(db, workbook([kept_row]), SO)
+    assert first["ok"] and first["applied"]["added"] == 1, first
+
+    so = db.query(SalesOrder).filter(SalesOrder.so_number == codes.project_so).one()
+    kept_line = db.query(SalesOrderLine).filter(SalesOrderLine.sales_order_id == so.id).one()
+
+    project_so = _adopted_mirror(db, so)
+    db.add(ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=project_so.id, core_sales_order_line_id=kept_line.id,
+        line_no=1, product_id=kept_line.product_id, qty=135,
+    ))
+    db.flush()
+
+    new_row = _row(PROJECT_LABEL, codes.project_so, so_date, "300-T012", codes.item_new, 12,
+                   date(2026, 9, 1), codes.loc_project, "new")
+    second = svc.apply(db, workbook([kept_row, new_row]), SO)
+    assert second["ok"] and second["applied"]["added"] == 1, second
+
+    db.expire_all()
+    new_core_id = db.execute(text(
+        "SELECT sol.id FROM sales_order_lines sol JOIN products p ON p.id = sol.product_id "
+        "WHERE sol.sales_order_id = :so AND p.product_code = :item"
+    ), {"so": so.id, "item": codes.item_new}).scalar()
+    assert new_core_id is not None, "the book upload must have created the new core line"
+
+    mirror = (
+        db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == project_so.id,
+            ProjectSalesOrderLine.core_sales_order_line_id == str(new_core_id),
+        )
+        .first()
+    )
+    assert mirror is not None, (
+        "the core line the book upload created on an adopted order must gain a mirror in "
+        "the same transaction (outstanding_import_service._write_change never calls "
+        "mirror_missing_lines)"
+    )
+    assert mirror.line_no == 2, "line_no must be the previous max (1) + 1"
