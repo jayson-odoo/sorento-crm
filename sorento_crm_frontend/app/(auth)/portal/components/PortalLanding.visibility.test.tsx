@@ -109,6 +109,15 @@ describe('PortalLanding - every kind derives from visible_form_types (AC-L1)', (
 });
 
 describe('PortalLanding - the active tab falls back to the first visible kind (AC-L2)', () => {
+  it('defaults to Stock Inquiry when visible - the dealers main form stays first', async () => {
+    mockContact(['complaint', 'stock_inquiry', 'purchase_request']);
+    render(<PortalLanding slug="darren" />);
+
+    expect(
+      await screen.findByRole('link', { name: /New Stock Inquiry/ }),
+    ).toBeInTheDocument();
+  });
+
   it('with no ?type= in the URL', async () => {
     mockContact(['purchase_request', 'sponsorship_form']);
     render(<PortalLanding slug="darren" />);

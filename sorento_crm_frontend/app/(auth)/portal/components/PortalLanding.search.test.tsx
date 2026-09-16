@@ -68,10 +68,7 @@ const ROW: PortalSubmissionSummary = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // N1: the active tab now defaults to the first VISIBLE kind (canonical
-  // order: complaint first), not a hardcoded 'stock_inquiry' - this suite
-  // is about stock_inquiry rows specifically, so the deep link pins it.
-  searchParams = new URLSearchParams('type=stock_inquiry');
+  searchParams = new URLSearchParams('');
   window.localStorage.clear();
   (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue(ME);
 });

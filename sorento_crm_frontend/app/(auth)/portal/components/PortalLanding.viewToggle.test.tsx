@@ -113,10 +113,7 @@ function mockViewportAtLeast768(matches: boolean) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // N1: the active tab now defaults to the first VISIBLE kind (canonical
-  // order: complaint first), not a hardcoded 'stock_inquiry' - this suite
-  // is about stock_inquiry rows specifically, so the deep link pins it.
-  searchParams = new URLSearchParams('type=stock_inquiry');
+  searchParams = new URLSearchParams('');
   window.localStorage.clear();
   (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue(ME);
   (fetchSubmissions as ReturnType<typeof vi.fn>).mockImplementation(

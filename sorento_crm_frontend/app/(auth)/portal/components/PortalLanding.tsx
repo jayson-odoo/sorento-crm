@@ -105,7 +105,12 @@ const WA_NO_FORMS_TEXT = 'Hi, I would like to submit a form.';
  */
 function landingKindsFor(contact: PortalContact | null): PortalLandingKind[] {
   const visible = contact?.visible_form_types ?? [];
-  return LANDING_KINDS.filter((k) => visible.includes(k));
+  // Stock Inquiry stays first when visible - the dealers' main form, and the
+  // one deliberate exception to LANDING_KINDS' own order (a pre-existing
+  // choice this lane keeps, not a new one). Everything else follows in
+  // LANDING_KINDS order.
+  const rest = LANDING_KINDS.filter((k) => k !== 'stock_inquiry' && visible.includes(k));
+  return visible.includes('stock_inquiry') ? ['stock_inquiry', ...rest] : rest;
 }
 
 const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
