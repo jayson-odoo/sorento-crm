@@ -42,6 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { FormSection } from './FormSection';
 import { RevisionHistory } from './RevisionHistory';
 import {
@@ -460,6 +461,11 @@ interface Props {
 export function PriceTagRequestForm({ requestId, slug }: Props) {
   const router = useRouter();
   const isNew = !requestId;
+  // Owner ruling after #948: List price / Promotion / Selling price are real
+  // table columns on desktop, not a `colSpan` sub-row. Below the existing
+  // sidebar breakpoint they still stack under the Item cell instead, reusing
+  // the app's own mobile check rather than a bespoke `md:` media query.
+  const isMobile = useIsMobile();
 
   // ---- Data fetching state ----
   const [loading, setLoading] = useState(!isNew);
@@ -1938,7 +1944,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             />
           </div>
 
-          {/* Lines: same table the edit form uses, cells read-only. */}
+          {/* Lines: same table the edit form uses, cells read-only.
+              NOTE: kept on the pre-existing label+value sub-row shape here
+              (not the new desktop-column layout the editable table below
+              got) - `readOnlyManualPrice.test.tsx` scopes
+              `within(linesTable).getByText('Selling price')` expecting the
+              ONE label immediately before its value, which a header column
+              of the same name would turn into two matches. See the coder's
+              handoff note for the deviation from the plan's ~:1988-2010
+              callout. */}
           <div className="space-y-1.5">
             <Label>Lines ({request.lines.length})</Label>
             {request.lines.length === 0 ? (
@@ -2457,9 +2471,56 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="w-7 px-2 py-2 text-left">#</th>
-                    <th className="w-[35%] px-2 py-2 text-left">Item</th>
-                    <th className="w-[12%] px-2 py-2 text-left">Qty (tags)</th>
-                    <th className="w-[33%] px-2 py-2 text-left">Remarks</th>
+                    <th
+                      className={
+                        isMobile
+                          ? 'w-[35%] px-2 py-2 text-left'
+                          : priceMode === 'selling'
+                            ? 'w-[18%] px-2 py-2 text-left'
+                            : 'w-[28%] px-2 py-2 text-left'
+                      }
+                    >
+                      Item
+                    </th>
+                    <th
+                      className={
+                        isMobile
+                          ? 'w-[12%] px-2 py-2 text-left'
+                          : priceMode === 'selling'
+                            ? 'w-[7%] px-2 py-2 text-left'
+                            : 'w-[10%] px-2 py-2 text-left'
+                      }
+                    >
+                      Qty (tags)
+                    </th>
+                    {!isMobile && (
+                      <th
+                        className={
+                          priceMode === 'selling'
+                            ? 'w-[8%] px-2 py-2 text-left'
+                            : 'w-[12%] px-2 py-2 text-left'
+                        }
+                      >
+                        List price
+                      </th>
+                    )}
+                    {!isMobile && priceMode === 'selling' && (
+                      <>
+                        <th className="w-[17%] px-2 py-2 text-left">Promotion</th>
+                        <th className="w-[10%] px-2 py-2 text-left">Selling price</th>
+                      </>
+                    )}
+                    <th
+                      className={
+                        isMobile
+                          ? 'w-[33%] px-2 py-2 text-left'
+                          : priceMode === 'selling'
+                            ? 'w-[20%] px-2 py-2 text-left'
+                            : 'w-[30%] px-2 py-2 text-left'
+                      }
+                    >
+                      Remarks
+                    </th>
                     <th className="w-[20%] px-2 py-2"></th>
                   </tr>
                 </thead>
@@ -2470,6 +2531,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       line={line}
                       index={index}
                       priceMode={priceMode}
+                      isMobile={isMobile}
                       pricing={linePricing[line.key] ?? null}
                       fetchItemOptions={fetchItemOptions}
                       fetchPartOptions={fetchPartOptions}
@@ -2727,6 +2789,9 @@ interface LineRowProps {
   line: DraftLine;
   index: number;
   priceMode: PriceMode;
+  /** Below the mobile breakpoint, List price/Promotion/Selling price stack
+   *  under the Item cell instead of living in their own columns (AC-S1-11). */
+  isMobile: boolean;
   /** S1/S2: this line's latest `lookupLinePricing` answer, or null before
    *  the first one lands (no product yet, or still in flight). */
   pricing: LinePricingResult | null;
@@ -2768,6 +2833,7 @@ function PartRow({
   part,
   pricing,
   priceMode,
+  colSpan,
   onResolvePart,
   onRemovePart,
 }: {
@@ -2776,6 +2842,9 @@ function PartRow({
   part: DraftPart;
   pricing: LinePricingResult | null;
   priceMode: PriceMode;
+  /** Matches however many real columns the line's own row currently has
+   *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
+  colSpan: number;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
@@ -2787,7 +2856,7 @@ function PartRow({
   const label = part.role || part.code || part.name;
   return (
     <tr className="align-top">
-      <td colSpan={5} className="px-2 pb-2 pl-9">
+      <td colSpan={colSpan} className="px-2 pb-2 pl-9">
         <div className="flex flex-col gap-1.5 border-l-2 border-border pl-3 sm:flex-row sm:items-start sm:gap-2">
           <div className="min-w-0 flex-1">
             {choosable ? (
@@ -2847,6 +2916,7 @@ function LineRow({
   line,
   index,
   priceMode,
+  isMobile,
   pricing,
   fetchItemOptions,
   fetchPartOptions,
@@ -2895,6 +2965,83 @@ function LineRow({
     .reverse()
     .find((part) => !part.product_id && part.candidates.length > 1)?.key;
 
+  // Owner ruling after #948: List price / Promotion / Selling price are real
+  // `<td>` columns on the line's own row (md and up), not a `colSpan`
+  // sub-row - `subRowSpan` keeps the OTHER sub-rows (guard error, package,
+  // parts, warning) spanning the row's actual current column count instead
+  // of a stale hard-coded 5. Below the mobile breakpoint the row still has
+  // exactly the original 5 columns, since the price fields move into the
+  // stack nested under the Item cell instead (AC-S1-11) - the two never
+  // render at once, so nothing duplicates in the DOM.
+  const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
+
+  const listPriceCell = (
+    <div>
+      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+        List price
+      </div>
+      <div className="text-sm font-medium">
+        {formatRM(pricing?.list_price)}
+        {hasOpenGroup(line) ? (
+          <span className="ml-1 text-xs text-muted-foreground">+ option</span>
+        ) : null}
+      </div>
+    </div>
+  );
+
+  const promotionCell = (
+    <div>
+      <Label
+        className="text-2xs uppercase tracking-wide text-muted-foreground"
+        htmlFor={`promotion-${line.key}`}
+      >
+        Promotion
+      </Label>
+      <SearchableSelect
+        id={`promotion-${line.key}`}
+        clearable
+        truncateTriggerLabel
+        value={line.promotion_id ?? ''}
+        onChange={(value) => onChoosePromotion(line.key, value)}
+        options={promotionOptions}
+        placeholder="No covering promotion"
+        emptyMessage="No promotion covers this line."
+        size="sm"
+      />
+    </div>
+  );
+
+  const sellingPriceCell = (
+    <div>
+      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+        Selling price
+      </div>
+      {line.promotion_id ? (
+        <div
+          className="text-sm font-medium"
+          title={partsAtListTitle(line, pricing)}
+        >
+          {formatRM(pricing?.sell_price)}
+        </div>
+      ) : (
+        <Input
+          type="number"
+          inputMode="decimal"
+          // The server takes `gt=0` with 2 decimal places (`ManualSellPrice`),
+          // so 0 is a refusal, not a bound.
+          min={0.01}
+          step={0.01}
+          variant="sm"
+          className="w-full max-w-28"
+          value={line.manual_sell_price ?? ''}
+          onChange={(e) => onManualSellPriceChange(line.key, e.target.value)}
+          placeholder="Type a price"
+          aria-label={`Selling price for line ${index + 1}`}
+        />
+      )}
+    </div>
+  );
+
   return (
     <>
       <tr className="border-t border-border align-top">
@@ -2913,6 +3060,25 @@ function LineRow({
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
           />
+          {/* AC-S1-11: below md the same fields stack here instead of
+              living in their own columns - never both at once (isMobile
+              picks exactly one), so nothing in the row duplicates. */}
+          {isMobile && showPricing && (
+            <div
+              data-testid="line-pricing-stack"
+              className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
+            >
+              <div className="min-w-[110px]">{listPriceCell}</div>
+              {priceMode === 'selling' && (
+                <>
+                  <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
+                    {promotionCell}
+                  </div>
+                  <div className="min-w-[110px]">{sellingPriceCell}</div>
+                </>
+              )}
+            </div>
+          )}
         </td>
         <td className="px-2 py-2">
           <Input
@@ -2928,6 +3094,15 @@ function LineRow({
             aria-label={`Quantity for line ${index + 1}`}
           />
         </td>
+        {!isMobile && (
+          <td className="px-2 py-2">{showPricing ? listPriceCell : null}</td>
+        )}
+        {!isMobile && priceMode === 'selling' && (
+          <>
+            <td className="px-2 py-2">{showPricing ? promotionCell : null}</td>
+            <td className="px-2 py-2">{showPricing ? sellingPriceCell : null}</td>
+          </>
+        )}
         <td className="px-2 py-2">
           <Input
             value={line.remarks}
@@ -2954,94 +3129,16 @@ function LineRow({
       </tr>
       {line.guard_error && (
         <tr>
-          <td colSpan={5} className="px-2 pb-2">
+          <td colSpan={subRowSpan} className="px-2 pb-2">
             <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
               {line.guard_error}
             </p>
           </td>
         </tr>
       )}
-      {/* S1: List price always; Promotion + Selling price in Selling mode
-          only (AC-S1-1/S1-3). A block under the Item cell, not extra table
-          columns, so it wraps under the item at 375px instead of widening
-          the fixed-layout table (AC-S1-11). */}
-      {showPricing && (
-        <tr className="align-top">
-          <td colSpan={5} className="px-2 pb-2 pl-9">
-            <div className="flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
-              <div className="min-w-[110px]">
-                <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                  List price
-                </div>
-                <div className="text-sm font-medium">
-                  {formatRM(pricing?.list_price)}
-                  {hasOpenGroup(line) ? (
-                    <span className="ml-1 text-xs text-muted-foreground">
-                      + option
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              {priceMode === 'selling' && (
-                <>
-                  <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
-                    <Label
-                      className="text-2xs uppercase tracking-wide text-muted-foreground"
-                      htmlFor={`promotion-${line.key}`}
-                    >
-                      Promotion
-                    </Label>
-                    <SearchableSelect
-                      id={`promotion-${line.key}`}
-                      clearable
-                      truncateTriggerLabel
-                      value={line.promotion_id ?? ''}
-                      onChange={(value) => onChoosePromotion(line.key, value)}
-                      options={promotionOptions}
-                      placeholder="No covering promotion"
-                      emptyMessage="No promotion covers this line."
-                      size="sm"
-                    />
-                  </div>
-                  <div className="min-w-[110px]">
-                    <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                      Selling price
-                    </div>
-                    {line.promotion_id ? (
-                      <div
-                        className="text-sm font-medium"
-                        title={partsAtListTitle(line, pricing)}
-                      >
-                        {formatRM(pricing?.sell_price)}
-                      </div>
-                    ) : (
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        // The server takes `gt=0` with 2 decimal places
-                        // (`ManualSellPrice`), so 0 is a refusal, not a bound.
-                        min={0.01}
-                        step={0.01}
-                        variant="sm"
-                        className="w-28"
-                        value={line.manual_sell_price ?? ''}
-                        onChange={(e) =>
-                          onManualSellPriceChange(line.key, e.target.value)
-                        }
-                        placeholder="Type a price"
-                        aria-label={`Selling price for line ${index + 1}`}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
       {showPackage && (
         <tr className="align-top">
-          <td colSpan={5} className="px-2 pb-2 pl-9">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="border-l-2 border-border pl-3">
               <SearchableSelect
                 clearable
@@ -3068,13 +3165,14 @@ function LineRow({
             part={part}
             pricing={pricing}
             priceMode={priceMode}
+            colSpan={subRowSpan}
             onResolvePart={onResolvePart}
             onRemovePart={onRemovePart}
           />
           {/* AC-S2-3: once per line, under the LAST unresolved row. */}
           {part.key === lastOpenPartKey && (
             <tr>
-              <td colSpan={5} className="px-2 pb-2 pl-9">
+              <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
                 <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
                   Marketing will prepare one tag per option.
                 </p>
@@ -3085,7 +3183,7 @@ function LineRow({
       ))}
       {showParts && (
         <tr className="align-top">
-          <td colSpan={5} className="px-2 pb-2 pl-9">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="border-l-2 border-border pl-3">
               {/* The shared catalogue search, so a part missing from the package -
                   or on a product that has none - can be named by hand (AC-S2-4).
@@ -3109,7 +3207,7 @@ function LineRow({
       )}
       {warning && (
         <tr>
-          <td colSpan={5} className="px-2 pb-2 pl-9">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
               <Badge variant="warning" appearance="light" size="sm">
                 Package warning
