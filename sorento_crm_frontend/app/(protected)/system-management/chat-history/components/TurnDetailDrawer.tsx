@@ -11,6 +11,8 @@ import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { shortTurnId } from '../turnPresentation';
 import type {
   TurnDetail,
+  TurnDetailApplyDiff,
+  TurnDetailApplyDiffEntry,
   TurnDetailCrossdomain,
   TurnDetailDecay,
   TurnDetailFocus,
@@ -241,8 +243,28 @@ function ParseSection({ parse }: { parse: TurnDetail['parse'] }) {
   );
 }
 
+/**
+ * The state diff as one list, whichever shape the turn carries it in.
+ *
+ * `turn_runtime.focus_diff` sends a MAP keyed by focus slot and the panel called
+ * `.map()` on it, which threw `apply.state_diff.map is not a function` and took the
+ * whole drawer down with an error boundary (browser pass 7, turn 56e10c36).
+ */
+function diffEntries(diff: TurnDetailApplyDiff | null | undefined): TurnDetailApplyDiffEntry[] {
+  if (!diff) return [];
+  if (Array.isArray(diff)) return diff;
+  return Object.entries(diff).map(([slot, moved]) => ({
+    slot,
+    before: moved?.before,
+    after: moved?.after,
+    reason: moved?.reason ?? null,
+  }));
+}
+
 function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
   if (!apply) return <Empty>Not recorded on this turn (APPLY shipped in S3).</Empty>;
+  const stateDiff = diffEntries(apply.state_diff);
+  const narrowing = apply.narrowing ?? [];
   return (
     <div className="space-y-3 text-xs">
       {apply.verdict && (
@@ -253,11 +275,11 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
       )}
       <div>
         <div className="mb-1 font-medium text-muted-foreground">State diff</div>
-        {apply.state_diff.length === 0 ? (
+        {stateDiff.length === 0 ? (
           <Empty>Nothing changed this turn.</Empty>
         ) : (
           <ul className="space-y-1.5">
-            {apply.state_diff.map((d, i) => (
+            {stateDiff.map((d, i) => (
               <li key={`${d.slot}-${i}`} className="rounded-md border px-2 py-1.5">
                 <span className="font-medium">{d.slot}</span>{' '}
                 <span className="text-muted-foreground">
@@ -271,11 +293,11 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
       </div>
       <div>
         <div className="mb-1 font-medium text-muted-foreground">Narrowing applied</div>
-        {apply.narrowing.length === 0 ? (
+        {narrowing.length === 0 ? (
           <Empty>No narrowing rule fired.</Empty>
         ) : (
           <ul className="space-y-1 text-muted-foreground">
-            {apply.narrowing.map((line, i) => (
+            {narrowing.map((line, i) => (
               <li key={i}>{line}</li>
             ))}
           </ul>

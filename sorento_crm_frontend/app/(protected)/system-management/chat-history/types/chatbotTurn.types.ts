@@ -287,13 +287,23 @@ export interface TurnDetailApplyDiffEntry {
   before: unknown;
   after: unknown;
   /** Which rule moved it, e.g. "exclusive narrows the named axis". */
-  reason: string | null;
+  reason?: string | null;
 }
+
+/**
+ * What the backend actually sends: `turn_runtime.focus_diff` returns a MAP keyed by the
+ * focus slot (`{ customers: { before, after } }`), and only a slot that moved is in it.
+ * The array form is the older shape some recorded turns still carry, so the drawer
+ * accepts either and renders one list.
+ */
+export type TurnDetailApplyDiff =
+  | TurnDetailApplyDiffEntry[]
+  | Record<string, { before?: unknown; after?: unknown; reason?: string | null }>;
 
 export interface TurnDetailApply {
   /** The parser verdict APPLY read, as sent (contract 102 to 105's shape). */
   verdict: Record<string, unknown> | null;
-  state_diff: TurnDetailApplyDiffEntry[];
+  state_diff: TurnDetailApplyDiff | null;
   /** One line per (domain, entity kind) the narrower touched this turn. */
   narrowing: string[];
   /** `reconciled: <from> -> <to>`, or null when nothing was rewritten. */
