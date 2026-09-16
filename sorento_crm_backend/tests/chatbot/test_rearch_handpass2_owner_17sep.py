@@ -21,8 +21,8 @@ correction that were not chased further this session (time-boxed, flagged not si
 worked around).
 
 Findings 4 and 7 are explicitly excluded per the brief (4 = coder 12 in flight already;
-7 = blocked on the coder's own tool-output measurement). Findings 2 and 12 are NOT
-ported here - see the module-level notes at the bottom for why.
+7 = blocked on the coder's own tool-output measurement). Findings 2 and 12 are now
+ported (tester 14 session) - see their own classes below.
 """
 from __future__ import annotations
 
@@ -279,17 +279,152 @@ class TestFinding11APickAnswersEveryDomainTheAskNamed:
         )
 
 
-# Findings 2 and 12, NOT ported this session:
-#
-# * Finding 2 (customer roster stamps, "has DO / no DO"): `pickers.annotate_customer`
-#   ALREADY exists and is called generically from `resolve_gate.py`'s customer-picker
-#   exit arm (not gated to the outstanding lane), so this finding needs live tracing
-#   of WHY the specific "Delivery for hanlim" roster (a six-ledger family match) does
-#   not reach that call site - genuine engine tracing this session's time budget did
-#   not reach, not a mechanical absence like the others above. Flagged, not guessed.
-# * Finding 12 (document named in message sets focus.document, scope question does not
-#   arm): measured directly this session - the GENERIC mechanism already works
-#   (`verdict["document"]` reaching `focus.document`, no `plan.ask` armed). The owner's
-#   own report is about the OUTSTANDING domain's own scope-question arming
-#   specifically (turn c45e2929), which is coder 12's in-flight contract 38/39 work
-#   (finding 4) - folding into that scope rather than duplicating a red here.
+class TestFinding2CustomerRosterCarriesHasDoStamps:
+    """Ruling 2 (turns 7c60b2e6, d369447b): "Customer rosters carry has DO / no DO
+    stamps like product rosters carry incoming."
+
+    Traced through the REAL pipeline, no invented field name for the assertion itself:
+    `pickers.annotate_customer` (real function, real probe rows) followed by
+    `turn_runtime.candidates_by_kind` (real function) - the exact two calls
+    `turn_runtime.resolve_kinds` chains for a product roster via `annotate_incoming` /
+    `incoming_by_code` (`turn_runtime.py:522-539`, `:601`). CONFIRMED structural gap,
+    not guessed: `candidates_by_kind`'s only stamp source is
+    `gate.get("incoming_by_code")` (`turn_runtime.py:601`, one reader, grepped this
+    session) - `annotate_customer` computes its own `with_do` set (`pickers.py:224-230`)
+    but never exposes it as gate DATA the way `annotate_incoming` exposes
+    `incoming_by_code` (`pickers.py:118-126`), so a customer candidate can never carry a
+    `stamp` regardless of what the probe found. `narrow.py::_options` already renders
+    whatever `stamp` a candidate carries (`narrow.py:74,103` - kind-agnostic), so the
+    gap is entirely upstream of the narrower, at the annotate/candidates_by_kind seam."""
+
+    def test_candidates_by_kind_stamps_customer_rosters_like_it_stamps_product_rosters(
+        self,
+    ) -> None:
+        from app.services.chatbot.lanes.business import pickers
+        from app.services.chatbot.turn_runtime import candidates_by_kind
+
+        gate = {
+            "gate_clarification": (
+                "Which customer do you mean? Please choose:\n"
+                "1. HANLIM TRADING SDN BHD [A/C I]\n"
+                "2. HANLIM TRADING SDN BHD [A/C II]"
+            ),
+            "compatible_entities": [
+                {
+                    "entity_type": "customer",
+                    "canonical_code": "300-H030",
+                    "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                    "display_name": "HANLIM TRADING SDN BHD [A/C I]",
+                    "raw": "hanlim",
+                },
+                {
+                    "entity_type": "customer",
+                    "canonical_code": "300-H070",
+                    "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                    "display_name": "HANLIM TRADING SDN BHD [A/C II]",
+                    "raw": "hanlim",
+                },
+            ],
+        }
+        # Ledger I has a shipped DO, ledger II does not - the exact shape
+        # `test_resolve_gate_unit.py::test_an_order_with_no_delivery_order_is_not_
+        # counted_as_one` already proves `annotate_customer` measures correctly.
+        probe_rows = [
+            {
+                "title": "DO-1",
+                "fields": [
+                    {"label": "Customer", "value": "HANLIM TRADING SDN BHD [A/C I]"},
+                    {"label": "Actual Delivery Date", "value": "2026-09-01"},
+                ],
+            },
+            {
+                "title": "SO-2",
+                "fields": [
+                    {"label": "Customer", "value": "HANLIM TRADING SDN BHD [A/C II]"},
+                    {"label": "Actual Delivery Date", "value": None},
+                ],
+            },
+        ]
+        annotated = pickers.annotate_customer(
+            dict(gate), probe={"answers": probe_rows}, parser={}
+        )
+        # The real function already measures the fact correctly (proven by
+        # test_resolve_gate_unit.py) - confirm this recording's own fixture agrees
+        # before blaming the downstream seam for a fixture mistake.
+        assert annotated["customer_probe_hits"] == 1, annotated["escalate_message"]
+
+        grouped = candidates_by_kind(annotated, gate["compatible_entities"])
+        customers = grouped.get("customer", [])
+        stamped = {c.get("name"): c.get("stamp") for c in customers}
+        assert stamped == {
+            "HANLIM TRADING SDN BHD [A/C I]": "has DO",
+            "HANLIM TRADING SDN BHD [A/C II]": "no DO",
+        }, (
+            f"got {stamped!r} - candidates_by_kind only reads gate['incoming_by_code'] "
+            "(turn_runtime.py:601); annotate_customer's own 'with_do' set never "
+            "reaches the gate as data, so no customer candidate ever carries a stamp "
+            "today, whatever the probe found."
+        )
+
+
+class TestFinding12DocumentNamedSetsFocusAndDoesNotArmTheScopeAsk:
+    """Ruling 12 (turn c45e2929, "Outstanding DO for 7445"): the document named in the
+    message sets the scope; the question arms only when no document was named.
+
+    Measured (tester 13, this session's predecessor): the GENERIC mechanism already
+    works - `turn/apply.py`'s `_focus_rules` writes `focus.document` straight off
+    `verdict["document"]` (`apply.py:593-596`) with no engine change needed, and
+    `turn_runtime.lane_parse_output` already projects `outstanding_scope_ask_candidate`
+    off `document` + `status` via `_DOCUMENT_STATUS_TO_ORDER_STATUS`
+    (`turn_runtime.py:407-427`): a named document changes the projected bucket away
+    from the bare `"outstanding"` key the candidate flag tests for, so the flag comes
+    back False. Ported as a POSITIVE pin (not a guessed red) at the real
+    `lane_parse_output` seam directly - the same seam `71109d8d3`'s commit body itself
+    names ("No engine change: `_focus_rules` already writes `focus.document` from this
+    key and the answering half already reads it"). If this ever goes red, the engine
+    regressed, not the prompt."""
+
+    def test_a_named_document_sets_focus_document(self) -> None:
+        from app.services.chatbot.turn.state import Focus
+
+        v = verdict(
+            message_type="business_query",
+            intent_hint="check_order_status",
+            domain_hint="outstanding",
+            status="outstanding",
+            document=["DO"],
+            entities=[
+                {
+                    "raw": "SRTWT7445",
+                    "hint": "product",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        )
+        state2, _plan, _branch = _decide(v, focus=Focus())
+        assert state2.focus.document == ["DO"], (
+            f"got {state2.focus.document!r} - turn/apply.py's _focus_rules should "
+            "write focus.document straight off verdict['document']"
+        )
+
+    def test_a_named_document_does_not_arm_the_outstanding_scope_ask(self) -> None:
+        from app.services.chatbot.turn_runtime import lane_parse_output
+
+        named = lane_parse_output(
+            verdict(status="outstanding", document=["DO"]), focus=None
+        )
+        assert named["order_status"] == "do_outstanding", named["order_status"]
+        assert named["outstanding_scope_ask_candidate"] is False, (
+            f"got {named['outstanding_scope_ask_candidate']!r} - a named document "
+            "must move the projected bucket off the bare 'outstanding' key the "
+            "scope-ask candidate flag tests for"
+        )
+
+        # Contrast case: no document named IS the one bucket the flag should arm for -
+        # proves the assertion above is measuring the real branch, not a tautology.
+        bare = lane_parse_output(verdict(status="outstanding", document=[]), focus=None)
+        assert bare["order_status"] == "outstanding", bare["order_status"]
+        assert bare["outstanding_scope_ask_candidate"] is True, bare[
+            "outstanding_scope_ask_candidate"
+        ]
