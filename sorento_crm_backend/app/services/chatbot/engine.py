@@ -1167,6 +1167,15 @@ def _run_stages(  # noqa: PLR0915
         turn_no = turn_runtime.turn_number(db, contact_respond_id)
         state_in = turn_runtime.load_state(session_block, profile=profile, turn_no=turn_no)
         remembered_before = session_state.five_keys(session_block)
+        # The parser's `Previous response:` line. Read here, at `received`, with the
+        # other contact facts and off the SAME session: it is what the bot last said to
+        # this contact, and the parser is the one component allowed to read prose.
+        previous_reply = turn_runtime.previous_reply_text(
+            db,
+            contact_respond_id=contact_respond_id,
+            ingress=envelope.ingress,
+            is_test=bool(dry_run),
+        )
         parser_config = parser.resolve_config(
             db,
             current_date=_current_date_directive(),
@@ -1200,7 +1209,7 @@ def _run_stages(  # noqa: PLR0915
     profile_words = memory_mod.profile_block(state_in.profile)
     pending_options = _pending_option_labels(state_in.pending)
     user_block = parser.build_user_block(
-        previous_response=None,
+        previous_response=previous_reply,
         latest_user_message=latest_user_message,
         pending_kind=state_in.pending.kind if state_in.pending is not None else None,
         pending_options=pending_options,
@@ -1265,7 +1274,7 @@ def _run_stages(  # noqa: PLR0915
             recalled = memory_mod.recall(contact_respond_id, verdict, db)
         if recalled:
             user_block = parser.build_user_block(
-                previous_response=None,
+                previous_response=previous_reply,
                 latest_user_message=latest_user_message,
                 pending_kind=state_in.pending.kind if state_in.pending is not None else None,
                 pending_options=pending_options,

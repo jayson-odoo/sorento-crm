@@ -161,6 +161,57 @@ def _profile_rows(db: Session, contact_respond_id: str, space_id: str | None) ->
     )
 
 
+# `console` is its own world: a console turn replays against the operator's own thread
+# and must never read the customer's live reply as its "previous response" (nor the other
+# way round). Every other ingress - webhook, poller, retry - is the same live stream.
+_CONSOLE_INGRESS = "console"
+
+
+def previous_reply_text(
+    db: Session, *, contact_respond_id: str, ingress: str | None, is_test: bool
+) -> str | None:
+    """The text this contact was last answered with, for the parser's `Previous response:`.
+
+    Read from the newest COMPLETED `chatbot.turns` row rather than from the session,
+    because AC-1504 fixes `session_vars` at exactly five keys and a previous reply is not
+    one of them. The turn table already holds every answer the bot has given (D15 needs it
+    to replay a duplicate delivery), so this is a read of something already written, not a
+    new thing to store.
+
+    Scoped three ways, each because crossing it would answer from the wrong conversation:
+    the same contact; the same WORLD (`is_test`, so a test turn never reads a live reply);
+    and the same side of the console boundary (a console turn replays against the
+    operator's own thread). A dry run reads it too - it has to, or the console's second
+    turn parses as though the first never happened.
+
+    `status == "done"` is what "completed" means here, and it also excludes the row for
+    the turn currently running, which is still `processing` when this is called.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
+    try:
+        query = db.query(ChatbotTurn.response).filter(
+            ChatbotTurn.contact_respond_id == str(contact_respond_id),
+            ChatbotTurn.status == "done",
+            ChatbotTurn.is_test.is_(bool(is_test)),
+        )
+        if str(ingress or "") == _CONSOLE_INGRESS:
+            query = query.filter(ChatbotTurn.ingress == _CONSOLE_INGRESS)
+        else:
+            query = query.filter(ChatbotTurn.ingress != _CONSOLE_INGRESS)
+        row = query.order_by(ChatbotTurn.created_at.desc()).first()
+    except Exception:  # noqa: BLE001 - no previous reply is a blank line, never a failure
+        logger.warning(
+            "chatbot: previous reply lookup failed for %s", contact_respond_id, exc_info=True
+        )
+        return None
+    if row is None:
+        return None
+    reply = (row[0] or {}).get("reply") if isinstance(row[0], dict) else None
+    text_value = reply.get("text") if isinstance(reply, dict) else None
+    return str(text_value) if text_value else None
+
+
 def load_profile(
     db: Session, contact_respond_id: str, *, space_id: str | None = None
 ) -> tuple[Profile, bool]:
