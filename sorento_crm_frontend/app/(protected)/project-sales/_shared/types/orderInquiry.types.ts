@@ -135,6 +135,23 @@ export interface OrderInquiryLink {
    * link, so the PO column marks it "via SPO" (R-E). Absent or false otherwise.
    */
   derived_po?: boolean;
+  /**
+   * The document this link points at is FULLY received (`PLAN-oi-replan-received-links.md`
+   * S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
+   * 'closed'`, or an SPO allocation that fails `open_incoming_clauses()`. Goods that have
+   * landed are location stock, not a promise still in transit - the PO/SPO chip and the
+   * backing-documents dialog mark it so purchasing reads it as history rather than as
+   * something still to chase. Absent or false on an open document.
+   */
+  received?: boolean;
+  /**
+   * How much of THIS link's document line has been received: `PurchaseOrderLine.
+   * qty_received` for a `po`-kind link, `SPOAllocation.quantity_received` for `spo`.
+   * Present on every link regardless of `received` - a partly received document states
+   * the figure too, even though `received` itself only flips true once the WHOLE line is
+   * done. Null or absent when the book states no receipt yet.
+   */
+  received_qty?: string | null;
 }
 
 /**
@@ -333,6 +350,17 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   cited_document?: string | null;
   /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
   has_link_candidate?: boolean;
+  /**
+   * The row's linked document turned out to be FULLY RECEIVED by the time a replan met it
+   * (`PLAN-oi-replan-received-links.md`, S3): goods already shipped to other orders are
+   * location stock, not this line's any more, so settle-in-place did not carry the row -
+   * it kept its old `qty`/`delivery_date`/`links` as history and a fresh ORDER row was
+   * raised for the full need instead. The Qty cell marks it and the Buy / Purchased /
+   * Incoming card totals ignore it (AC-RL-04, AC-RL-16) - it is not owed anywhere any
+   * more. Absent or false on every row today (0 rows on prod as of 16 Sep 2026; this
+   * plan is the first writer of the column).
+   */
+  redirected_to_pool?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */

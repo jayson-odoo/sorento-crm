@@ -112,7 +112,10 @@ export interface BoardChangeAnnotation {
 }
 
 /**
- * `4 Sep` - a date in a sentence a person reads, the same shape the engine's own labels use.
+ * `4 Sep 2026` - a date in a sentence a person reads, the same shape the engine's own labels
+ * use, WITH the year (PLAN-oi-replan-received-links.md AC-RL-01, owner ruling 16 Sep 2026): a
+ * bare `1 Jun -> 1 Mar` reads as an advance within the same year when the book actually moved
+ * a line from 2026 into 2027, which is exactly what SO314593 did.
  *
  * The months are named here rather than left to `Intl`, whose `en-GB` short form spells
  * September "Sept": the server composes "Buy 134 for 15 Mar" with this vocabulary, and a
@@ -128,7 +131,7 @@ export function shortDay(value: string | null | undefined): string {
   if (!value) return '';
   const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return '';
-  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]}`;
+  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
 /**

@@ -471,6 +471,33 @@ export async function unplaceAllOrderInquiryRows(
  * `order_inquiry_spo_not_order_back` - every linkable verb, not only ORDER BACK, per the
  * 27 Aug widening).
  *
+ * `PLAN-oi-replan-received-links.md`, S1/S3 (Phase 1, mocked - no backend yet):
+ *
+ *   - Every link in `links[]` gains two fields, both read off the document line
+ *     `links_for_rows` already joins (`PurchaseOrderLine.qty_received` /
+ *     `SPOAllocation.quantity_received`, plus `open_incoming_clauses()` for an SPO):
+ *       received      : boolean  - the document is FULLY received (PO: `qty_received >=
+ *                        qty_ordered` or `line_status = 'closed'`; SPO: fails
+ *                        `open_incoming_clauses()`). Absent/false on an open document.
+ *       received_qty  : string | null - how much of THIS link's line has been received,
+ *                        stated even on a link that is only PARTLY received.
+ *     The PO/SPO chip (`DocumentsCell`) reads the first entry's `received` for a muted
+ *     `received` mark beside the number, and its `title` becomes `<document> - received
+ *     <received_qty> of <qty>`; the backing-documents dialog prints `received
+ *     <received_qty>` beside every received link's own location/quantity line.
+ *
+ *   - Every row in `OrderInquiryWorklistRow` gains:
+ *       redirected_to_pool : boolean - true once a replan met a row whose only coverage
+ *                        was a fully received document and could not carry it forward
+ *                        (S2, backend). The row keeps its old `qty`/`delivery_date`/
+ *                        `links` as history; a fresh, unlinked ORDER row carries the new
+ *                        need instead. The Qty cell marks a redirected row with a muted
+ *                        `redirected` mark, and the Buy / Purchased / Incoming card
+ *                        totals (`summary.kinds`) ignore it entirely - it is not owed
+ *                        anywhere any more, whatever its `state` or `links` still say.
+ *     Absent or false on every row today - 0 rows carry it on the 15 Sep prod copy; S2 is
+ *     its first writer.
+ *
  * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
  * no project at all. Permission is `projects.projects.view`, the same read the module
  * already grants.

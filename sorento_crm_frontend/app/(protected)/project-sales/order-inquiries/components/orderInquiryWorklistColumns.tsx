@@ -82,6 +82,15 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
 interface DocumentEntry {
   document: string;
   via: 'po' | 'spo' | null;
+  /**
+   * The FIRST link naming this document is fully received (S1,
+   * `PLAN-oi-replan-received-links.md`, AC-RL-02) - goods that have landed, not a promise
+   * still in transit. `receivedQty`/`qty` back the chip's own title; both are the LINK's
+   * own figures, never the row's.
+   */
+  received: boolean;
+  receivedQty: string | null;
+  qty: string | null;
 }
 
 function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
@@ -103,7 +112,13 @@ function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): Document
     const document = (named ?? '').trim();
     if (!document || seen.has(document)) continue;
     seen.add(document);
-    entries.push({ document, via });
+    entries.push({
+      document,
+      via,
+      received: Boolean(link.received),
+      receivedQty: link.received_qty ?? null,
+      qty: link.qty ?? null,
+    });
   }
   return entries;
 }
@@ -141,13 +156,18 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
     event.stopPropagation();
     setOpen(true);
   };
+  // AC-RL-02: a received document's title states the receipt rather than just the
+  // number - goods that have landed read differently from a promise still in transit.
+  const title = first.received
+    ? `${first.document} - received ${formatInquiryQty(first.receivedQty ?? '0')} of ${formatInquiryQty(first.qty ?? '0')}`
+    : first.document;
   return (
     <span className="flex min-w-0 items-center gap-1">
       <DraftMark row={row} />
       <button
         type="button"
         data-testid={triggerId}
-        title={first.document}
+        title={title}
         aria-label={`Show documents backing ${what}`}
         className="block min-w-0 truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={open_}
@@ -166,6 +186,20 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
           className="shrink-0 text-2xs text-muted-foreground"
         >
           {first.via === 'po' ? 'via PO' : 'via SPO'}
+        </span>
+      ) : null}
+      {/* S1, AC-RL-02: the document is fully received - location stock now, not a
+          promise still in transit. Same muted style as the "via" mark beside it. */}
+      {first.received ? (
+        <span
+          data-testid={
+            kind === 'spo'
+              ? `backing-documents-received-spo-${row.id}`
+              : `backing-documents-received-${row.id}`
+          }
+          className="shrink-0 text-2xs text-muted-foreground"
+        >
+          received
         </span>
       ) : null}
       {rest.length ? (
@@ -304,6 +338,27 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
+ * The Qty cell's `redirected` mark (S3, `PLAN-oi-replan-received-links.md`, AC-RL-04):
+ * a row a replan could not carry forward because its only coverage had already landed
+ * elsewhere. Its `qty` still reads as history - the mark is what tells purchasing not
+ * to act on it, since the fresh Buy sits on a row of its own with no mark at all.
+ */
+function RedirectedMark({ row }: { row: OrderInquiryWorklistRow }) {
+  if (!row.redirected_to_pool) return null;
+  const label = 'Redirected: this document already went to other orders, kept here as history';
+  return (
+    <span
+      data-testid={`redirected-mark-${row.id}`}
+      title={label}
+      aria-label={label}
+      className="shrink-0 text-2xs text-muted-foreground"
+    >
+      redirected
+    </span>
+  );
+}
+
+/**
  * The worklist's columns, in the spreadsheet's own order (`JAN - DEC 2026 ORDER.xlsx`).
  *
  * Shared between the main list and the calendar's day drilldown, so a person reading
@@ -420,6 +475,7 @@ export function useOrderInquiryWorklistColumns({
         cell: ({ row }) => (
           <span className="flex min-w-0 items-center gap-1 tabular-nums">
             {formatInquiryQty(row.original.qty)}
+            <RedirectedMark row={row.original} />
             <QtyAnnotationButton row={row.original} />
           </span>
         ),
