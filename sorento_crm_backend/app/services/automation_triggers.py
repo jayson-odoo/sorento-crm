@@ -500,6 +500,40 @@ register(
 )
 
 
+def _trigger_order_inquiry_handover(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `ProjectOrderInquiryService._record_handover`
+    (`PLAN-scm-oi-handover-email.md` S0-S3), queued mid-transaction and drained
+    post-commit by `_fire_pending_handover` - the same shape
+    `_trigger_order_inquiry_changed_with_links` above uses. One dispatch per commit,
+    covering every row a CS write raised, settled or cancelled in it.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_handover",
+        label="Order inquiry handover to purchasing",
+        description=(
+            "Fires once per commit that raises, settles or cancels order inquiry rows "
+            "(event-driven), shaped like the manual handover mail CS sends purchasing."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_handover,
+)
+
+
 def _trigger_sponsorship_form_approved(
     db: Session,
     config: dict[str, Any],

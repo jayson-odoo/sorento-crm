@@ -386,6 +386,8 @@ class AutomationService:
                 "user_ids": [],
                 "role_ids": [],
                 "include_promotion_owner": False,
+                "include_actor": False,
+                "one_email": False,
                 "extra_emails": [],
             }
         if hasattr(config, "model_dump"):
@@ -399,6 +401,14 @@ class AutomationService:
             "role_ids": [str(x) for x in (data.get("role_ids") or [])],
             "include_promotion_owner": bool(data.get("include_promotion_owner", False)),
             "include_assigned_cs_pic": bool(data.get("include_assigned_cs_pic", False)),
+            # Cc the person who raised the triggering event (AC-H11, PLAN-scm-oi-
+            # handover-email.md section 3.5). Reusable: any trigger context that
+            # puts `actor` on the context earns this checkbox for free.
+            "include_actor": bool(data.get("include_actor", False)),
+            # One email for the whole match, every resolved address on it (AC-H26) -
+            # `_send_per_match`'s opt-in; off by default so a promotion/certificate
+            # template that personalises `{{ recipient.name }}` per copy is unaffected.
+            "one_email": bool(data.get("one_email", False)),
             "extra_emails": [str(x).strip() for x in (data.get("extra_emails") or []) if str(x).strip()],
         }
 
@@ -599,9 +609,17 @@ class AutomationService:
         template_service: EmailTemplateService,
         owner_user_id: Optional[str],
     ) -> tuple[int, dict[str, Any]]:
-        """One email per (match × recipient) - the original behavior."""
+        """One email per (match × recipient) - the original behavior, UNLESS
+        ``recipient_config.one_email`` (AC-H26): then one email for the whole match,
+        every resolved address on it, the actor's own address moved LAST so
+        ``notification_tasks.py``'s To/Cc split leaves them on Cc rather than
+        displacing the real recipient from To. Opt-in only - the promotion/certificate
+        templates this same method sends for (when their own ``group_matches`` is off)
+        personalise ``{{ recipient.name }}`` per copy, so the default stays untouched.
+        """
         attempted = 0
         per_match: list[dict[str, Any]] = []
+        one_email = bool(dict(automation.recipient_config or {}).get("one_email"))
         for match in matches:
             recipients = automation_recipients.resolve_recipients(
                 self.db,
@@ -609,6 +627,55 @@ class AutomationService:
                 promotion_context=match.context,
                 source_id=match.source_id,
             )
+            if one_email and recipients:
+                actor_email = (
+                    ((match.context.get("actor") or {}).get("email") or "").strip().lower()
+                )
+                ordered = recipients
+                if actor_email:
+                    non_actor = [
+                        r for r in recipients if r["email"].strip().lower() != actor_email
+                    ]
+                    actor_entries = [
+                        r for r in recipients if r["email"].strip().lower() == actor_email
+                    ]
+                    ordered = non_actor + actor_entries
+                primary = ordered[0]
+                ctx = dict(match.context)
+                ctx["recipient"] = {
+                    "name": primary.get("name") or primary["email"],
+                    "email": primary["email"],
+                }
+                rendered = template_service.render(template, ctx)
+                self._enqueue_email(
+                    owner_user_id=owner_user_id,
+                    recipient=primary,
+                    subject=rendered["subject"],
+                    body_html=rendered["body_html"],
+                    body_text=rendered["body_text"],
+                    metadata={
+                        "automation_id": str(automation.id),
+                        "automation_run_id": str(run.id),
+                        "promotion_id": match.source_id,
+                        "source_kind": match.source_kind,
+                        "source_id": match.source_id,
+                        "trigger_type": str(automation.trigger_type),
+                    },
+                    recipient_emails=[r["email"] for r in ordered],
+                )
+                attempted += len(ordered)
+                per_match.append(
+                    {
+                        "source_kind": match.source_kind,
+                        "source_id": match.source_id,
+                        "recipients": [
+                            {"email": r["email"], "subject": rendered["subject"]}
+                            for r in ordered
+                        ],
+                    }
+                )
+                continue
+
             rendered_per_recipient: list[dict[str, Any]] = []
             for recipient in recipients:
                 ctx = dict(match.context)
@@ -754,12 +821,19 @@ class AutomationService:
         body_html: str,
         body_text: str,
         metadata: dict[str, Any],
+        recipient_emails: Optional[list[str]] = None,
     ) -> str:
         """Insert one Notification + email NotificationDelivery row.
 
         Reuses the existing ``notification_deliveries`` infra so the queued send
         appears in System Management → Outgoing Mails. The actual SMTP send is
         handled later by ``send_notification_deliveries`` against pending rows.
+
+        ``recipient_emails`` defaults to the single ``recipient`` (the original, one
+        email per recipient shape) - `_send_per_match`'s ``one_email`` branch (AC-H26)
+        is the one caller that passes the WHOLE resolved list, so
+        ``notification_tasks.py``'s own To/Cc split (first address To, the rest Cc)
+        puts everyone on one thread instead of a separate copy each.
         """
         if owner_user_id is None:
             raise AppException(
@@ -773,7 +847,7 @@ class AutomationService:
             body=body_text,
             data={
                 "single_email_to_all": True,
-                "recipient_emails": [recipient["email"]],
+                "recipient_emails": recipient_emails or [recipient["email"]],
                 "recipient_name": recipient.get("name"),
                 "body_html": body_html,
                 "body_text": body_text,

@@ -1,7 +1,7 @@
 """`scm.committed_v` drops a redirected row's own quantity and links
 
 Revision ID: 512_committed_v_redirect_exclude
-Revises: ptag_0012_seg_forms
+Revises: oihe_0001_seed_handover
 Create Date: 2026-09-16 00:00:00.000000
 
 `PLAN-oi-replan-received-links.md` S2/S3, AC-RL-15: a row a replan redirected because its
@@ -27,7 +27,7 @@ order, same names, only the two project legs' WHERE clauses gain one condition e
 from alembic import op
 
 revision = "512_committed_v_redirect_exclude"
-down_revision = "ptag_0012_seg_forms"
+down_revision = "oihe_0001_seed_handover"
 branch_labels = None
 depends_on = "ptag_0011_line_promo"
 
