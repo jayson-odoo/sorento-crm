@@ -513,7 +513,16 @@ def apply(
     )
 
     asks = verdict.get("asks") or []
-    if asks:
+    if domain_locked and focus.domains:
+        # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
+        # put the domain the question was ASKED under onto the focus and `_focus_rules`
+        # left it alone, and this is the second half of that: re-reading `asks` or
+        # `domain_hint` here would have undone it, because a bare "3" is parsed against
+        # the whole message history and its verdict still carries the PREVIOUS turn's
+        # domain hint. The answer belongs to the roster it was picked off.
+        domains = list(focus.domains)
+        trace.rules_fired.append("domain_locked_by_pick")
+    elif asks:
         domains = [a["domain"] for a in asks if a.get("domain")]
     elif verdict.get("domain_hint"):
         domains = [verdict["domain_hint"]]
