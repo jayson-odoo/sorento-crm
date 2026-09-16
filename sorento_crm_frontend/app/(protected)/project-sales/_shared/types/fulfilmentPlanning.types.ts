@@ -1768,7 +1768,10 @@ export interface BoardCommitPreview {
 }
 
 /**
- * `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing.
+ * `GET /project-sales/fulfilment-planning/board`. Claims nothing - no stock is reserved and
+ * no decision is written by opening it - but it does mirror a core line that arrived after
+ * adoption onto the planning record for an adopted order, so the line carries a
+ * `project_line_id` and is confirmable in the same response (#969).
  *
  * The four `*_count` totals are SELECTION-scoped: counted over every contributing line before
  * any window is applied, so they are identical on day, week and month and do not move when the
