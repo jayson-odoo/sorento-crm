@@ -5,15 +5,10 @@ per list row would add up to 50 x 60 ms to every page load, so the count is
 cached on the request and refreshed only for rows a cheap query says were
 touched. This migration is the cache columns.
 
-Written test-FIRST (PRINCIPLES.md Phase 2): the migration file does not exist
-yet, so importing it below fails at collection with a `FileNotFoundError` -
-the same single-file RED `test_migration_ptag_0011_line_promotion.py` and
-`test_migration_ptag_0009_combos_tags.py` both start from.
-
-Unlike ptag_0011's own test, `blank_session()`'s `create_all` here still
-builds the PRE-migration model (the coder's D slice has not landed), so no
-"rewind" step is needed - the scratch schema already looks like production
-looked before this revision.
+`blank_session()`'s `create_all` builds the POST-migration model (the coder's
+D slice has landed), so the pre-migration state has to be rebuilt by hand -
+exactly like `test_migration_ptag_0011_line_promotion.py`'s own
+`_rewind_to_pre_migration`: drop what the migration adds before running it.
 """
 from __future__ import annotations
 
@@ -69,6 +64,24 @@ def db():
         yield session
 
 
+def _rewind_to_pre_migration(db) -> None:
+    """Put the scratch schema back to how production looks before ptag_0012.
+
+    `create_all` gives us the POST state - `price_tag_requests` already
+    carries `data_changed_tag_count`/`data_checked_at` - so the migration's
+    own DDL is put back under test the same way ptag_0011's test does: drop
+    what the migration adds.
+    """
+    db.execute(
+        text(
+            "ALTER TABLE price_tag_requests "
+            "DROP COLUMN IF EXISTS data_changed_tag_count, "
+            "DROP COLUMN IF EXISTS data_checked_at"
+        )
+    )
+    db.flush()
+
+
 def _uid() -> str:
     return str(uuid.uuid4())
 
@@ -100,6 +113,7 @@ def _request(db) -> str:
 
 
 def test_upgrade_adds_the_two_columns_with_the_right_defaults(db):
+    _rewind_to_pre_migration(db)
     request_id = _request(db)
 
     _run_upgrade(db)
@@ -133,6 +147,7 @@ def test_single_alembic_head_still_holds_after_this_revision(db):
 
 
 def test_downgrade_drops_the_two_columns(db):
+    _rewind_to_pre_migration(db)
     _request(db)
     _run_upgrade(db)
 
