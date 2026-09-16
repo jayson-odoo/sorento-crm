@@ -42,6 +42,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
+import { useIsMobile } from '@/hooks/use-mobile';
 import { FormSection } from './FormSection';
 import { RevisionHistory } from './RevisionHistory';
 import {
@@ -275,6 +276,57 @@ function formatRM(value: number | null | undefined): string {
   return `RM ${value.toLocaleString('en-MY')}`;
 }
 
+/** AC-S1-10: a submitted line's List price, read straight off what the
+ *  server resolved - shared between the desktop `<td>` column (no label -
+ *  the header already names it) and the mobile stack under the Item cell
+ *  (label kept there, no header to read it off). Never both at once, see
+ *  `isMobile`. */
+function viewListPriceCell(line: PriceTagRequestLine, withLabel: boolean) {
+  return (
+    <div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          List price
+        </div>
+      )}
+      <div className="text-sm font-medium whitespace-nowrap">
+        {formatRM(line.list_price)}
+      </div>
+    </div>
+  );
+}
+
+function viewPromotionCell(line: PriceTagRequestLine, withLabel: boolean) {
+  return (
+    <div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Promotion
+        </div>
+      )}
+      <div className="text-sm font-medium">
+        {line.promotion_name ??
+          (line.sell_price_basis === 'manual' ? 'Manual price' : '-')}
+      </div>
+    </div>
+  );
+}
+
+function viewSellingPriceCell(line: PriceTagRequestLine, withLabel: boolean) {
+  return (
+    <div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Selling price
+        </div>
+      )}
+      <div className="text-sm font-medium whitespace-nowrap">
+        {formatRM(line.sell_price)}
+      </div>
+    </div>
+  );
+}
+
 /** AC-S1-8: "the cell's title reads which parts are at list" - the codes a
  *  promotion did not cover, resolved from the line's own part rows (plus the
  *  host itself, which a title never needs to name since the cell it sits in
@@ -460,6 +512,11 @@ interface Props {
 export function PriceTagRequestForm({ requestId, slug }: Props) {
   const router = useRouter();
   const isNew = !requestId;
+  // Owner ruling after #948: List price / Promotion / Selling price are real
+  // table columns on desktop, not a `colSpan` sub-row. Below the existing
+  // sidebar breakpoint they still stack under the Item cell instead, reusing
+  // the app's own mobile check rather than a bespoke `md:` media query.
+  const isMobile = useIsMobile();
 
   // ---- Data fetching state ----
   const [loading, setLoading] = useState(!isNew);
@@ -1938,7 +1995,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
             />
           </div>
 
-          {/* Lines: same table the edit form uses, cells read-only. */}
+          {/* Lines: same table the edit form uses, cells read-only. Owner
+              ruling after #948: List price / Promotion / Selling price are
+              real table columns on desktop here too, not a `colSpan`
+              sub-row - same `isMobile`-exclusive stack under the Item cell
+              below the mobile breakpoint as the editable table uses. */}
           <div className="space-y-1.5">
             <Label>Lines ({request.lines.length})</Label>
             {request.lines.length === 0 ? (
@@ -1946,145 +2007,192 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 No lines.
               </p>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[520px] table-fixed text-sm">
-                  <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                    <tr>
-                      <th className="w-10 px-2 py-2 text-left">#</th>
-                      <th className="w-[45%] px-2 py-2 text-left">Item</th>
-                      <th className="w-[15%] px-2 py-2 text-left">
-                        Qty (tags)
-                      </th>
-                      <th className="w-[40%] px-2 py-2 text-left">Remarks</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {request.lines.map((line, index) => (
-                      <Fragment key={line.id}>
-                        <tr className="border-t border-border align-top">
-                          <td className="px-2 py-2 text-muted-foreground">
-                            {index + 1}
-                          </td>
-                          <td className="px-2 py-2">
-                            <div
-                              className="font-medium truncate"
-                              title={line.name}
-                            >
-                              {line.name}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {line.line_type === 'product' ? 'Product' : 'Set'}
-                              {line.code ? ` - ${line.code}` : ''}
-                            </div>
-                          </td>
-                          <td className="px-2 py-2">{line.quantity}</td>
-                          <td
-                            className="px-2 py-2 text-muted-foreground truncate"
-                            title={line.remarks ?? undefined}
+              (() => {
+                const viewSelling = (request.price_mode ?? 'list') === 'selling';
+                const viewSpan = isMobile ? 4 : viewSelling ? 7 : 5;
+                return (
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[520px] table-fixed text-sm">
+                      <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+                        <tr>
+                          <th className="w-10 px-2 py-2 text-left">#</th>
+                          <th
+                            className={
+                              // Owner ruling on review: matches the edit
+                              // table's Item width per mode exactly, so
+                              // View and Edit share the layout - Item stays
+                              // the widest column in every mode.
+                              isMobile
+                                ? 'w-[46%] px-2 py-2 text-left'
+                                : viewSelling
+                                  ? 'w-[31%] px-2 py-2 text-left'
+                                  : 'w-[43%] px-2 py-2 text-left'
+                            }
                           >
-                            {line.remarks || '-'}
-                          </td>
+                            Item
+                          </th>
+                          <th
+                            className={
+                              isMobile
+                                ? 'w-[12%] px-2 py-2 text-left'
+                                : viewSelling
+                                  ? 'w-[9%] px-2 py-2 text-left'
+                                  : 'w-[12%] px-2 py-2 text-left'
+                            }
+                          >
+                            Qty (tags)
+                          </th>
+                          {!isMobile && (
+                            <th
+                              className={
+                                viewSelling
+                                  ? 'w-[13%] px-2 py-2 text-left'
+                                  : 'w-[14%] px-2 py-2 text-left'
+                              }
+                            >
+                              List price
+                            </th>
+                          )}
+                          {!isMobile && viewSelling && (
+                            <>
+                              <th className="w-[14%] px-2 py-2 text-left">
+                                Promotion
+                              </th>
+                              <th className="w-[12%] px-2 py-2 text-left">
+                                Selling price
+                              </th>
+                            </>
+                          )}
+                          <th
+                            className={
+                              // No trailing action column here (nothing to
+                              // delete on a read-only line), so Remarks
+                              // absorbs the edit table's action-column share
+                              // too.
+                              isMobile
+                                ? 'w-[42%] px-2 py-2 text-left'
+                                : viewSelling
+                                  ? 'w-[21%] px-2 py-2 text-left'
+                                  : 'w-[31%] px-2 py-2 text-left'
+                            }
+                          >
+                            Remarks
+                          </th>
                         </tr>
-                        {/* AC-S1-10: List price always; Promotion + Selling
-                            price in Selling mode - read straight off the
-                            LINE the server already resolved (F2, browser
-                            finding: this used to recompute client-side
-                            through `lookupLinePricing` keyed only on
-                            `promotion_id`, so a line saved with a manual
-                            price and no promotion showed the recomputed
-                            list total instead of the manual figure the
-                            salesperson actually typed and the server
-                            actually stored). */}
-                        {line.line_type === 'product' && line.product_id && (
-                          <tr className="align-top">
-                            <td colSpan={4} className="px-2 pb-2 pl-9">
-                              <div className="flex flex-wrap items-center gap-4 border-l-2 border-border pl-3">
-                                <div>
-                                  <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                                    List price
+                      </thead>
+                      <tbody>
+                        {request.lines.map((line, index) => {
+                          const hasPricing =
+                            line.line_type === 'product' && !!line.product_id;
+                          return (
+                            <Fragment key={line.id}>
+                              <tr className="border-t border-border align-top">
+                                <td className="px-2 py-2 text-muted-foreground">
+                                  {index + 1}
+                                </td>
+                                <td className="px-2 py-2">
+                                  <div
+                                    className="font-medium truncate"
+                                    title={line.name}
+                                  >
+                                    {line.name}
                                   </div>
-                                  <div className="text-sm font-medium">
-                                    {formatRM(line.list_price)}
+                                  <div className="text-xs text-muted-foreground">
+                                    {line.line_type === 'product' ? 'Product' : 'Set'}
+                                    {line.code ? ` - ${line.code}` : ''}
                                   </div>
-                                </div>
-                                {(request.price_mode ?? 'list') === 'selling' && (
-                                  <>
-                                    <div>
-                                      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                                        Promotion
-                                      </div>
-                                      <div className="text-sm font-medium">
-                                        {line.promotion_name ??
-                                          (line.sell_price_basis === 'manual'
-                                            ? 'Manual price'
-                                            : '-')}
-                                      </div>
-                                    </div>
-                                    <div>
-                                      <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                                        Selling price
-                                      </div>
-                                      <div className="text-sm font-medium">
-                                        {formatRM(line.sell_price)}
-                                      </div>
-                                    </div>
-                                  </>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        )}
-                        {/* The package under the line, exactly as it was asked
-                            for (AC-S2-8): the parts that go on the tag, and each
-                            group still left open. */}
-                        {(line.parts ?? []).map((part) => (
-                          <tr key={part.id} className="align-top">
-                            <td colSpan={4} className="px-2 pb-2 pl-9">
-                              <div className="border-l-2 border-border pl-3 text-sm">
-                                {part.product_id ? (
-                                  <>
-                                    <span
-                                      className="truncate"
-                                      title={part.name ?? undefined}
+                                  {/* AC-S1-10/AC-S1-11: below the app's 992px
+                                      mobile breakpoint (useIsMobile), the same
+                                      fields stack here instead of living in
+                                      their own columns. */}
+                                  {isMobile && hasPricing && (
+                                    <div
+                                      data-testid="line-pricing-stack"
+                                      className="mt-2 flex flex-wrap items-center gap-4 border-l-2 border-border pl-3"
                                     >
-                                      {part.name || part.code}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">
-                                      {part.code ? ` - ${part.code}` : ''}
-                                      {part.role ? ` (${part.role})` : ''}
-                                    </span>
-                                  </>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">
-                                    {part.role ? `${part.role}: ` : ''}
-                                    {part.candidates
-                                      .map((candidate) => candidate.code)
-                                      .join(' / ')}
-                                  </span>
+                                      {viewListPriceCell(line, true)}
+                                      {viewSelling && viewPromotionCell(line, true)}
+                                      {viewSelling && viewSellingPriceCell(line, true)}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-2 py-2">{line.quantity}</td>
+                                {!isMobile && (
+                                  <td className="px-2 py-2">
+                                    {hasPricing ? viewListPriceCell(line, false) : null}
+                                  </td>
                                 )}
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                        {line.package_warning ? (
-                          <tr>
-                            <td colSpan={4} className="px-2 pb-2 pl-9">
-                              <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
-                                <Badge variant="warning" appearance="light" size="sm">
-                                  Package warning
-                                </Badge>
-                                <span className="text-xs text-muted-foreground">
-                                  {line.package_warning}
-                                </span>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                                {!isMobile && viewSelling && (
+                                  <>
+                                    <td className="px-2 py-2">
+                                      {hasPricing ? viewPromotionCell(line, false) : null}
+                                    </td>
+                                    <td className="px-2 py-2">
+                                      {hasPricing ? viewSellingPriceCell(line, false) : null}
+                                    </td>
+                                  </>
+                                )}
+                                <td
+                                  className="px-2 py-2 text-muted-foreground truncate"
+                                  title={line.remarks ?? undefined}
+                                >
+                                  {line.remarks || '-'}
+                                </td>
+                              </tr>
+                              {/* The package under the line, exactly as it was asked
+                                  for (AC-S2-8): the parts that go on the tag, and each
+                                  group still left open. */}
+                              {(line.parts ?? []).map((part) => (
+                                <tr key={part.id} className="align-top">
+                                  <td colSpan={viewSpan} className="px-2 pb-2 pl-9">
+                                    <div className="border-l-2 border-border pl-3 text-sm">
+                                      {part.product_id ? (
+                                        <>
+                                          <span
+                                            className="truncate"
+                                            title={part.name ?? undefined}
+                                          >
+                                            {part.name || part.code}
+                                          </span>
+                                          <span className="text-xs text-muted-foreground">
+                                            {part.code ? ` - ${part.code}` : ''}
+                                            {part.role ? ` (${part.role})` : ''}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <span className="text-xs text-muted-foreground">
+                                          {part.role ? `${part.role}: ` : ''}
+                                          {part.candidates
+                                            .map((candidate) => candidate.code)
+                                            .join(' / ')}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                              {line.package_warning ? (
+                                <tr>
+                                  <td colSpan={viewSpan} className="px-2 pb-2 pl-9">
+                                    <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
+                                      <Badge variant="warning" appearance="light" size="sm">
+                                        Package warning
+                                      </Badge>
+                                      <span className="text-xs text-muted-foreground">
+                                        {line.package_warning}
+                                      </span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()
             )}
           </div>
         </FormSection>
@@ -2457,10 +2565,63 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                 <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="w-7 px-2 py-2 text-left">#</th>
-                    <th className="w-[35%] px-2 py-2 text-left">Item</th>
-                    <th className="w-[12%] px-2 py-2 text-left">Qty (tags)</th>
-                    <th className="w-[33%] px-2 py-2 text-left">Remarks</th>
-                    <th className="w-[20%] px-2 py-2"></th>
+                    <th
+                      className={
+                        isMobile
+                          ? 'w-[46%] px-2 py-2 text-left'
+                          : priceMode === 'selling'
+                            ? 'w-[31%] px-2 py-2 text-left'
+                            : 'w-[43%] px-2 py-2 text-left'
+                      }
+                    >
+                      Item
+                    </th>
+                    <th
+                      className={
+                        // The min-width floor belongs on the header cell, not
+                        // the input: `table-fixed` sizes every column from the
+                        // FIRST row (this one), so a min-width on the `<td>`'s
+                        // own Input is never honoured once the column is
+                        // narrower than it.
+                        isMobile
+                          ? 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
+                          : priceMode === 'selling'
+                            ? 'w-[9%] min-w-[3.5rem] px-2 py-2 text-left'
+                            : 'w-[12%] min-w-[3.5rem] px-2 py-2 text-left'
+                      }
+                    >
+                      Qty (tags)
+                    </th>
+                    {!isMobile && (
+                      <th
+                        className={
+                          priceMode === 'selling'
+                            ? 'w-[13%] px-2 py-2 text-left'
+                            : 'w-[14%] px-2 py-2 text-left'
+                        }
+                      >
+                        List price
+                      </th>
+                    )}
+                    {!isMobile && priceMode === 'selling' && (
+                      <>
+                        <th className="w-[14%] px-2 py-2 text-left">Promotion</th>
+                        <th className="w-[12%] px-2 py-2 text-left">Selling price</th>
+                      </>
+                    )}
+                    <th
+                      className={
+                        isMobile
+                          ? 'w-[35%] px-2 py-2 text-left'
+                          : priceMode === 'selling'
+                            ? 'w-[14%] px-2 py-2 text-left'
+                            : 'w-[24%] px-2 py-2 text-left'
+                      }
+                    >
+                      Remarks
+                    </th>
+                    {/* One 28px icon, not a fifth of the row. */}
+                    <th className="w-[7%] px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2470,6 +2631,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                       line={line}
                       index={index}
                       priceMode={priceMode}
+                      isMobile={isMobile}
                       pricing={linePricing[line.key] ?? null}
                       fetchItemOptions={fetchItemOptions}
                       fetchPartOptions={fetchPartOptions}
@@ -2727,6 +2889,9 @@ interface LineRowProps {
   line: DraftLine;
   index: number;
   priceMode: PriceMode;
+  /** Below the mobile breakpoint, List price/Promotion/Selling price stack
+   *  under the Item cell instead of living in their own columns (AC-S1-11). */
+  isMobile: boolean;
   /** S1/S2: this line's latest `lookupLinePricing` answer, or null before
    *  the first one lands (no product yet, or still in flight). */
   pricing: LinePricingResult | null;
@@ -2768,6 +2933,7 @@ function PartRow({
   part,
   pricing,
   priceMode,
+  colSpan,
   onResolvePart,
   onRemovePart,
 }: {
@@ -2776,6 +2942,9 @@ function PartRow({
   part: DraftPart;
   pricing: LinePricingResult | null;
   priceMode: PriceMode;
+  /** Matches however many real columns the line's own row currently has
+   *  (isMobile/priceMode dependent - see `subRowSpan` in `LineRow`). */
+  colSpan: number;
   onResolvePart: (key: string, partKey: string, productId: string) => void;
   onRemovePart: (key: string, partKey: string) => void;
 }) {
@@ -2787,7 +2956,7 @@ function PartRow({
   const label = part.role || part.code || part.name;
   return (
     <tr className="align-top">
-      <td colSpan={5} className="px-2 pb-2 pl-9">
+      <td colSpan={colSpan} className="px-2 pb-2 pl-9">
         <div className="flex flex-col gap-1.5 border-l-2 border-border pl-3 sm:flex-row sm:items-start sm:gap-2">
           <div className="min-w-0 flex-1">
             {choosable ? (
@@ -2847,6 +3016,7 @@ function LineRow({
   line,
   index,
   priceMode,
+  isMobile,
   pricing,
   fetchItemOptions,
   fetchPartOptions,
@@ -2895,6 +3065,98 @@ function LineRow({
     .reverse()
     .find((part) => !part.product_id && part.candidates.length > 1)?.key;
 
+  // Owner ruling after #948: List price / Promotion / Selling price are real
+  // `<td>` columns on the line's own row (above the app's 992px mobile
+  // breakpoint, useIsMobile), not a `colSpan` sub-row - `subRowSpan` keeps
+  // the OTHER sub-rows (guard error, package, parts, warning) spanning the
+  // row's actual current column count instead of a stale hard-coded 5.
+  // Below the mobile breakpoint the row still has exactly the original 5
+  // columns, since the price fields move into the stack nested under the
+  // Item cell instead (AC-S1-11) - the two never render at once, so
+  // nothing duplicates in the DOM.
+  const subRowSpan = isMobile ? 5 : priceMode === 'selling' ? 8 : 6;
+
+  // Owner polish after #948: the desktop `<td>` already sits under a
+  // "List price"/"Promotion"/"Selling price" header, so its cell holds only
+  // the value/control - the label stays only on the mobile stack, which has
+  // no header to read it off. `withLabel` picks between the two; the amount
+  // is `whitespace-nowrap` so "RM 1,350" never breaks mid-string, and the
+  // "+ option" hint gets its own line rather than fighting it for room.
+  const renderListPriceCell = (withLabel: boolean) => (
+    <div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          List price
+        </div>
+      )}
+      <div className="text-sm font-medium whitespace-nowrap">
+        {formatRM(pricing?.list_price)}
+      </div>
+      {hasOpenGroup(line) ? (
+        <div className="text-xs text-muted-foreground">+ option</div>
+      ) : null}
+    </div>
+  );
+
+  const renderPromotionCell = (withLabel: boolean) => (
+    <div>
+      <Label
+        className={
+          withLabel
+            ? 'text-2xs uppercase tracking-wide text-muted-foreground'
+            : 'sr-only'
+        }
+        htmlFor={`promotion-${line.key}`}
+      >
+        Promotion
+      </Label>
+      <SearchableSelect
+        id={`promotion-${line.key}`}
+        clearable
+        truncateTriggerLabel
+        value={line.promotion_id ?? ''}
+        onChange={(value) => onChoosePromotion(line.key, value)}
+        options={promotionOptions}
+        placeholder="No covering promotion"
+        emptyMessage="No promotion covers this line."
+        size="sm"
+      />
+    </div>
+  );
+
+  const renderSellingPriceCell = (withLabel: boolean) => (
+    <div>
+      {withLabel && (
+        <div className="text-2xs uppercase tracking-wide text-muted-foreground">
+          Selling price
+        </div>
+      )}
+      {line.promotion_id ? (
+        <div
+          className="text-sm font-medium whitespace-nowrap"
+          title={partsAtListTitle(line, pricing)}
+        >
+          {formatRM(pricing?.sell_price)}
+        </div>
+      ) : (
+        <Input
+          type="number"
+          inputMode="decimal"
+          // The server takes `gt=0` with 2 decimal places (`ManualSellPrice`),
+          // so 0 is a refusal, not a bound.
+          min={0.01}
+          step={0.01}
+          variant="sm"
+          className="w-full max-w-28"
+          value={line.manual_sell_price ?? ''}
+          onChange={(e) => onManualSellPriceChange(line.key, e.target.value)}
+          placeholder="Type a price"
+          aria-label={`Selling price for line ${index + 1}`}
+        />
+      )}
+    </div>
+  );
+
   return (
     <>
       <tr className="border-t border-border align-top">
@@ -2913,6 +3175,26 @@ function LineRow({
             placeholder="Search a set or product..."
             emptyMessage="No sets or products match."
           />
+          {/* AC-S1-11: below the app's 992px mobile breakpoint (useIsMobile),
+              the same fields stack here instead of living in their own
+              columns - never both at once (isMobile picks exactly one), so
+              nothing in the row duplicates. */}
+          {isMobile && showPricing && (
+            <div
+              data-testid="line-pricing-stack"
+              className="mt-2 flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4"
+            >
+              <div className="min-w-[110px]">{renderListPriceCell(true)}</div>
+              {priceMode === 'selling' && (
+                <>
+                  <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
+                    {renderPromotionCell(true)}
+                  </div>
+                  <div className="min-w-[110px]">{renderSellingPriceCell(true)}</div>
+                </>
+              )}
+            </div>
+          )}
         </td>
         <td className="px-2 py-2">
           <Input
@@ -2928,6 +3210,21 @@ function LineRow({
             aria-label={`Quantity for line ${index + 1}`}
           />
         </td>
+        {!isMobile && (
+          <td className="px-2 py-2">
+            {showPricing ? renderListPriceCell(false) : null}
+          </td>
+        )}
+        {!isMobile && priceMode === 'selling' && (
+          <>
+            <td className="px-2 py-2">
+              {showPricing ? renderPromotionCell(false) : null}
+            </td>
+            <td className="px-2 py-2">
+              {showPricing ? renderSellingPriceCell(false) : null}
+            </td>
+          </>
+        )}
         <td className="px-2 py-2">
           <Input
             value={line.remarks}
@@ -2954,94 +3251,16 @@ function LineRow({
       </tr>
       {line.guard_error && (
         <tr>
-          <td colSpan={5} className="px-2 pb-2">
+          <td colSpan={subRowSpan} className="px-2 pb-2">
             <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
               {line.guard_error}
             </p>
           </td>
         </tr>
       )}
-      {/* S1: List price always; Promotion + Selling price in Selling mode
-          only (AC-S1-1/S1-3). A block under the Item cell, not extra table
-          columns, so it wraps under the item at 375px instead of widening
-          the fixed-layout table (AC-S1-11). */}
-      {showPricing && (
-        <tr className="align-top">
-          <td colSpan={5} className="px-2 pb-2 pl-9">
-            <div className="flex flex-col gap-2 border-l-2 border-border pl-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
-              <div className="min-w-[110px]">
-                <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                  List price
-                </div>
-                <div className="text-sm font-medium">
-                  {formatRM(pricing?.list_price)}
-                  {hasOpenGroup(line) ? (
-                    <span className="ml-1 text-xs text-muted-foreground">
-                      + option
-                    </span>
-                  ) : null}
-                </div>
-              </div>
-              {priceMode === 'selling' && (
-                <>
-                  <div className="min-w-[180px] flex-1 sm:max-w-[260px]">
-                    <Label
-                      className="text-2xs uppercase tracking-wide text-muted-foreground"
-                      htmlFor={`promotion-${line.key}`}
-                    >
-                      Promotion
-                    </Label>
-                    <SearchableSelect
-                      id={`promotion-${line.key}`}
-                      clearable
-                      truncateTriggerLabel
-                      value={line.promotion_id ?? ''}
-                      onChange={(value) => onChoosePromotion(line.key, value)}
-                      options={promotionOptions}
-                      placeholder="No covering promotion"
-                      emptyMessage="No promotion covers this line."
-                      size="sm"
-                    />
-                  </div>
-                  <div className="min-w-[110px]">
-                    <div className="text-2xs uppercase tracking-wide text-muted-foreground">
-                      Selling price
-                    </div>
-                    {line.promotion_id ? (
-                      <div
-                        className="text-sm font-medium"
-                        title={partsAtListTitle(line, pricing)}
-                      >
-                        {formatRM(pricing?.sell_price)}
-                      </div>
-                    ) : (
-                      <Input
-                        type="number"
-                        inputMode="decimal"
-                        // The server takes `gt=0` with 2 decimal places
-                        // (`ManualSellPrice`), so 0 is a refusal, not a bound.
-                        min={0.01}
-                        step={0.01}
-                        variant="sm"
-                        className="w-28"
-                        value={line.manual_sell_price ?? ''}
-                        onChange={(e) =>
-                          onManualSellPriceChange(line.key, e.target.value)
-                        }
-                        placeholder="Type a price"
-                        aria-label={`Selling price for line ${index + 1}`}
-                      />
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          </td>
-        </tr>
-      )}
       {showPackage && (
         <tr className="align-top">
-          <td colSpan={5} className="px-2 pb-2 pl-9">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="border-l-2 border-border pl-3">
               <SearchableSelect
                 clearable
@@ -3068,13 +3287,14 @@ function LineRow({
             part={part}
             pricing={pricing}
             priceMode={priceMode}
+            colSpan={subRowSpan}
             onResolvePart={onResolvePart}
             onRemovePart={onRemovePart}
           />
           {/* AC-S2-3: once per line, under the LAST unresolved row. */}
           {part.key === lastOpenPartKey && (
             <tr>
-              <td colSpan={5} className="px-2 pb-2 pl-9">
+              <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
                 <p className="border-l-2 border-border pl-3 text-xs text-muted-foreground">
                   Marketing will prepare one tag per option.
                 </p>
@@ -3085,7 +3305,7 @@ function LineRow({
       ))}
       {showParts && (
         <tr className="align-top">
-          <td colSpan={5} className="px-2 pb-2 pl-9">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="border-l-2 border-border pl-3">
               {/* The shared catalogue search, so a part missing from the package -
                   or on a product that has none - can be named by hand (AC-S2-4).
@@ -3109,7 +3329,7 @@ function LineRow({
       )}
       {warning && (
         <tr>
-          <td colSpan={5} className="px-2 pb-2 pl-9">
+          <td colSpan={subRowSpan} className="px-2 pb-2 pl-9">
             <div className="flex flex-wrap items-center gap-1.5 border-l-2 border-border pl-3">
               <Badge variant="warning" appearance="light" size="sm">
                 Package warning
