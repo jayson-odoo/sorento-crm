@@ -1,4 +1,4 @@
-# Project Sales Rep - Submit a complaint, stock inquiry, purchase request, sponsorship form, or price tag request
+# Project Sales Rep - Submit a complaint, stock inquiry, request, or price tag
 
 This guide walks you through filing a new submission from the portal. Stock Inquiry, Complaint, Purchase Request and Sponsorship Form share the same form shape, so the steps below apply to all four - only the specific fields differ. Price Tag Request (shown only if your account has been granted it) has a different shape - it opens as four sections instead - see [Price Tag Request](#price-tag-request) further down.
 
