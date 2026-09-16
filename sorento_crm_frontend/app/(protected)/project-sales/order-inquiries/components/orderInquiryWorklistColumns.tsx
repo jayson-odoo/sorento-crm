@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { CellContext, ColumnDef } from '@tanstack/react-table';
+import { ColumnDef } from '@tanstack/react-table';
 import { CircleCheck, CircleDashed, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -80,26 +80,6 @@ function WorklistPill({
       )}
     </Badge>
   );
-}
-
-/**
- * REV-S6 (17 Sep review round): a `redirected_to_pool` row reads muted, the same
- * `opacity-60` treatment `data-grid-table.tsx`'s own `holdingRows` gives a row that is
- * no longer active - applied to every column's own cell here rather than touched into
- * each one's own JSX. `display: contents` keeps the wrapper out of layout entirely, so
- * it changes nothing about a column's own flex/grid behaviour - only its opacity.
- * Unwrapped (a bare fragment) on an ordinary row, so nothing about an ordinary row's
- * own DOM shape changes.
- */
-function MutedRowCell({
-  redirected,
-  children,
-}: {
-  redirected: boolean;
-  children: React.ReactNode;
-}) {
-  if (!redirected) return <>{children}</>;
-  return <span className="contents opacity-60">{children}</span>;
 }
 
 /**
@@ -1046,21 +1026,11 @@ export function useOrderInquiryWorklistColumns({
       // and the two facts that column existed to carry - a rejection and a settle-in-place
       // Was/Now - render in the qty cell above instead.
     ];
-    // REV-S6: every column's own cell reads muted on a redirected row - wrapped here,
-    // once, rather than in each column's own JSX. The select column is left alone: a
-    // redirected row still has to be tickable like any other (AC-A1..: only `cancelled`
-    // is ever excluded from selection).
-    return columns.map((column) =>
-      column.id === 'select'
-        ? column
-        : {
-            ...column,
-            cell: (ctx: CellContext<OrderInquiryWorklistRow, unknown>) => (
-              <MutedRowCell redirected={Boolean(ctx.row.original.redirected_to_pool)}>
-                {typeof column.cell === 'function' ? column.cell(ctx) : null}
-              </MutedRowCell>
-            ),
-          },
-    );
+    // REV-S6/S1: a redirected row reads muted via the DataGrid's own `rowClassName`
+    // (OrderInquiriesClient.tsx), not a per-cell wrapper here - a `display: contents`
+    // wrapper has no box, so `opacity-60` on it never applies. The select column was
+    // never touched by that wrapper either: a redirected row still has to be tickable
+    // like any other (AC-A1..: only `cancelled` is ever excluded from selection).
+    return columns;
   }, [selectable]);
 }

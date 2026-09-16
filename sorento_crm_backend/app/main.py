@@ -14,8 +14,20 @@ def _load_env_file() -> None:
     except ImportError:
         return
     _override_path = os.environ.get("SORENTO_ENV_FILE")
-    if _override_path and _Path(_override_path).exists():
-        _load_dotenv(_override_path, override=True)
+    if _override_path:
+        _resolved_override = _Path(_override_path)
+        if not _resolved_override.is_absolute():
+            _resolved_override = _Path(__file__).resolve().parent.parent / _resolved_override
+        if not _resolved_override.exists():
+            # A typo here must never fall back to the real .env - that would
+            # point a test run (or anything else setting this) at the live
+            # stack's database with no warning. See app.config's equivalent.
+            raise RuntimeError(
+                f"SORENTO_ENV_FILE={_override_path!r} does not resolve to an "
+                f"existing file (looked for {_resolved_override}); refusing "
+                f"to fall back to .env."
+            )
+        _load_dotenv(_resolved_override, override=True)
         return
     _env_path = _Path(__file__).resolve().parent.parent / ".env"
     if _env_path.exists():

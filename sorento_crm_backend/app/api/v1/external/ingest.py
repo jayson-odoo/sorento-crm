@@ -222,7 +222,7 @@ def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
 
 def _run_document_hooks(
     db: Session, entity: str, service, *, actor: Optional[str]
-) -> None:
+) -> int:
     """D7/S5 (plan section 2.6): post-write reactions, non-dry only.
 
     Runs AFTER the batch's own `db.commit()` - every hook here reacts to a
@@ -245,16 +245,22 @@ def _run_document_hooks(
     failure, so one exception mid-batch discarded every not-yet-committed
     record of the batch while the route still answered 200. Moved here so it
     runs against a batch that has already landed, same as every other hook.
+
+    Returns how many `follow_book_repairing` moves this push's own book-repair
+    hook (if it ran at all) dropped past `FOLLOW_BOOK_REPAIRING_MAX_MOVES` (S4
+    review fix, 17 Sep) - 0 for every entity/path that has no such hook.
     """
+    book_repair_moves_dropped = 0
     if entity == "sales_orders":
         _run_plan_exception_hook(db, service, actor=actor)
         _run_planning_change_hook(db, service, actor=actor)
     elif entity == "purchase_orders":
-        _run_supersede_and_relink_hooks(db, service, actor=actor)
+        book_repair_moves_dropped = _run_supersede_and_relink_hooks(db, service, actor=actor)
     elif entity == "shipping_orders":
         _run_shipping_order_forward_match_hook(db, service, actor=actor)
         _run_shipping_order_shipment_refresh_hook(db, service, actor=actor)
-        _run_shipping_order_book_repair_hook(db, service, actor=actor)
+        book_repair_moves_dropped = _run_shipping_order_book_repair_hook(db, service, actor=actor)
+    return book_repair_moves_dropped
 
 
 def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
@@ -334,13 +340,18 @@ def _run_planning_change_hook(db: Session, service, *, actor: Optional[str]) -> 
         logger.warning("ingest.planning_change_hook_failed", exc_info=True)
 
 
-def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> None:
+def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> int:
     """AC-V5-2: retire CRM-raised POs this push confirms, then relink placements.
 
     Two hooks, two try/except blocks, two commits - not one wrapping both -
     so a relink failure can never undo a supersession that already landed,
     and vice versa.
+
+    Returns the book-repair hook's own dropped-move count (S4 review fix, 17
+    Sep) - 0 when that hook never ran or its own transaction failed, since
+    either way nothing past the cap was actually applied.
     """
+    book_repair_moves_dropped = 0
     if service.po_supersede_triples:
         try:
             supersede_crm_raised_pos(db, service.po_supersede_triples)
@@ -369,7 +380,7 @@ def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str
     if getattr(service, "ref_moves", None):
         try:
             with db.begin_nested():
-                ProjectOrderInquiryService(db).follow_book_repairing(
+                book_repair_moves_dropped = ProjectOrderInquiryService(db).follow_book_repairing(
                     service.ref_moves, trigger="autocount_ingest",
                     company_id=service.company_id, actor_user_id=actor,
                 )
@@ -377,6 +388,8 @@ def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str
         except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
             db.rollback()
             logger.warning("ingest.follow_book_repairing_failed", exc_info=True)
+
+    return book_repair_moves_dropped
 
 
 def _run_shipping_order_forward_match_hook(
@@ -411,16 +424,20 @@ def _run_shipping_order_forward_match_hook(
 
 def _run_shipping_order_book_repair_hook(
     db: Session, service, *, actor: Optional[str]
-) -> None:
+) -> int:
     """S5 (`PLAN-oi-replan-received-links.md`): the SPO twin of the PO relink hook
     above - `service.ref_moves` is `ShippingOrderIngestService`'s own capture, taken
     inside `_write_row`'s in-place update path and inside `_supersede_xlsx_rows` for
-    the xlsx-era allocation the ESB's first ref-bearing push replaces."""
+    the xlsx-era allocation the ESB's first ref-bearing push replaces.
+
+    Returns the dropped-move count (S4 review fix, 17 Sep) - 0 when there was
+    nothing to repair or the hook's own transaction failed."""
+    book_repair_moves_dropped = 0
     if not getattr(service, "ref_moves", None):
-        return
+        return book_repair_moves_dropped
     try:
         with db.begin_nested():
-            ProjectOrderInquiryService(db).follow_book_repairing(
+            book_repair_moves_dropped = ProjectOrderInquiryService(db).follow_book_repairing(
                 service.ref_moves, trigger="autocount_ingest",
                 company_id=service.company_id, actor_user_id=actor,
             )
@@ -428,6 +445,7 @@ def _run_shipping_order_book_repair_hook(
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
         db.rollback()
         logger.warning("ingest.shipping_order_book_repair_hook_failed", exc_info=True)
+    return book_repair_moves_dropped
 
 
 def _run_shipping_order_shipment_refresh_hook(
@@ -573,7 +591,11 @@ def ingest_masters(
         # `DocumentIngestService` or `ShippingOrderIngestService` batch
         # reaches this.
         if isinstance(service, (DocumentIngestService, ShippingOrderIngestService)):
-            _run_document_hooks(
+            # S4 review fix (17 Sep): the hook return is the only place this batch's
+            # own `follow_book_repairing` cap-overflow count reaches the caller - it
+            # runs after `result` was already built, so it is folded in here rather
+            # than lost to a log line only the operator never sees.
+            result.book_repair_moves_dropped = _run_document_hooks(
                 db, entity, service, actor=current_user.get("id")
             )
 

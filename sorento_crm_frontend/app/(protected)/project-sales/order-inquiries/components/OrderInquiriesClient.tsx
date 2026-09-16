@@ -1448,6 +1448,11 @@ export function OrderInquiriesClient() {
             columnsResizable: true,
             columnsVisibility: true,
           }}
+          // REV-S6/S1 (17 Sep review round): a redirected row reads muted -
+          // the DataGrid's own row-level hook, not a per-cell wrapper (a
+          // `display: contents` wrapper has no box, so `opacity-60` on it
+          // never applies). Precedent: PlanRowDialog.tsx's rowClassName.
+          rowClassName={(row) => (row.redirected_to_pool ? 'opacity-60' : undefined)}
           emptyMessage={
             <div className="px-6 py-10 text-center">
               <p className="text-sm font-semibold">

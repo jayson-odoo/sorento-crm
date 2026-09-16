@@ -43,7 +43,10 @@ pytest tests/test_rbac.py::test_x      # one test
 ```
 
 `SORENTO_ENV_FILE=.env.ci-tests pytest ...` runs tests against a private DB without touching
-`.env` - the file a running dev server also reads (see `app.main._load_env_file`).
+`.env` - the file a running dev server also reads (see `app.config._resolve_settings_env_file`,
+which Settings itself reads, and `app.main._load_env_file`, which does the same for os.environ).
+A SORENTO_ENV_FILE that is set but does not resolve to an existing file raises at import instead
+of silently falling back to the real `.env`.
 
 Pyright: root `pyrightconfig.json` points to `sorento_crm_backend/venv` and Python 3.12.
 

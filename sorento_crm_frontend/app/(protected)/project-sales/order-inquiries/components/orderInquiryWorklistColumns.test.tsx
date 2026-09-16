@@ -76,7 +76,15 @@ function OneColumnOnly({
     <table>
       <tbody>
         {table.getRowModel().rows.map((row) => (
-          <tr key={row.id} data-testid={`row-${row.original.id}`}>
+          <tr
+            key={row.id}
+            data-testid={`row-${row.original.id}`}
+            // Mirrors OrderInquiriesClient.tsx's own `rowClassName` on the real
+            // DataGrid (REV-S6/S1, 17 Sep review round): muting is a ROW-level
+            // class from the grid itself, not a per-cell wrapper, so this bare
+            // `<table>` harness applies it the same way to stay a faithful stand-in.
+            className={row.original.redirected_to_pool ? 'opacity-60' : undefined}
+          >
             {row.getVisibleCells().map((cell) => (
               <td key={cell.id}>
                 {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -1371,13 +1379,15 @@ describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
 });
 
 describe('AC-RL-04 amended (17 Sep review round): a redirected row is visually muted, and the lightbox never says "Redirected"', () => {
-  it('a redirected_to_pool row is muted the same way this table already mutes an inactive row - opacity-60 on the row\'s own cells', () => {
+  it('a redirected_to_pool row is muted the same way this table already mutes an inactive row - opacity-60 on the row itself', () => {
     // No `state === 'cancelled'` styling exists anywhere in this file (the checkbox's
     // own `disabledReason` at the select column is the only `state` read at all, and a
     // cancelled row's OTHER cells read as plain, unmuted text - see the "coverage
     // restored" describe block above). `opacity-60` is this codebase's own convention
-    // for a row that is no longer active - the DataGrid's own holding-row class
-    // (`components/ui/data-grid-table.tsx`) - reused here rather than invented fresh.
+    // for a row that is no longer active. In the real listing (OrderInquiriesClient.tsx)
+    // this comes from the DataGrid's own `rowClassName` on the ROW - a per-cell wrapper
+    // (`display: contents`) has no box, so `opacity-60` on it never applies - so this
+    // pins the row's own className, not a cell's.
     renderRows(
       [
         worklistRow({
@@ -1390,8 +1400,7 @@ describe('AC-RL-04 amended (17 Sep review round): a redirected row is visually m
       'item_code',
     );
     const itemCodeRow = screen.getByTestId('row-row-redirected-muted');
-    const itemCodeCell = itemCodeRow.querySelector('td')?.firstElementChild;
-    expect(itemCodeCell?.className ?? '').toContain('opacity-60');
+    expect(itemCodeRow.className).toContain('opacity-60');
 
     renderQtyCell([
       worklistRow({
@@ -1401,18 +1410,16 @@ describe('AC-RL-04 amended (17 Sep review round): a redirected row is visually m
       }),
     ]);
     const qtyRow = screen.getByTestId('row-row-redirected-muted-2');
-    const qtyCell = qtyRow.querySelector('td')?.firstElementChild;
-    expect(qtyCell?.className ?? '').toContain('opacity-60');
+    expect(qtyRow.className).toContain('opacity-60');
   });
 
-  it('an ordinary (not redirected) row carries no opacity-60 on its cells', () => {
+  it('an ordinary (not redirected) row carries no opacity-60 on itself', () => {
     renderRows(
       [worklistRow({ id: 'row-plain-muted-check', qty: '10', item_code: 'B2154-NL' })],
       'item_code',
     );
     const row = screen.getByTestId('row-row-plain-muted-check');
-    const cell = row.querySelector('td')?.firstElementChild;
-    expect(cell?.className ?? '').not.toContain('opacity-60');
+    expect(row.className).not.toContain('opacity-60');
   });
 
   it('the open Qty annotation lightbox for a "used" row never contains the text "Redirected" anywhere in document.body, and shows "Used"', () => {

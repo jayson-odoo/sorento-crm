@@ -209,6 +209,12 @@ class RecordResult:
 class IngestResult:
     records: list[RecordResult] = field(default_factory=list)
     dry_run: bool = False
+    # S5 (`PLAN-oi-replan-received-links.md`) review fix: `follow_book_repairing`'s own
+    # `FOLLOW_BOOK_REPAIRING_MAX_MOVES` cap silently dropped anything past 200 moves in
+    # one push - set by the ingest route AFTER the post-write hooks run (the hook itself
+    # has no `result` to write into), never mutated by the ingest write path itself.
+    # Zero and omitted from `as_dict()`'s summary on every ordinary push.
+    book_repair_moves_dropped: int = 0
 
     @property
     def created(self) -> int:
@@ -238,6 +244,11 @@ class IngestResult:
                 "updated": self.updated,
                 "failed": self.failed,
                 "retryable": self.retryable,
+                **(
+                    {"book_repair_moves_dropped": self.book_repair_moves_dropped}
+                    if self.book_repair_moves_dropped
+                    else {}
+                ),
             },
             "records": [r.as_dict() for r in self.records],
         }

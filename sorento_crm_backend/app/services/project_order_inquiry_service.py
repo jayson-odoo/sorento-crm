@@ -1192,9 +1192,9 @@ class ProjectOrderInquiryService:
         moves: Sequence[Dict[str, Any]],
         *,
         trigger: str = "autocount_ingest",
-        company_id: Optional[str] = None,
+        company_id: str,
         actor_user_id: Optional[str] = None,
-    ) -> None:
+    ) -> int:
         """AC-RL-40 to AC-RL-45 (`PLAN-oi-replan-received-links.md` S5): `from_so_
         line_ref` is the source of truth, and whenever the ESB book moves it, our own
         link on the affected row follows.
@@ -1220,26 +1220,34 @@ class ProjectOrderInquiryService:
         queries (`_resolve_ref_line`, `_linkable_row_for_core_line`,
         `place_on_po_allocations`) - `FOLLOW_BOOK_REPAIRING_MAX_MOVES` caps how many
         of THIS call's `moves` are processed; the rest are skipped and logged.
+
+        Returns how many moves the cap dropped (0 on every ordinary push) - the S4
+        review fix (17 Sep): a dropped move used to be a log line only, invisible to
+        the operator who pushed the batch. `ingest.py`'s hook reads this and folds it
+        into the ingest response's own `summary`.
         """
         cap = self.FOLLOW_BOOK_REPAIRING_MAX_MOVES
         applied_moves = moves
+        dropped = 0
         if cap is not None and len(moves) > cap:
             applied_moves = moves[:cap]
+            dropped = len(moves) - cap
             logger.warning(
                 "follow_book_repairing: capped at %s moves, skipped %s of %s",
-                cap, len(moves) - cap, len(moves),
+                cap, dropped, len(moves),
             )
         for move in applied_moves:
             self._follow_one_move(
                 move, trigger=trigger, company_id=company_id, actor_user_id=actor_user_id,
             )
+        return dropped
 
     def _follow_one_move(
         self,
         move: Dict[str, Any],
         *,
         trigger: str,
-        company_id: Optional[str] = None,
+        company_id: str,
         actor_user_id: Optional[str] = None,
     ) -> None:
         target_kind = move.get("target_kind")
@@ -1434,7 +1442,7 @@ class ProjectOrderInquiryService:
         return not is_open
 
     def _resolve_ref_line(
-        self, ref: Optional[str], *, company_id: Optional[str] = None
+        self, ref: Optional[str], *, company_id: str
     ) -> Tuple[Optional[str], Optional[str]]:
         """`(core_sales_order_line_id, so_number)` for an ESB `from_so_line_ref`, or
         `(None, None)` when it is absent, names nothing this system holds, names a
