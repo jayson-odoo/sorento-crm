@@ -261,12 +261,38 @@ function diffEntries(diff: TurnDetailApplyDiff | null | undefined): TurnDetailAp
   }));
 }
 
+/**
+ * The four readings APPLY can give a message (`turn/decide.py`), in the words an
+ * operator reads the trace in.
+ */
+const DECISION_WORDS: Record<string, string> = {
+  answer: 'Answered the open question',
+  refine: 'Narrowed the subject',
+  new_ask: 'Asked something new',
+  carry: 'Ran as itself, question left open',
+};
+
+function decisionWords(kind: string): string {
+  return DECISION_WORDS[kind] ?? kind;
+}
+
 function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
   if (!apply) return <Empty>Not recorded on this turn (APPLY shipped in S3).</Empty>;
   const stateDiff = diffEntries(apply.state_diff);
   const narrowing = apply.narrowing ?? [];
   return (
     <div className="space-y-3 text-xs">
+      <div>
+        <div className="mb-1 font-medium text-muted-foreground">Decision</div>
+        {apply.decision ? (
+          <p>
+            <span className="font-medium">{decisionWords(apply.decision.kind)}</span>{' '}
+            <span className="text-muted-foreground">{apply.decision.why}</span>
+          </p>
+        ) : (
+          <Empty>Not recorded on this turn.</Empty>
+        )}
+      </div>
       {apply.verdict && (
         <div>
           <div className="mb-1 font-medium text-muted-foreground">Verdict</div>
@@ -309,7 +335,11 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
       </div>
       <div>
         <div className="mb-1 font-medium text-muted-foreground">Turn plan</div>
-        <p className="text-muted-foreground">{apply.plan ?? '-'}</p>
+        {typeof apply.plan === 'string' || !apply.plan ? (
+          <p className="text-muted-foreground">{apply.plan ?? '-'}</p>
+        ) : (
+          <Code value={apply.plan} />
+        )}
       </div>
       {apply.prompt_text && (
         <Collapsible>

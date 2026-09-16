@@ -1,6 +1,10 @@
 # apply(): the pure core (PLAN-chatbot-turn-rearch.md "APPLY contract", AC-1520). One
 # function; the order below is the order it runs, and the order IS the contract:
 #
+#   0. `decide()`         - ONE reading of this message against the open question and the
+#                           standing subject (`turn/decide.py`): ANSWER, REFINE, NEW_ASK
+#                           or CARRY. Every arm below reads that Decision; none of them
+#                           decides for itself.
 #   1. `_reconcile_step`  - an entity the resolver placed under one kind is rewritten to
 #                           it; two kinds arm a `kind_pick` and nothing else runs.
 #   2. `_answer_pending`  - the open question, resolved, re-printed or carried.
@@ -22,6 +26,14 @@ from dataclasses import replace
 from typing import Any
 
 from app.services.chatbot import contracts
+from app.services.chatbot.turn.decide import (
+    ANSWER,
+    DOCUMENT_BY_SCOPE,
+    NEW_ASK,
+    OUTSTANDING_KINDS,
+    Decision,
+    decide,
+)
 from app.services.chatbot.turn.narrow import decide as narrow_decide
 from app.services.chatbot.turn.pending import (
     ESCALATION_OFFER_KINDS,
@@ -203,7 +215,7 @@ def _domain_of_kind(policy: Policy, kind: str | None) -> str | None:
     return None
 
 
-def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace: Trace):
+def _answer_offer(pending: Pending, decision: Decision, focus: Focus, trace: Trace):
     """An escalation offer, ACCEPTED - the mirror of `answer_pending_decline`.
 
     "Would you like me to escalate?" is answered three ways and every one of them is an
@@ -215,34 +227,29 @@ def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace
     (browser pass 3, turns 9 and 12 - the same answer back, byte for byte, re-offering
     the same escalation).
 
-    The turn short-circuits to the escalation lane with the accepted team on the trace;
-    the lane then does its normal work (the assignee draw, the SLA row). Returns the
+    `decide()` settles WHETHER this message accepted (the one-position rule and the
+    decline veto both live there now); this arm owns only the EFFECT. The turn
+    short-circuits to the escalation lane with the accepted team on the trace, and the
+    lane then does its normal work (the assignee draw, the SLA row). Returns the
     four-tuple, or None when this message is not an acceptance - a decline, a miss and an
     aside are all settled by the generic rules below, in one place.
     """
-    escalation = verdict.get("escalation") or {}
-    if escalation.get("escalation_declined") is True or verdict.get("is_affirmative") is False:
-        # A decline outranks every acceptance signal, and it already has a rule.
+    if decision.declined or decision.negated:
+        # A decline outranks every acceptance signal, and it already has a rule below.
+        # Both flags are `decide()`'s single reading of the verdict's two decline keys.
+        return None
+    if not decision.answers:
         return None
 
     picked: dict[str, Any] | None = None
-    positions = _picked_positions(pending, verdict)
-    if positions:
-        # ONE option, and only a POSITION. "all" (contract 31) expands a menu of things
-        # to look up, and there is no such thing as handing one conversation to every
-        # team at once - so it is not an acceptance and the menu rules below keep it.
-        if verdict.get("broaden_axis") == "all":
-            return None
-        picked = next((o for o in pending.options if o.get("position") in (positions or [])), None)
+    if decision.positions:
+        picked = next(
+            (o for o in pending.options if o.get("position") in decision.positions), None
+        )
         if picked is None:
             # A position nobody offered: the re-print rule below owns it, the same as
             # for a roster.
             return None
-    elif not (
-        verdict.get("is_affirmative") is True
-        or escalation.get("is_escalation_confirmation") is True
-    ):
-        return None
 
     option_payload = (picked.get("payload") or {}) if picked else {}
     if option_payload.get("hold") is True:
@@ -261,119 +268,7 @@ def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace
     return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
 
 
-#: Contract 38 and 39: the outstanding report's own two questions. Business questions,
-#: not escalation offers - answering one is a fetch (see `ESCALATION_OFFER_KINDS`).
-OUTSTANDING_KINDS: frozenset[str] = frozenset({"outstanding_scope", "outstanding_detail"})
-
-#: The scope an option names, as the documents the focus then carries. One table, read
-#: both ways: a picked option becomes a `document` list, and a `document` the parser
-#: emitted in WORDS ("sales order", "both") answers the same question.
-DOCUMENT_BY_SCOPE: dict[str, list[str]] = {"so": ["SO"], "do": ["DO"], "both": ["SO", "DO"]}
-SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
-    ("SO",): "so",
-    ("DO",): "do",
-    ("DO", "SO"): "both",
-}
-
-
-def _positions_by_label(pending: Pending, verdict: dict[str, Any]) -> list[int]:
-    """The offered positions this message named by their own LABEL, exactly.
-
-    Half of the pick rule (owner ruling, hand pass 3): a customer who types
-    "SRTWC286-SH-150" back at a roster that offered it has answered position 2, and the
-    parser emits that as an ENTITY, because an entity is what it is. The comparison is
-    an exact string match against the option's own label, case-insensitive and nothing
-    more: the engine matches labels, it never reads words (D1, AC-1520), so a paraphrase
-    ("the SH one", "the DO list") stays the parser's job and arrives as
-    `reference_positions`.
-
-    Only an entity THIS message named counts. A carried one rides along on every turn of
-    a conversation about it, and reading that as an answer would answer the question in
-    the same breath it was asked.
-    """
-    named = {
-        str(value).strip().lower()
-        for e in (verdict.get("entities") or [])
-        if isinstance(e, dict) and e.get("current_message") is True
-        for value in (e.get("canonical_code"), e.get("raw"))
-        if isinstance(value, str) and value.strip()
-    }
-    if not named:
-        return []
-    return [
-        o["position"]
-        for o in pending.options
-        if o.get("position") is not None
-        and isinstance(o.get("label"), str)
-        and o["label"].strip().lower() in named
-    ]
-
-
-def _picked_positions(pending: Pending, verdict: dict[str, Any]) -> list[int] | None:
-    """Which of the open question's positions this message picked, or None for "it did
-    not pick".
-
-    Owner ruling, hand pass 3 (17 Sep 2026), superseding S6 cluster 4's
-    `answers_open_question`: that key is retired from the schema, the prompt and here,
-    and a message answers the open question in exactly three ways at this seam - a
-    `reference_positions` entry (the parser resolves every paraphrase, every ordinal and
-    every worded label onto a POSITION, which is the one signal every recorded verdict
-    also carries), an entity matching an offered option by exact label, or
-    `broaden_axis: "all"` over a numbered menu. Anything else is not an answer: the
-    question stays open and the message runs as itself.
-
-    A recorded verdict that still carries the retired key is simply not read at all.
-    """
-    raw = verdict.get("reference_positions")
-    positions = (
-        [int(p) for p in raw if isinstance(p, (int, float)) and not isinstance(p, bool)]
-        if isinstance(raw, list)
-        else []
-    )
-    if pending.kind in ESCALATION_OFFER_KINDS:
-        # A handover is the most expensive thing the bot can do with a message, so it
-        # takes an EXPLICIT signal and nothing weaker: ONE position the customer typed
-        # (which is how a multi-team roster is answered at all, contract 108), or the
-        # plain yes `_answer_offer` reads for itself. A label match and a broaden are
-        # both too weak to hand a conversation to a human on, and so is a SET of
-        # positions: there is no handing one conversation to every team at once, which
-        # is the rule `_answer_offer` already keeps for "all". Measured on
-        # `console/handpass3-owner-17sep-purchase-cost-po.json` step 3, where the ten
-        # positions of a product roster, typed over an offer the live engine had left
-        # open, assigned a human to a question about purchase orders.
-        return positions if len(positions) == 1 else None
-    if positions:
-        return positions
-    labelled = _positions_by_label(pending, verdict)
-    if labelled:
-        return labelled
-    if verdict.get("broaden_axis") == "all" and pending.options:
-        # Contract 31, R21: "all" over a numbered menu is a pick of EVERY option, not a
-        # widening of the search - the parser reads the word as a broaden (`entity_op:
-        # "clear"`, `broaden_axis: "all"`) because that is what it means anywhere else,
-        # and over an open roster it means the opposite. Read off the parser's own field
-        # rather than the word; live, "all" over a three-family customer picker ran the
-        # plain order list with no status and no dates, where "1" answered correctly.
-        return [o["position"] for o in pending.options]
-    return None
-
-
-def _refines_standing_subject(verdict: dict[str, Any]) -> bool:
-    """Does this turn NARROW the subject the conversation already has, rather than name a
-    new one?
-
-    `scope_exclusive` is the parser's own "only" marker and the single discriminator, and
-    this is the ONE reader of it, so every arm that could evict a standing subject asks
-    the same question in the same words: the shared-axis eviction in `_focus_rules`, and
-    the dead question's filters in `_drop_question_subject`. Before this, the two arms
-    disagreed - a refinement kept the carried customer when no outstanding question was
-    open and lost it when one was, which is the same message getting two answers
-    depending on what happened to be on screen.
-    """
-    return bool(verdict.get("scope_exclusive"))
-
-
-def _drop_question_subject(focus: Focus, pending: Pending, verdict: dict[str, Any]) -> None:
+def _drop_question_subject(focus: Focus, pending: Pending) -> None:
     """R17: the offer dies, and its filters die with it.
 
     The scope question and the detail offer are asked about a SUBJECT the lane resolved
@@ -383,17 +278,16 @@ def _drop_question_subject(focus: Focus, pending: Pending, verdict: dict[str, An
     answered about the wrong thing (reviewer N2). Only the axes THAT QUESTION named are
     cleared; `_focus_rules` runs next and re-fills whatever this message named itself.
 
-    Unless the turn is EXCLUSIVE, which is the same rule `_focus_rules` reads the same
-    flag for: "X only" narrows the standing subject and evicts nothing. Measured on the
-    owner's own turns, 16 Sep 2026: "i want to see fullshun only" typed under the DO
-    detail offer for SRTWC286-SH-200 ran the report for Fullshun and `Product: all`
-    (turn 78c7c428), and "ok i want to look at SRTKT1861SS only" typed under the DO
-    detail offer for six HANLIM ledgers ran it for the product with `customer_ids: []`
-    (turn b06e9ca8). Both are refinements the parser marked `scope_exclusive: true`, and
-    both lost exactly the half of the subject the dead question happened to be carrying.
+    It runs on a NEW ASK and on nothing else, so the "unless the turn is exclusive"
+    carve-out this used to carry is gone: an exclusive turn is a REFINE at `decide()`,
+    and a refinement never reaches this arm. "X only" narrows the standing subject and
+    evicts nothing - measured on the owner's own turns, 16 Sep 2026: "i want to see
+    fullshun only" typed under the DO detail offer for SRTWC286-SH-200 ran the report for
+    Fullshun and `Product: all` (turn 78c7c428), and "ok i want to look at SRTKT1861SS
+    only" typed under the DO detail offer for six HANLIM ledgers ran it for the product
+    with `customer_ids: []` (turn b06e9ca8). Both lost exactly the half of the subject
+    the dead question happened to be carrying.
     """
-    if _refines_standing_subject(verdict):
-        return
     filters = pending.payload.get("filters")
     if not isinstance(filters, dict):
         return
@@ -478,163 +372,72 @@ def _settle_question_subject(focus: Focus, pending: Pending, trace: Trace | None
         }
 
 
-def _keeps_subject(verdict: dict[str, Any], pending: Pending, entities: list[dict[str, Any]]) -> bool:
-    """R15 (owner ruling, 13 Sep 2026): does the PARSER's own verdict say this turn kept the
-    subject of the open question and merely narrowed it?
-
-    Two signals, both the parser's, neither a word list:
-
-    * `entity_op: "reuse"` - the parser read the turn as carrying no new value at all ("i
-      want to see this month only" is `reuse` plus a date window), so whatever it names is
-      a filter over the report already on screen.
-    * `entity_op: "replace_combine"` whose entities all sit on axes OTHER than the stored
-      subject's. There is only ever ONE subject, so an entity on the subject's own axis
-      REPLACES it, and that is a new ask.
-
-    R24 (owner round 9b) narrows it to the shape a refinement actually has: a turn the
-    parser classifies as a business question OF ITS OWN - `business_query` with a non-null
-    `domain_hint` - is a new ask whatever axes its entities sit on. The axis test alone
-    called "delivery status for hanlim" (a customer under a PRODUCT-subject offer, so a
-    different axis) a refinement of the old product's report: "I kind of can't escape this
-    loop."
-
-    The axis is `KIND_FIELD_MAP`'s - one slot per kind - deliberately NOT
-    `SHARED_AXIS_BY_DOMAIN`, which collapses product, customer and order number onto one
-    "which order" axis. That collapse is the right answer for the order LIST (hand pass 2
-    item 5, where the question is which orders are meant) and the wrong one here, where a
-    product report and a customer report are two different subjects a report can be about
-    and the whole test is which of them this turn is narrowing. Main's own
-    `_outstanding_subject_axes` makes the same carve-out for the same reason.
-    """
-    if verdict.get("entity_op") not in ("reuse", "replace_combine"):
-        return False
-    if verdict.get("message_type") == "business_query" and verdict.get("domain_hint"):
-        return False
-    filters = pending.payload.get("filters")
-    if not isinstance(filters, dict):
-        return False
-    subject_axes = set()
-    if filters.get("product_code") or filters.get("product_codes"):
-        subject_axes.add(KIND_FIELD_MAP["product"])
-    if filters.get("customer_ids"):
-        subject_axes.add(KIND_FIELD_MAP["customer"])
-    if not subject_axes:
-        # Nothing stored to keep. An entity here would be NAMING the subject, not narrowing
-        # it, so the turn stays the new ask the arm below already calls it.
-        return False
-    for entity in entities:
-        axis = KIND_FIELD_MAP.get(entity.get("hint"))
-        if axis is None or axis in subject_axes:
-            return False
-    return True
-
-
-def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any], focus: Focus, trace: Trace):
-    """Contracts 38 and 39: the outstanding report's scope question and detail offer,
-    answered.
+def _answer_outstanding(
+    pending: Pending, decision: Decision, focus: Focus, trace: Trace
+):
+    """Contracts 38 and 39: the outstanding report's scope question and detail offer.
 
     The retired `head/output_exchange._apply_outstanding_pending` did this by rewriting
     the parser's emission; here the answer moves the FOCUS instead, which is the only
-    place the next fetch reads its subject from. Three outcomes and nothing else:
+    place the next fetch reads its subject from. `decide()` says WHICH of the four
+    readings this message is and this arm owns the effects, one per reading:
 
-    * a REFINEMENT (R15): the turn picked nothing, named a filter of its own, and the
-      parser's own verdict says it kept the subject (`_keeps_subject`). The same report
-      re-runs over the narrower window and the same question is re-armed over it.
-    * a message that NAMES something of its own is a NEW ASK. The question is dropped
-      rather than mis-resolved, so a customer can leave it by asking something else
-      instead of only by answering it (D17 point 3: a stray position riding along with
-      an entity is still a new ask, because the parser is told never to emit both).
-    * an ANSWER (a picked option, or the scope named in words on `document`) writes
-      `focus.document` - which is what `turn_runtime.lane_parse_output` projects back
-      onto the order tools' one `order_status` bucket, so the SAME turn re-runs the
-      report for the scope just named and the question cannot re-arm itself
-      (`outstanding_scope_ask_candidate` reads that bucket).
-    * anything else leaves the question open, untouched.
+    * REFINE (R15): the turn picked nothing, named a filter of its own, and the parser's
+      own verdict says it kept the subject. The same report re-runs over the narrower
+      window and the same question is re-armed over it.
+    * NEW ASK, by naming an entity: the question is dropped rather than mis-resolved, so
+      a customer can leave it by asking something else instead of only by answering it
+      (D17 point 3 - a stray position riding along with an entity is still a new ask,
+      because the parser is told never to emit both).
+    * NEW ASK, by naming a DOCUMENT: a new scope. The report re-runs for that document
+      and the old question goes with it (owner ruling, hand pass 3 row 5).
+    * ANSWER (a picked option) writes `focus.document` - which is what
+      `turn_runtime.lane_parse_output` projects back onto the order tools' one
+      `order_status` bucket, so the SAME turn re-runs the report for the scope just
+      named and the question cannot re-arm itself (`outstanding_scope_ask_candidate`
+      reads that bucket).
+
+    Anything else returns None: the generic rules settle it, in one place.
 
     The scope question clears when it is answered; the detail offer does not (contract
     39, owner ruling 13 Sep 2026 - "after '1' (SO list), typing '2' must give the DO
     list"), so it is the one offer kind that stays on screen across its own pick.
     """
-    entities = [e for e in (verdict.get("entities") or []) if e]
     asked_for = pending.payload.get("domain")
-    positions = _picked_positions(pending, verdict)
-    names_own_dates = bool(verdict.get("date_filter_start") or verdict.get("date_filter_end"))
-    if not positions and (entities or names_own_dates) and _keeps_subject(verdict, pending, entities):
-        # R15. Tested BEFORE the new-ask arm below, because the turn that narrows an open
-        # report names a filter too, and the old "any entity of its own is a new ask" rule
-        # read a date window as nothing at all (so the offer was re-printed unchanged) and
-        # a location word as a brand new question: "you are anticipating me to reply for
-        # the detail list after offering me the detail list, but i just want to shrink the
-        # search by date" (owner, on his own stack, 13 Sep 2026).
-        #
+
+    if decision.refines:
         # The subject SETTLES exactly as an answer's does - the question's own resolved
-        # product, customer ids and warehouses - and `_focus_rules` runs next and lays this
-        # turn's own window or location over the top. `detail: None` is what makes it a
-        # re-run of the REPORT rather than one of its lists: the customer narrowed the
-        # search, they did not ask for a list.
+        # product, customer ids and warehouses - and `_focus_rules` runs next and lays
+        # this turn's own window or location over the top. `detail: None` is what makes
+        # it a re-run of the REPORT rather than one of its lists: the customer narrowed
+        # the search, they did not ask for a list.
         _settle_question_subject(focus, pending, trace)
-        filters = pending.payload.get("filters")
-        scope = (filters or {}).get("scope") if isinstance(filters, dict) else None
-        if scope not in DOCUMENT_BY_SCOPE:
-            scope = None
         focus.status = "outstanding"
         # The scope question has NOT been answered, only narrowed (AC-1158), so the
-        # document axis stays empty and `lane_parse_output`'s `("", "outstanding")` bucket
-        # re-arms the same question over the new filters through the arm that armed it -
-        # one writer for the question's text, no second re-ask path. The detail offer's
-        # scope is already known (a report ran, or it could not have offered its lists), so
-        # its re-run carries it and never asks a question that has been answered.
-        focus.document = list(DOCUMENT_BY_SCOPE[scope]) if scope else []
+        # document axis stays empty and `lane_parse_output`'s `("", "outstanding")`
+        # bucket re-arms the same question over the new filters through the arm that
+        # armed it - one writer for the question's text, no second re-ask path. The
+        # detail offer's scope is already known (a report ran, or it could not have
+        # offered its lists), so its re-run carries it and never asks a question that
+        # has been answered.
+        focus.document = list(DOCUMENT_BY_SCOPE[decision.scope]) if decision.scope else []
         if asked_for:
             focus.domains = [asked_for]
         trace.rules_fired.append("outstanding_refined")
-        trace.outstanding = {"kind": pending.kind, "scope": scope, "detail": None}
+        trace.outstanding = {"kind": pending.kind, "scope": decision.scope, "detail": None}
         return focus, pending, None, True
 
-    if entities:
-        # A turn that NAMES something is a new ask, and D17 point 3's defensive guard is
-        # this line: a stray position riding along with an entity ("2" + "delivery to
-        # hanlim") is still a new ask, because the parser is told never to emit both.
-        # A message that merely names another DOMAIN and nothing else is NOT dropped
-        # here - the owner's S6 cluster 4 ruling keeps the question open across an
-        # aside, and it is the entity that makes this one a different subject.
+    if decision.kind == NEW_ASK and decision.why == "names_its_own_entity":
         trace.rules_fired.append("outstanding_pending_dropped")
-        _drop_question_subject(focus, pending, verdict)
+        _drop_question_subject(focus, pending)
         return focus, None, None, False
 
-    # A document named in the message is a NEW SCOPE, and it is read FIRST - before the
-    # positions the same emission may carry (owner ruling, hand pass 3 row 5; browser
-    # pass 6 item 5, turn e0d6459c). "Sales order", typed straight after the DO detail
-    # list, emitted `document: ["SO"]` AND `reference_positions: [1]`, and the position
-    # won: position 1 of that offer is its only option, "Delivery order list", so the
-    # same twenty DO lines came back byte for byte at a customer who had just said which
-    # paper they wanted. The parser emits a named document on its own `document` slot
-    # ("sales order outstanding" and a bare "sales orders" are the same emission), so
-    # there is no second vocabulary to teach it, and it is read under the DETAIL offer
-    # too, not only under the scope question.
-    named = tuple(sorted(str(d).strip().upper() for d in (verdict.get("document") or [])))
-    scope = SCOPE_BY_DOCUMENT.get(named)
-    named_scope = scope is not None
-    if scope is None:
-        matched = (
-            [o for o in pending.options if o.get("position") in positions] if positions else []
-        )
-        values = [(o.get("payload") or {}).get("value") for o in matched]
-        # "all" over the scope question picks every option, and every option at once IS
-        # the widest one - answering "both" rather than the first row on the list.
-        scope = "both" if "both" in values else next((v for v in values if v), None)
-        if scope not in DOCUMENT_BY_SCOPE:
-            scope = None
-
-    if scope is None:
-        # Not an answer to this question. Every other reading of the turn - the generic
-        # re-print of an out-of-range position, the aside that carries the question
-        # forward unrepeated (owner ruling, S6 cluster 4) - is the same rule for every
-        # pending kind and is settled below, in one place.
+    if decision.scope is None or decision.kind not in (ANSWER, NEW_ASK):
         return None
 
+    named_scope = decision.why == "named_document"
     _settle_question_subject(focus, pending, trace)
-    focus.document = list(DOCUMENT_BY_SCOPE[scope])
+    focus.document = list(DOCUMENT_BY_SCOPE[decision.scope])
     focus.status = "outstanding"
     if asked_for:
         # Contract 121: the answer goes back to the domain the question was asked for.
@@ -644,21 +447,26 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
     # the offer's own answer and keeps contract 39's rule, where the detail offer is the
     # one kind that survives its own pick.
     answers_the_offer = pending.kind == "outstanding_detail" and not named_scope
-    trace.rules_fired.append("answer_outstanding" if not named_scope else "outstanding_pending_dropped")
+    trace.rules_fired.append(
+        "answer_outstanding" if not named_scope else "outstanding_pending_dropped"
+    )
     trace.outstanding = {
         "kind": pending.kind,
-        "scope": scope,
+        "scope": decision.scope,
         # Contract 39: "1" asks for one of the report's LISTS, which is the same tool
         # call with a `detail` argument. The scope question asks which document the
         # report itself is about, and that is the `document` axis alone.
-        "detail": scope if answers_the_offer else None,
+        "detail": decision.scope if answers_the_offer else None,
     }
     carried = pending if answers_the_offer else None
     return focus, carried, None, True
 
 
-def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
+def _answer_pending(state: State, decision: Decision, trace: Trace):
     # Returns (focus_after, pending_after, short_circuit_plan, domain_locked).
+    #
+    # Every branch here is an EFFECT of the one Decision `decide()` already made; not one
+    # of them re-reads the verdict to decide for itself.
     pending = state.pending
     focus = copy.deepcopy(state.focus)
 
@@ -669,18 +477,18 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         # BEFORE the generic roster path: these options are a SCOPE, not an entity to
         # fetch with, and building one into an entity sent "Both" to the resolver as an
         # order token (console run 4, finding 6).
-        answered = _answer_outstanding(state, pending, verdict, focus, trace)
+        answered = _answer_outstanding(pending, decision, focus, trace)
         if answered is not None:
             return answered
 
     if pending.kind in ESCALATION_OFFER_KINDS:
         # BEFORE the roster path: an accepted escalation offer is a handover, never a
         # fetch, whichever of the three ways it was accepted.
-        accepted = _answer_offer(pending, verdict, focus, trace)
+        accepted = _answer_offer(pending, decision, focus, trace)
         if accepted is not None:
             return accepted
 
-    positions = _picked_positions(pending, verdict) or []
+    positions = list(decision.positions) if decision.answers else []
     if positions:
         matched = [o for o in pending.options if o.get("position") in positions]
         if not matched:
@@ -768,11 +576,7 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
 
-    is_affirmative = verdict.get("is_affirmative")
-    escalation = verdict.get("escalation") or {}
-    verdict_entities = verdict.get("entities") or []
-
-    if is_affirmative is True or escalation.get("is_escalation_confirmation") is True:
+    if decision.answers and decision.why == "affirmative":
         trace.rules_fired.append("answer_pending_accept")
         if pending.payload.get("escalate_offered") is True:
             # Item 8's other half: the open question is the ROSTER, and the escalate
@@ -785,7 +589,7 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 
-    if escalation.get("escalation_declined") is True or (is_affirmative is False and not verdict_entities):
+    if decision.declined or (decision.negated and not decision.entities):
         trace.rules_fired.append("answer_pending_decline")
         if pending.kind in OFFER_KINDS:
             # The offer was answered with a decline: that IS the turn (contract 42, the
@@ -799,7 +603,7 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 
-    if is_affirmative is False and verdict_entities:
+    if decision.negated and decision.entities:
         # A "no" carrying its own entities is not a decline - the offer stays open.
         trace.rules_fired.append("answer_pending_own_entities")
         return focus, pending, None, False
@@ -844,6 +648,7 @@ def _focus_rules(
     focus: Focus,
     verdict: dict[str, Any],
     entities: list[dict[str, Any]],
+    decision: Decision,
     *,
     domain_locked: bool,
     domain_override: str | None,
@@ -879,17 +684,22 @@ def _focus_rules(
     if by_kind:
         about = _domain_of_turn(focus, verdict, asks, domain_override, domain_locked=domain_locked)
         shared = SHARED_AXIS_BY_DOMAIN.get(about or "", frozenset())
-        if verdict.get("entity_op") == "replace":
+        if decision.replaces_every_axis:
             # The retired head's own rule: `replace` means this turn's entities ARE the
             # whole scope, on every axis. It is only ever stamped by a pick that has
             # already folded in whatever it means to keep.
             shared = frozenset(KIND_FIELD_MAP)
-        elif _refines_standing_subject(verdict):
+        elif decision.refines:
             # A REFINEMENT narrows the standing subject and evicts nothing (hand pass 3
-            # row 3, browser pass 6 item 3). `scope_exclusive` is the parser's own "only"
-            # marker, and it is what tells the two measured turns apart - both name a
-            # product under an order subject that carries a customer, and both emit
-            # `entity_op: replace_combine`, so the op alone cannot decide:
+            # row 3, browser pass 6 item 3). Which turn is a refinement is `decide()`'s
+            # call and no longer this arm's, which is the whole point: this rule and the
+            # outstanding question's own arm used to answer it differently, so the same
+            # message kept the carried customer when no question was open and lost it
+            # when one was.
+            #
+            # The two measured turns both name a product under an order subject that
+            # carries a customer, and both emit `entity_op: replace_combine`, so the op
+            # alone cannot decide:
             #
             # * c45e2929 "Outstsnding DO for 7445" - `scope_intent: null`,
             #   `scope_exclusive: false`. A NEW ASK that states its own scope, and the
@@ -948,13 +758,14 @@ def _focus_rules(
     return focus
 
 
-def _exclusive(verdict: dict[str, Any], trace: Trace) -> None:
+def _exclusive(decision: Decision, trace: Trace) -> None:
     # `replace_same_axis` already narrows only the axis a new entity named (see
     # `_focus_rules` above) - `scope_exclusive` confirms the same reading rather than
-    # changing it, so this step is a trace marker, not a second mutation. The flag's ONE
-    # behavioural reader is in `_focus_rules`: it holds the shared axis off, so a
-    # refinement narrows the subject instead of replacing it.
-    if verdict.get("scope_exclusive"):
+    # changing it, so this step is a trace marker, not a second mutation. The flag is
+    # read once, by `decide()`, and its ONE behavioural consequence is a REFINE decision:
+    # `_focus_rules` holds the shared axis off for one, so a refinement narrows the
+    # subject instead of replacing it.
+    if decision.exclusive:
         trace.rules_fired.append("exclusive")
 
 
@@ -1313,6 +1124,14 @@ def apply(
             f"{type(raw_entities).__name__}"
         )
 
+    # ONE reading of this message, before any arm acts on it: did it answer the open
+    # question, narrow the standing subject, name a new one, or none of the three
+    # (`turn/decide.py`). Every arm below reads this Decision; the four that used to
+    # decide for themselves disagreed at the edges, and each hand pass since the second
+    # found a path one of them missed.
+    decision = decide(verdict, state.focus, state.pending)
+    trace.decision = decision.as_trace()
+
     verdict_entities = list(verdict.get("entities") or [])
     entities, domain_override, reconcile_short_circuit = _reconcile_step(
         verdict_entities, resolved, policy, verdict, trace
@@ -1321,18 +1140,19 @@ def apply(
         return state, reconcile_short_circuit
 
     focus_after_pending, pending_after, pending_short_circuit, domain_locked = _answer_pending(
-        state, verdict, trace
+        state, decision, trace
     )
     if pending_short_circuit is not None:
         unchanged = replace(state, pending=pending_after)
         return unchanged, pending_short_circuit
 
-    _exclusive(verdict, trace)
+    _exclusive(decision, trace)
 
     focus = _focus_rules(
         focus_after_pending,
         verdict,
         entities,
+        decision,
         domain_locked=domain_locked,
         domain_override=domain_override,
         trace=trace,

@@ -245,14 +245,16 @@ PROMPT_TEXT_CHAR_CAP = 65_536
 
 
 def _apply(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The turn re-architecture's `apply` stage record (AC-1549): verdict in, state
-    diff out, narrowing fired, reconciliation if any, the turn plan."""
+    """The turn re-architecture's `apply` stage record (AC-1549): verdict in, the one
+    decision it was read as, state diff out, narrowing fired, reconciliation if any, the
+    turn plan."""
     entries = _kind_records(records, "apply")
     if not entries:
         return None
     entry = entries[-1]
     return {
         "verdict": entry.get("verdict"),
+        "decision": entry.get("decision"),
         "state_diff": entry.get("state_diff"),
         "narrowing": entry.get("narrowing"),
         "reconciled": entry.get("reconciled"),

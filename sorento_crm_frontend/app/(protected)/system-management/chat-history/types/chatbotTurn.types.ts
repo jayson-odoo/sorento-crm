@@ -300,16 +300,29 @@ export type TurnDetailApplyDiff =
   | TurnDetailApplyDiffEntry[]
   | Record<string, { before?: unknown; after?: unknown; reason?: string | null }>;
 
+/**
+ * What APPLY read the message as, before any rule acted on it: one of `answer`,
+ * `refine`, `new_ask` or `carry`, with the single rule that decided it.
+ */
+export interface TurnDetailApplyDecision {
+  kind: string;
+  why: string;
+}
+
 export interface TurnDetailApply {
   /** The parser verdict APPLY read, as sent (contract 102 to 105's shape). */
   verdict: Record<string, unknown> | null;
+  decision?: TurnDetailApplyDecision | null;
   state_diff: TurnDetailApplyDiff | null;
   /** One line per (domain, entity kind) the narrower touched this turn. */
   narrowing: string[];
   /** `reconciled: <from> -> <to>`, or null when nothing was rewritten. */
-  reconciliation: string | null;
-  /** The turn's plan in one line - fetches, or the question asked instead. */
-  plan: string | null;
+  reconciliation?: string | null;
+  /**
+   * The turn's plan. The backend sends the `apply` record's own object (domains,
+   * fetch, denied, ask, lane); an older turn carries the one-line string.
+   */
+  plan: string | Record<string, unknown> | null;
   /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
   prompt_text: string | null;
 }

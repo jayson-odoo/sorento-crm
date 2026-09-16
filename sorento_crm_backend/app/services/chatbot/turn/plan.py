@@ -39,6 +39,11 @@ class Trace:
     # `apply()` itself, which stamps the carry onto the turn's `FetchSpec.filters` so
     # the runtime knows this fetch is a re-run of the question's own report.
     outstanding: dict[str, Any] | None = None
+    # What `turn/decide.py` read this message as: `{"kind", "why"}`. One of ANSWER,
+    # REFINE, NEW_ASK or CARRY, and the single rule that decided it. The engine puts it
+    # on the `apply` trace record so the console drawer prints the decision itself rather
+    # than leaving an operator to infer it from the rules that fired.
+    decision: dict[str, str] | None = None
     # The entity kinds a NUMBERED PICK settled this turn. The narrower reads it and does
     # not re-ask them: a roster the customer has just answered is not a choice still on
     # the table, whatever the domain's policy would say about the same rows carried in

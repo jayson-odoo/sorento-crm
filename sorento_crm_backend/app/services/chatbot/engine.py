@@ -1532,6 +1532,10 @@ def _run_stages(  # noqa: PLR0915
             "apply",
             {
                 "verdict": verdict,
+                # What APPLY read this message AS, before any rule acted on it
+                # (`turn/decide.py`): ANSWER, REFINE, NEW_ASK or CARRY, plus the one
+                # rule that decided it.
+                "decision": dict(plan.trace.decision) if plan.trace.decision else None,
                 "state_diff": turn_runtime.focus_diff(state_in.focus, state_out.focus),
                 "narrowing": list(plan.trace.narrowing),
                 "reconciled": [list(r) for r in plan.trace.reconciled],
