@@ -236,6 +236,16 @@ revision, so the UPDATE branch could only overwrite an admin's hand edit; AC-H13
 "Raised by" date dd/mm/yyyy (AC-H14). Noted, not built: a carried line holding two owed rows
 compares against one of them (N2); the edit form resends `group_matches` (inert here, N4).
 
+## 6d. Review round 3 (16 Sep, Opus): READY
+
+Root-only drain verified at SQLAlchemy source level and by a six-shape probe (root, one
+savepoint, two deep, inner rollback, root rollback, 50 idle savepoints): one dispatch at the root
+commit, no marker or pending entry survives. Additive follow-ups taken before merge: seed test
+asserts `one_email: true` (AC-H13 text updated), AC-H24 marker assertions, guide verb list,
+checkbox evidence. Recorded, not built: `_send_grouped` ignores `one_email` (seeded row has
+grouping off; trigger = an admin wants both); a session closed without commit or rollback keeps
+its pending entries until the session is discarded (harmless).
+
 ## 7. After merge
 
 Owner types `purchasing@` and the CS manager into the automation's extra emails. Replay on the

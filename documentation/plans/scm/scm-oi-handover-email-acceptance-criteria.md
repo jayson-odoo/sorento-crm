@@ -71,7 +71,7 @@ actions (confirm, reject, link) send nothing.
 
 | id | tag | Given / When / Then |
 | --- | --- | --- |
-| AC-H13 | [BE] | The migration seeds `email_templates.code = order_inquiry_handover_default` and one `automations` row (`trigger_type = order_inquiry_handover`, name `Order inquiry to purchasing`, `enabled = true`, `group_matches = false`, `recipient_config = {role_ids: <ids of user_roles whose slug starts with purchasing>, include_actor: true, user_ids: [], extra_emails: []}`), idempotently (re-run creates nothing). Downgrade removes both. |
+| AC-H13 | [BE] | The migration seeds `email_templates.code = order_inquiry_handover_default` and one `automations` row (`trigger_type = order_inquiry_handover`, name `Order inquiry to purchasing`, `enabled = true`, `group_matches = false`, `recipient_config = {role_ids: <ids of user_roles whose slug starts with purchasing>, include_actor: true, one_email: true, user_ids: [], extra_emails: []}`), idempotently (re-run creates nothing). Downgrade removes both. |
 | AC-H14 | [BE] | Rendering the seeded template with a fixture context yields: subject `OI: <subject_scope>`; HTML with the headline, an SO table (S/O NO, CUSTOMER, PROJECT), a line table (SO DATE, S/O NO, CUSTOMER, PROJECT, ITEM CODE, QTY, DELIVERY DATE, REMARK) where every set `was.*` prints as `<s>old</s> new`; text body prints the same cell as `new (was old)`; the worklist link is present. A null value prints blank, never the word None, and the text SO summary line omits the segment. Every td and th carries inline `border:1px solid` and `padding:` (mail clients have no stylesheet); header cells carry a background colour. The "Raised by" date prints dd/mm/yyyy like every other date. |
 
 ## Out of scope (recorded, not built)
