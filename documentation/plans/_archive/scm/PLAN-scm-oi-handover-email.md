@@ -1,6 +1,6 @@
 # PLAN - Order inquiry handover email to purchasing (parallel run)
 
-Status: **APPROVED 16 Sep 2026, building.** UAC: `scm-oi-handover-email-acceptance-criteria.md`.
+Status: **SHIPPED 17 Sep 2026 (PR #962 merged 17f050fbd, deployed run 35142064016).** UAC: `scm-oi-handover-email-acceptance-criteria.md`.
 Owner rulings R1-R10 accepted in Lavish (scratchpad `oi-purchasing-email-proposal.html`,
 "ok let's have this first and we further improve, go"). Go-live is 17 Sep; the parallel run
 starts with it.
