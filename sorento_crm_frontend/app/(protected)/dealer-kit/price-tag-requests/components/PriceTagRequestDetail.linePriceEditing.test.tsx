@@ -19,7 +19,7 @@
  * IS blur-only already; the recompute is the one still per-keystroke).
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -393,5 +393,93 @@ describe('PriceTagRequestDetail - a line with a SAVED manual price is editable, 
       promotion_id: null,
       manual_sell_price: 1500,
     });
+  });
+});
+
+// --------------------------------------------------------------------------- columns
+// Owner ruling after #948: Promotion / Selling price are real table columns
+// on the desktop table (md and up), not a `bg-muted/20` sub-row under the
+// line. Below md they still stack under the line - since jsdom has no CSS
+// breakpoints this is asserted only via a `data-testid="line-pricing-stack"`
+// element's presence, never its visibility.
+describe('PriceTagRequestDetail - Promotion/Selling price are table columns, not a colSpan sub-row', () => {
+  it('the Lines header has Promotion and Selling price columns, and the line row (not a following colSpan row) holds the select and value', async () => {
+    mockGet.mockResolvedValue({
+      ...baseRequest,
+      lines: [
+        {
+          id: 'line-1',
+          line_type: 'product',
+          product_id: 'prod-1',
+          product_set_id: null,
+          name: 'Kitchen Sink',
+          code: 'SRT-1',
+          show_promo_price: true,
+          quantity: 1,
+          included_accessories: null,
+          sort_order: 0,
+          list_price: 500,
+          sell_price: 300,
+          parts: [],
+          package_warning: null,
+          promotion_id: 'promo-raya',
+          promotion_name: 'Raya',
+          manual_sell_price: null,
+          sell_price_basis: 'promotion',
+          tags: [
+            {
+              id: 'line-1',
+              sort_order: 0,
+              label: '1a',
+              quantity: 1,
+              choices: {},
+              choices_display: [],
+              open_groups: [],
+              marketing_price_override: null,
+              marketing_override_reason: null,
+              list_price: 500,
+              sell_price: 300,
+            },
+          ],
+        },
+      ],
+    } as never);
+    mockLookupLinePricing.mockResolvedValue([
+      {
+        key: 'line-1',
+        list_price: 500,
+        promotion_options: [{ id: 'promo-raya', description: 'Raya', sell_price: 300 }],
+        auto_promotion_id: 'promo-raya',
+        sell_price: 300,
+        sell_price_basis: 'promotion',
+        parts_at_list: [],
+        candidates: [],
+      },
+    ]);
+
+    renderDetail();
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    const headers = (await screen.findAllByRole('columnheader')).map((h) =>
+      h.textContent?.trim(),
+    );
+    expect(headers).toContain('Promotion');
+    expect(headers).toContain('Selling price');
+
+    // The line's own row (found via its code, a fixed per-line anchor)
+    // carries the Promotion select and the Selling price value in `<td>`
+    // cells of THAT row - not a following `bg-muted/20` sub-row.
+    const rows = screen.getAllByRole('row');
+    const lineRow = rows.find((row) => within(row).queryByText('SRT-1'));
+    expect(lineRow).toBeTruthy();
+    expect(within(lineRow!).getByLabelText('promotion-line-1')).toBeInTheDocument();
+
+    // No sub-row: every pricing cell lives in the line's own row, so no
+    // `<td>` anywhere carries a `colspan` wider than 1.
+    const colSpanCells = Array.from(document.querySelectorAll('td[colspan]')).filter(
+      (cell) => Number(cell.getAttribute('colspan')) > 1,
+    );
+    expect(colSpanCells).toHaveLength(0);
   });
 });
