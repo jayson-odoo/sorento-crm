@@ -1431,25 +1431,31 @@ def _run_stages(  # noqa: PLR0915
         predicate: dict[str, Any] | None = None
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
         if plan.fetch or plan.ask is not None:
-            # The RESOLVER's own ctx, and only when the narrower is ASKING: a roster has
-            # to list things that exist, with the stamps the picker probe measures
-            # ("SRTWC286-SH-NEW-P - has incoming"), and a turn that named no product of
-            # its own ("incoming", after a stock answer about ten variants) gave the
-            # resolver nothing to look up. The carried subject is handed over for that
-            # question only - a FETCH keeps the verdict's own entities, because a
-            # carried entity that is already settled is already in the plan, and
-            # re-resolving one is how a stale subject gets back into an answer.
-            resolver_ctx = ctx
-            if plan.ask is not None:
-                resolver_ctx = {
-                    **ctx,
-                    "parse": {
-                        **(ctx.get("parse") or {}),
-                        "output": turn_runtime.with_carried_entities(
-                            (ctx.get("parse") or {}).get("output") or {}, state_out.focus
-                        ),
-                    },
-                }
+            # The RESOLVER's own ctx: a roster has to list things that exist, with the
+            # stamps the picker probe measures ("SRTWC286-SH-NEW-P - has incoming"), and
+            # a turn that named no product of its own ("incoming", after a stock answer
+            # about ten variants) gave the resolver nothing to look up. The carried
+            # subject is handed over for that question.
+            #
+            # A FETCH turn hands over the UNSETTLED carry only. A settled carry is
+            # already in the plan and re-resolving one is how a stale subject gets back
+            # into an answer; a carry that is still only a TOKEN is in the plan as a word
+            # no `*_ids` param can be built from, so the fetch runs about nothing. That
+            # is browser pass 6's promo defect exactly (turn 0bd47e62): the tier pick
+            # settled the tier, and the ruling "a pick settles only its kind" leaves the
+            # product on the fetch - but it was never resolved, so the promotion tool was
+            # called with no product at all.
+            resolver_ctx = {
+                **ctx,
+                "parse": {
+                    **(ctx.get("parse") or {}),
+                    "output": turn_runtime.with_carried_entities(
+                        (ctx.get("parse") or {}).get("output") or {},
+                        state_out.focus,
+                        unsettled_only=plan.ask is None,
+                    ),
+                },
+            }
             resolved_kinds, compatible_entities, predicate, resolved_candidates = (
                 turn_runtime.resolve_kinds(
                     db,

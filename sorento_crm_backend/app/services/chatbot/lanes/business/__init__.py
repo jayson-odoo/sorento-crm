@@ -257,12 +257,9 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
     else:
         location = "all"
 
-    start = _outstanding_ddmmyyyy(filters.get("date_filter_start"))
-    end = _outstanding_ddmmyyyy(filters.get("date_filter_end"))
-    if start and end:
-        order_date = start if start == end else f"{start} to {end}"
-    else:
-        order_date = start or end or "all"
+    order_date = order_date_text(
+        filters.get("date_filter_start"), filters.get("date_filter_end")
+    )
 
     return [
         f"Product: {product_code or 'all'}",
@@ -270,6 +267,23 @@ def _outstanding_scope_filter_lines(filters: dict[str, Any], *, customer_name: s
         f"Location: {location}",
         f"Order date: {order_date}",
     ]
+
+
+def order_date_text(start: Any, end: Any) -> str:
+    """What the `Order date:` line SAYS: `01/09/2026 to 30/09/2026`, one date when the
+    two match, `all` when the fetch ran with no window at all.
+
+    One writer, two readers: the scope question's own four-line header above, and the
+    answer header a fetch that ran with a window now carries
+    (`turn_runtime.envelope_of` -> `turn/compose.py`, browser pass 6 item 4 - the
+    September window reached the tool and the reply never said so). Two copies of this
+    would let the question and the answer state the same window in different words.
+    """
+    first = _outstanding_ddmmyyyy(start)
+    last = _outstanding_ddmmyyyy(end)
+    if first and last:
+        return first if first == last else f"{first} to {last}"
+    return first or last or "all"
 
 
 def _outstanding_ddmmyyyy(value: Any) -> str:

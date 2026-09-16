@@ -563,30 +563,29 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
         _drop_question_subject(focus, pending)
         return focus, None, None, False
 
-    matched = (
-        [o for o in pending.options if o.get("position") in positions] if positions else []
-    )
-    values = [(o.get("payload") or {}).get("value") for o in matched]
-    # "all" over the scope question picks every option, and every option at once IS the
-    # widest one - answering "both" rather than the first row on the list.
-    scope = "both" if "both" in values else next((v for v in values if v), None)
-    if scope not in DOCUMENT_BY_SCOPE:
-        scope = None
-    named_scope = False
+    # A document named in the message is a NEW SCOPE, and it is read FIRST - before the
+    # positions the same emission may carry (owner ruling, hand pass 3 row 5; browser
+    # pass 6 item 5, turn e0d6459c). "Sales order", typed straight after the DO detail
+    # list, emitted `document: ["SO"]` AND `reference_positions: [1]`, and the position
+    # won: position 1 of that offer is its only option, "Delivery order list", so the
+    # same twenty DO lines came back byte for byte at a customer who had just said which
+    # paper they wanted. The parser emits a named document on its own `document` slot
+    # ("sales order outstanding" and a bare "sales orders" are the same emission), so
+    # there is no second vocabulary to teach it, and it is read under the DETAIL offer
+    # too, not only under the scope question.
+    named = tuple(sorted(str(d).strip().upper() for d in (verdict.get("document") or [])))
+    scope = SCOPE_BY_DOCUMENT.get(named)
+    named_scope = scope is not None
     if scope is None:
-        # The same question, answered in words. The parser emits a named document on its
-        # own `document` slot ("sales order outstanding" and a bare "sales orders" are
-        # the same emission), so there is no second vocabulary to teach it.
-        #
-        # Read under the DETAIL offer too (owner ruling, hand pass 3 row 5, turn bb233665):
-        # "Sales order" typed after the DO list is a document nobody had asked about, and
-        # reading it only under the scope question left the detail offer to re-print its
-        # own "Reply 1 for the delivery order list" at a customer who had just said which
-        # paper they wanted. A NAMED document is a new scope whichever outstanding
-        # question is open.
-        named = tuple(sorted(str(d).strip().upper() for d in (verdict.get("document") or [])))
-        scope = SCOPE_BY_DOCUMENT.get(named)
-        named_scope = scope is not None
+        matched = (
+            [o for o in pending.options if o.get("position") in positions] if positions else []
+        )
+        values = [(o.get("payload") or {}).get("value") for o in matched]
+        # "all" over the scope question picks every option, and every option at once IS
+        # the widest one - answering "both" rather than the first row on the list.
+        scope = "both" if "both" in values else next((v for v in values if v), None)
+        if scope not in DOCUMENT_BY_SCOPE:
+            scope = None
 
     if scope is None:
         # Not an answer to this question. Every other reading of the turn - the generic
@@ -844,12 +843,29 @@ def _focus_rules(
         if verdict.get("entity_op") == "replace":
             # The retired head's own rule: `replace` means this turn's entities ARE the
             # whole scope, on every axis. It is only ever stamped by a pick that has
-            # already folded in whatever it means to keep. `scope_exclusive` is NOT the
-            # same thing here and stays a trace marker (`_exclusive`): the narrower
-            # already restricts the axis a new entity named, and
-            # `test_rearch_s2_exclusive.py` pins that "only BRW" keeps the product and
-            # the customer it is narrowing.
+            # already folded in whatever it means to keep.
             shared = frozenset(KIND_FIELD_MAP)
+        elif verdict.get("scope_exclusive"):
+            # A REFINEMENT narrows the standing subject and evicts nothing (hand pass 3
+            # row 3, browser pass 6 item 3). `scope_exclusive` is the parser's own "only"
+            # marker, and it is what tells the two measured turns apart - both name a
+            # product under an order subject that carries a customer, and both emit
+            # `entity_op: replace_combine`, so the op alone cannot decide:
+            #
+            # * c45e2929 "Outstsnding DO for 7445" - `scope_intent: null`,
+            #   `scope_exclusive: false`. A NEW ASK that states its own scope, and the
+            #   customer named six turns earlier is last question's (hand pass 2 item 5,
+            #   `test_rearch_handpass2_owner_17sep::TestFinding5...`).
+            # * 67df5114 "For srtwc286 only" - `scope_intent: "specific"`,
+            #   `scope_exclusive: true`. A refinement of "orders for CHIN CHUN HARDWARE",
+            #   and evicting the customer re-asked a fresh roster and then answered
+            #   globally (browser pass 6 item 3).
+            #
+            # This is also the reading `test_rearch_s2_exclusive.py` already pins for the
+            # same flag ("only BRW" keeps the product and the customer it narrows); the
+            # shared axis contradicted it for any kind that happens to sit on that axis.
+            shared = frozenset()
+            trace.rules_fired.append("refinement_keeps_subject")
         elif not (shared & set(by_kind)):
             # The turn named nothing ON the shared axis, so nothing on it is superseded.
             # Without this test, "only BRW" typed under a report about a customer evicted
@@ -896,7 +912,9 @@ def _focus_rules(
 def _exclusive(verdict: dict[str, Any], trace: Trace) -> None:
     # `replace_same_axis` already narrows only the axis a new entity named (see
     # `_focus_rules` above) - `scope_exclusive` confirms the same reading rather than
-    # changing it, so this step is a trace marker, not a second mutation.
+    # changing it, so this step is a trace marker, not a second mutation. The flag's ONE
+    # behavioural reader is in `_focus_rules`: it holds the shared axis off, so a
+    # refinement narrows the subject instead of replacing it.
     if verdict.get("scope_exclusive"):
         trace.rules_fired.append("exclusive")
 

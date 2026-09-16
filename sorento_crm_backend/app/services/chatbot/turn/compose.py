@@ -247,6 +247,20 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             block = f"*{label}*: this is not enabled for your account."
         else:
             block = header
+        # The window the fetch ran with, stated under the header it belongs to (browser
+        # pass 6 item 4). Never on a section that states its own scope - the outstanding
+        # report and the refusal both do, and the report's own four-line block already
+        # carries this exact line (`own_header`), so printing it here too would say the
+        # same dates twice in one answer.
+        date_line = env.get("date_line")
+        if (
+            isinstance(date_line, str)
+            and date_line.strip()
+            and not env.get("own_header")
+            and not env.get("denied")
+        ):
+            head, sep, rest = block.partition("\n")
+            block = head + "\n" + date_line.strip() + (sep + rest if sep else "")
         # AC-922, "nothing on any rung": the primary domain missed AND every domain on
         # its ladder missed too. Named once, here, rather than as one empty header per
         # rung - the customer asked about a product, not about three domains.

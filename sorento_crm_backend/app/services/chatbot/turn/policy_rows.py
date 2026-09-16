@@ -74,7 +74,7 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         ],
         escalation_team_code="marketing_promotion",
         switch_words=["promo", "promos", "promotion", "promotions", "promosi"],
-        narrowing={"tier": "narrow_by_tier"},
+        narrowing={"tier": "narrow_by_tier", "product": "optional_filter"},
         reveal_key=None,
         supported=True,
         ladder=[],
