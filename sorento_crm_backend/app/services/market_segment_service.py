@@ -121,6 +121,7 @@ class MarketSegmentService:
         is_active: bool = True,
         sort_order: Optional[int] = None,
         is_requestor_selectable: bool = False,
+        portal_form_types: Optional[list[str]] = None,
     ) -> MarketSegment:
         code = (code or "").strip().lower()
         name = (name or "").strip()
@@ -135,6 +136,7 @@ class MarketSegmentService:
             is_active=is_active,
             sort_order=sort_order,
             is_requestor_selectable=is_requestor_selectable,
+            portal_form_types=list(portal_form_types or []),
         )
         self.db.add(seg)
         self.db.commit()
@@ -150,6 +152,7 @@ class MarketSegmentService:
         is_active: Optional[bool] = None,
         sort_order: Optional[int] = None,
         is_requestor_selectable: Optional[bool] = None,
+        portal_form_types: Optional[list[str]] = None,
     ) -> MarketSegment:
         seg = self.get_segment(code)
         if seg is None:
@@ -166,6 +169,8 @@ class MarketSegmentService:
             seg.sort_order = sort_order
         if is_requestor_selectable is not None:
             seg.is_requestor_selectable = is_requestor_selectable
+        if portal_form_types is not None:
+            seg.portal_form_types = list(portal_form_types)
         self.db.commit()
         self.db.refresh(seg)
         return seg

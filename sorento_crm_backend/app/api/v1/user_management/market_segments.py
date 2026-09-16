@@ -53,6 +53,7 @@ async def create_market_segment(
             is_active=data.is_active,
             sort_order=data.sort_order,
             is_requestor_selectable=data.is_requestor_selectable,
+            portal_form_types=data.portal_form_types,
         )
     except AppException:
         raise
@@ -76,6 +77,7 @@ async def update_market_segment(
             is_active=data.is_active,
             sort_order=data.sort_order,
             is_requestor_selectable=data.is_requestor_selectable,
+            portal_form_types=data.portal_form_types,
         )
     except AppException:
         raise
