@@ -18,7 +18,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -48,7 +48,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/e55ecf49-f5a5-4a54-be13-4d5549ab487b"
+              "value": "https://internal.example.invalid/contacts/445659708"
             },
             {
               "name": "is_allowed_ai",
@@ -82,12 +82,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27210556061901353\", \"firstName\": \"ZZT\", \"lastName\": \"Ng\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",
@@ -236,7 +236,7 @@
       "envelope": {
         "contact": {
           "assignee": {
-            "email": "zzt-agent@example.invalid",
+            "email": "zzt-agent-1061691@example.invalid",
             "firstName": "ZZT-agent",
             "id": 1061691,
             "lastName": ""
@@ -266,7 +266,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/e55ecf49-f5a5-4a54-be13-4d5549ab487b"
+              "value": "https://internal.example.invalid/contacts/445659708"
             },
             {
               "name": "is_allowed_ai",
@@ -300,12 +300,12 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27210556061901353\", \"firstName\": \"ZZT\", \"lastName\": \"Ng\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
             "assignee": {
-              "email": "zzt-agent@example.invalid",
+              "email": "zzt-agent-1061691@example.invalid",
               "firstName": "ZZT-agent",
               "id": 1061691,
               "lastName": "",

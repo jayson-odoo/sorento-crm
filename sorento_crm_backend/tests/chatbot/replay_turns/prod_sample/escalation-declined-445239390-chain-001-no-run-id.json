@@ -39,7 +39,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+              "value": "https://internal.example.invalid/contacts/445239390"
             },
             {
               "name": "is_allowed_ai",
@@ -74,7 +74,7 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27221486210808338\", \"firstName\": \"ZZT\", \"lastName\": \"Sorento\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
@@ -353,7 +353,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+              "value": "https://internal.example.invalid/contacts/445239390"
             },
             {
               "name": "is_allowed_ai",
@@ -388,7 +388,7 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27221486210808338\", \"firstName\": \"ZZT\", \"lastName\": \"Sorento\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {
@@ -616,7 +616,7 @@
             },
             {
               "name": "backend_id",
-              "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+              "value": "https://internal.example.invalid/contacts/445239390"
             },
             {
               "name": "is_allowed_ai",
@@ -651,7 +651,7 @@
             "created_at": 1767682908,
             "id": 453209,
             "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.27221486210808338\", \"firstName\": \"ZZT\", \"lastName\": \"Sorento\"}}",
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (scrubbed)",
             "source": "whatsapp_business"
           },
           "contact": {

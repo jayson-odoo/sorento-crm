@@ -79,6 +79,7 @@ silent 8-second HTTP wait against OpenAI.
 from __future__ import annotations
 
 import json
+import re
 import socket
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,28 @@ from tests.chatbot.test_engine import stub_parser  # noqa: F401 - fixture import
 
 REPLAY_ROOT = Path(__file__).resolve().parent / "replay_turns"
 DIVERGENCES_PATH = REPLAY_ROOT / "DIVERGENCES.md"
+
+# Same pattern `scripts/chatbot_record_turn.py::_is_uuid` uses - kept local rather than
+# imported, since that module is a script, not a package this file should depend on.
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE
+)
+
+
+def _is_uuid(value: Any) -> bool:
+    return isinstance(value, str) and bool(_UUID_RE.match(value))
+
+
+def _entity_uuids_from_args(args: dict[str, Any]) -> set[str]:
+    found: set[str] = set()
+    for key, value in args.items():
+        if not (key.endswith("_id") or key.endswith("_ids")):
+            continue
+        values = value if isinstance(value, list) else [value]
+        for v in values:
+            if _is_uuid(v):
+                found.add(v)
+    return found
 
 SPACE_ID = "364817"
 SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -287,7 +310,14 @@ def _write_session_vars(session_factory, *, contact_id: Any, payload: dict[str, 
 # --------------------------------------------------------------------------- #
 
 
-def _install_stubs(monkeypatch, stub_parser, *, turn: dict[str, Any]) -> None:
+def _install_stubs(monkeypatch, stub_parser, *, turn: dict[str, Any]) -> list[dict[str, Any]]:
+    """Installs the four stubs (AC-1590's own list) and returns the list every REAL
+    MCP tool call this step makes gets appended to (`{"tool": name, "args": {...}}`,
+    the full argument dict, not a placeholder) - reviewer finding B5: `_compare`'s old
+    `tools` check read `result.actions`, which carries no tool identity at all (an
+    internal fetch detail), so the disjoint check was vacuously true on every case.
+    `_compare` grades THIS list against the recorded `tool_results` entries instead.
+    """
     from app.services.chatbot import engine as engine_mod
     from app.services.chatbot.lanes.business.services import ResolveGateServices
 
@@ -335,9 +365,12 @@ def _install_stubs(monkeypatch, stub_parser, *, turn: dict[str, Any]) -> None:
     for entry in tool_results:
         by_tool.setdefault(entry.get("tool"), []).append(entry)
 
+    tool_calls: list[dict[str, Any]] = []
+
     from app.services.ai_assistant_service import MCPRuntimeClient
 
     def _fake_call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        tool_calls.append({"tool": name, "args": dict(arguments)})
         bucket = by_tool.get(name)
         if not bucket:
             raise AssertionError(
@@ -347,6 +380,7 @@ def _install_stubs(monkeypatch, stub_parser, *, turn: dict[str, Any]) -> None:
         return json.dumps(entry.get("envelope") or {})
 
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", _fake_call_tool)
+    return tool_calls
 
 
 def _build_envelope(turn: dict[str, Any], *, message_id: str) -> Envelope:
@@ -371,7 +405,16 @@ def _build_envelope(turn: dict[str, Any], *, message_id: str) -> Envelope:
 # --------------------------------------------------------------------------- #
 
 
-def _compare(case_id: str, step_no: int, expected: dict[str, Any], result: Any, failures: list[str]) -> None:
+def _compare(
+    case_id: str,
+    step_no: int,
+    expected: dict[str, Any],
+    result: Any,
+    failures: list[str],
+    *,
+    turn: dict[str, Any] | None = None,
+    tool_calls: list[dict[str, Any]] | None = None,
+) -> None:
     field = "branch_kind"
     if expected.get("branch_kind") and result.branch_kind != expected["branch_kind"]:
         if not _excused(case_id, field):
@@ -388,22 +431,37 @@ def _compare(case_id: str, step_no: int, expected: dict[str, Any], result: Any, 
             failures.append(f"step {step_no} {field}: expected {expected_kinds!r}, got {actual_kinds!r}")
 
     field = "tools"
-    expected_tools = expected.get("tools") or []
-    if expected_tools:
-        # Order-free: the plan's fan-out (contract 122) may reorder domains.
-        expected_pairs = {(t.get("tool"), tuple(sorted(t.get("args_keys") or []))) for t in expected_tools}
-        actual_pairs = set()
-        for a in actions:
-            for key in ("tool", "tool_name"):
-                if a.get(key):
-                    actual_pairs.add((a[key], tuple()))
-        # Tool identity is not always on `actions` (it is an internal fetch detail);
-        # only compared when the result surface actually carries it, else skipped -
-        # noted rather than silently passed.
-        if actual_pairs and expected_pairs and actual_pairs.isdisjoint(expected_pairs) and not _excused(
-            case_id, field
-        ):
-            failures.append(f"step {step_no} {field}: expected {expected_pairs!r}, saw {actual_pairs!r}")
+    # Reviewer finding B5: `result.actions` carries no tool identity at all (an
+    # internal fetch detail) and the old comparison hard-coded every actual arg-key
+    # tuple to `()`, so the "disjoint" check above was true on every case regardless
+    # of what the stub was actually called with. Graded now against the CALLS
+    # `_fake_call_tool` really received (name + sorted arg keys), against the
+    # recorded `tool_results` entries directly (the ground truth `_pending_of`/
+    # `_expected_of` derived `expected.tools`' `args_keys` summary FROM, so this is
+    # the more precise source, not a second copy that can drift from it).
+    recorded_tool_results = (turn or {}).get("tool_results") or []
+    if recorded_tool_results or tool_calls:
+        expected_pairs = {
+            (r.get("tool"), tuple(sorted((r.get("args") or {}).keys()))) for r in recorded_tool_results
+        }
+        actual_pairs = {(c["tool"], tuple(sorted(c["args"].keys()))) for c in (tool_calls or [])}
+        if actual_pairs != expected_pairs and not _excused(case_id, field):
+            failures.append(f"step {step_no} {field}: expected {expected_pairs!r}, got {actual_pairs!r}")
+
+    field = "entity_ids"
+    # AC-1591: "entity ids actually fetched" - the recorded `expected.entity_ids` was
+    # written by `chatbot_record_turn.py::_expected_of` but never read back here
+    # (reviewer finding B5). Compared as a set (fan-out, contract 122, may reorder).
+    expected_entity_ids = set(expected.get("entity_ids") or [])
+    if expected_entity_ids or tool_calls:
+        actual_entity_ids: set[str] = set()
+        for c in tool_calls or []:
+            actual_entity_ids |= _entity_uuids_from_args(c["args"])
+        if actual_entity_ids != expected_entity_ids and not _excused(case_id, field):
+            failures.append(
+                f"step {step_no} {field}: expected {sorted(expected_entity_ids)!r}, "
+                f"got {sorted(actual_entity_ids)!r}"
+            )
 
     field = "pending"
     expected_pending = expected.get("pending")
@@ -460,12 +518,12 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
     failures: list[str] = []
     for step_no, turn in enumerate(turns, start=1):
         _apply_switches(session_factory, turn.get("switches"))
-        _install_stubs(monkeypatch, stub_parser, turn=turn)
+        tool_calls = _install_stubs(monkeypatch, stub_parser, turn=turn)
         envelope = _build_envelope(turn, message_id=f"ZZT-replay-{case_id}-{step_no}")
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
 
         expected = turn.get("expected") or {}
-        _compare(case_id, step_no, expected, result, failures)
+        _compare(case_id, step_no, expected, result, failures, turn=turn, tool_calls=tool_calls)
 
         if step_no < len(turns) and result.session_patch is not None:
             _write_session_vars(session_factory, contact_id=contact_id, payload=result.session_patch)

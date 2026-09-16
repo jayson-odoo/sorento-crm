@@ -319,6 +319,108 @@ def _expected_of(row: dict[str, Any], trace: list[dict[str, Any]], tool_events: 
     }
 
 
+_BACKEND_ID_URL_RE = re.compile(r"^https?://\S+$")
+
+
+def _scrub_assignee(assignee: dict[str, Any] | None) -> None:
+    """The staff member handling a contact - a FIXED placeholder ("ZZT-agent"), never
+    id-derived like a customer contact, because `_scrub_contact` below would produce
+    "ZZT-None" for the many assignee rows recorded with `id: null`. Its own function
+    so `_scrub_contact`'s internal `contact.get("assignee")` call and
+    `_scrub_nested_pii`'s key-aware recursion (an assignee found nested with no
+    parent "contact" wrapper, e.g. `envelope.media.message.contact.assignee`) apply
+    the exact same rule rather than two independently-drifting copies."""
+    if not isinstance(assignee, dict):
+        return
+    assignee_id = assignee.get("id")
+    if "firstName" in assignee:
+        assignee["firstName"] = "ZZT-agent"
+    if "lastName" in assignee:
+        assignee["lastName"] = ""
+    if assignee.get("email"):
+        assignee["email"] = f"zzt-agent-{assignee_id}@example.invalid" if assignee_id else "zzt-agent@example.invalid"
+
+
+def _scrub_contact(contact: dict[str, Any] | None) -> None:
+    """One contact-shaped dict, in place - the shared body `_scrub_pii` and
+    `_scrub_nested_pii` both call, so a contact found nested three levels deep inside
+    a tool result gets exactly the same treatment as the envelope's own top-level one
+    (security review nit, 16 Sep 2026: a real staff assignee - name, `@foundryx.my`
+    email - was found unscrubbed inside a `tool_results[].envelope`, not the
+    top-level `envelope` this function used to be the only caller of).
+
+    NEVER call this on an assignee dict directly - `contact_id`-derived values
+    (`ZZT-<id>`) are wrong for an assignee, which recorded rows carry `id: null` on
+    (measured); `_scrub_assignee` above is the assignee's own rule."""
+    if not isinstance(contact, dict):
+        return
+    contact_id = contact.get("id")
+    if "firstName" in contact:
+        contact["firstName"] = f"ZZT-{contact_id}"
+    if "lastName" in contact:
+        contact["lastName"] = ""
+    if "phone" in contact and contact["phone"]:
+        contact["phone"] = f"+60{str(contact_id)[-9:].rjust(9, '0')}"
+    if "email" in contact and contact["email"]:
+        contact["email"] = f"zzt-{contact_id}@example.invalid"
+    custom_fields = contact.get("custom_fields")
+    if isinstance(custom_fields, list):
+        for field in custom_fields:
+            if not isinstance(field, dict):
+                continue
+            # `backend_id`: the internal admin URL for this contact
+            # (`https://fe-sorento.foundryx.my/user-management/contacts/<uuid>`) -
+            # the hostname reveals the company's own admin domain even though the
+            # uuid alone identifies nobody.
+            if field.get("name") == "backend_id" and isinstance(field.get("value"), str):
+                if _BACKEND_ID_URL_RE.match(field["value"]):
+                    field["value"] = f"https://internal.example.invalid/contacts/{contact_id}"
+    _scrub_assignee(contact.get("assignee"))
+    for field in ("profilePic",):
+        if contact.get(field):
+            contact[field] = None
+
+
+# Any dict carrying at least two of these three keys is treated as a contact-shaped
+# record wherever it turns up, not only at the envelope's own known paths - a tool
+# response (ideation, media, an echoed webhook payload) can embed the SAME shape at
+# an arbitrary depth. Checked only when the PARENT key is not already "assignee"
+# (that shape gets `_scrub_assignee`'s own, different rule instead - see its
+# docstring for why treating an assignee as a contact corrupts it).
+_CONTACT_SHAPE_KEYS = ("firstName", "lastName", "email")
+
+
+def _scrub_nested_pii(node: Any, *, key: str | None = None) -> Any:
+    """Recursively scrub any contact/assignee-shaped dict found anywhere inside
+    `node` (a `tool_results[].envelope` / `.args`, or any other nested structure) -
+    the same fields `_scrub_contact` / `_scrub_assignee` clear at the envelope's own
+    known paths. Also scrubs a whatsapp-channel-shaped dict's own `name` (the
+    company's real number) wherever ONE of those turns up nested too
+    (`envelope.media.message.channel`, measured - the two targeted `message.channel`
+    calls in `_scrub_pii` only reach the envelope's own top-level copy).
+
+    `key` is the dict key `node` was found under in its parent, threaded through the
+    recursion so an "assignee" gets `_scrub_assignee`'s rule and never
+    `_scrub_contact`'s id-derived one (which produces "ZZT-None" for the many
+    assignee rows recorded with `id: null` - measured, the bug this parameter
+    fixes)."""
+    if isinstance(node, dict):
+        if key == "assignee":
+            _scrub_assignee(node)
+        else:
+            shape_hits = sum(1 for k in _CONTACT_SHAPE_KEYS if k in node)
+            if shape_hits >= 2:
+                _scrub_contact(node)
+        if node.get("source") == "whatsapp_business" and node.get("name"):
+            node["name"] = "Internal (scrubbed)"
+        for child_key, value in node.items():
+            _scrub_nested_pii(value, key=child_key)
+    elif isinstance(node, list):
+        for item in node:
+            _scrub_nested_pii(item, key=key)
+    return node
+
+
 def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
     """Real names, phone numbers and emails out of a recorded envelope before it is
     ever written to disk (this corpus is committed to git).
@@ -339,32 +441,15 @@ def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
         return envelope
     envelope = json.loads(json.dumps(envelope))  # deep copy, JSON-safe values only
 
-    def _scrub_contact(contact: dict[str, Any] | None) -> None:
-        if not isinstance(contact, dict):
-            return
-        contact_id = contact.get("id")
-        if "firstName" in contact:
-            contact["firstName"] = f"ZZT-{contact_id}"
-        if "lastName" in contact:
-            contact["lastName"] = ""
-        if "phone" in contact and contact["phone"]:
-            contact["phone"] = f"+60{str(contact_id)[-9:].rjust(9, '0')}"
-        if "email" in contact and contact["email"]:
-            contact["email"] = f"zzt-{contact_id}@example.invalid"
-        assignee = contact.get("assignee")
-        if isinstance(assignee, dict):
-            assignee["firstName"] = "ZZT-agent"
-            assignee["lastName"] = ""
-            if assignee.get("email"):
-                assignee["email"] = "zzt-agent@example.invalid"
-        for field in ("profilePic",):
-            if contact.get(field):
-                contact[field] = None
-
     _scrub_contact(envelope.get("contact"))
     message = envelope.get("message") or {}
     _scrub_contact(message.get("contact"))
     channel = message.get("channel") or {}
+    if channel.get("name"):
+        # The COMPANY's own WhatsApp Business channel name/number (measured:
+        # "Internal (+60 11-1673 1179)") - not a customer's, but still the
+        # company's real number, publicly readable in a committed corpus.
+        channel["name"] = "Internal (scrubbed)"
     if isinstance(channel.get("meta"), str):
         # A JSON string embedding `profile.name` / `wa_id` (WhatsApp's own webhook
         # shape) - real name/phone AGAIN, one level down as text rather than a key.
@@ -381,7 +466,14 @@ def _scrub_pii(envelope: dict[str, Any] | None) -> dict[str, Any] | None:
             if "firstName" in (meta.get("meta") or {}):
                 meta["meta"]["firstName"] = "ZZT"
             channel["meta"] = json.dumps(meta)
-    return envelope
+
+    # A blanket recursive pass over the WHOLE envelope, last (security review nit,
+    # 16 Sep 2026): `envelope.media.message.contact.assignee` was found carrying a
+    # real staff email unscrubbed - a FULL nested copy of the message/contact shape
+    # under an audio/media intake field the two targeted calls above never visit.
+    # Idempotent over what `_scrub_contact` already touched above (re-deriving the
+    # same `ZZT-<id>` twice is a no-op), so this is additive coverage, not a redo.
+    return _scrub_nested_pii(envelope)
 
 
 def _record_row(row: dict[str, Any], *, db_label: str, switches: dict[str, Any]) -> dict[str, Any]:
@@ -398,10 +490,16 @@ def _record_row(row: dict[str, Any], *, db_label: str, switches: dict[str, Any])
         },
         "envelope": _scrub_pii(row.get("envelope")),
         "verdict": verdict,
-        "tool_results": [
-            {"tool": e.get("name"), "args": e.get("args"), "envelope": e.get("envelope")}
-            for e in tool_events
-        ],
+        "tool_results": _scrub_nested_pii(
+            json.loads(
+                json.dumps(
+                    [
+                        {"tool": e.get("name"), "args": e.get("args"), "envelope": e.get("envelope")}
+                        for e in tool_events
+                    ]
+                )
+            )
+        ),
         "access": _access_of(trace),
         "resolutions": _derive_resolutions(verdict, tool_events),
         "expected": _expected_of(row, trace, tool_events),

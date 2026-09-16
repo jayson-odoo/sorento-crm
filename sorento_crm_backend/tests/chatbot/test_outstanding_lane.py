@@ -2446,20 +2446,16 @@ class TestParserContextCarriesTheOpenQuestionsOptions:
         assert "Delivery orders" not in user_block, user_block
 
 
-class TestOutstandingWordTableIsRetired:
-    def test_output_exchange_carries_no_outstanding_word_table(self) -> None:
-        """D17 point 2: "No `_OUTSTANDING_WORD_VALUES`, no filler list, no word cap."
-        Measured today: the table (and its `_outstanding_word_pick` reader) is still
-        in `head/output_exchange.py` from D16 - this fails until it is removed."""
-        from app.services.chatbot.head import output_exchange
-
-        assert not hasattr(output_exchange, "_OUTSTANDING_WORD_VALUES"), (
-            "the D16 word table must be gone under D17 - the parser resolves words, "
-            "the head only ever maps a position"
-        )
-        assert not hasattr(output_exchange, "_outstanding_word_pick"), (
-            "the D16 word-reading function must be gone alongside its table"
-        )
+# `TestOutstandingWordTableIsRetired` (B2, AC-1592): RETIRED, not ported. It asserted
+# `head/output_exchange.py` carries neither `_OUTSTANDING_WORD_VALUES` nor
+# `_outstanding_word_pick` - D17's "the parser resolves words, the head only ever maps a
+# position". `head/output_exchange.py` is now deleted outright (AC-1594), so the
+# assertion is true in the strongest possible way and the import it needed
+# (`from app.services.chatbot.head import output_exchange`) raises ModuleNotFoundError
+# before it ever runs. Nothing to port to: there is no successor "head" module that maps
+# a bare position the way D17 described, because the whole head/route split is gone -
+# the parser-only decider (`turn/policy.py`, `turn/narrow.py`) reads a position straight
+# off the verdict. AC-1594's own grep guard test is what would catch the table's return.
 
 
 class TestParserPromptTeachesOpenQuestionAnswers:

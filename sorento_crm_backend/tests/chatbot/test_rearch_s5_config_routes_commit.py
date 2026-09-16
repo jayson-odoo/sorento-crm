@@ -47,6 +47,10 @@ from tests.chatbot.test_rearch_s5_config_routes import _domain_body, _kind_body
 
 VIEW = "system.chat_history.view"
 MANAGE = "system.chatbot_config.manage"
+# Coordinator fixture item, 16 Sep 2026: `PUT /contacts/{id}/chatbot` now requires
+# this grant too (coder's just-merged permission gate on that route) - a fixture
+# gap, not a route bug.
+CONTACT_EDIT = "user_management.contacts.edit"
 DOMAINS_BASE = "/api/v1/system/chatbot/domains"
 ENTITY_KINDS_BASE = "/api/v1/system/chatbot/entity-kinds"
 CONTACT_CHATBOT_BASE = "/api/v1/user-management/contacts"
@@ -60,6 +64,7 @@ def _permissions(monkeypatch):
     _GRANTS.clear()
     _GRANTS.add(VIEW)
     _GRANTS.add(MANAGE)
+    _GRANTS.add(CONTACT_EDIT)
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",

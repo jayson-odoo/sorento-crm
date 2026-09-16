@@ -1836,7 +1836,12 @@
           "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "No incoming stock (ETA) found for SRTWC286-SH.\nNo incoming for SRTWC286-SH.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWC286-SH\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-IB\n*Quantity On Hand:* 685\n*Outstanding:* 0\n\n- *Product Code:* SRTWC286-SH\n*Warehouse:* MERU\n*System Location:* MWH-IB\n*Quantity On Hand:* 136\n*Outstanding:* 0\n\n- *Product Code:* SRTWC286-SH\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 4\n*Outstanding:* 20\n\n- *Product Code:* SRTWC286-SH\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 2\n*Outstanding:* 0\n\nRelated products:\n1. SRTWC286-SH-NEW - has incoming\n2. SRTWC286-SH-NEW-200 - has incoming\n3. SRTWC286-SH-NEW-P - has incoming\n4. SRTWC286-SH - no incoming\n5. SRTWC286-SH-150 - no incoming\n6. SRTWC286-SH-200 - no incoming\n7. SRTWC286-SH-NEW-150 - no incoming\n8. SRTWC286-SH-P - no incoming\n9. SRTWC286-SH-PP - no incoming\n10. SRTWC286-SH-UF - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
         "tools": [
           {
