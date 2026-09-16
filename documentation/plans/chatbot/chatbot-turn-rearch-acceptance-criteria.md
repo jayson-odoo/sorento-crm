@@ -344,6 +344,8 @@ entry and exit presets apply; nothing else animates.
   no PO) from the same probe seam as incoming and DO; the PO picker stays.
 - Word numbers ("eight") are positions; the prompt says so.
 - Hand pass 3 row 4 withdrawn: the parser returned the date window; only the header was wrong.
+- A multi-domain ask with one ungranted domain answers the granted domain and refuses the
+  other in the same reply (owner, 17 Sep 2026); contract 58 stays one TURN, not one domain.
 
 ## Appendix A - Compatibility contract (129 lines, signed 15 Sep 2026)
 
