@@ -659,6 +659,81 @@ def test_retired_row_prints_cancelled_line(api, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# AC-H20: an unchanged carry is silent; a changed carry prints once as settled #
+# --------------------------------------------------------------------------- #
+
+
+def test_unchanged_carried_row_is_not_printed(api, monkeypatch):
+    """AC-H20.
+
+    H19's own captured output shows the gap this pins: the carried line's row goes
+    through the SAME cancel-and-re-raise site as any other raise
+    (`refresh_for_decision`'s `raised_row = OrderInquiryRow(...)` /
+    `self._record_handover(raised_row, kind="raised", ...)`, called UNCONDITIONALLY) -
+    so an UNCHANGED carry (line 2, same qty/date it already had, only line 1 was
+    uncovered) currently prints as a fresh "ORDER" line with no `was`. Nothing changed
+    for purchasing, so it must print NOTHING. A carry the active decision's own frozen
+    snapshot genuinely restates at a DIFFERENT qty is the opposite case: it DID change,
+    so it must print exactly once, but as a SETTLED line (`was.qty` set), never as a
+    second bare ORDER.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    # -- unchanged carry: line 1 dropped, line 2 carried at the SAME qty/date. --
+    fixture = _raise_two_rows(api, first_qty="10", second_qty="6")
+    world.db.commit()
+    calls.clear()
+
+    supply = ProjectSupplyService(world.db)
+    supply.uncover_lines(
+        fixture["order"],
+        [str(fixture["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "the retire must still dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    unchanged_carry = [l for l in lines if l["qty"] == "6"]
+    assert unchanged_carry == [], (
+        f"an unchanged carry must print nothing for purchasing, found {lines}"
+    )
+
+    # -- a variant: the carry's qty DID change - the row's live qty has drifted from
+    # what the active decision's own frozen snapshot carries forward for it (the same
+    # kind of drift an earlier settle-in-place could leave behind). It must print
+    # exactly once, as a settled line carrying `was.qty`, never as a second bare ORDER.
+    fixture2 = _raise_two_rows(api, first_qty="10", second_qty="6")
+    world.db.commit()
+    second_row = fixture2["second"]["row"]
+    second_row.qty = Decimal("9")
+    world.db.flush()
+    world.db.commit()
+    calls.clear()
+
+    ProjectSupplyService(world.db).uncover_lines(
+        fixture2["order"],
+        [str(fixture2["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    matches2 = _handover_calls(calls)
+    assert matches2, "the retire must dispatch the handover"
+    lines2 = matches2[-1]["context"]["handover"]["lines"]
+    changed_carry = [l for l in lines2 if l["was"] == {"qty": "9"}]
+    assert len(changed_carry) == 1, (
+        f"a carry that actually changed qty must print exactly once with was.qty, got {lines2}"
+    )
+    assert changed_carry[0]["qty"] == "6"
+
+
+# --------------------------------------------------------------------------- #
 # AC-H8: purchasing's own actions never dispatch                              #
 # --------------------------------------------------------------------------- #
 
