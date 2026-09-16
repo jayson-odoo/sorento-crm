@@ -22,14 +22,25 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    op.get_bind().execute(
+def apply_narrowing(bind) -> None:
+    """Set `forms.narrowing.form` to `must_narrow_one`.
+
+    Shared by `upgrade()` and `scripts.bootstrap_env.seed_chatbot_policy`, for the same
+    create_all-gap reason as `chatbot_rearch_s6d.apply_narrowing` /
+    `chatbot_rearch_s6e.apply_narrowing`. Idempotent: a jsonb `||` merge with the same
+    value is a no-op.
+    """
+    bind.execute(
         sa.text(
             "UPDATE chatbot_domains "
             "SET narrowing = narrowing || '{\"form\": \"must_narrow_one\"}'::jsonb "
             "WHERE name = 'forms'"
         )
     )
+
+
+def upgrade() -> None:
+    apply_narrowing(op.get_bind())
 
 
 def downgrade() -> None:
