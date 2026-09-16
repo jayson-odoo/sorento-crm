@@ -245,6 +245,13 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             block = header + "\n" + lane_words.strip()
         elif env.get("denied"):
             block = f"*{label}*: this is not enabled for your account."
+        elif env.get("error"):
+            # The fetch BROKE - the tool timed out or the call failed - which is neither
+            # an answer nor a miss, and the section had nothing to print but its own
+            # header. Measured on turn 32425b9a (16 Sep 2026): the MCP call timed out and
+            # the customer read `*orders* for HANLIM TRADING SDN BHD:` and nothing else,
+            # which reads as "there are none" rather than "ask me again".
+            block = header + "\n" + f"I could not fetch {label} just now, please try again."
         else:
             block = header
         # The window the fetch ran with, stated under the header it belongs to (browser
