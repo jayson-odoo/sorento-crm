@@ -32,7 +32,14 @@ import {
 import type { ChatbotMemorySettings, ChatbotSettings } from './services/chatbotSettingsService';
 import MemorySettingsCard from './components/MemorySettingsCard';
 import TierOrderCard from './components/TierOrderCard';
-import CrossDomainLadderCard from './components/CrossDomainLadderCard';
+import CrossDomainLadderCard, {
+  DEFAULT_LADDER_DOMAIN,
+} from './components/CrossDomainLadderCard';
+import {
+  useChatbotDomainsQuery,
+  useUpdateChatbotDomain,
+} from '@/app/(protected)/system-management/chatbot-domains/hooks/useChatbotDomains';
+import type { ChatbotDomainInput } from '@/app/(protected)/system-management/chatbot-domains/types/chatbotDomain.types';
 
 /**
  * Settings -> Chatbot (AC-809, AC-810; chatbot turn re-architecture S1/S5, AC-1513,
@@ -62,11 +69,19 @@ export default function ChatbotSettingsPage() {
   const saveMemory = useSaveChatbotMemorySettings();
   const tierOrderQuery = useChatbotTierOrder();
   const saveTierOrder = useSaveChatbotTierOrder();
+  // The ladder is the "inventory" domain row's own `ladder` column, so its save is that
+  // domain's PUT - fired by the same one button as the other three (browser pass 2,
+  // step 4: the card's own Save was the second Save on the page).
+  const domainsQuery = useChatbotDomainsQuery();
+  const saveDomain = useUpdateChatbotDomain();
 
   const [draft, setDraft] = useState<ChatbotSettings | null>(null);
   const [memoryDraft, setMemoryDraft] = useState<ChatbotMemorySettings | null>(null);
   const [tierOrderDraft, setTierOrderDraft] = useState<string[] | null>(null);
+  const [ladderDraft, setLadderDraft] = useState<string[] | null>(null);
   const [orderingConfirmOpen, setOrderingConfirmOpen] = useState(false);
+
+  const ladderDomain = (domainsQuery.data ?? []).find((d) => d.name === DEFAULT_LADDER_DOMAIN);
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(settingsQuery.data);
@@ -77,8 +92,12 @@ export default function ChatbotSettingsPage() {
   useEffect(() => {
     if (tierOrderQuery.data && tierOrderDraft === null) setTierOrderDraft(tierOrderQuery.data);
   }, [tierOrderQuery.data, tierOrderDraft]);
+  useEffect(() => {
+    if (ladderDomain && ladderDraft === null) setLadderDraft(ladderDomain.ladder);
+  }, [ladderDomain, ladderDraft]);
 
-  const saving = save.isPending || saveMemory.isPending || saveTierOrder.isPending;
+  const saving =
+    save.isPending || saveMemory.isPending || saveTierOrder.isPending || saveDomain.isPending;
 
   // The failed load is checked FIRST. A load that fails leaves `draft` null, so a
   // loading check that also covered `!draft` would win every time and the operator
@@ -184,7 +203,13 @@ export default function ChatbotSettingsPage() {
         isLoading={tierOrderQuery.isLoading}
         isError={tierOrderQuery.isError}
       />
-      <CrossDomainLadderCard />
+      <CrossDomainLadderCard
+        value={ladderDraft}
+        onChange={setLadderDraft}
+        domains={domainsQuery.data}
+        isLoading={domainsQuery.isLoading}
+        isError={domainsQuery.isError}
+      />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
         <Button
@@ -195,6 +220,7 @@ export default function ChatbotSettingsPage() {
             if (settingsQuery.data) setDraft(settingsQuery.data);
             if (memoryQuery.data) setMemoryDraft(memoryQuery.data);
             if (tierOrderQuery.data) setTierOrderDraft(tierOrderQuery.data);
+            if (ladderDomain) setLadderDraft(ladderDomain.ladder);
           }}
         >
           Reset
@@ -213,6 +239,15 @@ export default function ChatbotSettingsPage() {
               saveTierOrder.mutate(tierOrderDraft, {
                 onSuccess: (saved) => setTierOrderDraft(saved),
               });
+            }
+            if (ladderDraft && ladderDomain) {
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars -- stripped, not sent
+              const { id, updated_at, ...rest } = ladderDomain;
+              const input: ChatbotDomainInput = { ...rest, ladder: ladderDraft };
+              saveDomain.mutate(
+                { id: ladderDomain.id, input },
+                { onSuccess: (saved) => setLadderDraft(saved.ladder) },
+              );
             }
           }}
         >
