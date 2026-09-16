@@ -39,9 +39,16 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from sqlalchemy import Date, String, case, cast, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
+from app.models.base import get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
+from app.models.procurement import (
+    InboundShipment,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+    Supplier,
+)
 from app.models.product import Product
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
@@ -66,6 +73,7 @@ from app.models.project_so import (
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
+from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.product_companion_service import (
     bundled_with_item_codes_map,
@@ -73,6 +81,7 @@ from app.services.product_companion_service import (
 )
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
+    derived_spo_open_clauses,
     project_customer_label,
 )
 from app.services.scm import order_link_service, priority
@@ -266,6 +275,20 @@ _HAS_ANY_LINK = (
 )
 
 
+def _row_has_link(*where) -> Any:
+    """An EXISTS on `order_inquiry_links`, correlated to the row, for whatever extra
+    clauses the caller names (S1, R-K: `po_number`/`spo_number` narrow to a link of one
+    kind whose own `document` starts with the typed text). The same shape `_HAS_PO_LINK`
+    / `_HAS_SPO_LINK` already are, generalised so a filter does not need its own copy.
+    """
+    return (
+        select(OrderInquiryLink.id)
+        .where(OrderInquiryLink.row_id == OrderInquiryRow.id, *where)
+        .correlate(OrderInquiryRow)
+        .exists()
+    )
+
+
 def _linked_qty(*where) -> Any:
     """How much of this row sits on documents, correlated to the row itself.
 
@@ -321,6 +344,16 @@ _CAPPED_QTY = func.least(OrderInquiryRow.qty, _LINE_OUTSTANDING)
 _UNLINKED_QTY = func.greatest(
     _CAPPED_QTY - _linked_qty() - OrderInquiryRow.bundled_qty, 0
 )
+#: The three STAGES a unit passes through, left to right (R-F): not yet on any document,
+#: on a purchase order line but not yet on a shipment, already on an SPO (own link or a
+#: derived one via its linked PO). A unit counts once, the furthest stage it reached.
+#:
+#: The other two are built PER CALL, on the service - `OrderInquiryWorklistService.
+#: _incoming_qty()` and `_purchased_qty()` - because the derived leg they read is
+#: company-scoped and the scope lives on the session (AC-D14), which no module-level
+#: expression has.
+
+
 #: The ANCHOR row's own item code, for a bundled row with no document of its own
 #: (export D8: "the bundled row's document column names its host, not a blank").
 _BundleAnchor = aliased(OrderInquiryRow)
@@ -552,14 +585,17 @@ def _month_bounds(month: str) -> Tuple[date, date]:
     return first, following
 
 
-def _as_day(value: str) -> date:
+def _as_day(value: str, code: str = "invalid_raised_date") -> date:
+    """A `YYYY-MM-DD` parameter, refused by the NAME OF THE PARAMETER IT CAME FROM: three
+    filters parse a day now, and answering a malformed `delivery_from` with
+    `invalid_raised_date` sends whoever reads the code to the wrong control."""
     try:
         return datetime.strptime(value.strip(), "%Y-%m-%d").date()
     except (ValueError, AttributeError):
         raise AppException(
             422,
             f"'{value}' is not a date. Use YYYY-MM-DD.",
-            code="invalid_raised_date",
+            code=code,
         )
 
 
@@ -568,6 +604,133 @@ class OrderInquiryWorklistService:
 
     def __init__(self, db: Session):
         self.db = db
+
+    # -------------------------------------------------------------- derived SPO
+
+    def _derived_spo_query(self, *columns: Any, extra_where: tuple = ()) -> Any:
+        """S5 (R-D/R-E/R-F): every OPEN SPO allocation this row's own PO links reach -
+        `from_po_number = po_number AND product_id = po_line.product_id`, open per
+        `derived_spo_open_clauses()` (shared with `links_for_rows`'s display entries).
+
+        ONE ROW PER ALLOCATION. The links are reached through an EXISTS rather than a
+        join, which is the whole of AC-D12: a row holding two PO links on the SAME
+        purchase order and product reaches ONE allocation, and a join would have
+        returned it once per link and summed its quantity twice.
+
+        COMPANY-SCOPED BY HAND (AC-D14), AND THE PREDICATE IS NOT REDUNDANT. The session
+        listener (`company_scope.do_orm_execute`) injects `with_loader_criteria` for the
+        entities a statement names at its TOP level; `SPOAllocation` here is inside a
+        correlated sub-select spliced into the worklist's own query, which names
+        `OrderInquiryRow` and its joins, so nothing scopes this leg on the list path.
+        `from_po_number` is plain text off the AutoCount feed and `product_id` is not
+        company-scoped either, so without the predicate another company's allocation
+        naming the same PO number string reads as this row's incoming stock - measured,
+        5 of an 8 row. Do not delete it as duplicated by the listener.
+
+        Built PER CALL rather than at import time, because the scope lives on the
+        session. Every reader wraps it - an `EXISTS` (`kind=spo`, `linked=spo`,
+        `spo_number`) or a `SUM` (`_derived_cover_qty`) - so the filters and the cards
+        can never disagree about what counts as incoming.
+        """
+        reached_by_a_po_link = (
+            select(OrderInquiryLink.id)
+            .select_from(OrderInquiryLink)
+            .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .where(
+                OrderInquiryLink.row_id == OrderInquiryRow.id,
+                SPOAllocation.from_po_number == PurchaseOrder.po_number,
+                SPOAllocation.product_id == PurchaseOrderLine.product_id,
+            )
+            .correlate(OrderInquiryRow, SPOAllocation)
+            .exists()
+        )
+        company_predicate = build_company_predicate(
+            SPOAllocation, get_company_scope(self.db)
+        )
+        return (
+            select(*(columns or (SPOAllocation.id,)))
+            .select_from(SPOAllocation)
+            .outerjoin(
+                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+            )
+            .where(
+                reached_by_a_po_link,
+                *derived_spo_open_clauses(),
+                *((company_predicate,) if company_predicate is not None else ()),
+                *extra_where,
+            )
+            .correlate(OrderInquiryRow)
+        )
+
+    def _has_derived_spo(self) -> Any:
+        """Does this row's own PO link have an open derived SPO cover at all (S5,
+        R-D/R-E, round 2 AC-D6b)? The one existence test `kind=spo` and `linked=spo`
+        both filter on, so a PO-linked row with a derived cover answers to either
+        without a real spo link."""
+        return self._derived_spo_query().exists()
+
+    def _derived_cover_qty(self) -> Any:
+        """The derived SPO quantity this row may still COUNT, before the cap below.
+
+        Two exclusions the display entries do not make (S5, corrected 16 Sep after
+        review - the first formula double counted):
+
+        * an allocation the row ALREADY links to for real is left out (AC-D10), or the
+          same five units would be counted once as the row's own SPO link and once
+          again as its PO's derived cover;
+        * each allocation counts ONCE per row (AC-D12), which the EXISTS shape above
+          gives for nothing.
+
+        A row with no PO link answers 0 - the subquery finds nothing to sum, never a
+        null that would poison the `+` in `_incoming_qty`.
+        """
+        already_linked_for_real = (
+            select(OrderInquiryLink.id)
+            .where(
+                OrderInquiryLink.row_id == OrderInquiryRow.id,
+                OrderInquiryLink.spo_allocation_id == SPOAllocation.id,
+            )
+            .correlate(OrderInquiryRow, SPOAllocation)
+            .exists()
+        )
+        return func.coalesce(
+            self._derived_spo_query(
+                func.sum(
+                    SPOAllocation.allocated_quantity
+                    - func.coalesce(SPOAllocation.quantity_received, 0)
+                ),
+                extra_where=(~already_linked_for_real,),
+            ).scalar_subquery(),
+            0,
+        )
+
+    def _incoming_qty(self) -> Any:
+        """Stage 3: already on a shipping order, own link or derived via its linked PO.
+
+        `least(qty, spo_real + least(po_linked, cover))`. The derived cover is CAPPED AT
+        THE ROW'S OWN PO-LINKED QUANTITY (AC-D11): an allocation of 500 on the purchase
+        order covers at most the three units this row actually put on that purchase
+        order, and the rest of the row is demand nobody has placed.
+        """
+        derived_cover = func.least(_PO_LINKED_QTY, self._derived_cover_qty())
+        return func.least(OrderInquiryRow.qty, _SPO_LINKED_QTY + derived_cover)
+
+    def _purchased_qty(self) -> Any:
+        """Stage 2: on a purchase order line, not yet on a shipment.
+
+        `least(qty - incoming, greatest(0, po_linked - derived_cover))`, spelled the way
+        the PLAN states it (S5) - what the row put on purchase orders, net of the part
+        its own derived cover has already carried to Incoming, so a unit is counted once
+        and at the furthest stage it reached. Both legs are non-negative by construction
+        (`incoming` is capped at `qty`, `derived_cover` at `po_linked`), so the
+        `greatest` is a guard on the arithmetic rather than a clamp anything reaches.
+        """
+        derived_cover = func.least(_PO_LINKED_QTY, self._derived_cover_qty())
+        return func.least(
+            OrderInquiryRow.qty - self._incoming_qty(),
+            func.greatest(0, _PO_LINKED_QTY - derived_cover),
+        )
 
     # ------------------------------------------------------------------ query
 
@@ -584,6 +747,18 @@ class OrderInquiryWorklistService:
         linked: Optional[str] = None,
         kind: Optional[str] = None,
         ack: Optional[str] = None,
+        # S1, R-K (`PLAN-scm-oi-worklist-excel-parity.md`).
+        location: Optional[str] = None,
+        agent: Optional[str] = None,
+        so_month: Optional[str] = None,
+        po_number: Optional[str] = None,
+        spo_number: Optional[str] = None,
+        delivery_from: Optional[str] = None,
+        delivery_to: Optional[str] = None,
+        # S3: a Schedule CELL's own rows, named the way the cell itself is (its axis and
+        # the key it groups on) rather than by whatever label happened to be printed.
+        axis: Optional[str] = None,
+        axis_key: Optional[str] = None,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -674,7 +849,10 @@ class OrderInquiryWorklistService:
             elif linked == "po":
                 base = base.filter(_HAS_PO_LINK)
             elif linked == "spo":
-                base = base.filter(_HAS_SPO_LINK)
+                # S5, R-E (round 2, AC-D6b): widened to a row whose only real link is
+                # on a PO, but whose PO carries a derived SPO cover - it genuinely is
+                # on both books now, one of them derived.
+                base = base.filter(or_(_HAS_SPO_LINK, self._has_derived_spo()))
             elif linked == "none":
                 base = base.filter(~_HAS_ANY_LINK)
             else:
@@ -699,10 +877,15 @@ class OrderInquiryWorklistService:
                     code="invalid_kind_filter",
                 )
             base = base.filter(OrderInquiryRow.state.notin_(_NOT_OWED_STATES))
+            # S5, R-F: `spo` is the SAME `_has_derived_spo()`-widened test `linked=spo`
+            # uses (round 2, "one rule at one seam") - a row whose own PO link has a
+            # derived SPO cover answers to it even with no real spo link at all. `po`
+            # stays the STAGE amount, since `_purchased_qty()` is what nets out the
+            # portion `spo` already claimed.
             if kind == "spo":
-                base = base.filter(_HAS_SPO_LINK)
+                base = base.filter(or_(_HAS_SPO_LINK, self._has_derived_spo()))
             elif kind == "po":
-                base = base.filter(_HAS_PO_LINK)
+                base = base.filter(self._purchased_qty() > 0)
             else:
                 base = base.filter(_UNLINKED_QTY > 0)
         if ack:
@@ -735,6 +918,75 @@ class OrderInquiryWorklistService:
                 base = base.filter(OrderInquiryRow.changed_at.isnot(None))
             else:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
+        # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
+        # the Excel parity batch adds to the Filters popover.
+        if location:
+            base = base.filter(_LOCATION == location)
+        if agent:
+            base = base.filter(SalesAgent.id == agent)
+        if so_month:
+            first, following = _month_bounds(so_month)
+            base = base.filter(_SO_DATE >= first, _SO_DATE < following)
+        if po_number:
+            like = f"{_escape_like(po_number)}%"
+            base = base.filter(
+                or_(
+                    _row_has_link(
+                        OrderInquiryLink.po_line_id.isnot(None),
+                        OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
+                    ),
+                    # An SPO link the book named a source purchase order for (AC-F5b) -
+                    # the row's only document is the SHIPPING order, and `po_number` has
+                    # to reach the purchase order it came from all the same.
+                    select(OrderInquiryLink.id)
+                    .join(
+                        SPOAllocation,
+                        SPOAllocation.id == OrderInquiryLink.spo_allocation_id,
+                    )
+                    .where(
+                        OrderInquiryLink.row_id == OrderInquiryRow.id,
+                        SPOAllocation.from_po_number.ilike(like, escape=_LIKE_ESCAPE),
+                    )
+                    .correlate(OrderInquiryRow)
+                    .exists(),
+                )
+            )
+        if spo_number:
+            like = f"{_escape_like(spo_number)}%"
+            base = base.filter(
+                or_(
+                    _row_has_link(
+                        OrderInquiryLink.spo_allocation_id.isnot(None),
+                        OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
+                    ),
+                    # AC-F6b (round 2): the row's only REAL link is a PO, but that PO
+                    # carries a derived SPO cover (S5, R-E) whose own number starts
+                    # with the typed text - `_has_derived_spo()`'s own read, narrowed to
+                    # this prefix rather than "any open allocation at all".
+                    self._derived_spo_query(
+                        extra_where=(
+                            SPOAllocation.spo_number.ilike(like, escape=_LIKE_ESCAPE),
+                        )
+                    ).exists(),
+                )
+            )
+        if delivery_from:
+            base = base.filter(
+                OrderInquiryRow.delivery_date
+                >= _as_day(delivery_from, code="invalid_delivery_from")
+            )
+        if delivery_to:
+            base = base.filter(
+                OrderInquiryRow.delivery_date
+                <= _as_day(delivery_to, code="invalid_delivery_to")
+            )
+        if axis and axis_key:
+            # S3: the Schedule cell's drilldown. EQUALITY on the very column the matrix
+            # grouped by, off the same `_MATRIX_AXES` map, rather than the cell's printed
+            # label through the search box - two products can share a name, and an
+            # unknown axis is refused here the way it is refused there.
+            column, _label = self._matrix_axis(axis)
+            base = base.filter(column == axis_key)
         if query:
             # ONE FILTER PER WORD (S2, AC-2.1): an order has forty lines and a product sits
             # on twenty orders, so "SO366990 SRTWT6801" typed as one phrase matched nothing
@@ -769,6 +1021,27 @@ class OrderInquiryWorklistService:
                         # belongs to the TOKEN, not to the whole box.
                         User.name.ilike(like, escape=_LIKE_ESCAPE),
                         User.email.ilike(f"{_escape_like(token)}%", escape=_LIKE_ESCAPE),
+                        # S1, R-K: a link document (PO or SPO), an SPO link's own source
+                        # purchase order, and the sales agent's code or name - the search
+                        # box reaches everything the five new filters can name by hand.
+                        _row_has_link(
+                            OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE)
+                        ),
+                        select(OrderInquiryLink.id)
+                        .join(
+                            SPOAllocation,
+                            SPOAllocation.id == OrderInquiryLink.spo_allocation_id,
+                        )
+                        .where(
+                            OrderInquiryLink.row_id == OrderInquiryRow.id,
+                            SPOAllocation.from_po_number.ilike(
+                                like, escape=_LIKE_ESCAPE
+                            ),
+                        )
+                        .correlate(OrderInquiryRow)
+                        .exists(),
+                        SalesAgent.sales_agent.ilike(like, escape=_LIKE_ESCAPE),
+                        SalesAgent.person_label.ilike(like, escape=_LIKE_ESCAPE),
                     )
                 )
         return base
@@ -1420,6 +1693,10 @@ class OrderInquiryWorklistService:
             "suppliers": self._suppliers({**filters, "supplier_id": None}),
             "projects": self._projects({**filters, "project_id": None}),
             "raised_by": self._raised_by({**filters, "raised_by": None}),
+            # S1, R-K: the Location and Agent filters' own lists, same shape as
+            # `suppliers` (`[{id,label,rows}]`), each with its own filter dropped.
+            "locations": self._locations({**filters, "location": None}),
+            "agents": self._agents({**filters, "agent": None}),
             # The three cards, computed with the CARD FILTER ITSELF DROPPED, for the
             # reason every other axis here drops its own: a card that empties the two
             # beside it the moment it is pressed cannot be pressed a second time.
@@ -1471,29 +1748,59 @@ class OrderInquiryWorklistService:
         )
         return counts
 
+    def _stage_rows(
+        self,
+        filters: Dict[str, Any],
+        *,
+        extra_columns: Sequence[Any] = (),
+        extra_filters: Sequence[Any] = (),
+    ) -> Any:
+        """ONE ROW PER INQUIRY ROW - its quantity and its three stage amounts, computed
+        ONCE - as a subquery to aggregate over.
+
+        The cards (`_kinds`) and the Schedule matrix both read it, which is the whole
+        reason it exists: a cell and the card above it are two GROUP BYs over the same
+        per-row arithmetic rather than two copies of the formula, so the Schedule view
+        cannot answer differently from the strip over it (AC-X6).
+        """
+        return (
+            self._base(**filters)
+            .with_entities(
+                OrderInquiryRow.id.label("row_id"),
+                OrderInquiryRow.qty.label("qty"),
+                self._incoming_qty().label("incoming"),
+                self._purchased_qty().label("purchased"),
+                _UNLINKED_QTY.label("buy"),
+                *extra_columns,
+            )
+            .filter(*extra_filters)
+            .order_by(None)
+            .subquery()
+        )
+
     def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:
-        """Quantity per kind over every matching row (AC-I11): on SPO allocations, on
-        purchase order lines, and the unlinked remainder that still has to be bought.
+        """Quantity per STAGE over every matching row (AC-I11, S5/R-F): incoming (on an
+        SPO allocation, own link or derived via its linked PO), purchased (on a purchase
+        order line but not yet on a shipment), and the unlinked remainder that still has
+        to be bought. A unit counts once, the furthest stage it reached.
 
         SUMMED SERVER-SIDE OVER THE WHOLE MATCHING SET, never over a page, so a card
         cannot claim less than pressing it reveals. Cancelled and actioned rows are
         dropped by the same rule the `kind` filter drops them (`_NOT_OWED_STATES`), so
         the cards and the rows agree.
         """
-        spo, po, buy = (
-            self._base(**filters)
-            .with_entities(
-                func.coalesce(func.sum(_SPO_LINKED_QTY), 0),
-                func.coalesce(func.sum(_PO_LINKED_QTY), 0),
-                func.coalesce(func.sum(_UNLINKED_QTY), 0),
-            )
-            .filter(OrderInquiryRow.state.notin_(_NOT_OWED_STATES))
-            .order_by(None)
-            .one()
+        stages = self._stage_rows(
+            filters,
+            extra_filters=(OrderInquiryRow.state.notin_(_NOT_OWED_STATES),),
         )
+        incoming, purchased, buy = self.db.query(
+            func.coalesce(func.sum(stages.c.incoming), 0),
+            func.coalesce(func.sum(stages.c.purchased), 0),
+            func.coalesce(func.sum(stages.c.buy), 0),
+        ).one()
         return {
-            "spo": _qty_str(_dec(spo)),
-            "po": _qty_str(_dec(po)),
+            "spo": _qty_str(_dec(incoming)),
+            "po": _qty_str(_dec(purchased)),
             "buy": _qty_str(_dec(buy)),
         }
 
@@ -1537,6 +1844,44 @@ class OrderInquiryWorklistService:
             for supplier_id, name, count in rows
         ]
 
+    def _locations(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """S1, R-K: the Location filter's own list. `_LOCATION` is a plain warehouse
+        code, not an FK, so the code IS the id - the same shape a picker built off a real
+        id-bearing table offers, with no id of its own to leak into the UI."""
+        rows = (
+            self._base(**filters)
+            .with_entities(_LOCATION, func.count(OrderInquiryRow.id))
+            .filter(_LOCATION.isnot(None))
+            .group_by(_LOCATION)
+            .order_by(_LOCATION.asc())
+            .all()
+        )
+        return [
+            {"id": location, "label": location, "rows": int(count)}
+            for location, count in rows
+        ]
+
+    def _agents(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """S1, R-K: the Agent filter's own list, off the same core sales order the
+        Agent column already reads."""
+        rows = (
+            self._base(**filters)
+            .with_entities(
+                SalesAgent.id,
+                SalesAgent.sales_agent,
+                SalesAgent.person_label,
+                func.count(OrderInquiryRow.id),
+            )
+            .filter(SalesAgent.id.isnot(None))
+            .group_by(SalesAgent.id, SalesAgent.sales_agent, SalesAgent.person_label)
+            .order_by(SalesAgent.sales_agent.asc())
+            .all()
+        )
+        return [
+            {"id": agent_id, "label": label or code, "rows": int(count)}
+            for agent_id, code, label, count in rows
+        ]
+
     def _projects(self, filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         rows = (
             self._base(**filters)
@@ -1573,6 +1918,129 @@ class OrderInquiryWorklistService:
         return [
             {"id": user_id, "label": name or "Unnamed user", "rows": int(count)}
             for user_id, name, count in rows
+        ]
+
+    # -------------------------------------------------------------------- matrix
+
+    #: The vertical axis, each naming its own grouping column and its own human label
+    #: (S3, R-I second half). Product first, in the order the captain named them.
+    #:
+    #: The sales order key falls back to the PROJECT sales order's own id, the way the
+    #: `_SO_NUMBER` label beside it already falls back to `provisional_ref`: an AUTHORED
+    #: order that was never adopted from the book has `so_id` NULL, and keying on the
+    #: core order alone dropped every one of its rows off the axis entirely (SF-3).
+    _MATRIX_AXES = {
+        "product": (Product.id, Product.product_code),
+        "sales_order": (
+            func.coalesce(SalesOrder.id, ProjectSalesOrder.id),
+            _SO_NUMBER,
+        ),
+        "customer": (Customer.id, Customer.customer_name),
+        "agent": (SalesAgent.id, SalesAgent.sales_agent),
+    }
+    #: Postgres `date_trunc` unit per granularity. `week` truncates to Monday under
+    #: Postgres's own ISO-8601 week reckoning - no manual weekday arithmetic needed for
+    #: AC-X3, the same fact the FE's date-fns build used to compute client-side.
+    _MATRIX_TRUNC = {"day": "day", "week": "week", "month": "month", "year": "year"}
+
+    def _matrix_axis(self, axis: str) -> Tuple[Any, Any]:
+        """The grouping column and its label, refused rather than guessed at. The list's
+        own `axis`/`axis_key` drilldown filter reads the same map, so a cell and the rows
+        it opens cannot group by two different columns."""
+        if axis not in self._MATRIX_AXES:
+            raise AppException(
+                422,
+                f"'{axis}' is not a matrix axis. Use "
+                f"{', '.join(self._MATRIX_AXES)}.",
+                code="invalid_matrix_axis",
+            )
+        return self._MATRIX_AXES[axis]
+
+    def _matrix_trunc(self, by: str) -> str:
+        """REFUSED, never silently bucketed by week: a Schedule view headed "by
+        fortnight" while the server cut the data by week is a screen lying about what it
+        is showing, the same reason an unknown `axis` or sort column is a 422."""
+        if by not in self._MATRIX_TRUNC:
+            raise AppException(
+                422,
+                f"'{by}' is not a matrix granularity. Use "
+                f"{', '.join(self._MATRIX_TRUNC)}.",
+                code="invalid_matrix_granularity",
+            )
+        return self._MATRIX_TRUNC[by]
+
+    def matrix(self, *, axis: str, by: str = "week", **filters) -> List[Dict[str, Any]]:
+        """The Schedule matrix's own read (S3): one GROUP BY over the SAME filtered set
+        the list reads, axis by date bucket, no page and no cap - the old Schedule view
+        fetched the list once with `limit=1000` and grouped client-side, which a
+        delivery-filtered worklist has already exceeded on prod (PLAN section 0).
+
+        `qty`/`rows`/the stage sums drop a CANCELLED row (AC-X5, round 2) - its
+        quantity is not owed any more, and counting it would inflate a cell nobody
+        can act on. An ACTIONED row still counts, unlike `_kinds`/`kind=` (which drops
+        both via `_NOT_OWED_STATES`): it has been answered somewhere else, but the
+        matrix is a read of what was DELIVERY-DUE in a period, not of what is still
+        outstanding, and an actioned row was still due then.
+
+        The stage sums are the SAME per-row arithmetic the cards read (AC-X6), computed
+        once per row in `_stage_rows` and grouped over here - not a second copy of the
+        formula, which is how the uncapped derived cover reached the Schedule view.
+        """
+        axis_key, axis_label = self._matrix_axis(axis)
+        period = cast(
+            func.date_trunc(self._matrix_trunc(by), OrderInquiryRow.delivery_date), Date
+        )
+        stages = self._stage_rows(
+            filters,
+            extra_columns=(
+                axis_key.label("axis_key"),
+                axis_label.label("axis_label"),
+                period.label("period"),
+            ),
+            extra_filters=(
+                OrderInquiryRow.delivery_date.isnot(None),
+                axis_key.isnot(None),
+                # AC-X5: cancelled is out, actioned stays - narrower than
+                # `_NOT_OWED_STATES` (which `_kinds`/`kind=` drop both by).
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            ),
+        )
+        rows = (
+            self.db.query(
+                stages.c.axis_key,
+                stages.c.axis_label,
+                stages.c.period,
+                func.coalesce(func.sum(stages.c.qty), 0),
+                func.coalesce(func.sum(stages.c.buy), 0),
+                func.coalesce(func.sum(stages.c.purchased), 0),
+                func.coalesce(func.sum(stages.c.incoming), 0),
+                func.count(stages.c.row_id),
+            )
+            .group_by(stages.c.axis_key, stages.c.axis_label, stages.c.period)
+            .order_by(stages.c.axis_label.asc(), stages.c.period.asc())
+            .all()
+        )
+        return [
+            {
+                "axis_key": str(axis_key_value),
+                "axis_label": axis_label_value,
+                "period": period_value.isoformat(),
+                "qty": _qty_str(_dec(qty)),
+                "buy": _qty_str(_dec(buy)),
+                "po": _qty_str(_dec(po)),
+                "spo": _qty_str(_dec(spo)),
+                "rows": int(count),
+            }
+            for (
+                axis_key_value,
+                axis_label_value,
+                period_value,
+                qty,
+                buy,
+                po,
+                spo,
+                count,
+            ) in rows
         ]
 
     # ------------------------------------------------------------- unplace all

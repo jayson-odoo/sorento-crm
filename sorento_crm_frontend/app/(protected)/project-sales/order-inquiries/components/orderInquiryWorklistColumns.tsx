@@ -11,11 +11,7 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import {
-  ackStateOf,
-  isBulkRejectable,
-  previousValueOf,
-} from '../../_shared/lib/orderInquiryAck';
+import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -76,22 +72,40 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
  * partly shipped row carries both a `po` link and an `spo` link naming the same purchase
  * order, and the list must not read that as two.
  */
-function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): string[] {
-  const numbers: string[] = [];
+/**
+ * One document number for this cell's book, and whether it is DERIVED (S5, R-E) - the
+ * PO column's number read off an SPO link's `source_po_number` (`via: 'spo'`), or the
+ * SPO column's number that is really the linked PO's own open shipment (`via: 'po'`).
+ * Written nowhere: no link is created for either, so `via` never appears outside these
+ * two columns.
+ */
+interface DocumentEntry {
+  document: string;
+  via: 'po' | 'spo' | null;
+}
+
+function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
+  const entries: DocumentEntry[] = [];
+  const seen = new Set<string>();
   for (const link of row.links ?? []) {
-    const named =
-      kind === 'po'
-        ? link.kind === 'po'
-          ? link.document
-          : link.source_po_number
-        : link.kind === 'spo'
-          ? link.document
-          : null;
+    let named: string | null = null;
+    let via: 'po' | 'spo' | null = null;
+    if (kind === 'po') {
+      if (link.kind === 'po') named = link.document;
+      else if (link.kind === 'spo' && link.source_po_number) {
+        named = link.source_po_number;
+        via = link.derived_po ? 'spo' : null;
+      }
+    } else if (link.kind === 'spo') {
+      named = link.document;
+      via = link.derived ? 'po' : null;
+    }
     const document = (named ?? '').trim();
-    if (!document || numbers.includes(document)) continue;
-    numbers.push(document);
+    if (!document || seen.has(document)) continue;
+    seen.add(document);
+    entries.push({ document, via });
   }
-  return numbers;
+  return entries;
 }
 
 /**
@@ -133,13 +147,27 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       <button
         type="button"
         data-testid={triggerId}
-        title={first}
+        title={first.document}
         aria-label={`Show documents backing ${what}`}
         className="block min-w-0 truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={open_}
       >
-        {first}
+        {first.document}
       </button>
+      {/* S5, R-E: never a real link - the SAME allocation read the other book's own
+          number off (an SPO's `source_po_number`, or the PO's own open shipment). */}
+      {first.via ? (
+        <span
+          data-testid={
+            kind === 'spo'
+              ? `backing-documents-via-spo-${row.id}`
+              : `backing-documents-via-${row.id}`
+          }
+          className="shrink-0 text-2xs text-muted-foreground"
+        >
+          {first.via === 'po' ? 'via PO' : 'via SPO'}
+        </span>
+      ) : null}
       {rest.length ? (
         <Badge asChild size="sm" variant="secondary" appearance="light">
           <button
@@ -297,18 +325,16 @@ export function useOrderInquiryWorklistColumns({
       ...(selectable
         ? [
             buildSelectColumn<OrderInquiryWorklistRow>({
-              // Only a row Reject may still take is tickable now (S1): every row is born
-              // acknowledged, so there is no Confirm press left for the tick to feed, and
-              // Reject is the last remaining bulk action gated on the row's own state.
-              enableRow: (row) => isBulkRejectable(row.original),
+              // Informational only - TanStack reads `getCanSelect` off the TABLE's own
+              // `enableRowSelection`, never a column's (`OrderInquiriesClient`'s own
+              // note over the same trap), which is where R-A's rule actually lives now
+              // (S4, PLAN-scm-oi-worklist-excel-parity.md): every row except `cancelled`
+              // ticks, fully linked rows included. Kept here only so this column's own
+              // `disabledReason` still applies to the one row the table itself blocks.
               disabledReason: (row) =>
-                ackStateOf(row.original) === 'rejected'
-                  ? 'Rejected rows go back to CS, not to purchasing'
-                  : row.original.state === 'cancelled'
-                    ? 'This instruction was called off'
-                    : row.original.state === 'actioned'
-                      ? 'This row has already been answered'
-                      : 'Nothing left to act on',
+                row.original.state === 'cancelled'
+                  ? 'This instruction was called off'
+                  : undefined,
               rowLabel: (row) =>
                 `Select ${row.original.item_code ?? 'row'} on ${row.original.so_number ?? 'this order'}`,
             }),
@@ -355,25 +381,6 @@ export function useOrderInquiryWorklistColumns({
             </Link>
           );
         },
-      },
-      {
-        accessorKey: 'inquiry_no',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Order inquiry" column={column} />
-        ),
-        size: 130,
-        meta: { headerTitle: 'Order inquiry', skeleton: <Skeleton className="h-4 w-20" /> },
-        // Which instruction this row belongs to, by the number purchasing quotes. An
-        // amendment raises a SECOND inquiry on the same sales order, so the S/O no beside
-        // it cannot answer "which one was I told about".
-        cell: ({ row }) =>
-          row.original.inquiry_no ? (
-            <span className="block truncate tabular-nums" title={row.original.inquiry_no}>
-              {row.original.inquiry_no}
-            </span>
-          ) : (
-            <Muted>Not numbered</Muted>
-          ),
       },
       {
         accessorKey: 'item_code',
@@ -453,6 +460,118 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
+        accessorKey: 'supplier',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+        size: 150,
+        meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
+        // Blank means nobody has linked it yet, exactly as a blank cell does on their
+        // sheet. Never filled in with a guess at who would supply it.
+        cell: ({ row }) =>
+          row.original.supplier ? (
+            <span className="block truncate" title={row.original.supplier}>
+              {row.original.supplier}
+            </span>
+          ) : (
+            <Muted>Not linked</Muted>
+          ),
+      },
+      {
+        // WHICH PURCHASE ORDER this row stands on (AC-R-26..R-31, owner 14 Sep, live look
+        // at prod after the migration upload). The cell is ONE LINE: the draft/confirmed
+        // mark, the first PO number as the trigger for the backing-documents lightbox, and
+        // a `+N` pill when the row stands on more than one. The coverage headline and the
+        // info icon left this cell in that slice - both are in the lightbox already (the
+        // headline is its subtitle), and the owner's question of the list is "which PO",
+        // which an icon cannot answer until it is clicked.
+        //
+        // The column id stays `po_number`: it is what a saved column layout is keyed by,
+        // and renaming it would silently exile the column to the right of everyone's grid.
+        id: 'po_number',
+        accessorFn: (row) => documentsOf(row, 'po')[0]?.document ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
+        // Wide enough for `202605-S0005` AND the "via SPO" tag beside it at 1280 (review
+        // round): at 150 the number itself truncated the moment a row's PO was derived,
+        // which is the one row where reading the whole number matters.
+        size: 200,
+        meta: { headerTitle: 'PO', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row, table }) => {
+          const bundled = row.original.bundled_with;
+          const bundledQty = Number(row.original.bundled_qty ?? '0');
+          if (bundled && Number.isFinite(bundledQty) && bundledQty > 0) {
+            const headline = bundledHeadline(row.original);
+            if (headline) {
+              // The FULL anchor row, for the info icon's own lightbox only (it needs
+              // the anchor's real documents, not just its headline) - the headline text
+              // above never depends on this: it comes straight off `bundled.anchor_headline`,
+              // resolved server-side. `table.options.data` is the loaded rows, never a
+              // second fetch; a page that does not happen to hold the anchor falls back
+              // to the row's own lightbox (`dialogRow` inside `BundledDocumentsButton`).
+              const rows = table.options.data as OrderInquiryWorklistRow[];
+              const anchorRow = rows.find((r) => r.id === bundled.row_id) ?? null;
+              const qty = Number(row.original.qty ?? '0');
+              const fullyBundled = qty - bundledQty <= 0;
+              return (
+                <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
+                  <DraftMark row={row.original} />
+                  <span className="truncate" title={headline}>
+                    {headline}
+                  </span>
+                  <BundledDocumentsButton
+                    row={row.original}
+                    anchorRow={anchorRow}
+                    fullyBundled={fullyBundled}
+                  />
+                </span>
+              );
+            }
+          }
+          if ((row.original.links ?? []).length === 0) {
+            // Nothing in either book can cover this row (S5, AC-D4): a plain dash, the
+            // same "no explanation in the UI" rule every other blank cell here follows -
+            // "Not found (new order)" read as a caption nobody asked for. Nothing is
+            // clickable: there is nothing behind it to open.
+            return (
+              <div className="min-w-0">
+                <Muted>-</Muted>
+              </div>
+            );
+          }
+          // Linked in the other book only: a muted dash, and the SPO cell beside this one
+          // is where that row says where it stands.
+          return <DocumentsCell row={row.original} kind="po" />;
+        },
+      },
+      {
+        // WHICH SHIPPING ORDER this row stands on - the other half of the owner's ruling,
+        // and a new column rather than a second line in the PO cell, because "I want all
+        // rows to have 1 line only".
+        id: 'spo_number',
+        accessorFn: (row) => documentsOf(row, 'spo')[0]?.document ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+        // Same width as PO beside it, for the same reason - plus "awaiting shipment",
+        // which this column prints in full.
+        size: 200,
+        meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
+        cell: ({ row }) => {
+          // A bundled row's documents are the anchor's, and the PO cell already says so
+          // in words (`Included with ...`) with the bundled lightbox behind it. Repeating
+          // any of that here would make the bundle read as two separate facts.
+          const bundledQty = Number(row.original.bundled_qty ?? '0');
+          const bundled =
+            row.original.bundled_with && Number.isFinite(bundledQty) && bundledQty > 0;
+          if (bundled) return <Muted>-</Muted>;
+          // S5, AC-D4: bought but not yet on a shipment - distinct from a plain dash,
+          // which means nobody has put this row anywhere at all.
+          if (
+            documentsOf(row.original, 'spo').length === 0 &&
+            documentsOf(row.original, 'po').length > 0
+          ) {
+            return <Muted>awaiting shipment</Muted>;
+          }
+          return <DocumentsCell row={row.original} kind="spo" />;
+        },
+      },
+      {
         accessorKey: 'agent_code',
         header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
         size: 110,
@@ -487,107 +606,23 @@ export function useOrderInquiryWorklistColumns({
           ) : null,
       },
       {
-        accessorKey: 'supplier',
-        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
-        size: 150,
-        meta: { headerTitle: 'Supplier', skeleton: <Skeleton className="h-4 w-20" /> },
-        // Blank means nobody has linked it yet, exactly as a blank cell does on their
-        // sheet. Never filled in with a guess at who would supply it.
+        accessorKey: 'inquiry_no',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Order inquiry" column={column} />
+        ),
+        size: 130,
+        meta: { headerTitle: 'Order inquiry', skeleton: <Skeleton className="h-4 w-20" /> },
+        // Which instruction this row belongs to, by the number purchasing quotes. An
+        // amendment raises a SECOND inquiry on the same sales order, so the S/O no beside
+        // it cannot answer "which one was I told about".
         cell: ({ row }) =>
-          row.original.supplier ? (
-            <span className="block truncate" title={row.original.supplier}>
-              {row.original.supplier}
+          row.original.inquiry_no ? (
+            <span className="block truncate tabular-nums" title={row.original.inquiry_no}>
+              {row.original.inquiry_no}
             </span>
           ) : (
-            <Muted>Not linked</Muted>
+            <Muted>Not numbered</Muted>
           ),
-      },
-      {
-        // WHICH PURCHASE ORDER this row stands on (AC-R-26..R-31, owner 14 Sep, live look
-        // at prod after the migration upload). The cell is ONE LINE: the draft/confirmed
-        // mark, the first PO number as the trigger for the backing-documents lightbox, and
-        // a `+N` pill when the row stands on more than one. The coverage headline and the
-        // info icon left this cell in that slice - both are in the lightbox already (the
-        // headline is its subtitle), and the owner's question of the list is "which PO",
-        // which an icon cannot answer until it is clicked.
-        //
-        // The column id stays `po_number`: it is what a saved column layout is keyed by,
-        // and renaming it would silently exile the column to the right of everyone's grid.
-        id: 'po_number',
-        accessorFn: (row) => documentsOf(row, 'po')[0] ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 150,
-        meta: { headerTitle: 'PO', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row, table }) => {
-          const bundled = row.original.bundled_with;
-          const bundledQty = Number(row.original.bundled_qty ?? '0');
-          if (bundled && Number.isFinite(bundledQty) && bundledQty > 0) {
-            const headline = bundledHeadline(row.original);
-            if (headline) {
-              // The FULL anchor row, for the info icon's own lightbox only (it needs
-              // the anchor's real documents, not just its headline) - the headline text
-              // above never depends on this: it comes straight off `bundled.anchor_headline`,
-              // resolved server-side. `table.options.data` is the loaded rows, never a
-              // second fetch; a page that does not happen to hold the anchor falls back
-              // to the row's own lightbox (`dialogRow` inside `BundledDocumentsButton`).
-              const rows = table.options.data as OrderInquiryWorklistRow[];
-              const anchorRow = rows.find((r) => r.id === bundled.row_id) ?? null;
-              const qty = Number(row.original.qty ?? '0');
-              const fullyBundled = qty - bundledQty <= 0;
-              return (
-                <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
-                  <DraftMark row={row.original} />
-                  <span className="truncate" title={headline}>
-                    {headline}
-                  </span>
-                  <BundledDocumentsButton
-                    row={row.original}
-                    anchorRow={anchorRow}
-                    fullyBundled={fullyBundled}
-                  />
-                </span>
-              );
-            }
-          }
-          if ((row.original.links ?? []).length === 0) {
-            // Nothing in either book can cover this row, so it is a NEW order rather
-            // than an oversight (AC-A7). "Not linked" read as a step somebody had
-            // forgotten to take; the links are drafted the moment a row is raised now,
-            // so an empty cell means the cascade looked and found nothing. Nothing is
-            // clickable: there is nothing behind it to open.
-            return (
-              <div className="min-w-0">
-                <Muted>Not found (new order)</Muted>
-              </div>
-            );
-          }
-          // Linked in the other book only: a muted dash, and the SPO cell beside this one
-          // is where that row says where it stands.
-          return <DocumentsCell row={row.original} kind="po" />;
-        },
-      },
-      {
-        // WHICH SHIPPING ORDER this row stands on - the other half of the owner's ruling,
-        // and a new column rather than a second line in the PO cell, because "I want all
-        // rows to have 1 line only".
-        id: 'spo_number',
-        accessorFn: (row) => documentsOf(row, 'spo')[0] ?? '',
-        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        size: 160,
-        meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) => {
-          // A bundled row's documents are the anchor's, and the PO cell already says so
-          // in words (`Included with ...`) with the bundled lightbox behind it. Repeating
-          // any of that here would make the bundle read as two separate facts.
-          const bundledQty = Number(row.original.bundled_qty ?? '0');
-          const bundled =
-            row.original.bundled_with && Number.isFinite(bundledQty) && bundledQty > 0;
-          return bundled ? (
-            <Muted>-</Muted>
-          ) : (
-            <DocumentsCell row={row.original} kind="spo" />
-          );
-        },
       },
       {
         accessorKey: 'taken_from_po',

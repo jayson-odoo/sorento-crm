@@ -1,7 +1,13 @@
 /**
- * Purchasing's three-kind vocabulary (section 3.I2, AC-I11 to AC-I14): Use SPO, Use PO,
- * Buy - and the arithmetic that keeps the strip, the bar and the "Linked to" column
- * unable to disagree, because every one of them is built off `links[]` here.
+ * Purchasing's three-STAGE vocabulary (section 3.I2, AC-I11 to AC-I14;
+ * PLAN-scm-oi-worklist-excel-parity.md R-F): Buy, Purchased, Incoming - the furthest a
+ * unit has reached, left to right - and the arithmetic that keeps the strip, the bar and
+ * the "Linked to" column unable to disagree, because every one of them is built off
+ * `links[]` here.
+ *
+ * The ORDER is the reading order (`KIND_ORDER`), not the old `spo, po, buy`, and the
+ * words are the cards' own (`KIND_LABELS`): a cell that said "PO 5" beside a card that
+ * said "Purchased" taught two vocabularies for one fact.
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -52,14 +58,14 @@ describe('segmentsOfRows, one row at a time (the schedule matrix bar reads it th
     expect(segments).toEqual([{ kind: 'spo', qty: '10' }]);
   });
 
-  it('splits a partly linked row: PO 5 off a quantity of 8 leaves a Buy of 3', () => {
+  it('splits a partly linked row: Purchased 5 off a quantity of 8 leaves a Buy of 3', () => {
     const segments = segmentsOfRows([
       row({ qty: '8', links: [link({ kind: 'po', qty: '5' })] }),
     ]);
 
     expect(segments).toEqual([
-      { kind: 'po', qty: '5' },
       { kind: 'buy', qty: '3' },
+      { kind: 'po', qty: '5' },
     ]);
   });
 
@@ -72,8 +78,8 @@ describe('segmentsOfRows, one row at a time (the schedule matrix bar reads it th
     ]);
 
     expect(segments).toEqual([
-      { kind: 'spo', qty: '4' },
       { kind: 'po', qty: '6' },
+      { kind: 'spo', qty: '4' },
     ]);
   });
 });
@@ -88,14 +94,14 @@ describe('kindTotals', () => {
 
     expect(totals.map((segment) => segment.kind)).toEqual(KIND_ORDER);
     expect(totals).toEqual([
-      { kind: 'spo', qty: '10' },
-      { kind: 'po', qty: '5' },
       { kind: 'buy', qty: '23' },
+      { kind: 'po', qty: '5' },
+      { kind: 'spo', qty: '10' },
     ]);
   });
 
   it('carries all three kinds even when every one of them is zero', () => {
-    expect(kindTotals([]).map((segment) => segment.kind)).toEqual(['spo', 'po', 'buy']);
+    expect(kindTotals([]).map((segment) => segment.kind)).toEqual(['buy', 'po', 'spo']);
     expect(kindTotals([]).every((segment) => segment.qty === '0')).toBe(true);
   });
 
@@ -106,9 +112,9 @@ describe('kindTotals', () => {
     ]);
 
     expect(totals).toEqual([
-      { kind: 'spo', qty: '0' },
-      { kind: 'po', qty: '0' },
       { kind: 'buy', qty: '20' },
+      { kind: 'po', qty: '0' },
+      { kind: 'spo', qty: '0' },
     ]);
   });
 
@@ -124,12 +130,12 @@ describe('kindText', () => {
     expect(kindText(segmentsOfRows([row({ qty: '85', links: [] })]))).toBe('Buy 85');
   });
 
-  it('names a split row as "PO 5 · Buy 3"', () => {
+  it('names a split row as "Buy 3 · Purchased 5" - the cards\' own words', () => {
     const text = kindText(
       segmentsOfRows([row({ qty: '8', links: [link({ kind: 'po', qty: '5' })] })]),
     );
 
-    expect(text).toBe('PO 5 · Buy 3');
+    expect(text).toBe('Buy 3 · Purchased 5');
   });
 
   it('is empty when there is nothing to say', () => {
@@ -161,22 +167,22 @@ describe('fullyLinked', () => {
 describe('facetSegments', () => {
   it('reads three zeros when the summary has not answered yet', () => {
     expect(facetSegments(undefined)).toEqual([
-      { kind: 'spo', qty: '0' },
-      { kind: 'po', qty: '0' },
       { kind: 'buy', qty: '0' },
+      { kind: 'po', qty: '0' },
+      { kind: 'spo', qty: '0' },
     ]);
     expect(facetSegments(null)).toEqual([
-      { kind: 'spo', qty: '0' },
-      { kind: 'po', qty: '0' },
       { kind: 'buy', qty: '0' },
+      { kind: 'po', qty: '0' },
+      { kind: 'spo', qty: '0' },
     ]);
   });
 
   it('reads the server facet in the same fixed order the cards render', () => {
     expect(facetSegments({ spo: '10', po: '95', buy: '116' })).toEqual([
-      { kind: 'spo', qty: '10' },
-      { kind: 'po', qty: '95' },
       { kind: 'buy', qty: '116' },
+      { kind: 'po', qty: '95' },
+      { kind: 'spo', qty: '10' },
     ]);
   });
 });

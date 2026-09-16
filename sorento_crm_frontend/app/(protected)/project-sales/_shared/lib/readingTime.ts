@@ -1,3 +1,5 @@
+import { parseDateTimeAsUTC } from '@/lib/helpers';
+
 /**
  * How long a document read took, said the way a person would say it.
  *
@@ -41,7 +43,9 @@ export function describeReadingTime(ms: number | null | undefined): string | nul
  */
 export function describeWaitingFor(startedAt: string | null | undefined): string | null {
   if (!startedAt) return null;
-  const started = Date.parse(startedAt.endsWith('Z') ? startedAt : `${startedAt}Z`);
+  // Through the ONE parser (`lib/helpers`), which also reads an offset-bearing string
+  // and a bare `YYYY-MM-DD` - the shapes this hand-rolled `+ 'Z'` got wrong.
+  const started = parseDateTimeAsUTC(startedAt).getTime();
   if (Number.isNaN(started)) return null;
   const seconds = Math.floor((Date.now() - started) / 1000);
   if (seconds < 0) return null;

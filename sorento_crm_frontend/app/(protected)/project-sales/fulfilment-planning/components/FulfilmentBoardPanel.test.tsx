@@ -294,7 +294,10 @@ function openLinesTab() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  currentSearchParams = new URLSearchParams('');
+  // R-J (List is now the default view): every spec here exercises the GRID matrix,
+  // so `?view=grid` is seeded by default rather than clicking the Grid button in
+  // each test - one place, per the coordinator's repair note.
+  currentSearchParams = new URLSearchParams('view=grid');
 });
 
 /**
@@ -1167,7 +1170,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
         .filter((bucket) => bucket.kind === 'dated')
         .slice(0, 5),
     });
-    currentSearchParams = new URLSearchParams('granularity=day');
+    currentSearchParams = new URLSearchParams('view=grid&granularity=day');
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -1208,7 +1211,7 @@ describe('FulfilmentBoardPanel: the calendar control (13.3)', () => {
       'day',
     );
     getPlanningBoard.mockResolvedValue(dayBoard);
-    currentSearchParams = new URLSearchParams('granularity=day');
+    currentSearchParams = new URLSearchParams('view=grid&granularity=day');
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
@@ -2087,14 +2090,14 @@ describe('FulfilmentBoardPanel: searching the product rows', () => {
 
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith(
-        '/project-sales/fulfilment-planning?product=tpe',
+        '/project-sales/fulfilment-planning?view=grid&product=tpe',
         expect.objectContaining({ scroll: false }),
       ),
     );
   });
 
   it('opens on the term the URL carries', async () => {
-    currentSearchParams = new URLSearchParams('product=ceiling');
+    currentSearchParams = new URLSearchParams('view=grid&product=ceiling');
     getPlanningBoard.mockResolvedValue(catalogue());
 
     renderPanel();
@@ -2190,7 +2193,7 @@ describe('FulfilmentBoardPanel: the live policy, and only it', () => {
  */
 describe('FulfilmentBoardPanel: granularity in the URL', () => {
   it('opens on the granularity the URL names', async () => {
-    currentSearchParams = new URLSearchParams('granularity=month');
+    currentSearchParams = new URLSearchParams('view=grid&granularity=month');
     getPlanningBoard.mockResolvedValue(boardOf([demand()], {}, 'month'));
 
     renderPanel(['SO403340']);
@@ -2207,7 +2210,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
   });
 
   it('falls back to week on a granularity nobody defined', async () => {
-    currentSearchParams = new URLSearchParams('granularity=fortnightly');
+    currentSearchParams = new URLSearchParams('view=grid&granularity=fortnightly');
     getPlanningBoard.mockResolvedValue(boardOf([demand()]));
 
     renderPanel(['SO403340']);
@@ -2234,7 +2237,7 @@ describe('FulfilmentBoardPanel: granularity in the URL', () => {
 
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith(
-        '/project-sales/fulfilment-planning?granularity=month',
+        '/project-sales/fulfilment-planning?view=grid&granularity=month',
         expect.objectContaining({ scroll: false }),
       ),
     );
@@ -2443,14 +2446,14 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
 
     await waitFor(() =>
       expect(routerReplace).toHaveBeenCalledWith(
-        '/project-sales/fulfilment-planning?rows=customer',
+        '/project-sales/fulfilment-planning?view=grid&rows=customer',
         expect.objectContaining({ scroll: false }),
       ),
     );
   });
 
   it('opens on the axis the URL names, and falls back to product on nonsense', async () => {
-    currentSearchParams = new URLSearchParams('rows=project');
+    currentSearchParams = new URLSearchParams('view=grid&rows=project');
     getPlanningBoard.mockResolvedValue(twoOrders());
 
     renderPanel();
@@ -2461,7 +2464,7 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
   });
 
   it('falls back to product on an axis nobody defined', async () => {
-    currentSearchParams = new URLSearchParams('rows=warehouse');
+    currentSearchParams = new URLSearchParams('view=grid&rows=warehouse');
     getPlanningBoard.mockResolvedValue(twoOrders());
 
     renderPanel();
@@ -2700,7 +2703,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     expect(board.contributions).toHaveLength(2);
     // Both SAVED (8 Sep 2026 ruling, reverses R11), or the counter reads 0 regardless of window.
     getPlanningBoard.mockResolvedValue(allSaved(board));
-    currentSearchParams = new URLSearchParams('granularity=day');
+    currentSearchParams = new URLSearchParams('view=grid&granularity=day');
     confirmMany.mockResolvedValue({
       results: [
         { pso_id: 'pso-so-a', ok: true, decision_revision: 1 },

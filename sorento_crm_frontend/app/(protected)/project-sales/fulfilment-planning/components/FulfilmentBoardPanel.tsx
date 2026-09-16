@@ -90,7 +90,11 @@ import { DecisionStrip } from './DecisionStrip';
 import { cellCarriesKind, contributionCarriesKind } from '../../_shared/lib/decisionStrip';
 import type { SupplyKind } from '../../_shared/lib/supplyVocabulary';
 
-/** Persisted in the URL as `?view=list` (D2). Grid is the default the board shipped as. */
+/**
+ * Persisted in the URL as `?view=grid` (S6, PLAN-scm-oi-worklist-excel-parity.md R-J).
+ * List is the default now - the plan opens on the overview "Approve all" reads, and Grid
+ * is the deliberate switch into the pivoted matrix.
+ */
 type BoardView = 'grid' | 'list';
 
 /**
@@ -102,8 +106,13 @@ type BoardView = 'grid' | 'list';
  */
 type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string };
 
-function boardViewFrom(value: string | null): BoardView {
-  return value === 'list' ? 'list' : 'grid';
+/**
+ * S6 (R-J): List is the default view; only an explicit `?view=grid` opens Grid. Exported
+ * so `OrderInquiriesClient.planner.test.tsx` can pin AC-P1 as a pure function rather than
+ * mounting the whole board for a one-line contract.
+ */
+export function boardViewFrom(value: string | null): BoardView {
+  return value === 'grid' ? 'grid' : 'list';
 }
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
@@ -238,7 +247,7 @@ export function FulfilmentBoardPanel({
     else next.set('rows', rowAxis);
     if (productSearch.trim()) next.set('product', productSearch.trim());
     else next.delete('product');
-    if (view === 'grid') next.delete('view');
+    if (view === 'list') next.delete('view');
     else next.set('view', view);
     const query = next.toString();
     if (query === searchParams.toString()) return;
@@ -1615,6 +1624,10 @@ export function FulfilmentBoardPanel({
                 onDecide={decide}
                 onDecideMany={decideMany}
                 annotations={changeAnnotationsByLine}
+                // S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the ONE search box,
+                // beside the title, drives Grid and List alike - the panel's own search
+                // box is gone, so there is no second box to disagree with this one.
+                externalSearch={productSearch}
               />
             ) : (
               <>

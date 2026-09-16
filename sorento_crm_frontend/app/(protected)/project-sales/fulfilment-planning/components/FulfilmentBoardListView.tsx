@@ -24,6 +24,7 @@ import { BoardChangeTable } from './BoardChangeTable';
 import { changedFieldsOf, lineKeyOf } from '../../_shared/lib/boardChangeAnnotations';
 import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotations';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
+import { contributionMatchesSearch } from '../../_shared/lib/fulfilmentBoard';
 import {
   contributionDecision,
   contributionInquiryDecision,
@@ -56,6 +57,7 @@ export function FulfilmentBoardListView({
   onDecide,
   onDecideMany,
   annotations,
+  externalSearch,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -72,6 +74,13 @@ export function FulfilmentBoardListView({
    * says the rest - the same component the grid cell uses.
    */
   annotations?: Map<string, BoardChangeAnnotation[]>;
+  /**
+   * S6 (PLAN-scm-oi-worklist-excel-parity.md R-J): the board's ONE search box, beside the
+   * title, drives Grid and List alike now - this filters `contributions` with it BEFORE
+   * handing them to `PanelDataGrid`, and `PanelDataGrid` is never given its own `searchOf`
+   * any more, so there is no second box to type into.
+   */
+  externalSearch?: string;
 }) {
   /**
    * Which rows are open - the same STATE the cell breakdown keeps, and the same panel inside
@@ -81,6 +90,14 @@ export function FulfilmentBoardListView({
    * readings now, or the two would teach different gestures for one act - including the
    * question asked before an unsaved composition is thrown away (C5).
    */
+  // S6: the row filter itself, off the board's own search box - `contributionMatchesSearch`
+  // is the SAME matcher `rowMatchesSearch` reads for the grid's rows, so the two views can
+  // never disagree about what one search term narrows to.
+  const filteredContributions = React.useMemo(
+    () => contributions.filter((contribution) => contributionMatchesSearch(contribution, externalSearch ?? '')),
+    [contributions, externalSearch],
+  );
+
   const expansion = useDecisionRowExpansion({ multiple: true });
   const {
     expanded,
@@ -494,16 +511,10 @@ export function FulfilmentBoardListView({
     <PanelDataGrid
       title="Every contributing line"
       columns={columns}
-      rows={contributions}
+      rows={filteredContributions}
       getRowId={(row) => row.key}
       listingKey="projects.projects.view::project-fulfilment-board-list-v1"
       emptyTitle="Nothing is outstanding on this board"
-      searchPlaceholder="Search sales order, customer, agent or product"
-      searchOf={(row) =>
-        [row.so_number, row.customer_name, row.agent_code, row.item_code]
-          .filter(Boolean)
-          .join(' ')
-      }
       rowSelection={rowSelection}
       onRowSelectionChange={setRowSelection}
       enableRowSelection={(row) => canQuickSave(row.original, draft)}
@@ -521,8 +532,8 @@ export function FulfilmentBoardListView({
             data-testid="board-list-expand-all"
             title="Expand all"
             aria-label="Expand all"
-            disabled={openKeys.length >= contributions.length}
-            onClick={() => expandAll(contributions.map((row) => row.key))}
+            disabled={openKeys.length >= filteredContributions.length}
+            onClick={() => expandAll(filteredContributions.map((row) => row.key))}
           >
             <ChevronsUpDown className="size-4" aria-hidden />
           </Button>

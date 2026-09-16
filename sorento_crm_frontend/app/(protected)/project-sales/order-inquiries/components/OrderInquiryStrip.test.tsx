@@ -1,6 +1,8 @@
 /**
- * The three cards above both views (AC-I11): Use SPO, Use PO, Buy - totals off the
- * worklist summary's `kinds` facet, a click narrows, a second click clears.
+ * The three stage cards above both views (S5, R-F, AC-D5/AC-D8): Buy, Purchased,
+ * Incoming, in THAT order - the furthest a unit has reached, left to right - totals off
+ * the worklist summary's `kinds` facet, a click narrows, a second click clears, no
+ * caption under any of them.
  */
 import React from 'react';
 import { render, screen } from '@testing-library/react';
@@ -8,8 +10,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { facetSegments } from '../../_shared/lib/orderInquiryKinds';
 
-describe('OrderInquiryStrip', () => {
-  it('renders exactly three cards, Use SPO, Use PO, Buy, in that order', () => {
+describe('OrderInquiryStrip (AC-D5: order and labels)', () => {
+  it('renders exactly three cards, Buy, Purchased, Incoming, in that order', () => {
     render(
       <OrderInquiryStrip totals={facetSegments({ spo: '10', po: '95', buy: '116' })} active={null} onToggle={vi.fn()} />,
     );
@@ -17,9 +19,9 @@ describe('OrderInquiryStrip', () => {
     const cards = screen.getAllByRole('button');
     expect(cards).toHaveLength(3);
     expect(cards.map((card) => card.textContent)).toEqual([
-      expect.stringContaining('Use SPO'),
-      expect.stringContaining('Use PO'),
       expect.stringContaining('Buy'),
+      expect.stringContaining('Purchased'),
+      expect.stringContaining('Incoming'),
     ]);
   });
 
@@ -28,17 +30,17 @@ describe('OrderInquiryStrip', () => {
       <OrderInquiryStrip totals={facetSegments({ spo: '10', po: '95', buy: '116' })} active={null} onToggle={vi.fn()} />,
     );
 
-    expect(screen.getByTestId('order-inquiry-strip-qty-spo')).toHaveTextContent('10');
-    expect(screen.getByTestId('order-inquiry-strip-qty-po')).toHaveTextContent('95');
     expect(screen.getByTestId('order-inquiry-strip-qty-buy')).toHaveTextContent('116');
+    expect(screen.getByTestId('order-inquiry-strip-qty-po')).toHaveTextContent('95');
+    expect(screen.getByTestId('order-inquiry-strip-qty-spo')).toHaveTextContent('10');
   });
 
   it('reads three zero cards while the summary has not answered yet', () => {
     render(<OrderInquiryStrip totals={facetSegments(undefined)} active={null} onToggle={vi.fn()} />);
 
-    expect(screen.getByTestId('order-inquiry-strip-qty-spo')).toHaveTextContent('0');
-    expect(screen.getByTestId('order-inquiry-strip-qty-po')).toHaveTextContent('0');
     expect(screen.getByTestId('order-inquiry-strip-qty-buy')).toHaveTextContent('0');
+    expect(screen.getByTestId('order-inquiry-strip-qty-po')).toHaveTextContent('0');
+    expect(screen.getByTestId('order-inquiry-strip-qty-spo')).toHaveTextContent('0');
   });
 
   it('clicking a card calls onToggle with that kind, and a second click clears it', () => {
@@ -64,7 +66,7 @@ describe('OrderInquiryStrip', () => {
       />,
     );
     expect(screen.getByTestId('order-inquiry-strip-po')).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByTestId('order-inquiry-strip-spo')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('order-inquiry-strip-buy')).toHaveAttribute('aria-pressed', 'false');
 
     screen.getByTestId('order-inquiry-strip-po').click();
     expect(onToggle).toHaveBeenLastCalledWith('po');
@@ -98,5 +100,20 @@ describe('OrderInquiryStrip', () => {
     expect(screen.getByTestId('order-inquiry-strip-spo')).toBeDisabled();
     expect(screen.getByTestId('order-inquiry-strip-po')).toBeDisabled();
     expect(screen.getByTestId('order-inquiry-strip-buy')).toBeDisabled();
+  });
+});
+
+describe('OrderInquiryStrip (AC-D8: no on-screen explanation)', () => {
+  it('carries no caption text under any card - the number and the label are the whole card', () => {
+    render(
+      <OrderInquiryStrip totals={facetSegments({ spo: '10', po: '95', buy: '116' })} active={null} onToggle={vi.fn()} />,
+    );
+
+    // No legend, no sentence, no sub-line: each card's own text is exactly its label
+    // followed by its quantity (`SupplyKindCard`'s own layout puts the qty in a child
+    // span the strip owns, `order-inquiry-strip-qty-<kind>`; nothing else renders).
+    expect(screen.getByTestId('order-inquiry-strip-buy').textContent).toBe('Buy116');
+    expect(screen.getByTestId('order-inquiry-strip-po').textContent).toBe('Purchased95');
+    expect(screen.getByTestId('order-inquiry-strip-spo').textContent).toBe('Incoming10');
   });
 });

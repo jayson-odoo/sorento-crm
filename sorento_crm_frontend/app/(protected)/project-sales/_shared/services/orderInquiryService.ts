@@ -136,7 +136,8 @@ export async function markOrderInquiryRows(
  *        partly linked. 409 `order_inquiry_over_allocated` when the allocations total
  *        more than the row's own quantity; 409 `order_inquiry_po_line_short` naming the
  *        line that cannot cover what was asked of it; 409
- *        `order_inquiry_spo_not_order_back` when a non-ORDER BACK row names an SPO.
+ *        `order_inquiry_spo_not_linkable` when a row whose verb cannot be linked at all
+ *        names a document (every linkable verb may name either book since 27 Aug).
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/unplace  { link_id? }
  *        -> OrderInquiryRowOut. With a `link_id` that ONE link goes; without one every
@@ -394,10 +395,21 @@ export async function unplaceAllOrderInquiryRows(
  *   GET  {BASE}/order-inquiries
  *        query, delivery_month=YYYY-MM, raised_date=YYYY-MM-DD, state, project_id,
  *        supplier_id, raised_by, linked, kind, page, limit, sort, dir
- *        kind=spo|po|buy is the cards' own filter (AC-I11): every row CARRYING that
- *        kind, so a row linked 5 of 8 to a purchase order answers to po and to buy
- *        alike, and a cancelled row to neither.
- *        query also matches the name and the email prefix of the CS who raised it.
+ *        S1 (PLAN-scm-oi-worklist-excel-parity.md, R-K) adds: location (warehouse code,
+ *        equality), agent (sales agent id, equality), so_month=YYYY-MM (on the SO date),
+ *        po_number / spo_number (prefix, case-insensitive - `po_number` hits a PO link's
+ *        `document` AND an SPO link's `source_po_number`; `spo_number` hits an SPO
+ *        link's own `document` - a REAL link only, never a derived SPO entry, which is
+ *        computed for display and matches no row of `order_inquiry_links` to filter on).
+ *        kind=spo|po|buy is the cards' own filter (AC-I11), now the R-F STAGES (S5): buy
+ *        is unlinked, po is on a purchase order line but not yet on a shipment
+ *        (`min(qty - incoming, po_linked - derived_spo_cover)`), spo is incoming - on an
+ *        SPO allocation, own link or derived via its linked PO line. A row linked 5 of 8
+ *        to a purchase order answers to po AND to buy alike, and a cancelled row to
+ *        neither.
+ *        query also matches the name and the email prefix of the CS who raised it, and
+ *        (S1) a link document, an SPO link's `source_po_number`, and the sales agent's
+ *        code/name.
  *        -> { data: OrderInquiryWorklistRow[], pagination: {total,page,limit}, empty }
  *        sort is a CLOSED set - so_date, so_number, item_code, product_name, qty,
  *        delivery_date, project_customer, supplier, po_number, state, raised_at,
@@ -408,12 +420,14 @@ export async function unplaceAllOrderInquiryRows(
  *        the same filters, no paging
  *        -> { total_rows, total_qty, by_state,
  *             by_month: [{month,label,rows,qty}], suppliers: [], projects: [],
- *             raised_by: [], kinds: {spo,po,buy} }
- *        `kinds` is the three cards above both views - quantity on SPO allocations, on
- *        purchase order lines, and the unlinked remainder - over every matching row.
- *        The TOTALS honour `kind` like every other filter, because they describe what is
- *        on screen; the `kinds` facet itself drops it, so pressing one card leaves the
- *        other two readable.
+ *             raised_by: [], locations: [], agents: [], kinds: {spo,po,buy} }
+ *        `locations`/`agents` (S1) are the Location/Agent filters' own lists, same shape
+ *        as `suppliers` (`[{id,label,rows}]`), each computed with its own filter dropped.
+ *        `kinds` is the three cards above both views, in R-F's stage order (Buy,
+ *        Purchased, Incoming) - quantity still unlinked, on a purchase order line, on an
+ *        SPO allocation (own or derived). The TOTALS honour `kind` like every other
+ *        filter, because they describe what is on screen; the `kinds` facet itself drops
+ *        it, so pressing one card leaves the other two readable.
  *        PLAN-scm-supplied-with-companions.md (owner, plan review): a `bundled_qty` is
  *        in NONE of the three cards - it rides inside another line's own supply, so it
  *        is not owed anywhere. Every card subtracts `bundled_qty` from what it would
@@ -442,21 +456,35 @@ export async function unplaceAllOrderInquiryRows(
  *                  cell renders this directly rather than scanning its own loaded rows
  *                  for a match, which is only ever right when the anchor happens to be
  *                  on the SAME page as its companion. Null when the anchor has no links
- *                  of its own yet - the cell falls back to "Not found (new order)".
+ *                  of its own yet - the cell falls back to a plain dash (S5).
  * `response_model` drops a field nobody declares, so both are asserted directly against
  * a fixture row in `test_order_inquiry_bundles.py` (`test_d7`, `test_d7c`).
+ *
+ * PLAN-scm-oi-worklist-excel-parity.md, S5 (R-D, R-E): every PO link gains an SPO
+ * allocation matching `from_po_number = po_number AND product_id`, open per
+ * `spo_supply.open_incoming_clauses`, emitted as a SYNTHETIC entry on `links[]`:
+ * `{ kind: 'spo', derived: true, document, qty, location, expected_date, id }` - never
+ * written, so `committed_v` and every demand read stay on real links only. The mirror:
+ * an SPO link whose `source_po_number` is shown as "the PO" carries `derived_po: true`.
+ * Both flags are absent/false on a real link. The error code for an SPO placement
+ * refused by verb is `order_inquiry_spo_not_linkable` (renamed from
+ * `order_inquiry_spo_not_order_back` - every linkable verb, not only ORDER BACK, per the
+ * 27 Aug widening).
  *
  * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
  * no project at all. Permission is `projects.projects.view`, the same read the module
  * already grants.
  *
- * The Schedule matrix (List | Schedule, reworked) is NOT a fourth endpoint: it asks this
- * same list, unpaged (`limit: MATRIX_FETCH_LIMIT` in `OrderInquiriesClient`), and groups
- * the rows client-side by whichever axis and date granularity the reader picked
- * (`_shared/lib/orderInquiryMatrix.ts`). One fetch, one idea of what a row is.
+ * The Schedule matrix (List | Schedule) is its own endpoint now (S3,
+ * `orderInquiryMatrixService.ts`) - `GET {BASE}/order-inquiries/matrix`, documented
+ * there. It replaced an unpaged list fetch grouped client-side, which capped at
+ * `MATRIX_FETCH_LIMIT` (1,000) rows a delivery-filtered worklist has already exceeded.
  */
 
-function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
+/** Exported so `orderInquiryMatrixService.ts` builds the SAME filter set the list and
+ * summary do - one function, so a filter added here never drifts out of step with the
+ * matrix's own request. */
+export function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
   return buildDataGridParams(
     {
       pageIndex: (params.page ?? 1) - 1,
@@ -477,6 +505,18 @@ function worklistParams(params: OrderInquiryWorklistParams, limit: number) {
       // list, the summary facet and the export alike (R3), so the page's default filter is
       // one value rather than two the client would have to union.
       ack: params.ack,
+      // S1, R-K.
+      location: params.location,
+      agent: params.agent,
+      so_month: params.so_month,
+      po_number: params.po_number,
+      spo_number: params.spo_number,
+      delivery_from: params.delivery_from,
+      delivery_to: params.delivery_to,
+      // S3: a Schedule cell's own drilldown. The pair is sent as the pair - the server
+      // ignores either half alone.
+      axis: params.axis,
+      axis_key: params.axis_key,
     },
   );
 }

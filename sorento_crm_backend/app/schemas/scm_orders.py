@@ -62,7 +62,9 @@ class SalesOrderLineLink(BaseModel):
     reads, and `line_label` is absent rather than invented when the book numbered nothing.
     """
 
-    #: `po` or `spo`. Only an ORDER BACK row ever carries an `spo` link (part 2 4b).
+    #: `po` or `spo`. EITHER on any linkable row since R5 (27 Aug,
+    #: `PLAN-scm-oi-draft-links.md`): SPO first, then PO. It was the order back alone
+    #: under the 25 Aug rule, which no longer holds.
     kind: str
     document: Optional[str] = None
     line_label: Optional[str] = None

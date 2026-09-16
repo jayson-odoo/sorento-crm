@@ -74,7 +74,7 @@ export function OrderInquiryBackingDocumentsDialog({
                 themselves live, always joined in full - never the count. */}
             {bundleNote?.fullyBundled
               ? `Included with ${bundleNote.itemCodes.join(' + ')}`
-              : (summary?.headline ?? 'Not found (new order)')}
+              : (summary?.headline ?? 'Nothing linked yet')}
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -110,6 +110,11 @@ export function OrderInquiryBackingDocumentsDialog({
                         document={link.document}
                         poId={link.po_id}
                       />
+                      {/* S5, R-E: never a real link - the SAME "via" tag the cell itself
+                          shows, so the lightbox and the cell can never disagree. */}
+                      {link.derived ? (
+                        <span className="shrink-0 text-2xs text-muted-foreground">via PO</span>
+                      ) : null}
                     </div>
                     {/* Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
                         number of this SPO?" - named here, clearly subordinate to the SPO

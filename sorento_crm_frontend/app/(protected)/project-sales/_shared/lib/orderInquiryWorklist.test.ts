@@ -111,7 +111,7 @@ describe('linkedSummary: the headline only (slice A, 8 Sep 2026 - AC-A3 drops la
     expect(summary).toEqual({ headline: '25 of 25' });
   });
 
-  it('answers null for a row with no links - the cell reads "Not found (new order)"', () => {
+  it('answers null for a row with no links - the cell reads a dash, never "Not found (new order)"', () => {
     expect(linkedSummary('85', '0', [])).toBeNull();
     expect(linkedSummary('85', '0', null)).toBeNull();
   });

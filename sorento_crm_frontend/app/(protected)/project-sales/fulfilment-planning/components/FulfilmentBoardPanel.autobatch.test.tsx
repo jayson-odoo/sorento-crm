@@ -15,7 +15,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => '/project-sales/fulfilment-planning',
-  useSearchParams: () => new URLSearchParams(''),
+  // R-J (List is now the default view): every spec here exercises the GRID matrix, so
+  // `?view=grid` is seeded rather than clicking the Grid button in each test.
+  useSearchParams: () => new URLSearchParams('view=grid'),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({

@@ -25,12 +25,14 @@ import {
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
+import { getOrderInquiryMatrix } from '../services/orderInquiryMatrixService';
 import { PLANNING_BOARD_KEY } from './useFulfilmentPlanning';
 import type { LinkHorizonRequest } from '../lib/linkHorizon';
 import { acknowledgeOutcomeText, linkOutcomeText } from '../lib/linkHorizon';
 import type {
   AutoPlaceRequest,
   OrderInquiryListParams,
+  OrderInquiryMatrixParams,
   OrderInquiryPoAllocation,
   OrderInquiryWorklistParams,
   UnplaceAllRequest,
@@ -47,6 +49,7 @@ export const ORDER_INQUIRY_PO_DETAIL_KEY = 'order-inquiry-po-detail';
 export const ORDER_INQUIRY_SPO_DETAIL_KEY = 'order-inquiry-spo-detail';
 export const ORDER_INQUIRY_UNPLACE_ALL_PREVIEW_KEY = 'order-inquiry-unplace-all-preview';
 export const ORDER_INQUIRY_UPLOAD_JOB_KEY = 'order-inquiry-upload-job';
+export const ORDER_INQUIRY_MATRIX_KEY = 'order-inquiry-matrix';
 
 export const orderInquiryRowsKey = (
   projectId: string,
@@ -112,6 +115,23 @@ export function useOrderInquiryWorklistSummary(
     enabled: options.enabled,
     // Above all here: the month strip is inside this answer, so without it pressing a
     // month makes the control you just used vanish until the next answer lands.
+  });
+}
+
+/**
+ * The Schedule matrix's own read (S3): the same filters as the list, plus which axis and
+ * which date cut. Server-side GROUP BY in Phase 2; a small in-process fixture in Phase 1
+ * (`orderInquiryMatrixService`) - the caller never has to know which.
+ */
+export function useOrderInquiryMatrix(
+  params: OrderInquiryMatrixParams,
+  options: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    ...LIST_QUERY_OPTIONS,
+    queryKey: [ORDER_INQUIRY_MATRIX_KEY, params],
+    queryFn: () => getOrderInquiryMatrix(params),
+    enabled: options.enabled,
   });
 }
 

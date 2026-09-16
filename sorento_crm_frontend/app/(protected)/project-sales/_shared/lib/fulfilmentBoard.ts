@@ -947,6 +947,28 @@ function byLabel(left: BoardAxisRow, right: BoardAxisRow): number {
  * keep ALL their contributions - filtering inside a cell would print a total that is not the
  * cell's, which is the same rule that keeps the selection totals still under a filter.
  */
+/**
+ * The ONE matcher a search box on this board reads (S6, PLAN-scm-oi-worklist-excel-
+ * parity.md R-J): SO number, customer, agent code, item code - the same fields whichever
+ * of the grid's row filter or the list view's own row filter is asking. Sharing this
+ * function is what keeps "one search box drives Grid and List alike" true: a field added
+ * here reaches both without either one drifting out of step with the other.
+ */
+export function contributionMatchesSearch(
+  contribution: BoardContribution,
+  search: string,
+): boolean {
+  const needle = search.trim().toLowerCase();
+  if (!needle) return true;
+  return [
+    contribution.so_number,
+    contribution.customer_name,
+    contribution.project_label,
+    contribution.agent_code,
+    contribution.item_code,
+  ].some((field) => (field ?? '').toLowerCase().includes(needle));
+}
+
 export function rowMatchesSearch(
   row: BoardAxisRow,
   contributions: BoardContribution[],
@@ -960,14 +982,7 @@ export function rowMatchesSearch(
   ) {
     return true;
   }
-  return contributions.some((contribution) =>
-    [
-      contribution.so_number,
-      contribution.customer_name,
-      contribution.project_label,
-      contribution.item_code,
-    ].some((field) => (field ?? '').toLowerCase().includes(needle)),
-  );
+  return contributions.some((contribution) => contributionMatchesSearch(contribution, search));
 }
 
 

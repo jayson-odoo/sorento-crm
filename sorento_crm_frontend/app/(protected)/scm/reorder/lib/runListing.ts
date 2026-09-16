@@ -5,6 +5,7 @@
  * finished; whether the buyer has finished with it is a fact about the decisions on it, and
  * the two are different questions the same word used to answer.
  */
+import { parseDateTimeAsUTC } from '@/lib/helpers';
 import { DATE_LOCALE, DATE_PARTS, EM_DASH, fmtDate } from '../../lib/format';
 import type { ReorderRunHistoryItem } from '../services/reorderRunService';
 
@@ -78,8 +79,9 @@ export function describeWindow(
  */
 export function runStartedLabel(startedAt: string | null | undefined): string {
   if (!startedAt) return EM_DASH;
-  const hasTz = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(startedAt);
-  const d = new Date(hasTz ? startedAt : `${startedAt}Z`);
+  // Through the ONE parser (`lib/helpers`), not a second hand-rolled `+ 'Z'`: it holds
+  // the same naive-UTC rule and the date-only carve-out iOS Safari needs (16 Sep).
+  const d = parseDateTimeAsUTC(startedAt);
   if (Number.isNaN(d.getTime())) return startedAt;
   const date = new Intl.DateTimeFormat(DATE_LOCALE, {
     ...DATE_PARTS,
