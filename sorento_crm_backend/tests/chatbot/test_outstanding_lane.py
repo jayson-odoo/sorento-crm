@@ -190,18 +190,27 @@ def _qf(**overrides: Any) -> dict[str, Any]:
 
 
 def _resolve_services(matches: dict[str, dict[str, Any]]) -> ResolveGateServices:
-    """A `resolve_entity` seam that resolves EVERY raw token in `matches`, unconditionally -
-    same simplification `test_foundre_rung_end_to_end.py::_bundle` makes (the real resolver
-    is not under test here)."""
+    """A `resolve_entity` seam that answers only the tokens `body["tokens"]` actually
+    asks about, out of `matches` - never every raw token in `matches` unconditionally.
+
+    Fixed 17 Sep 2026 (coder 15's measurement, coordinator relay): the old
+    unconditional version answered a stale carried token even when the real turn's own
+    resolve-gate body never named it, which the engine now hands over correctly since
+    `with_carried_entities` gained `unsettled_only` (item 1, `6dc96c237`) - before that
+    fix the resolver was never called on the affected turn at all, so the stub's own
+    dishonesty never had a turn to bite on. `_resolve_gate.py`'s real seam only ever
+    resolves the tokens it is asked about; a test double must keep the same contract."""
 
     def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+        asked = list(body.get("tokens") or [])
+        resolved = {raw: match for raw, match in matches.items() if raw in asked}
         return {
-            "tokens": list(matches),
+            "tokens": asked,
             "resolutions": [
                 {"raw": raw, "token": raw, "matches": [match]}
-                for raw, match in matches.items()
+                for raw, match in resolved.items()
             ],
-            "unresolved_tokens": [],
+            "unresolved_tokens": [raw for raw in asked if raw not in resolved],
         }
 
     return ResolveGateServices(
