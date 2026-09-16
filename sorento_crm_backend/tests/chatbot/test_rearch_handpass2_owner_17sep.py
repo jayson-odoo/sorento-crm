@@ -188,24 +188,28 @@ class TestFinding8AMissAfterARosterPickKeepsTheRosterOpen:
 
 class TestFinding9ATierPickSetsFocusTier:
     """Ruling 9 (turns 64f7b2f2 "Promo for srtwc286", 142dd695 "1", 1cf36d59 "2"): a
-    tier pick sets the tier and the promotion answer follows. Today: the tier question
-    re-asks after each pick."""
+    tier pick sets the tier and the promotion answer follows.
 
-    def test_answering_a_tier_pick_does_not_set_focus_tier(self) -> None:
+    LANDED (`_CODE_ONLY_FIELDS = {"tier": "tier", "brand": "brands"}`,
+    `turn/apply.py::_set_kind_field` / `_code_of_entity`): a tier option carries no
+    uuid, so the roster-pick branch now reads its value off `option["payload"]["value"]`
+    (falling back to the label) into `canonical_code`, and `_code_of_entity` lands that
+    on `focus.tier`. Re-pinned POSITIVE per the coordinator's 17 Sep addendum - the
+    prior `focus.tier == []` pin passed vacuously once the fix landed, because it only
+    ever expressed the pick through the retired `answers_open_question` key and so
+    picked nothing at all; `reference_positions` is the surviving signal that exercises
+    the same branch."""
+
+    def test_answering_a_tier_pick_sets_focus_tier(self) -> None:
         pend = _roster(
             "tier_pick",
             [{"position": 1, "label": "dealer", "payload": {"value": "dealer"}, "entity_type": "tier"}],
         )
-        v = verdict(
-            message_type="casual",
-            answers_open_question={"resolved": True, "picks": [1], "answer": None},
-        )
+        v = verdict(message_type="casual", reference_positions=[1])
         state2, plan, branch = _decide(v, pending=pend)
-        assert state2.focus.tier == [], (
-            "if focus.tier is now populated after a tier_pick answer, the fix has "
-            f"landed - got {state2.focus.tier!r}. turn/apply.py's roster-pick branch "
-            "only ever restores focus.domains off pending.payload['domain']; it has "
-            "no equivalent write for a tier value onto focus.tier."
+        assert state2.focus.tier == ["dealer"], (
+            f"got {state2.focus.tier!r} - a revert of _CODE_ONLY_FIELDS / "
+            "_code_of_entity's payload read would leave this empty again."
         )
 
 
@@ -230,7 +234,7 @@ class TestFinding10AllOverARosterAnswersEveryOptionRegardlessOfPolicy:
                 {"position": 3, "label": "C", "payload": {}, "entity_type": "customer", "uuid": "u3"},
             ],
         )
-        v = verdict(message_type="casual", answers_open_question={"resolved": True, "picks": "all", "answer": None})
+        v = verdict(message_type="casual", entity_op="clear", broaden_axis="all")
         state2, plan, branch = _decide(v, pending=pend)
         assert state2.pending is not None and state2.pending.answered_positions == [1, 2, 3], (
             f"got {state2.pending!r}"
@@ -258,7 +262,7 @@ class TestFinding11APickAnswersEveryDomainTheAskNamed:
             message_type="casual",
             domain_hint=None,
             asks=[{"domain": "purchase_cost", "intent": "check_po_cost"}, {"domain": "inventory", "intent": "check_stock"}],
-            answers_open_question={"resolved": True, "picks": [1], "answer": None},
+            reference_positions=[1],
         )
         state2, plan, branch = _decide(v, pending=pend)
         assert state2.focus.domains == ["purchase_cost"], (

@@ -34,35 +34,15 @@ from tests.chatbot._turn_helpers import PENDING_KINDS, ROSTER_KINDS, build_polic
 from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures
 
 
-def test_schema_declares_answers_open_question_as_a_required_object_key():
-    from app.services.chatbot.head.parser import DECLARED_KEYS, PARSE_OUTPUT_JSON_SCHEMA
-
-    assert "answers_open_question" in DECLARED_KEYS
-    prop = PARSE_OUTPUT_JSON_SCHEMA["properties"]["answers_open_question"]
-    assert prop["type"] == "object"
-    assert prop["additionalProperties"] is False
-
-    sub = prop["properties"]
-    # resolved: bool | null
-    assert set(sub["resolved"]["type"]) == {"boolean", "null"}
-    # picks: array of number | "all" | null - permissive union, matching this schema's
-    # own convention (`string_or_null` etc.) rather than a strict oneOf.
-    assert "array" in sub["picks"]["type"]
-    assert "string" in sub["picks"]["type"]  # the literal "all"
-    assert "null" in sub["picks"]["type"]
-    # answer: string | null
-    assert set(sub["answer"]["type"]) == {"string", "null"}
-
-    assert set(prop["required"]) == {"resolved", "picks", "answer"}
-
-
-def test_prompt_documents_the_answers_open_question_key():
-    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
-
-    assert "answers_open_question" in SEMANTIC_PARSER_PROMPT, (
-        "the fallback prompt never asks the model to emit this key, so a live LLM parse "
-        "has no instruction to ever populate it"
-    )
+# `test_schema_declares_answers_open_question_as_a_required_object_key` and
+# `test_prompt_documents_the_answers_open_question_key` RETIRED (owner ruling, hand pass
+# 3, 17 Sep 2026 - `chatbot-turn-rearch-acceptance-criteria.md`'s "Hand pass 3 rulings"
+# block): `answers_open_question` is retired from the parser schema, the prompt and
+# APPLY outright, so a schema/prompt asserting its presence is now asserting the wrong
+# thing on purpose. The retirement's own behaviour (carry, never re-print, on a message
+# that answers nothing) is unchanged and stays covered by
+# `TestAbsentAnswerCarriesThePendingWithoutReprinting` below, restated without the
+# retired key.
 
 
 def _state_with_pending(kind: str):

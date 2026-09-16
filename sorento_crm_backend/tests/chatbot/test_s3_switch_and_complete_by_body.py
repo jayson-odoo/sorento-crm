@@ -628,11 +628,18 @@ class TestSendActionShape:
         # Ported (AC-1592): the OLD `is_explicit_correction()` / `output_exchange.
         # derive_routing` route to `escalate_offer` is gone (that whole module deleted,
         # AC-1594) - measured directly, `correction`/`routing.suggested_team` are not
-        # read anywhere `apply.py` builds a plan. The CURRENT route (`turn/apply.py::
-        # _answer_pending`, `resolved is False` branch, contract 42) is the RE-ASK: an
-        # already-open `team_pick` offer the customer tried to answer and missed is
-        # re-surfaced as `plan.ask` unchanged, which `turn/route.py::route` maps straight
-        # to `escalate_offer` (`plan.ask.kind in ESCALATION_OFFER_KINDS`).
+        # read anywhere `apply.py` builds a plan.
+        #
+        # Re-pinned again (owner ruling, hand pass 3, 17 Sep 2026 - `answers_open_
+        # question` retired): the OLD `resolved is False` re-ask branch this test
+        # exercised is gone with the key. A message naming nothing over an open
+        # `team_pick` offer is now simply "not an answer" - `_picked_positions` returns
+        # None, the pending is carried untouched (not re-printed), and the message runs
+        # as itself, which for an unrouted `message_type: "unknown"` with no entities
+        # falls through to the casual/`low_signal` lane rather than re-surfacing the
+        # offer as `escalate_offer`. Measured directly: `result.branch_kind ==
+        # "low_signal"`, the stubbed casual reply, one `send_message` action, no
+        # `quick_replies`.
         stub_parser(
             _parser_output(
                 message_type="unknown",
@@ -657,14 +664,20 @@ class TestSendActionShape:
 
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert result.branch_kind == "escalate_offer"
+        assert result.branch_kind == "low_signal"
+        assert result.status == "done"
         send = result.actions[-1]
         assert send["kind"] == "send_message"
         assert send["text"] == result.reply["text"]
         # IDENTITY with the sealed value, not `[]`: this lane seals no quick replies, and
         # an action that invented an empty list would be hiding that from the sender.
         assert send["quick_replies"] == result.reply.get("quick_replies")
-        assert send["result_set"] == result.reply.get("result_set")
+        # The low_signal lane's OWN hand-built action (`_run_casual_lane`, the mid-flight
+        # list appended before the clarifier call resolves) never carries a `result_set`
+        # key at all - measured directly, not the `_send_actions` shape the docstring
+        # above describes for the canned lanes. There is nothing to number on a casual
+        # reply, so there is no key pretending there might be.
+        assert "result_set" not in send
         assert send["dry_run"] is False
         # Nothing to attach, so there is no second action.
         assert [a["kind"] for a in result.actions] == ["send_message"]

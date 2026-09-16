@@ -86,15 +86,15 @@ class TestAnAcceptedOfferNeverFallsThroughToAFetch:
 
     def test_a_bare_pick_of_the_single_option_short_circuits_to_escalation_with_no_fetch(self):
         """Browser pass 3 turn 9 (`67fcbb6a`): a numbered "1" against the SAME
-        single-option yes/no offer answers it as `resolved: true, picks: [1]`
-        (`answers_open_question`), not `is_affirmative` - a separate branch of
-        `_answer_pending` entirely (the `resolved is True` block at the top), which
-        today builds a plain entity pick and never even checks `pending.kind in
-        OFFER_KINDS` before falling through to the ordinary planner."""
+        single-option yes/no offer answers it as `reference_positions: [1]` - not
+        `is_affirmative` - one EXPLICIT position, which is the mirror `_answer_offer`
+        accepts for an `ESCALATION_OFFER_KINDS` pending (owner ruling, hand pass 3,
+        `answers_open_question` retired; `_picked_positions`'s one-position-only rule
+        for an escalation offer, `5b33fde02`)."""
         from app.services.chatbot.turn.apply import apply
 
         state = _team_pick_state(with_carried_focus=True)
-        v = verdict(answers_open_question={"resolved": True, "picks": [1], "answer": "1"})
+        v = verdict(reference_positions=[1])
 
         state2, plan = apply(state, v, build_policy())
 

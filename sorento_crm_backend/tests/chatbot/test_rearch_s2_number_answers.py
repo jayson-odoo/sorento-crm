@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from app.services.chatbot.turn.pending import ESCALATION_OFFER_KINDS
 from tests.chatbot._turn_helpers import (
     OFFER_KINDS,
     PENDING_KINDS,
@@ -70,19 +71,44 @@ def test_multi_pick_resolves_every_named_position(kind):
     assert {"u1", "u3"} <= picked_uuids or plan is not None  # loose: shape asserted, not every axis
 
 
-@pytest.mark.parametrize("kind", PENDING_KINDS)
+@pytest.mark.parametrize(
+    "kind", [k for k in PENDING_KINDS if k not in ESCALATION_OFFER_KINDS]
+)
 def test_all_over_the_menu_yields_every_option(kind):
+    """Owner ruling, hand pass 3: `answers_open_question` is retired. "All" over a
+    numbered menu is read off `broaden_axis == "all"` (contract 31, R21;
+    `_picked_positions`'s third signal), never a word match. Excludes
+    `ESCALATION_OFFER_KINDS` - see `test_all_over_an_escalation_offer_is_refused` below,
+    the one-explicit-position rule `5b33fde02` landed in the same round.
+    """
     from app.services.chatbot.turn.apply import apply
 
     state = _state_with_pending(kind)
-    v = verdict(
-        entity_op="clear",
-        answers_open_question={"resolved": True, "picks": "all", "answer": "all"},
-    )
+    v = verdict(entity_op="clear", broaden_axis="all")
     state2, _plan = apply(state, v, build_policy())
 
     products = getattr(state2.focus, "products", [])
     assert len(products) == 3
+
+
+@pytest.mark.parametrize("kind", sorted(ESCALATION_OFFER_KINDS))
+def test_all_over_an_escalation_offer_is_refused(kind):
+    """Owner ruling, hand pass 3 (`turn/apply.py::_picked_positions`, measured on
+    `handpass3-owner-17sep-purchase-cost-po.json` step 3): handing a conversation to a
+    human takes an EXPLICIT signal - one position typed, or a yes - and nothing weaker.
+    "all" over `team_pick` / `company_pick` / `member_offer` is too weak, so the
+    question stays open and nothing is picked, unlike the roster/outstanding kinds
+    above.
+    """
+    from app.services.chatbot.turn.apply import apply
+
+    state = _state_with_pending(kind)
+    v = verdict(entity_op="clear", broaden_axis="all")
+    state2, _plan = apply(state, v, build_policy())
+
+    products = getattr(state2.focus, "products", [])
+    assert len(products) == 0
+    assert state2.pending is not None
 
 
 def test_an_option_with_two_uuids_yields_two_entities():
