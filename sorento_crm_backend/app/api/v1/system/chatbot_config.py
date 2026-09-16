@@ -21,6 +21,7 @@ would rewrite a version somebody has already graded.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from datetime import datetime
 from typing import Any, Literal
 
@@ -100,8 +101,73 @@ def _unprocessable(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=message)
 
 
+# Every string on these two tables is rendered verbatim into the parser prompt
+# (`chatbot_parser_prompt.render_prompt_blocks`), so an operator holding
+# `system.chatbot_config.manage` is writing into the model's instructions. Three limits,
+# each because the failure is silent rather than loud:
+#
+# - Control characters (newline included) would break the block's own line grammar, so a
+#   label carrying one could restructure the rendered block. They are STRIPPED, not
+#   rejected: an operator who pasted a label out of a spreadsheet meant the letters.
+# - The two block markers would let a value close the policy block and continue as
+#   prompt text of its own. That is rejected, never repaired: there is no legitimate
+#   reason for either string to appear in a domain name.
+# - Length. A field with no ceiling is a place to put a paragraph of instructions; the
+#   longest real value on the seeded rows is well inside 64 characters, and no real
+#   domain names 50 intents.
+_TEXT_MAX = 64
+_LIST_MAX = 50
+
+
+def _clean_text(value: str | None, *, field: str, max_chars: int = _TEXT_MAX) -> str | None:
+    """Strip control characters, refuse a block marker, cap the length."""
+    if value is None:
+        return None
+    from app.services.chatbot_parser_prompt import BLOCKS_BEGIN, BLOCKS_END
+
+    cleaned = "".join(ch for ch in value if unicodedata.category(ch) not in ("Cc", "Cf"))
+    for marker in (BLOCKS_BEGIN, BLOCKS_END):
+        if marker in cleaned:
+            raise _unprocessable(
+                f"{field} may not contain {marker!r} - that marker delimits the policy "
+                f"block inside the parser prompt."
+            )
+    if len(cleaned) > max_chars:
+        raise _unprocessable(f"{field} is longer than {max_chars} characters.")
+    return cleaned
+
+
+def _clean_list(values: list[str] | None, *, field: str) -> list[str]:
+    if not values:
+        return []
+    if len(values) > _LIST_MAX:
+        raise _unprocessable(f"{field} holds more than {_LIST_MAX} entries.")
+    return [_clean_text(v, field=field) or "" for v in values]
+
+
 def _validate_domain(db: Session, body: ChatbotDomainBody) -> None:
+    """Clean the free text ON the body, then check the three names that must resolve.
+
+    Cleaning mutates `body` rather than returning a copy so that both callers - which
+    already write `body.model_dump()` onto the row - store exactly what was validated.
+    """
     from app.services.chatbot.lanes.escalation import ESCALATION_TEAMS
+
+    body.name = _clean_text(body.name, field="name") or ""
+    body.label = _clean_text(body.label, field="label", max_chars=128) or ""
+    body.primary_tool = _clean_text(body.primary_tool, field="primary_tool")
+    body.escalation_team_code = _clean_text(body.escalation_team_code, field="escalation_team_code")
+    body.reveal_key = _clean_text(body.reveal_key, field="reveal_key")
+    body.intents = _clean_list(body.intents, field="intents")
+    body.tools = _clean_list(body.tools, field="tools")
+    body.switch_words = _clean_list(body.switch_words, field="switch_words")
+    body.ladder = _clean_list(body.ladder, field="ladder")
+    if len(body.narrowing or {}) > _LIST_MAX:
+        raise _unprocessable(f"narrowing holds more than {_LIST_MAX} entries.")
+    body.narrowing = {
+        (_clean_text(kind, field="narrowing") or ""): policy
+        for kind, policy in (body.narrowing or {}).items()
+    }
 
     wanted = [t for t in (body.tools or []) if t]
     if body.primary_tool:
@@ -142,6 +208,22 @@ def _domain_out(row: ChatbotDomain) -> ChatbotDomainResponse:
         sort_order=int(row.sort_order or 0),
         updated_at=row.updated_at,
     )
+
+
+def _validate_kind(body: ChatbotEntityKindBody) -> None:
+    """The same three limits as `_validate_domain`, on the entity-kind block's own text."""
+    body.kind = _clean_text(body.kind, field="kind") or ""
+    body.label = _clean_text(body.label, field="label", max_chars=128)
+    body.resolver_source = _clean_text(body.resolver_source, field="resolver_source") or ""
+    body.family_grouping = _clean_text(body.family_grouping, field="family_grouping")
+    if len(body.base_property_words or {}) > _LIST_MAX:
+        raise _unprocessable(f"base_property_words holds more than {_LIST_MAX} entries.")
+    body.base_property_words = {
+        (_clean_text(word, field="base_property_words") or ""): (
+            _clean_text(column, field="base_property_words") or ""
+        )
+        for word, column in (body.base_property_words or {}).items()
+    }
 
 
 def _kind_out(row: ChatbotEntityKind) -> ChatbotEntityKindResponse:
@@ -318,6 +400,7 @@ def create_entity_kind(
     db: Session = Depends(get_db),
 ):
     _ = current_user
+    _validate_kind(body)
     if db.query(ChatbotEntityKind).filter(ChatbotEntityKind.kind == body.kind).first() is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -341,6 +424,7 @@ def update_entity_kind(
 ):
     _ = current_user
     row = _find_kind(db, kind)
+    _validate_kind(body)
     values = body.model_dump()
     values["label"] = values.get("label") or row.label
     for field, value in values.items():

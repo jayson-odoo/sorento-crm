@@ -33,6 +33,9 @@ export interface ChatbotEntityKindModalProps {
   entityKindCode: string | null;
   rows: ChatbotEntityKind[];
   onNavigate: (code: string) => void;
+  /** `system.chatbot_config.manage`. Without it the modal reads the row and nothing more:
+   * no Save, every field disabled. The backend enforces the same slug. */
+  canManage: boolean;
 }
 
 export default function ChatbotEntityKindModal({
@@ -41,6 +44,7 @@ export default function ChatbotEntityKindModal({
   entityKindCode,
   rows,
   onNavigate,
+  canManage,
 }: ChatbotEntityKindModalProps) {
   const isNew = entityKindCode === null;
   const current = entityKindCode ? rows.find((r) => r.code === entityKindCode) : null;
@@ -96,7 +100,7 @@ export default function ChatbotEntityKindModal({
           )}
         </DialogHeader>
 
-        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+        <fieldset disabled={!canManage} className="m-0 flex min-w-0 flex-1 flex-col space-y-4 overflow-y-auto border-0 px-6 py-4">
           <div className="space-y-1.5">
             <Label htmlFor="kind-code">Kind</Label>
             <Input
@@ -163,20 +167,22 @@ export default function ChatbotEntityKindModal({
               onChange={(v) => set('base_property_words', v)}
             />
           </div>
-        </div>
+        </fieldset>
 
         <div className="flex items-center justify-end gap-2 border-t px-6 py-4">
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            {canManage ? 'Cancel' : 'Close'}
           </Button>
-          <Button
-            type="button"
-            onClick={handleSave}
-            disabled={saving || !draft.code.trim() || !draft.label.trim()}
-          >
-            {saving && <LoaderCircleIcon className="size-4 animate-spin" />}
-            Save
-          </Button>
+          {canManage && (
+            <Button
+              type="button"
+              onClick={handleSave}
+              disabled={saving || !draft.code.trim() || !draft.label.trim()}
+            >
+              {saving && <LoaderCircleIcon className="size-4 animate-spin" />}
+              Save
+            </Button>
+          )}
         </div>
       </DialogContent>
     </Dialog>

@@ -12,6 +12,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useChatbotEntityKindsQuery } from '../hooks/useChatbotEntityKinds';
 import {
   NARROWING_POLICY_OPTIONS,
@@ -28,6 +29,9 @@ export default function ChatbotEntityKindsList() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingCode, setEditingCode] = useState<string | null>(null);
 
+  // Read is `system.chat_history.view` (the nav gate); writing the policy the turn
+  // engine narrows on is its own grant, and the backend enforces the same slug.
+  const canManage = useHasPermission('system.chatbot_config.manage');
   const { data, isLoading, isError } = useChatbotEntityKindsQuery();
   const kinds = useMemo(() => data ?? [], [data]);
 
@@ -137,12 +141,12 @@ export default function ChatbotEntityKindsList() {
     setModalOpen(true);
   };
 
-  const listPrimaryAction = (
+  const listPrimaryAction = canManage ? (
     <Button onClick={openCreate}>
       <Plus className="size-4" />
       Add kind
     </Button>
-  );
+  ) : undefined;
 
   if (isError) {
     return (
@@ -189,6 +193,7 @@ export default function ChatbotEntityKindsList() {
         entityKindCode={editingCode}
         rows={filtered}
         onNavigate={(code) => setEditingCode(code)}
+        canManage={canManage}
       />
     </>
   );

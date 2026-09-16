@@ -20,7 +20,16 @@ from app.database import Base
 
 
 class ChatbotDomain(Base):
+    """One routing domain: its intents, its tools, its narrowing policy, its team.
+
+    Audited (``__audit_track__``) like ``stock_visibility_policies``, for the same
+    reason: one row decides what every future turn does - which tool is called, whether
+    the bot asks before answering, where an escalation lands - so "who changed this, and
+    from what" has to be answerable.
+    """
+
     __tablename__ = "chatbot_domains"
+    __audit_track__ = True
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
     name = Column(Text, nullable=False, unique=True)
@@ -43,7 +52,13 @@ class ChatbotDomain(Base):
 
 
 class ChatbotEntityKind(Base):
+    """One entity kind: what resolves it, and how it narrows by default.
+
+    Audited for the same reason as ``ChatbotDomain``.
+    """
+
     __tablename__ = "chatbot_entity_kinds"
+    __audit_track__ = True
 
     kind = Column(Text, primary_key=True)
     label = Column(Text, nullable=False)

@@ -237,7 +237,7 @@ class ContactChatbotUpdate(BaseModel):
 async def update_contact_chatbot(
     contact_id: str,
     body: ContactChatbotUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
     """Set a contact's chatbot profile and recall toggle.
@@ -245,6 +245,10 @@ async def update_contact_chatbot(
     Absent means "leave it alone", not "clear it": the card sends whichever half the
     operator touched, and a recall toggle must never be switched off as a side effect of
     saving a language.
+
+    Guarded by the same `user_management.contacts.edit` the rest of the contact's
+    editable surface is: this writes the stock-check and recall switches, which decide
+    what the chatbot will tell that contact.
     """
     _ = current_user
     try:
