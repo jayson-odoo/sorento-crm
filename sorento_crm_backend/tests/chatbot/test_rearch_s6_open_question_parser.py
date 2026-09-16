@@ -31,6 +31,7 @@ from __future__ import annotations
 import pytest
 
 from tests.chatbot._turn_helpers import PENDING_KINDS, ROSTER_KINDS, build_policy, verdict
+from tests.chatbot.test_engine import stub_access, stub_parser  # noqa: F401 - fixtures
 
 
 def test_schema_declares_answers_open_question_as_a_required_object_key():
@@ -157,3 +158,95 @@ class TestAbsentAnswerCarriesThePendingWithoutReprinting:
         assert "promotion" in plan.domains, plan.domains
         assert state2.pending is not None, "the pending must survive unresolved, sticky"
         assert state2.pending.kind == kind
+
+
+class TestTheCasualTailWritesThePendingBackUnchanged:
+    """AC-1593 (browser pass 3, 16 Sep 2026, turn `d9c09b50` "hello" while an escalate
+    offer sat open): `apply()` already proves it carries `state.pending` unchanged
+    through a casual/idle message (the class above, `test_a_casual_message_with_a_
+    pending_open_fetches_nothing`) - this is the OTHER half, that the real engine's tail
+    actually WRITES that carried pending back to the session, not just that `apply()`
+    computed it correctly in isolation.
+
+    The `low_signal` lane is the one to watch: it is the ONLY arm that completes through
+    `engine.complete_turn` (the pre-rearch tail entry point, built for the delegate
+    pipeline) rather than `turn/tail.py::session_payload` directly (`_run_answer`'s own
+    tail) - measured in `engine.py::_run_casual_lane`. Whether that older completion
+    path still carries `turn/apply.py`'s NEW `state.pending` through to the five-key
+    session write is exactly what a casual/idle turn needs and is not proven anywhere
+    else in this tree.
+    """
+
+    def test_hello_on_a_dry_run_hands_back_the_same_open_question_it_was_seeded_with(
+        self, session_factory, stub_parser, stub_access
+    ) -> None:
+        import json
+
+        from sqlalchemy import text
+
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot._turn_helpers import verdict as v3_verdict
+        from tests.chatbot.test_engine import CONTACT_ID, _envelope
+
+        db = session_factory()
+        existing = db.execute(
+            text("SELECT 1 FROM respond_contacts WHERE respond_io_id = :cid"),
+            {"cid": str(CONTACT_ID)},
+        ).first()
+        if existing is None:
+            db.execute(
+                text(
+                    "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                    "VALUES (gen_random_uuid()::text, :cid, :phone, CAST('{}' AS jsonb))"
+                ),
+                {"cid": str(CONTACT_ID), "phone": "+60000000009"},
+            )
+            db.commit()
+        seeded_pending = {
+            "kind": "team_pick",
+            "team": "customer_service",
+            "expects": "yes_no",
+            "options": [
+                {
+                    "position": 1,
+                    "label": "orders",
+                    "entity_type": "team",
+                    "payload": {"team": "customer_service"},
+                }
+            ],
+        }
+        db.execute(
+            text(
+                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+                "WHERE respond_io_id = :cid"
+            ),
+            {"cid": str(CONTACT_ID), "sv": json.dumps({"variables": {"open_question": seeded_pending}})},
+        )
+        db.commit()
+
+        stub_parser(
+            v3_verdict(
+                message_type="casual",
+                entities=[],
+                is_affirmative=None,
+                escalation={
+                    "is_escalation_confirmation": None,
+                    "escalation_declined": None,
+                    "company_pick": None,
+                },
+                answers_open_question=None,
+            )
+        )
+        stub_access()
+
+        envelope = _envelope(is_test=True)  # dry run: D14, ZERO writes outside chatbot.turns
+        envelope.message["message"]["message"]["text"] = "hello"
+
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        assert result.session_patch is not None, "a dry run must hand back what it would have written"
+        after = (result.session_patch or {}).get("open_question")
+        assert after is not None, "the open question must still be there after a casual reply"
+        assert after.get("kind") == "team_pick", after
+        assert after.get("team") == "customer_service", after
+        assert after.get("options") == seeded_pending["options"], after
