@@ -795,6 +795,171 @@ def test_confirm_inside_savepoint_dispatches_once(api, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# AC-H27/AC-H28: review round 2 ruling - the drain fires ONLY at the ROOT      #
+# transaction's own commit, never at any savepoint release                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_batch_apply_two_savepoints_one_dispatch_at_root(api, monkeypatch):
+    """AC-H27 (review round 2).
+
+    Round 1's fix (AC-H21) made `_mark_handover_transaction_committed` tag the SAME
+    transaction `_record_handover` names (`get_nested_transaction() or
+    get_transaction()`) - which cured the single-savepoint stranding, but over-corrects
+    for `planning_change_service.apply`'s REAL shape: several orders, each confirmed
+    inside its OWN `db.begin_nested()` / `savepoint.commit()`, one root commit at the
+    end. Every savepoint's own release now genuinely counts as "committed" for that
+    savepoint, so each one's queued line fires on its OWN conclusion - the reviewer's
+    probe on HEAD reports exactly that: 2 dispatches, one per savepoint, instead of one
+    combined dispatch at the root. The ruling: dispatch fires ONLY when the ROOT
+    transaction concludes by commit.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+    supply = ProjectSupplyService(db)
+
+    core_so_1 = _core_so(db, world.company_id)
+    core_line_1 = _core_line(
+        db, core_so_1, world.product, world.warehouse, qty_ordered="10", required_date=WAS
+    )
+    order_1 = _project_so(
+        db, world.project, so_id=core_so_1.id, autocount_doc_no=core_so_1.so_number
+    )
+    line_1 = _project_line(db, order_1, line_no=1, product=world.product, core_line=core_line_1)
+
+    core_so_2 = _core_so(db, world.company_id)
+    core_line_2 = _core_line(
+        db, core_so_2, world.product, world.warehouse, qty_ordered="8", required_date=WAS
+    )
+    order_2 = _project_so(
+        db, world.project, so_id=core_so_2.id, autocount_doc_no=core_so_2.so_number
+    )
+    line_2 = _project_line(db, order_2, line_no=1, product=world.product, core_line=core_line_2)
+    db.commit()
+
+    savepoint_1 = db.begin_nested()
+    supply.confirm(
+        order_1,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line_1.id), buy_qty="10")]),
+        actor_user_id=world.cs_user,
+    )
+    savepoint_1.commit()
+
+    savepoint_2 = db.begin_nested()
+    supply.confirm(
+        order_2,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line_2.id), buy_qty="8")]),
+        actor_user_id=world.cs_user,
+    )
+    savepoint_2.commit()
+
+    assert _handover_calls(calls) == [], (
+        "nothing may dispatch at a savepoint release, only at the root commit"
+    )
+
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert len(matches) == 1, f"expected exactly one dispatch at the root commit, got {len(matches)}"
+    so_numbers = {o["so_number"] for o in matches[0]["context"]["handover"]["orders"]}
+    assert so_numbers == {core_so_1.so_number, core_so_2.so_number}
+
+
+def test_parent_rollback_after_savepoint_release_dispatches_nothing(api, monkeypatch):
+    """AC-H28 (review round 2).
+
+    A line recorded inside a savepoint that RELEASES must not dispatch on that release
+    alone - only the ROOT's own commit fires anything (AC-H27's ruling), so a root
+    rollback after the savepoint has already released must leave nothing dispatched and
+    nothing pending. The sibling half is the fine-grained rollback AC-H10 already pins
+    at the row level, now at the savepoint level: order A's savepoint releases, order
+    B's own savepoint rolls back, and the root commits - B's rollback must discard only
+    B's own queued line, not A's, and the root commit must still fire exactly once, for
+    A alone.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+    supply = ProjectSupplyService(db)
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.warehouse, qty_ordered="10", required_date=WAS
+    )
+    order = _project_so(
+        db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+    )
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    savepoint = db.begin_nested()
+    supply.confirm(
+        order,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line.id), buy_qty="10")]),
+        actor_user_id=world.cs_user,
+    )
+    savepoint.commit()
+
+    db.rollback()
+
+    assert _handover_calls(calls) == [], (
+        "a released savepoint must not have dispatched before the root rolled back"
+    )
+    assert not db.info.get(_HANDOVER_PENDING_KEY), (
+        "the pending queue must be empty once the root has rolled back"
+    )
+
+    # -- sibling half: order A's savepoint releases, order B's own savepoint rolls
+    # back, the root commits - exactly one dispatch, A only.
+    core_so_a = _core_so(db, world.company_id)
+    core_line_a = _core_line(
+        db, core_so_a, world.product, world.warehouse, qty_ordered="10", required_date=WAS
+    )
+    order_a = _project_so(
+        db, world.project, so_id=core_so_a.id, autocount_doc_no=core_so_a.so_number
+    )
+    line_a = _project_line(db, order_a, line_no=1, product=world.product, core_line=core_line_a)
+
+    core_so_b = _core_so(db, world.company_id)
+    core_line_b = _core_line(
+        db, core_so_b, world.product, world.warehouse, qty_ordered="6", required_date=WAS
+    )
+    order_b = _project_so(
+        db, world.project, so_id=core_so_b.id, autocount_doc_no=core_so_b.so_number
+    )
+    line_b = _project_line(db, order_b, line_no=1, product=world.product, core_line=core_line_b)
+    db.commit()
+
+    savepoint_a = db.begin_nested()
+    supply.confirm(
+        order_a,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line_a.id), buy_qty="10")]),
+        actor_user_id=world.cs_user,
+    )
+    savepoint_a.commit()
+
+    savepoint_b = db.begin_nested()
+    supply.confirm(
+        order_b,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line_b.id), buy_qty="6")]),
+        actor_user_id=world.cs_user,
+    )
+    savepoint_b.rollback()
+
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert len(matches) == 1, f"expected exactly one dispatch, got {len(matches)}"
+    so_numbers = {o["so_number"] for o in matches[0]["context"]["handover"]["orders"]}
+    assert so_numbers == {core_so_a.so_number}, (
+        f"order B's rolled-back savepoint must not appear, got {so_numbers}"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # AC-H22: the AC-H20 carry rule still applies when the row's live handshake    #
 # is missing (rejected, or never acknowledged)                                #
 # --------------------------------------------------------------------------- #
@@ -1492,20 +1657,20 @@ def test_handover_sends_one_email_with_actor_in_cc(monkeypatch):
     """AC-H26.
 
     A real send on the production copy: one confirm produced FIVE `email_outbox` rows,
-    one per recipient with a single address each. `_send_per_match` calls
-    `_enqueue_email` - which always stamps `single_email_to_all: True`, the flag the
-    downstream To/Cc split (`notification_tasks.py:252-268`) reads - ONCE PER
-    RECIPIENT with `recipient_emails=[one]`, defeating the flag's own point. R5's
-    requirement is the manual mail's shape: ONE email, purchasing in To/Cc, the raiser
-    on Cc, so reply-all threads across everyone. `notification_tasks.py:252-268` puts
-    the FIRST address in To and the rest in Cc, so the actor has to be LAST in
-    `recipient_emails` for `include_actor` to land them on Cc rather than displacing
-    purchasing from To.
+    one per recipient with a single address each. R5's requirement is the manual
+    mail's shape: ONE email, purchasing in To/Cc, the raiser on Cc, so reply-all
+    threads across everyone. `notification_tasks.py:252-268` puts the FIRST address in
+    To and the rest in Cc, so the actor has to be LAST in `recipient_emails` for
+    `include_actor` to land them on Cc rather than displacing purchasing from To.
+
+    The fix landed as an OPT-IN `recipient_config["one_email"]` key (`fcc4a5e02`) -
+    other automations keep sending one copy per person, so this fixture has to ask for
+    it explicitly or it exercises the (still legal) per-person path this AC is not
+    about.
 
     Drives `AutomationService.dispatch_event` for REAL against a genuinely seeded
-    `order_inquiry_handover` automation - not mocked, unlike this file's other tests,
-    because the bug lives inside `_send_per_match` / `_enqueue_email` itself, and
-    reuses `test_automation_service.py`'s own assertion shape (query
+    `order_inquiry_handover` automation - not mocked, unlike this file's other tests -
+    and reuses `test_automation_service.py`'s own assertion shape (query
     `Notification`/`NotificationDelivery` by `source_entity_type` /
     `source_entity_id`, read `data.recipient_emails` off the `Notification` row).
     """
@@ -1571,6 +1736,10 @@ def test_handover_sends_one_email_with_actor_in_cc(monkeypatch):
                 "role_ids": [],
                 "extra_emails": [],
                 "include_actor": True,
+                # Opt-in (fcc4a5e02): "one email" is a per-automation choice, not the
+                # default for every automation, so this fixture has to ask for it
+                # explicitly or it exercises the (still legal) per-person-copy path.
+                "one_email": True,
             },
             group_matches=False,
             schedule_type="manual",
