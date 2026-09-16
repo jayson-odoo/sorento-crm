@@ -1,6 +1,6 @@
 # PLAN - Price tag: line-level promotion, combo subject picker, auto-split, photo tiebreak, tag size
 
-Status: owner-reviewed 2026-09-15 (Q1, Q2, Q4 confirmed, Q3 ruled: price badge subject adds Tag total). Tickets #942 #943 #944 #945 #946 #947. Implemented 16 Sep 2026, reviewed (Opus x2, security x1), browser-verified (3 passes); draft PR #948 awaiting owner test on :3080 and merge go.
+Status: merged 2026-09-16 as PR #948 and deployed. Follow-up lane fix/price-tag-line-price-columns turns the per-line price fields into real table columns on desktop.
 UAC: `documentation/plans/dealer-kit/price-tag-line-promo-combo-subject-acceptance-criteria.md`
 Predecessor: `PLAN-price-tag-ai-extract-resolver.md` (merged #929, 15 Sep 12:08Z), `PLAN-price-tag-combos.md` (#913), `PLAN-price-tag-r9-review-loop.md` (#907).
 Lane: one lane, one PR. Branch `feat/price-tag-line-promo`, worktree `.claude/worktrees/price-tag-line-promo`, stack slot :3080/:8080, private DB `sorento_ptlp_ci`.
