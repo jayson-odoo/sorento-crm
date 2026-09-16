@@ -1387,7 +1387,14 @@ def _run_stages(  # noqa: PLR0915
             session=session_block,
             parse={
                 "output": turn_runtime.lane_parse_output(
-                    verdict, focus=state_out.focus, pending=state_in.pending, prior_session=session_block
+                    verdict,
+                    focus=state_out.focus,
+                    pending=state_in.pending,
+                    # An accepted escalation offer routes by the team the customer just
+                    # picked (contract 108); a multi-team offer's own `pending.team` is
+                    # null until one of its options is chosen.
+                    accepted_team=plan.trace.team,
+                    prior_session=session_block,
                 ),
                 "_parser_raw": verdict,
             },
@@ -1426,6 +1433,10 @@ def _run_stages(  # noqa: PLR0915
                     branch_kind="business_query",
                     space_id=space_id_for_turn,
                     dry_run=dry_run,
+                    # The roster about to be printed is an INCOMING one: it carries the
+                    # has/no-incoming stamp whether the customer named the family this
+                    # turn or the conversation carried it (browser pass 3, turn 2).
+                    stamp_incoming=plan.ask is not None and "incoming" in plan.domains,
                 )
             )
             if resolved_kinds or resolved_candidates:
@@ -1544,6 +1555,7 @@ def _run_stages(  # noqa: PLR0915
                     dry_run=dry_run,
                     turn_trace=turn_trace,
                 ),
+                granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
                 contains_flyer=bool(verdict.get("contains_flyer")),
             )
@@ -1632,6 +1644,7 @@ def _run_stages(  # noqa: PLR0915
                 dry_run=dry_run,
                 contact_respond_id=contact_respond_id,
                 turn_trace=turn_trace,
+                state=state_out,
             )
             actions = [*actions, *extra_actions]
             _close_turn(
@@ -1762,6 +1775,7 @@ def _run_stages(  # noqa: PLR0915
             session_factory=session_factory,
             turn_trace=turn_trace,
             stage=stage,
+            state=state_out,
         )
 
     if branch_kind == "low_signal" and completes_here:
@@ -1777,6 +1791,7 @@ def _run_stages(  # noqa: PLR0915
             clarifier_prompt=clarifier_prompt,
             clarifier_config=clarifier_config,
             setup_error=clarifier_setup_error,
+            state=state_out,
         )
 
     return TurnResult(
@@ -2096,6 +2111,7 @@ def _run_casual_lane(
     clarifier_prompt: dict[str, Any] | None,
     clarifier_config: Any,
     setup_error: str | None = None,
+    state: Any = None,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -2251,6 +2267,9 @@ def _run_casual_lane(
         turn_id,
         {"item": answer, "ctx": ctx, "answer": answer},
         session_factory=session_factory,
+        # The clarifier asks nothing of its own, so whatever question was open before
+        # this greeting is still open after it (contract 36 / 56, cluster 4's carry).
+        state=state,
     )
 
     return TurnResult(
@@ -2279,6 +2298,7 @@ def _run_escalation_arm(
     session_factory: SessionFactory,
     turn_trace: Any,
     stage: list[str],
+    state: Any = None,
 ) -> TurnResult:
     """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
 
@@ -2402,6 +2422,9 @@ def _run_escalation_arm(
             ),
         },
         session_factory=session_factory,
+        # An accepted offer was CONSUMED by APPLY, so this carries nothing; a clarify
+        # arm asks its own question and `_question_offered` reads it back.
+        state=state,
     )
 
     # -- seal the send actions with what the tail composed -------------------- #
@@ -2983,6 +3006,10 @@ def run_tail(
     are written from the `State` APPLY computed and the question the composer asked, so
     there is one writer, one shape, and no ladder of markers to keep in step.
 
+    `state` is APPLY's own `state'` when the caller has one (every lane that runs inside
+    `run_turn`): its focus is what gets written, and its `pending` is what an answering
+    lane carried.
+
     `write_session` is the ONE thing a caller may vary, and it is not a dry-run flag:
     `access_denied` answers WITHOUT the tail's write on a live turn, and a contact refused
     the agent must not have the turn written into their memory.
@@ -3059,6 +3086,12 @@ def run_tail(
     # check `LegacyVariables` used to run is now the shape itself: `SessionVars` forbids
     # every key outside the five, so a producer cannot leak one into a real contact's
     # memory.
+    # What APPLY decided this turn, when the caller ran one. `/complete` is n8n's own
+    # entry and has no APPLY state at all, so it re-reads the session this turn STARTED
+    # with - which is exactly why the carry below reads `applied` and not `state`: that
+    # reloaded pending is the question as it stood BEFORE the turn, and writing it back
+    # would re-open a question the lane has just answered.
+    applied = state
     if state is None:
         state = turn_runtime.load_state(
             {"session_vars": jsc.get(jsc.get(ctx, "session"), "session_vars")},
@@ -3068,7 +3101,16 @@ def run_tail(
     before = dict(remembered_before or session_state.five_keys(jsc.get(ctx, "session")))
     payload = {
         "focus": turn_state.focus_to_wire(state.focus),
-        "open_question": turn_pending.to_wire(question),
+        # The lane's OWN question, else the one APPLY carried - the same rule the
+        # composed arms run through `turn/tail.py::session_payload` ("no new question"
+        # is not "no question", AC-1532). A lane that answers nothing and clears nothing
+        # must leave the open question exactly where it found it: hand-pass 2 sent
+        # "hello" while an escalate offer was open, the casual lane wrote a patch with
+        # no question in it, and the "1" that followed had nothing left to answer
+        # (browser pass 3, turns 8 and 9).
+        "open_question": turn_pending.to_wire(
+            question if question is not None else (applied.pending if applied else None)
+        ),
         "ideation": before.get("ideation"),
         "access_levels": list(before.get("access_levels") or []),
         "contains_flyer": bool(before.get("contains_flyer")),
@@ -3224,6 +3266,7 @@ def _complete_canned_lane(
     dry_run: bool,
     contact_respond_id: str,
     turn_trace: trace_mod.TurnTrace,
+    state: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]:
     """One of S3's eight lanes, answered inside the turn. `(reply, patch, actions)`.
 
@@ -3299,6 +3342,7 @@ def _complete_canned_lane(
             dry_run=dry_run,
             contact_respond_id=contact_respond_id,
             turn_trace=turn_trace,
+            state=state,
         )
         reply = {**reply, **reply_extras}
 
@@ -3320,6 +3364,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     session_factory: SessionFactory,
     compose_send_action: bool = False,
     lane_trace: Any = None,
+    state: Any = None,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -3336,6 +3381,11 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     **The session write is validated BEFORE it happens.** `LegacyVariables(extra="forbid")`
     is what stops a harness key leaking into a customer's session (H15, AC-203), and it
     has to raise before `overwrite_for_contact`, not after.
+
+    `state` is APPLY's `state'`, handed over by the lanes that run inside `run_turn`, so
+    the session this writes carries the focus and the still-open question THIS turn
+    computed rather than a re-read of the one it started with. `/complete` is n8n's path
+    and has none.
 
     `compose_send_action` is for a lane that finishes IN the CRM and only learns its own
     words here (S6c's business arms): it puts the `send_message` on the row before the row
@@ -3441,6 +3491,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 dry_run=dry_run,
                 contact_respond_id=contact_respond_id,
                 turn_trace=turn_trace,
+                state=state,
                 # NOT a `FRAGMENT_FIELD`: those are the lane CARRIERS the tail composes
                 # from, and this is one value the tail could not have composed for itself
                 # - what the lane already decided the customer can tap.

@@ -1109,6 +1109,36 @@ def run(
     return exit_item(_snapshot(ctx_resolved_item), exit_kind="not_found", fields=base_fields)
 
 
+def probe_incoming(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    space_id: str | None,
+) -> Any:
+    """The incoming picker's own probe, for a caller outside the miss arm.
+
+    The arm above runs it only when the gate could not pin a single product
+    (`if_incoming_picker`: `require_specific`), which is the only way the n8n graph could
+    ever reach a picker. The re-architected narrower asks the same roster from the other
+    side - a domain switch that CARRIES ten settled variants ("incoming", after a stock
+    answer about them) is not ambiguous to the gate at all, so it never reached this
+    probe and the roster printed without the has/no-incoming stamps the same roster shows
+    when the customer names the family themselves (browser pass 3, turn 2). One probe,
+    one builder for its inputs, two callers.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=INCOMING_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=None,
+        space_id=space_id,
+    )
+
+
 def _run_probe(
     services: ResolveGateServices,
     *,

@@ -23,7 +23,14 @@ from typing import Any
 
 from app.services.chatbot import contracts
 from app.services.chatbot.turn.narrow import decide as narrow_decide
-from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, ask as pending_ask, is_roster, with_answered_positions
+from app.services.chatbot.turn.pending import (
+    ESCALATION_OFFER_KINDS,
+    OFFER_KINDS,
+    Pending,
+    ask as pending_ask,
+    is_roster,
+    with_answered_positions,
+)
 from app.services.chatbot.turn.plan import FetchSpec, Plan, Trace
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.reconcile import apply_reconciliation
@@ -68,6 +75,64 @@ def _set_kind_field(focus: Focus, kind: str, entities: list[dict[str, Any]]) -> 
         focus.extra[kind] = entities
 
 
+def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace: Trace):
+    """An escalation offer, ACCEPTED - the mirror of `answer_pending_decline`.
+
+    "Would you like me to escalate?" is answered three ways and every one of them is an
+    acceptance: a bare "yes" (`is_affirmative`), the parser's own escalation flag, and a
+    NUMBER off a multi-team roster (`answers_open_question.resolved` with a pick). The
+    third is why this runs before the roster path below: an accepted offer's option is a
+    TEAM, not an entity to fetch with, and the roster path turned "yes" into a product
+    pick, restored `payload.domain` and re-ran the very lookup that had just missed
+    (browser pass 3, turns 9 and 12 - the same answer back, byte for byte, re-offering
+    the same escalation).
+
+    The turn short-circuits to the escalation lane with the accepted team on the trace;
+    the lane then does its normal work (the assignee draw, the SLA row). Returns the
+    four-tuple, or None when this message is not an acceptance - a decline, a miss and an
+    aside are all settled by the generic rules below, in one place.
+    """
+    escalation = verdict.get("escalation") or {}
+    if escalation.get("escalation_declined") is True or verdict.get("is_affirmative") is False:
+        # A decline outranks every acceptance signal, and it already has a rule.
+        return None
+
+    answers = verdict.get("answers_open_question") or {}
+    picked: dict[str, Any] | None = None
+    if answers.get("resolved") is True:
+        # ONE option, and only a POSITION. "all" (contract 31) expands a menu of things
+        # to look up, and there is no such thing as handing one conversation to every
+        # team at once - so it is not an acceptance and the menu rules below keep it.
+        picks = answers.get("picks")
+        positions = picks if isinstance(picks, list) else []
+        picked = next((o for o in pending.options if o.get("position") in positions), None)
+        if picked is None:
+            # A position nobody offered: the re-print rule below owns it, the same as
+            # for a roster.
+            return None
+    elif not (
+        verdict.get("is_affirmative") is True
+        or escalation.get("is_escalation_confirmation") is True
+    ):
+        return None
+
+    option_payload = (picked.get("payload") or {}) if picked else {}
+    if option_payload.get("hold") is True:
+        # Contract 43: "No it's okay" is on the roster precisely so it can be picked,
+        # and picking it is a decline - the same lane the word "no" reaches.
+        trace.rules_fired.append("answer_pending_decline")
+        trace.lane = "escalation_declined"
+        return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
+
+    trace.rules_fired.append("answer_pending_accept")
+    trace.lane = "escalation"
+    # Contract 108: an acceptance names no team of its own, so the OFFER's team is what
+    # the escalation lane routes by - the picked option's when the roster offered
+    # several, the offer's own when it was a single-team yes/no.
+    trace.team = option_payload.get("team") or pending.team
+    return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
+
+
 def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
     # Returns (focus_after, pending_after, short_circuit_plan, domain_locked).
     pending = state.pending
@@ -75,6 +140,13 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
 
     if pending is None:
         return focus, None, None, False
+
+    if pending.kind in ESCALATION_OFFER_KINDS:
+        # BEFORE the roster path: an accepted escalation offer is a handover, never a
+        # fetch, whichever of the three ways it was accepted.
+        accepted = _answer_offer(pending, verdict, focus, trace)
+        if accepted is not None:
+            return accepted
 
     answers = verdict.get("answers_open_question") or {}
     if answers.get("resolved") is True:

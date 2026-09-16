@@ -26,6 +26,13 @@ class Trace:
     # sixth Plan field because the Plan's own field set is the contract (AC-1528) - and
     # because "which lane, and why" is exactly what an operator reads the trace for.
     lane: str | None = None
+    # The team an ACCEPTED escalation offer named: the option the customer picked off
+    # the roster (`payload.team`), else the single team the yes/no offer was made for.
+    # It lives beside `lane` for the same reason - it is a fact about WHICH lane this
+    # turn goes to, and the Plan's own field set is the contract (AC-1528) - and it has
+    # exactly one reader, `engine.run_turn`, which hands it to `lane_parse_output` as
+    # the head of the `routing.suggested_team` chain (contract 108).
+    team: str | None = None
 
 
 @dataclass

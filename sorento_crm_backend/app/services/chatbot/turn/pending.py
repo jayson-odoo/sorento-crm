@@ -96,6 +96,15 @@ def with_answered_positions(pending: Pending, positions: list[int]) -> Pending:
 # Offer kinds clear when they are answered; the roster kinds above stay alive.
 OFFER_KINDS: frozenset[str] = frozenset(PENDING_KINDS) - ROSTER_KINDS
 
+# The three offers the ESCALATION lane owns, both halves of them. `route()` sends the
+# ASK to `escalate_offer` off this set, and `apply._answer_pending` sends the ANSWER
+# back to the escalation lane off the same one - the arm that asks and the arm that
+# answers must not be able to disagree about which questions are escalation questions.
+# The other three offer kinds are BUSINESS questions (`tier_pick` is contract 15's price
+# tier, `outstanding_scope` and `outstanding_detail` are contract 38 and 39): accepting
+# one of those is a fetch, not a handover.
+ESCALATION_OFFER_KINDS: frozenset[str] = frozenset({"team_pick", "member_offer", "company_pick"})
+
 
 def to_wire(pending: Pending | None) -> dict[str, Any] | None:
     """`session_vars.open_question` - the ONE open question, as stored (AC-1504)."""

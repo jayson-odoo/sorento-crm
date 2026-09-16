@@ -21,6 +21,7 @@ here instead, one function per seam:
 """
 from __future__ import annotations
 
+import copy
 import logging
 import re
 from dataclasses import dataclass, field
@@ -64,6 +65,11 @@ class TurnContext:
     policy: Any = None
     profile: Profile = field(default_factory=Profile)
     tool_runner: Callable[[str, FetchSpec], dict[str, Any]] | None = None
+    # The field-reveal keys this contact holds (`ctx["access"]["attributes"]`, contract
+    # 59). `None` is the empty grant set, as it is everywhere else that reads it. The
+    # cross-domain ladder is the reader: a rung the contact was never granted is not
+    # probed at all (owner ruling, 8 Sep 2026).
+    granted_reveals: list[str] | None = None
     access_levels: list[str] = field(default_factory=list)
     contains_flyer: bool = False
     ideation: Any = None
@@ -346,6 +352,7 @@ def lane_parse_output(
     focus: Focus | None = None,
     pending: Pending | None = None,
     domain: str | None = None,
+    accepted_team: str | None = None,
     prior_session: Any = None,
 ) -> dict[str, Any]:
     """`ctx.parse.output` for the kept lanes, projected from the v3 verdict.
@@ -366,7 +373,10 @@ def lane_parse_output(
       `test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing`
       both call `escalation.run()` directly with a hand-built ctx and pin a null/inherited
       team flowing through UNGUARDED - the default belongs to the layer that builds
-      `ctx.parse.output`, not to the lane that reads it). Chain, in order: a NAMED team
+      `ctx.parse.output`, not to the lane that reads it). Chain, in order: the team an
+      ACCEPTED offer just named (`apply`'s `trace.team`, the option the customer picked
+      off the roster - it outranks the rest because they picked it THIS turn, and a
+      multi-team offer's own `pending.team` stays null until they do); a NAMED team
       (this turn's own); an OFFER's carried team (`pending.team`, contract 108, an
       acceptance names no team of its own); a PREVIOUS turn's own carried routing
       (`_prior_suggested_team`, test_pass4_item5's B3 - "the carried team when a previous
@@ -390,6 +400,8 @@ def lane_parse_output(
         out.setdefault("order_status", None)
 
     routing = dict(out.get("routing") or {})
+    if accepted_team:
+        routing["suggested_team"] = accepted_team
     if not routing.get("suggested_team") and pending is not None and pending.kind in OFFER_KINDS:
         routing["suggested_team"] = pending.team
     if not routing.get("suggested_team"):
@@ -406,7 +418,13 @@ def lane_parse_output(
 
 
 def resolve_kinds(
-    db: Session, *, ctx: dict[str, Any], branch_kind: str, space_id: str | None, dry_run: bool
+    db: Session,
+    *,
+    ctx: dict[str, Any],
+    branch_kind: str,
+    space_id: str | None,
+    dry_run: bool,
+    stamp_incoming: bool = False,
 ) -> tuple[
     dict[str, dict[str, int]],
     list[dict[str, Any]],
@@ -422,19 +440,25 @@ def resolve_kinds(
 
     A resolver that cannot answer is not a failed turn: reconciliation simply has nothing
     to say, and the entities the parser named stand as they are.
+
+    `stamp_incoming` is the caller's own answer to "is this turn about to ask a product
+    roster under incoming?" - the engine knows it from the plan, the gate cannot know it
+    at all (see `resolve_gate.probe_incoming`), and it is what earns the extra probe.
     """
+    from app.services.chatbot.lanes.business import pickers
     from app.services.chatbot.lanes.business import resolve_gate
     from app.services.chatbot.lanes.business import services as business_services
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
         return {}, [], None, {}
+    services = business_services.production_services(db)
     try:
         payload = resolve_gate.run(
             ctx,
             "resolve",
             {"branch_kind": branch_kind},
-            services=business_services.production_services(db),
+            services=services,
             space_id=space_id,
             probe_default_start=resolve_gate.default_probe_start(),
             dry_run=dry_run,
@@ -465,6 +489,21 @@ def resolve_kinds(
     # annotated item (the `offer` exit), not onto the gate it was handed. Fall back to
     # the gate so a turn that never reached the picker still groups its candidates.
     annotated = payload.get("annotate_incoming")
+    if not isinstance(annotated, dict) and stamp_incoming and compatible:
+        # The roster this turn is about to print IS the incoming picker's roster, reached
+        # from the other side: the customer switched domain without naming the product
+        # again, so nothing was ambiguous and the gate never took its picker arm. Probe
+        # the same tool it would have, and annotate a COPY of the gate - `annotate_incoming`
+        # writes `escalate_message` onto what it is handed, and the gate the rest of the
+        # turn reads must keep saying what the gate said.
+        probe = resolve_gate.probe_incoming(
+            services,
+            ctx=ctx,
+            entities=compatible,
+            aggregate=payload.get("aggregate"),
+            space_id=space_id,
+        )
+        annotated = pickers.annotate_incoming(copy.deepcopy(gate), probe=probe)
     stamps_from = annotated if isinstance(annotated, dict) else gate
     return by_token, compatible, predicate, candidates_by_kind(stamps_from, compatible)
 
