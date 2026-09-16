@@ -74,7 +74,13 @@
       "expected": {
         "branch_kind": "business_query",
         "hand_built": true,
-        "note": "AC-1592/S6 console corpus: no recorded run in sorento_ai_automation_focus_full for 'reorder report' (2026-09-14-low-stock-report.yaml, only branch_kind + reply_contains pinned, no parser: field) - verdict hand-built by inference (intent_hint low_stock_report matches the sibling rearch-prompt.yaml pin for the SAME phrase). Only branch_kind asserted, same caveat as the rearch-prompt cases above."
+        "note": "AC-1592/S6 console corpus: no recorded run in sorento_ai_automation_focus_full for 'reorder report' (2026-09-14-low-stock-report.yaml, only branch_kind + reply_contains pinned, no parser: field) - verdict hand-built by inference (intent_hint low_stock_report matches the sibling rearch-prompt.yaml pin for the SAME phrase). Only branch_kind asserted, same caveat as the rearch-prompt cases above.",
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        }
       },
       "resolutions": {
         "resolutions": [],

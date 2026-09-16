@@ -397,7 +397,12 @@
           "f173ffd5-4624-48ed-ac88-79d6f84b4b06"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *File Name:* 11.09.2026 Container Status 2026 (MOCHA).xlsx\n*Company:* Mocha\n*Uploaded:* 2026-09-11\n\n2. *File Name:* 11.09.2026 Container Status 2026.xlsx\n*Company:* Sorento\n*Uploaded:* 2026-09-11\n\n3. *File Name:* 28.08.2026 Container Status 2026 (MOCHA).xlsx\n*Company:* Mocha\n*Uploaded:* 2026-08-28\n\n_Data last updated: 11/09/2026 18:35:19_",
         "tools": [
           {

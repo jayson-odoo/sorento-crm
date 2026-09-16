@@ -81,7 +81,12 @@
           "ecfdaf8f-3909-4375-afa8-1b8348790d55"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 inbound_shipment: TGHU6295708 (Mocha), TGHU6295708 (Sorento)\n\nBut no incoming matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing team?",
         "tools": [
           {
