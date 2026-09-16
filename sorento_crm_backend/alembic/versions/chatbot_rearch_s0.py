@@ -20,6 +20,7 @@ Revises: ptag_0012_seg_forms
 from __future__ import annotations
 
 import json
+import uuid
 
 import sqlalchemy as sa
 from alembic import op
@@ -41,17 +42,97 @@ depends_on = None
 # against `chatbot_domains` / `chatbot_entity_kinds`, never an edit to either file.
 
 
+def seed_domains_and_kinds(bind) -> tuple[int, int]:
+    """Insert the `chatbot_domains` / `chatbot_entity_kinds` seed rows, skipping any
+    name/kind already present.
 
-def upgrade() -> None:
+    Shared by `upgrade()` (a table this same migration just created, so always empty -
+    `intents`/`tools`/`switch_words`/`ladder` are still JSONB at that point, `s4b`
+    converts them to `text[]` later in the chain) and
+    `scripts.bootstrap_env.seed_chatbot_policy` (a `create_all`-built table, which
+    reflects every column at its FINAL model type - `text[]` for those four - and every
+    other column this migration adds, but none of the INSERTs a migration BODY only
+    runs through `alembic upgrade`) - so the two paths read the exact same rows and
+    cannot drift. Both tables are REFLECTED rather than declared with a fixed column
+    type for exactly that reason: the same values (Python lists/dicts) bind correctly
+    against either shape once SQLAlchemy knows the column's real type from the catalog,
+    which a hardcoded `sa.table(..., sa.column("intents", JSONB()))` cannot do for both
+    callers at once. Idempotent: re-run against an already-seeded table is a no-op, and
+    bootstrap may run twice.
+    """
     # Imported HERE, by bare module name, the same way `475_chatbot_parser_prompt_slim`
-    # reads `_legacy_prompt_bodies` (alembic puts its own directory on `sys.path`).
+    # reads `_legacy_prompt_bodies` (alembic puts its own directory on `sys.path`; a
+    # caller loading this module directly - `scripts.bootstrap_env` - adds it too).
     from _chatbot_policy_seed import (
         DATE_PARAM_TOOLS as _DATE_PARAM_TOOLS,
         DEFAULT_DOMAIN_ROWS as _DOMAINS,
         DEFAULT_KIND_ROWS as _ENTITY_KINDS,
-        DEFAULT_TIER_ORDER as _TIER_ORDER,
     )
 
+    metadata = sa.MetaData()
+    domains_table = sa.Table("chatbot_domains", metadata, autoload_with=bind)
+    kinds_table = sa.Table("chatbot_entity_kinds", metadata, autoload_with=bind)
+
+    existing_names = {
+        row[0] for row in bind.execute(sa.text("SELECT name FROM chatbot_domains"))
+    }
+    domains_inserted = 0
+    for i, row in enumerate(_DOMAINS):
+        if row["name"] in existing_names:
+            continue
+        bind.execute(
+            domains_table.insert().values(
+                # Explicit rather than relying on a server default: `chatbot_domains.id`
+                # has one on a REAL migrated database (this migration's own DDL, above)
+                # but not on a `create_all`-built one (the model declares only a Python-
+                # side default, which a reflected `Table` never sees) - an explicit
+                # value is correct either way.
+                id=str(uuid.uuid4()),
+                name=row["name"],
+                label=row["label"],
+                intents=row["intents"],
+                tools=row["tools"],
+                primary_tool=row["tools"][0] if row["tools"] else None,
+                escalation_team_code=row["escalation_team_code"],
+                switch_words=row["switch_words"],
+                narrowing=row["narrowing"],
+                takes_date_filter=any(t in _DATE_PARAM_TOOLS for t in row["tools"]),
+                reveal_key=row["reveal_key"],
+                supported=row["supported"],
+                ladder=row["ladder"],
+                sort_order=i,
+            )
+        )
+        domains_inserted += 1
+
+    existing_kinds = {
+        row[0] for row in bind.execute(sa.text("SELECT kind FROM chatbot_entity_kinds"))
+    }
+    kinds_inserted = 0
+    for i, row in enumerate(_ENTITY_KINDS):
+        if row["kind"] in existing_kinds:
+            continue
+        bind.execute(
+            kinds_table.insert().values(
+                # See the `domains_table` insert above - explicit for the same reason
+                # (`chatbot_entity_kinds.id`, chatbot_rearch_s6f, has no server default).
+                id=str(uuid.uuid4()),
+                kind=row["kind"],
+                label=row["label"],
+                resolver_source=row["resolver_source"],
+                did_you_mean=row["did_you_mean"],
+                default_narrowing=row["default_narrowing"],
+                family_grouping=row["family_grouping"],
+                base_property_words=row["base_property_words"],
+                sort_order=i,
+            )
+        )
+        kinds_inserted += 1
+
+    return domains_inserted, kinds_inserted
+
+
+def upgrade() -> None:
     bind = op.get_bind()
 
     # ---- chatbot_domains -------------------------------------------------- #
@@ -76,41 +157,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
     )
 
-    domains_table = sa.table(
-        "chatbot_domains",
-        sa.column("name", sa.Text()),
-        sa.column("label", sa.Text()),
-        sa.column("intents", sa.dialects.postgresql.JSONB()),
-        sa.column("tools", sa.dialects.postgresql.JSONB()),
-        sa.column("primary_tool", sa.Text()),
-        sa.column("escalation_team_code", sa.Text()),
-        sa.column("switch_words", sa.dialects.postgresql.JSONB()),
-        sa.column("narrowing", sa.dialects.postgresql.JSONB()),
-        sa.column("takes_date_filter", sa.Boolean()),
-        sa.column("reveal_key", sa.Text()),
-        sa.column("supported", sa.Boolean()),
-        sa.column("ladder", sa.dialects.postgresql.JSONB()),
-        sa.column("sort_order", sa.Integer()),
-    )
-    for i, row in enumerate(_DOMAINS):
-        bind.execute(
-            domains_table.insert().values(
-                name=row["name"],
-                label=row["label"],
-                intents=row["intents"],
-                tools=row["tools"],
-                primary_tool=row["tools"][0] if row["tools"] else None,
-                escalation_team_code=row["escalation_team_code"],
-                switch_words=row["switch_words"],
-                narrowing=row["narrowing"],
-                takes_date_filter=any(t in _DATE_PARAM_TOOLS for t in row["tools"]),
-                reveal_key=row["reveal_key"],
-                supported=row["supported"],
-                ladder=row["ladder"],
-                sort_order=i,
-            )
-        )
-
     # ---- chatbot_entity_kinds ---------------------------------------------- #
     op.create_table(
         "chatbot_entity_kinds",
@@ -126,30 +172,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("now()")),
     )
 
-    kinds_table = sa.table(
-        "chatbot_entity_kinds",
-        sa.column("kind", sa.Text()),
-        sa.column("label", sa.Text()),
-        sa.column("resolver_source", sa.Text()),
-        sa.column("did_you_mean", sa.Boolean()),
-        sa.column("default_narrowing", sa.Text()),
-        sa.column("family_grouping", sa.Text()),
-        sa.column("base_property_words", sa.dialects.postgresql.JSONB()),
-        sa.column("sort_order", sa.Integer()),
-    )
-    for i, row in enumerate(_ENTITY_KINDS):
-        bind.execute(
-            kinds_table.insert().values(
-                kind=row["kind"],
-                label=row["label"],
-                resolver_source=row["resolver_source"],
-                did_you_mean=row["did_you_mean"],
-                default_narrowing=row["default_narrowing"],
-                family_grouping=row["family_grouping"],
-                base_property_words=row["base_property_words"],
-                sort_order=i,
-            )
-        )
+    seed_domains_and_kinds(bind)
 
     # ---- respond_contacts (AC-1503) ---------------------------------------- #
     op.add_column(
@@ -179,6 +202,8 @@ def upgrade() -> None:
     op.add_column("conversation_frames", sa.Column("opened_at", sa.DateTime(), nullable=True))
 
     # ---- system_settings.chatbot_tier_order (AC-1502) ----------------------- #
+    from _chatbot_policy_seed import DEFAULT_TIER_ORDER as _TIER_ORDER
+
     op.add_column(
         "system_settings",
         sa.Column(
