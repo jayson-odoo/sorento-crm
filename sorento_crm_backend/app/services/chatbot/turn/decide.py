@@ -411,8 +411,9 @@ def _subject_reading(
     # This retires `scope_exclusive`, which asked the wrong question of the two turns it
     # was introduced for: "Outstsnding DO for 7445" (c45e2929) and "For srtwc286 only"
     # (67df5114) differ because the FIRST names a document and a status and the second
-    # names nothing but a product, not because one of them carries an "only" marker. The
-    # key stays declared and documented in the prompt; the engine no longer reads it.
+    # names nothing but a product, not because one of them carries an "only" marker. Item
+    # 2 (captain ruling, 17 Sep 2026): the key is gone from the schema, `DECLARED_KEYS`
+    # and the prompt entirely, not merely unread.
     #
     # `None` is a verdict recorded before the key existed - those fall through to the
     # rules below, unchanged, so the replay corpus still measures what it measured.
