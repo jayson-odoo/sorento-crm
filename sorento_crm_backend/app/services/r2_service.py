@@ -28,11 +28,15 @@ _R2_REGION = "auto"
 try:
     from dotenv import load_dotenv
 
-    env_path = Path(__file__).parent.parent.parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
+    _override_path = os.environ.get("SORENTO_ENV_FILE")
+    if _override_path and Path(_override_path).exists():
+        load_dotenv(_override_path, override=True)
     else:
-        load_dotenv()
+        env_path = Path(__file__).parent.parent.parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path)
+        else:
+            load_dotenv()
 except ImportError:
     pass
 

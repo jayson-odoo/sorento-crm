@@ -42,6 +42,9 @@ pytest tests/test_rbac.py -q           # one file
 pytest tests/test_rbac.py::test_x      # one test
 ```
 
+`SORENTO_ENV_FILE=.env.ci-tests pytest ...` runs tests against a private DB without touching
+`.env` - the file a running dev server also reads (see `app.main._load_env_file`).
+
 Pyright: root `pyrightconfig.json` points to `sorento_crm_backend/venv` and Python 3.12.
 
 ### Frontend (`sorento_crm_frontend/`)
