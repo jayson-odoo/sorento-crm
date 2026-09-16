@@ -268,6 +268,30 @@ class TestStoreDataChangeCount:
 
         assert request.data_changed_tag_count == 0
 
+    def test_checked_at_horizon_is_the_callers_own_not_a_post_resolve_read(self, db):
+        """Security review 16 Sep: `checked_at` must be a horizon captured
+        BEFORE the resolve, never a timestamp read after it - stamping
+        post-resolve would swallow a product edit that landed WHILE the
+        resolve ran."""
+        from app.services.dealer_kit import tag_data_service
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = _product(db)
+        request = _request_with_product_line(db, product)
+        horizon = BASE_TIME
+        rows = [{"tag_id": "t1", "changes": []}]
+
+        # The product moves AFTER the horizon was captured but BEFORE the
+        # store call runs - the window a post-resolve stamp would miss.
+        _touch(db, "products", product.id, "updated_at", horizon + timedelta(minutes=5))
+        tag_data_service.store_data_change_count(db, request, rows, horizon)
+        db.flush()
+
+        assert request.data_checked_at == horizon
+
+        touched = PriceTagRequestService.touched_request_ids(db, [request])
+        assert request.id in touched
+
 
 # --------------------------------------------------------------------------- AC-D3
 
@@ -535,3 +559,41 @@ class TestListRouteRefreshesOnlyTouchedRows:
         row = next(r for r in res.json()["data"] if r["id"] == request.id)
         assert row["data_changed_tag_count"] == 3
         assert request.id not in calls
+
+    def test_refresh_is_capped_at_ten_touched_rows_per_call(self, api, monkeypatch):
+        """Security review 16 Sep: unbounded, a page where every row is
+        touched (a bulk product edit) turns one list load into dozens of
+        resolves - `_DATA_CHANGE_REFRESH_CAP` caps it at 10, in page order."""
+        client, db = api
+        from app.services.dealer_kit import tag_data_service
+
+        requests = []
+        for _ in range(12):
+            product = _product(db)
+            request = _request_with_product_line(db, product)
+            request.data_checked_at = None
+            requests.append(request)
+        db.flush()
+        db.commit()
+
+        calls: list[str] = []
+        real_resolver = tag_data_service.resolve_request_line_data
+
+        def counting_resolver(db_arg, req_arg):
+            calls.append(req_arg.id)
+            return real_resolver(db_arg, req_arg)
+
+        monkeypatch.setattr(tag_data_service, "resolve_request_line_data", counting_resolver)
+
+        res = client.get("/api/v1/dealer-kit/price-tag-requests", params={"limit": 50})
+
+        assert res.status_code == 200, res.text
+        seeded_ids = {r.id for r in requests}
+        assert len({c for c in calls if c in seeded_ids}) == 10
+
+        for r in requests:
+            db.refresh(r)
+        checked = [r for r in requests if r.data_checked_at is not None]
+        unchecked = [r for r in requests if r.data_checked_at is None]
+        assert len(checked) == 10
+        assert len(unchecked) == 2

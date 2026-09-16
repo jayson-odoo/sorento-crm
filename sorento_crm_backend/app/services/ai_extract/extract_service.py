@@ -733,6 +733,16 @@ class AIExtractService:
         from app.services.ai_prompt_registry import get_prompt
 
         system = get_prompt(self.db, extract_prompt_key(form_key)).text
+        # Security review 16 Sep: a blank system prompt (a bad publish that
+        # wiped the production version, a bug in the registry's own fallback)
+        # must not send the model an LLM call with no rules at all - that
+        # answers SOMETHING, silently ungoverned, rather than failing loudly.
+        if not system or not system.strip():
+            raise AppException(
+                status_code=500,
+                message="AI extract prompt is not configured for this form.",
+                code="ai_extract_prompt_missing",
+            )
         line_items_clause = (
             (
                 " Include a top-level `products` array of "

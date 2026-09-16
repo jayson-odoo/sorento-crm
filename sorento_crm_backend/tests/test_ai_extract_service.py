@@ -885,3 +885,26 @@ def test_ac_b4_a_form_with_no_line_items_still_forbids_the_products_array():
 
     assert "Do NOT include a top-level" in user["content"]
     assert "products" in user["content"]
+
+
+def test_security_review_blank_prompt_text_raises_ai_extract_prompt_missing(monkeypatch):
+    """Security review 16 Sep: a blank system prompt (a bad publish, or a bug
+    in the registry's own fallback) must not send the model an LLM call with
+    no rules at all - `_build_messages` refuses loudly instead."""
+    from app.services.error_handler import AppException
+
+    class _BlankPrompt:
+        text = "   "
+
+    monkeypatch.setattr(
+        "app.services.ai_prompt_registry.get_prompt",
+        lambda db, name, *a, **kw: _BlankPrompt(),
+    )
+
+    svc = AIExtractService(db=None)  # type: ignore[arg-type]
+    schema = [ExtractFieldSpec(name="customer_name", label="Customer", kind="text")]
+
+    with pytest.raises(AppException) as exc_info:
+        svc._build_messages("portal.complaint", schema, {}, has_line_items=False)
+
+    assert exc_info.value.code == "ai_extract_prompt_missing"

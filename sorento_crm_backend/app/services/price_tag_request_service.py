@@ -1929,6 +1929,9 @@ Marketing's own work is not part of the form's payload, so it is captured
 
         A deleted image link leaves no timestamp (named gap, plan section D):
         that change surfaces on the next open of the record, not in the list.
+
+        Contract: ``ids`` MUST already be company-scoped by the caller (ORM
+        rows); this raw SQL adds no company predicate.
         """
         candidates = [
             request
@@ -2062,12 +2065,15 @@ Marketing's own work is not part of the form's payload, so it is captured
         # prices come off its FIRST tag - every tag on a line prints the same
         # host product, so those three are a line fact even though the rows are
         # per tag.
+        # Security review 16 Sep: the horizon is captured BEFORE the resolve,
+        # never after - see `store_data_change_count`'s own docstring.
+        checked_at = datetime.utcnow()
         rows = tag_data_service.resolve_request_line_data(db, request)
         # AC-D2: the detail route already pays for this exact resolve, so the
         # stored count/timestamp are refreshed here at no extra cost - the
         # list route's own cache stays honest the moment anyone opens the
         # record, not only on its own 30s poll.
-        tag_data_service.store_data_change_count(db, request, rows)
+        tag_data_service.store_data_change_count(db, request, rows, checked_at)
         db.commit()
         by_tag = {row["tag_id"]: row for row in rows}
         first_by_line: dict[str, dict] = {}

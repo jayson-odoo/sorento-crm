@@ -1147,7 +1147,9 @@ def _row_change_count(row) -> int:
     return 1 if changes else 0
 
 
-def store_data_change_count(db: Session, request, rows: Iterable) -> None:
+def store_data_change_count(
+    db: Session, request, rows: Iterable, checked_at: datetime | None = None
+) -> None:
     """AC-D2: cache how many of ``rows`` carry a change, and when this ran.
 
     Every caller that already computed the diff calls this right after (the
@@ -1156,6 +1158,16 @@ def store_data_change_count(db: Session, request, rows: Iterable) -> None:
     the same way it already did for its own write. A terminal request stores
     0 unconditionally: nothing on it can be updated, so a nonzero count would
     be true but is a claim nobody can act on.
+
+    Security review 16 Sep: ``checked_at`` should be a HORIZON the caller
+    captures immediately before calling ``resolve_request_line_data``, not a
+    timestamp read after the resolve. Stamping post-resolve leaves a window: a
+    product edited WHILE the resolve ran (read the old value, then moved)
+    would stamp a `data_checked_at` after that edit and `touched_request_ids`
+    would then treat the row as already checked, silently swallowing a real
+    change. Every production call site now passes its own pre-resolve
+    horizon; the default (``datetime.utcnow()`` taken here) exists only for a
+    caller with no resolve of its own to time against.
     """
     from app.services.price_tag_request_service import PriceTagRequestService
 
@@ -1164,7 +1176,7 @@ def store_data_change_count(db: Session, request, rows: Iterable) -> None:
         if PriceTagRequestService.is_terminal(request)
         else sum(_row_change_count(row) for row in rows)
     )
-    request.data_checked_at = datetime.utcnow()
+    request.data_checked_at = checked_at or datetime.utcnow()
 
 
 def pin_payload(row: dict) -> dict:
