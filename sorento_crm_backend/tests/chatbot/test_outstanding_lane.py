@@ -82,11 +82,44 @@ finding along the way, both preserved as-measured, not silently forced green:
   session-shape port rather than staying masked behind a `KeyError`. Kept red, not
   worked around; each test's own docstring names the finding.
 
-The REMAINING ~43 reds (answering the open scope/detail question end to end - the actual
-tool re-run with the carried filters, the header/reply text, the picker interplay) are
-still the file's original, larger finding: waiting on coder 12's contract 38/39 wiring,
-per the coordinator's own routing (16 Sep 2026). Tester 9's original flag on this file
-stands for that remaining group; the session-shape rename half is no longer part of it.
+CONTRACTS 38/39 LANDED (coder 12, `2a69c51b5`, 16 Sep 2026) - "the outstanding report's
+own two questions are answered": the ~43-red group above dropped to 17 the moment this
+session merged it, without any test-file edit. Tester 14 (this session) then ported the
+remaining TWO stale `_session_of(session_factory)["variables"]` reads (mechanical,
+`TestExactProductCodeWinsOverSiblings::test_the_scope_question_arm_stores_the_typed_code_
+too`, `TestOwnerRoundFivePickerAndOfferScope::test_a_customer_pick_after_an_outstanding_
+ask_arms_the_scope_question`) plus every trailing `["variables"]` read still sitting
+downstream of a still-failing assertion in the 15 that remain, so a future fix does not
+also trip a stale `KeyError` the moment its own earlier assertion goes green. 74 passed,
+15 failed (was 72/17) after the port; every customer-visible assertion kept.
+
+**The remaining 15 are NOT one uniform gap - measured this session, three distinct
+findings**, each already confirmed for the right reason (a real behavioural
+AssertionError against a real fetch/reply, never a fixture bug):
+
+* **The offer/question does not yet win over a generic casual/business read on every
+  call path** (`TestDetailOfferIsSticky` x4, `TestDateNarrowingUnderAnOpenOffer` x5,
+  `TestScopeQuestionCarriesTheFullHeader::test_refinement_reask_prints_customer_too`,
+  `TestOpenOfferCanBeLeft` x2 - 12 of the 15): a "thanks"/date-only/location-only turn
+  over a genuinely armed offer still reaches `crm_order_management_orders_list` instead
+  of resolving against (or re-printing) the open question. Measured directly
+  (`test_detail_offer_survives_a_casual_turn`: a bare "thanks" turn's own `captured`
+  list carries a real `crm_order_management_orders_list` call).
+* **The scope question's own Customer line prints the roster's generic family label
+  instead of the real resolved rows, and drops a carried date filter**
+  (`TestScopeQuestionCustomerLineMatchesReportHeader`,
+  `TestAllOnTheCustomerPickerKeepsTheQuestion::test_all_on_the_customer_picker_arms_the_
+  scope_question_for_every_family` - 2 of the 15): measured directly - the reply's
+  `Customer:` line reads `"CHIN CHUN HARDWARE SDN BHD"` (one name) where the real picked
+  rows are three, and `Order date: all` where a carried `2026-01-01`/`2026-12-31` window
+  should print.
+* **A plain (non-outstanding) delivery ask's DO hint changed**
+  (`TestOutstandingAskPickerHasNoDeliveryHint::test_plain_delivery_ask_picker_keeps_the_
+  do_hint` - 1 of the 15): unrelated to the scope/detail question mechanism above,
+  narrower, not diagnosed further this session.
+
+Not a tester-owned fix (behavioural engine gaps, not a test/fixture defect) - flagged for
+the coordinator to route, same as this file's original queue-2 flag.
 """
 from __future__ import annotations
 
@@ -760,10 +793,14 @@ class TestExactProductCodeWinsOverSiblings:
         assert reply.startswith("Product: ZZT7445\n"), (
             f"the question must name the code the customer typed: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert stored.get("outstanding_filters", {}).get("product_code") == "ZZT7445", (
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): outstanding_filters ->
+        # open_question.payload.filters, the same rename every other class in this
+        # file already reads - customer-visible assertion (the stored filter) kept
+        # unchanged, only the internal key path updated.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("payload", {}).get("filters", {}).get("product_code") == "ZZT7445", (
             f"the carried filter set must hold the typed code, or the ANSWER turn reports "
-            f"the wrong product: {stored.get('outstanding_filters')}"
+            f"the wrong product: {open_question.get('payload', {}).get('filters')}"
         )
 
     def test_the_answer_turn_reports_the_typed_code(self, session_factory, monkeypatch) -> None:
@@ -2043,8 +2080,10 @@ class TestDetailOfferIsSticky:
         assert "How can I help" not in reply, (
             f"a greeting mid-conversation, over an offer still on screen: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", stored.get("pending")
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # .kind - customer-visible assertion (the offer stays open) unchanged.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", open_question
 
     def test_the_reprint_uses_the_same_offer_form_the_report_used(
         self, session_factory, monkeypatch
@@ -2950,11 +2989,11 @@ class TestDateNarrowingUnderAnOpenOffer:
         assert "1. Sales order list" in reply and "2. Delivery order list" in reply, (
             f"the re-run must re-arm the detail offer: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            stored.get("pending")
-        )
-        filters_out = stored.get("outstanding_filters") or {}
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # .kind, outstanding_filters -> open_question.payload.filters.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", open_question
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
         assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
         assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
@@ -3097,11 +3136,11 @@ class TestDateNarrowingUnderAnOpenOffer:
             f"the re-asked scope question must show the NEW window, in the real "
             f"presenter format: {reply!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
-            stored.get("pending")
-        )
-        filters_out = stored.get("outstanding_filters") or {}
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # .kind, outstanding_filters -> open_question.payload.filters.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_scope", open_question
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("date_filter_start") == "2026-09-01", filters_out
         assert filters_out.get("date_filter_end") == "2026-09-30", filters_out
         assert filters_out.get("customer_ids") == [CUSTOMER_UUID], (
@@ -3204,11 +3243,11 @@ class TestDateNarrowingUnderAnOpenOffer:
             f"a location-only refinement re-runs the REPORT, not a detail pick: {args}"
         )
         _result_unused = result
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_detail", (
-            stored.get("pending")
-        )
-        filters_out = stored.get("outstanding_filters") or {}
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # .kind, outstanding_filters -> open_question.payload.filters.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_detail", open_question
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("warehouse_codes") == ["BRW"], filters_out
         assert filters_out.get("customer_ids") == [CUSTOMER_UUID], filters_out
 
@@ -3371,14 +3410,21 @@ class TestOwnerRoundFivePickerAndOfferScope:
         assert "2. Delivery orders (not yet delivered)" in reply, reply
         assert "3. Both" in reply, reply
 
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # .kind, outstanding_filters -> open_question.payload.filters - the same rename
+        # every other class in this file already reads. Customer-visible assertions
+        # (the resumed scope question, the picked customer stored as the subject) kept
+        # unchanged, only the internal key path updated.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_scope", (
             f"the picker's own outstanding ask must be resumed as the scope question, "
-            f"not left in whatever pending kind the picker itself used: {stored.get('pending')!r}"
+            f"not left in whatever pending kind the picker itself used: {open_question!r}"
         )
-        assert stored.get("outstanding_filters", {}).get("customer_ids") == [HANLIM_UUID_1], (
+        assert open_question.get("payload", {}).get("filters", {}).get("customer_ids") == [
+            HANLIM_UUID_1
+        ], (
             f"the CUSTOMER JUST PICKED (position 1) must be the stored subject: "
-            f"{stored.get('outstanding_filters')}"
+            f"{open_question.get('payload', {}).get('filters')}"
         )
 
     def test_a_pick_then_a_scope_answer_runs_the_report_for_the_picked_customer(
@@ -4305,11 +4351,11 @@ class TestAllOnTheCustomerPickerKeepsTheQuestion:
             "Outstanding for which document?\n"
         )
         assert reply.startswith(expected_header), reply
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") == "outstanding_scope", (
-            stored.get("pending")
-        )
-        filters_out = stored.get("outstanding_filters") or {}
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # .kind, outstanding_filters -> open_question.payload.filters.
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") == "outstanding_scope", open_question
+        filters_out = open_question.get("payload", {}).get("filters") or {}
         assert filters_out.get("customer_ids") == [c1_id, c2_id, c3_id], (
             f"every picked family's id must be in the stored subject: {filters_out}"
         )
@@ -4576,13 +4622,16 @@ class TestOpenOfferCanBeLeft:
             f"the offer is gone, so this turn's OWN reply (the greeting) is what the "
             f"customer sees: {reply2!r}"
         )
-        stored = _session_of(session_factory)["variables"]
-        assert (stored.get("pending") or {}).get("kind") != "outstanding_detail", (
-            f"the offer must be closed after the second unreadable turn: {stored.get('pending')!r}"
+        # SESSION-SHAPE PORT (AC-1592, tester 14, 16 Sep 2026): pending -> open_question
+        # (a closed offer = no open_question at all); outstanding_filters only ever
+        # lived inside the offer's own payload, never a sibling key, so a closed
+        # open_question already covers "the filter set dies with it".
+        open_question = _session_of(session_factory).get("open_question") or {}
+        assert open_question.get("kind") != "outstanding_detail", (
+            f"the offer must be closed after the second unreadable turn: {open_question!r}"
         )
-        assert stored.get("pending") is None, stored.get("pending")
-        assert "outstanding_filters" not in stored, (
-            f"the closed offer's filter set dies with it: {stored.get('outstanding_filters')!r}"
+        assert not open_question, (
+            f"the closed offer's filter set dies with it: {open_question!r}"
         )
 
         result3, captured3 = _run_turn(
