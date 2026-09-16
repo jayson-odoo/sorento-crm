@@ -515,14 +515,15 @@ line as elapsed time, not raw timestamps.
 turns only** - narrows the list to contacts with at least one failed turn in that range. Inside a
 thread, the drawer has its own **Failed turns only** toggle scoped to that one conversation.
 
-> **Which lanes the CRM answers itself is a `system_settings` switch, not this table.**
-> `system_settings.chatbot_completed_lanes` (a list of `branch_kind` values) says which lanes the
-> CRM is allowed to finish on its own; anything not listed there still gets handed to the WhatsApp
-> automation side to answer, even though the turn row above still gets written either way.
-> `system_settings.chatbot_stock_denial_enabled` and `system_settings.chatbot_unsupported_domains`
-> are two narrower switches of the same kind (see the troubleshooting guide below for what each
-> does). None of these three have an in-app settings screen today - they are changed by the
-> engineering / integrations team, not from this admin reference.
+> **Which topics the CRM answers itself is decided by the turn engine now, not a standalone
+> `system_settings` switch.** `system_settings.chatbot_completed_lanes` is no longer read - the
+> engine decides for itself, per turn, what it can finish. `system_settings.chatbot_stock_denial_enabled`
+> (**Stock denial lanes** on **[Settings > Chatbot](/user-management/settings)**) still gates
+> whether the bot may ever tell a customer their stock question is refused. The list of domains
+> the bot refuses entirely used to be free text here (`chatbot_unsupported_domains`); that is
+> retired - each domain's own **Supported** switch on
+> **[Chatbot Domains](/system-management/chatbot-domains)** controls it now (see the
+> troubleshooting guide below for both).
 
 **Example questions**
 
@@ -552,6 +553,8 @@ thread, the drawer has its own **Failed turns only** toggle scoped to that one c
 
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
+* [Chatbot Domains](chatbot-domains.md), [Entity kinds](chatbot-entity-kinds.md) and
+  [Chatbot settings](../user-management/chatbot-settings.md)
 * [Supply Chain - Upload the data a reorder plan is built from](../supply-chain/upload-plan-data.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Upload SPO allocations](../purchasing/upload-spo.md)
