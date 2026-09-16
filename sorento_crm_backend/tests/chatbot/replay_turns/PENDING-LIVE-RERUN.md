@@ -200,6 +200,16 @@ confirmed fixed, see DIVERGENCES.md's cluster D section),
 `contract/line-001-stock-by-location`,
 `prod_sample/business-query-477071889-chain-001-no-run-id`.
 
+Seven more added after signing cluster A's `tools`/`pending` fields (DIVERGENCES.md,
+"Cluster A signed" section) exposed the SAME entity_ids-only gap underneath, unrelated
+to cluster A's own ladder-fanout/settled-carry story: `case-002-a-container-number-is-
+named-never-its-uuid`, `case-016-a-bare-product-code-under-a-stock-thread-answers-
+stock-not-incoming`, `case-044-owner-8-sep-stock-then-po-for-another-code-then-last-
+in`, `case-052-finding-2-a-stock-ask-with-incoming-rows-never-claims-an-attachment-
+send`, `prod_sample/business-query-445239384-chain-001-no-run-id`,
+`prod_sample/out-of-scope-423755030-chain-001-no-run-id`,
+`prod_sample/out-of-scope-445239384-chain-001-no-run-id`.
+
 Re-measured this session (unchanged from tester 15's original clustering): 16 files
 still fail on entity_ids alone; `case-045` additionally confirmed clean on
 branch_kind/tools (its growth_r1 regression is fixed, only this entity_ids divergence
