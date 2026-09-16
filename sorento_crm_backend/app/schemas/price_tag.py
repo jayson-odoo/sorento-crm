@@ -482,6 +482,11 @@ class PriceTagRequestListItem(BaseModel):
     revision_no: int = 0
     last_revised_at: Optional[datetime] = None
     has_revision_draft: bool = False
+    # AC-D5: the stored count from the product-data-change cache (PLAN
+    # price-tag-currency-token-extract-prompt.md section D). Served from the
+    # column for an untouched row; the list route refreshes it first for a
+    # row a cheap query says was touched since its last check.
+    data_changed_tag_count: int = 0
 
 
 # ---------------------------------------------------------------------------

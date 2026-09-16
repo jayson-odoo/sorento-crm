@@ -152,6 +152,18 @@ def list_price_tag_requests(
         sort=sort,
         direction=dir,
     )
+    # AC-D4 (PLAN price-tag-currency-token-extract-prompt.md section D):
+    # refresh the stored product-data-change count for the touched rows on
+    # THIS page only - a full per-row resolve would add up to 50 x 60ms to
+    # every load; an untouched row is served straight from the column.
+    touched = PriceTagRequestService.touched_request_ids(db, rows)
+    if touched:
+        for row in rows:
+            if row.id not in touched:
+                continue
+            change_rows = tag_data_service.resolve_request_line_data(db, row)
+            tag_data_service.store_data_change_count(db, row, change_rows)
+        db.commit()
     return PriceTagRequestPage(
         data=PriceTagRequestService.list_items(db, rows),
         pagination={"total": total, "page": page, "limit": limit},
@@ -434,8 +446,13 @@ def _change_sets(db: Session, req) -> list[TagDataChangeSet]:
     them resolve different products, so rolling them up here would ask one
     question about two different changes. The Lines tab rolls its own pill up
     from these.
+
+    AC-D2: also refreshes the request's stored change count/timestamp - every
+    caller of this helper already runs the diff, so this is where all three
+    (GET, recheck, pin) pick it up with no second resolve.
     """
-    return [
+    rows = tag_data_service.resolve_request_line_data(db, req)
+    sets = [
         TagDataChangeSet(
             tag_id=row["tag_id"],
             tag_label=row.get("tag_label") or "",
@@ -444,9 +461,11 @@ def _change_sets(db: Session, req) -> list[TagDataChangeSet]:
             name=row.get("name") or "",
             changes=row.get("data_changes") or [],
         )
-        for row in tag_data_service.resolve_request_line_data(db, req)
+        for row in rows
         if row.get("data_changes")
     ]
+    tag_data_service.store_data_change_count(db, req, rows)
+    return sets
 
 
 @router.get("/{request_id}/data-changes", response_model=list[TagDataChangeSet])
@@ -468,7 +487,11 @@ def list_tag_data_changes(
         raise AppException(
             status_code=404, message="Price tag request not found.", code="NOT_FOUND"
         )
-    return _change_sets(db, req)
+    result = _change_sets(db, req)
+    # AC-D2: this route was read-only before the stored cache existed - the
+    # commit is new, for the count/timestamp `_change_sets` just wrote.
+    db.commit()
+    return result
 
 
 @router.post(
@@ -499,7 +522,9 @@ def recheck_tag_data_changes(
             if tag.data_change_ack_hash is not None:
                 tag.data_change_ack_hash = None
     db.commit()
-    return _change_sets(db, req)
+    result = _change_sets(db, req)
+    db.commit()
+    return result
 
 
 @router.post("/{request_id}/tags/{tag_id}/pin", response_model=TagPinResponse)
@@ -614,6 +639,10 @@ def resolve_tag_pin(
         tag.data_change_ack_hash = tag_data_service.data_hash(live)
 
     db.flush()
+    # AC-D2: this decision moved the pin/ack, so the stored count has to
+    # reflect it before the response goes out - `_change_sets` re-runs the
+    # diff over the whole request and writes the refreshed count/timestamp.
+    _change_sets(db, req)
     db.commit()
     return TagPinResponse(tag_id=tag.id, pinned_at=tag.pinned_at)
 

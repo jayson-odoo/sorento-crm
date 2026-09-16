@@ -1131,6 +1131,42 @@ def _plain(value):
     return value
 
 
+def _row_change_count(row) -> int:
+    """1 if this row carries any product-data change, else 0.
+
+    Two shapes reach here: a raw resolver row (``resolve_request_line_data``'s
+    own ``data_changes`` key) and a ``TagDataChangeSet`` the routes build for
+    the wire (``changes``, a pydantic model, not a dict). Checking both is
+    what lets one function serve every caller the plan names (AC-D2) without
+    each one reshaping its rows first.
+    """
+    if isinstance(row, dict):
+        changes = row.get("changes") or row.get("data_changes")
+    else:
+        changes = getattr(row, "changes", None) or getattr(row, "data_changes", None)
+    return 1 if changes else 0
+
+
+def store_data_change_count(db: Session, request, rows: Iterable) -> None:
+    """AC-D2: cache how many of ``rows`` carry a change, and when this ran.
+
+    Every caller that already computed the diff calls this right after (the
+    data-changes GET, recheck, pin update/keep, the detail response route -
+    PLAN price-tag-currency-token-extract-prompt.md section D), then commits
+    the same way it already did for its own write. A terminal request stores
+    0 unconditionally: nothing on it can be updated, so a nonzero count would
+    be true but is a claim nobody can act on.
+    """
+    from app.services.price_tag_request_service import PriceTagRequestService
+
+    request.data_changed_tag_count = (
+        0
+        if PriceTagRequestService.is_terminal(request)
+        else sum(_row_change_count(row) for row in rows)
+    )
+    request.data_checked_at = datetime.utcnow()
+
+
 def pin_payload(row: dict) -> dict:
     """What gets stored on the tag: the resolved row, JSON-safe.
 

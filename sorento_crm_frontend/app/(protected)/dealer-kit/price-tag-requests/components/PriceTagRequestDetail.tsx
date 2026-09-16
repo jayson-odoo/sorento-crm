@@ -187,7 +187,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   /** The gear's Edit request modal (r9 D7): today it holds the print choice. */
   const [editOpen, setEditOpen] = useState(false);
   const [reviewTagId, setReviewTagId] = useState<string | null>(null);
-  const [pinBusy, setPinBusy] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
   const [tab, setTab] = useState<DetailTab>('request');
@@ -262,15 +261,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
 
   const decideTagPin = useCallback(
     async (tagId: string, action: 'update' | 'keep') => {
-      setPinBusy(true);
       try {
         await resolveTagPin(requestId, tagId, action);
         await queryClient.invalidateQueries({ queryKey: tagDataChangesKey(requestId) });
         toast.success(action === 'update' ? 'Tag updated' : 'Kept the current tag');
       } catch {
         toast.error('Could not apply that decision');
-      } finally {
-        setPinBusy(false);
       }
     },
     [requestId, queryClient],
