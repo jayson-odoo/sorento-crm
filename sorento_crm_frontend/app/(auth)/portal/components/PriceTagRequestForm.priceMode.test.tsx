@@ -25,7 +25,12 @@ vi.mock('next/navigation', () => ({
 const toasts = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/toast', () => ({ toast: toasts }));
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(),
@@ -39,7 +44,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
   collectRequest: vi.fn(),
-}));
+  };
+});
 
 vi.mock('../lib/portal-client', () => ({
   uploadAttachment: vi.fn(),
@@ -191,12 +197,16 @@ describe('PriceTagRequestForm - price mode (D5, D-P2/AC-P8)', () => {
     expect(payload.price_mode).toBe('list');
   });
 
-  it('Selling price is never disabled, and picking it reveals the optional Promotion picker inside Price (D-P2, AC-P8)', async () => {
-    // role="radio" (the Price control is a radiogroup, not two plain
-    // buttons). r8 owner ruling drops the r7 "disabled until a promotion is
-    // picked" rule entirely - mode first, promotion second - so there is no
-    // `aria-disabled` state to assert here at all, and the Promotion field
-    // does not exist in the DOM until Selling is chosen.
+  // D1 (PLAN-price-tag-line-promo-combo-subject.md, this lane, S1): the
+  // header's own "Promotion" picker inside Price is RETIRED - a promotion is
+  // a LINE fact now, picked per row in the lines table (AC-S1-3), never at
+  // the header. The four tests this replaces asserted the r8 header picker
+  // (open Selling, see "Promotion", pick/clear it, watch it disappear on
+  // List); full per-line coverage (auto-fill, scoped options, manual price)
+  // lives in `PriceTagRequestForm.linePricing.test.tsx` (AC-S12-1). What is
+  // still this file's job: Selling stays never-disabled, and no header
+  // Promotion field exists in EITHER mode.
+  it('Selling price is never disabled, and the header carries no Promotion field in either mode (D1, AC-S1-3)', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
     // Price is collapsed until a line lands (AC-P7); opened by hand here so
@@ -214,54 +224,30 @@ describe('PriceTagRequestForm - price mode (D5, D-P2/AC-P8)', () => {
       'aria-checked',
       'true',
     );
-    expect(await screen.findByLabelText('Promotion')).toBeInTheDocument();
-    expect(screen.getByText('Promotion (optional)')).toBeInTheDocument();
+    // D1: no header Promotion field appears even in Selling mode - it moved
+    // onto the lines table.
+    expect(screen.queryByLabelText('Promotion')).toBeNull();
+    expect(screen.queryByText('Promotion (optional)')).toBeNull();
   });
 
-  it('choosing Selling price with a promotion posts price_mode selling', async () => {
+  it('choosing Selling price posts price_mode selling with no header promotion_id (D1)', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
-    // Selling first: the Promotion field only renders once Selling is chosen
-    // (D-P2 - the picker moved inside the Price section).
     fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
-    await selectOption('Promotion', 'promo-1');
 
     submit();
 
     const payload = await lastCreatePayload();
     expect(payload.price_mode).toBe('selling');
-    expect(payload.promotion_id).toBe('promo-1');
+    // D1: the request-level `promotion_id` is dropped from the payload
+    // entirely, backfilled into lines instead (AC-S6-3).
+    expect('promotion_id' in payload).toBe(false);
   });
 
-  it('clearing the promotion while Selling is chosen keeps price_mode selling (D-P2 owner ruling: the r7 revert-to-List rule is dropped)', async () => {
+  it('switching back to List keeps posting no header promotion_id (D1)', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
     fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
-    await selectOption('Promotion', 'promo-1');
-
-    // Clear the promotion: the mocked select's own empty option.
-    fireEvent.change(screen.getByLabelText('Promotion'), {
-      target: { value: '' },
-    });
-
-    // Selling stays selected - AC-B5/AC-P8: Selling with no promotion is a
-    // valid end state and submits fine.
-    expect(
-      screen.getByRole('radio', { name: 'Selling price' }),
-    ).toHaveAttribute('aria-checked', 'true');
-
-    submit();
-
-    const payload = await lastCreatePayload();
-    expect(payload.price_mode).toBe('selling');
-    expect(payload.promotion_id).toBeNull();
-  });
-
-  it('switching back to List hides and clears the promotion (D-P2, AC-P8)', async () => {
-    render(<PriceTagRequestForm />);
-    await fillMinimalRequiredFields();
-    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
-    await selectOption('Promotion', 'promo-1');
 
     fireEvent.click(screen.getByRole('radio', { name: 'List price' }));
 
@@ -271,7 +257,7 @@ describe('PriceTagRequestForm - price mode (D5, D-P2/AC-P8)', () => {
 
     const payload = await lastCreatePayload();
     expect(payload.price_mode).toBe('list');
-    expect(payload.promotion_id).toBeNull();
+    expect('promotion_id' in payload).toBe(false);
   });
 
   it('has no per-line "Promo price" switch anywhere on the form (AC-S2-3)', async () => {

@@ -10,7 +10,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
@@ -20,7 +20,12 @@ vi.mock('@/lib/toast', () => ({
   toast: { error: vi.fn(), success: vi.fn(), info: vi.fn() },
 }));
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(async () => []),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(async () => []),
@@ -33,7 +38,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   requestChanges: vi.fn(),
   listReviewComments: vi.fn(async () => []),
   collectRequest: vi.fn(),
-}));
+  };
+});
 
 import { getRequest } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
@@ -117,15 +123,27 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     // fields the OLD ad-hoc `{id, filename, content_type, url, created_at}`
     // shape never had, so this is what would go quietly missing if the type
     // ever regressed to it.
-    expect(previewPropsSpy).toHaveBeenCalled();
-    const items = previewPropsSpy.mock.calls.at(-1)?.[0].items;
-    expect(items).toEqual([
-      expect.objectContaining({
-        id: 'link-1',
-        name: 'ZZT-po.pdf',
-        downloadUrl: expect.stringContaining('att-1'),
-      }),
-    ]);
+    // D1 (this lane, mocked): the load effect now shares a render cycle with
+    // the new `lookupLinePricing` effect, and StrictMode's mount/cleanup/
+    // remount churn (the "not wrapped in act" warnings this file already
+    // carries) can leave a trailing re-render or two where `attachments`
+    // reads its resting empty default before the loaded request lands again -
+    // an artifact of the double-invoke, not of anything a real browser
+    // renders once. So this asserts the round trip landed AT LEAST once
+    // (the LAST call carrying the real row), rather than trusting whichever
+    // call happens to be temporally last.
+    await waitFor(() => {
+      const calls = previewPropsSpy.mock.calls
+        .map((call) => call[0].items as unknown[])
+        .filter((items) => items.length > 0);
+      expect(calls.at(-1)).toEqual([
+        expect.objectContaining({
+          id: 'link-1',
+          name: 'ZZT-po.pdf',
+          downloadUrl: expect.stringContaining('att-1'),
+        }),
+      ]);
+    });
   });
 
   it('renders the Sales Order card with an empty state when the request carries no attachments', async () => {

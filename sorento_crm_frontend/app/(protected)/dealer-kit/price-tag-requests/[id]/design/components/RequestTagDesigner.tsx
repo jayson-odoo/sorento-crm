@@ -92,6 +92,7 @@ import {
   type TagRequestTag,
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
+import { layerDisplayName } from '@/lib/dealer-kit/product-block';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import type { ToolbarTrailingAction } from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -99,7 +100,6 @@ import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/compon
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
@@ -107,9 +107,7 @@ import { UpdateTemplateDialog } from './UpdateTemplateDialog';
 import {
   getPriceTagRequest,
   resolveRequestTags,
-  splitRequestTag,
   transitionPriceTagRequest,
-  updateRequestTag,
   exportTagSheet,
   markReadyForCollection,
   type PriceTagRequestDetail,
@@ -156,6 +154,44 @@ let idSeq = 0;
 function newTagId(): string {
   idSeq += 1;
   return `tag-${Date.now()}-${idSeq}`;
+}
+
+/**
+ * D7/AC-S4-6: "Apply to all" can copy a layer whose subject points at a part
+ * index a THINNER target line does not have - the source tag had a combo
+ * with parts, the target has fewer (or none). Walks the freshly-applied
+ * tags and resets any such layer's subject to the parent (`-1`, the same
+ * value `subjectOf` already falls back to for an out-of-range index at
+ * render time - this just makes the DOCUMENT agree, so the Inspector shows
+ * "Parent" rather than a stale index the next time somebody opens it).
+ * Returns the touched layers' display names, deduped, for the toast.
+ */
+function fallBackOutOfRangeSubjects(
+  tags: Record<string, PlacedTag>,
+  targetTagIds: string[],
+  resolved: Map<string, LineTagData>,
+): { tags: Record<string, PlacedTag>; affected: string[] } {
+  const next = { ...tags };
+  const affected: string[] = [];
+  for (const tagId of targetTagIds) {
+    const tag = next[tagId];
+    if (!tag) continue;
+    const partCount = resolved.get(tagId)?.parts.length ?? 0;
+    let changed = false;
+    const layers = tag.layers.map((layer) => {
+      const props = layer.props;
+      const subjectPart = 'subjectPart' in props ? props.subjectPart : undefined;
+      if (typeof subjectPart !== 'number' || subjectPart < 0 || subjectPart < partCount) {
+        return layer;
+      }
+      changed = true;
+      const name = layerDisplayName(layer);
+      if (!affected.includes(name)) affected.push(name);
+      return { ...layer, props: { ...props, subjectPart: -1 } as TagLayer['props'] };
+    });
+    if (changed) next[tagId] = { ...tag, layers };
+  }
+  return { tags: next, affected };
 }
 
 interface Props {
@@ -740,11 +776,24 @@ export function RequestTagDesigner({
     const count = tagRefs.length - 1;
     if (count <= 0) return;
     bulkUndoRef.current = tags;
-    setTags(applyDesignToAllTags(tags, tagRefs, selectedRequestTagId, newTagId));
+    const applied = applyDesignToAllTags(tags, tagRefs, selectedRequestTagId, newTagId);
+    const targetIds = tagRefs
+      .map((ref) => ref.id)
+      .filter((id) => id !== selectedRequestTagId);
+    const { tags: fixed, affected } = fallBackOutOfRangeSubjects(applied, targetIds, resolved);
+    setTags(fixed);
     toast.success(`Applied to ${count} tag${count === 1 ? '' : 's'}`, {
       action: { label: 'Undo', onClick: undoBulkApply },
     });
-  }, [selectedRequestTagId, tags, tagRefs, undoBulkApply]);
+    // AC-S4-6: a layer pointed at a part a thinner target line does not have
+    // fell back to the parent - named so the designer knows to check it,
+    // not silently.
+    if (affected.length > 0) {
+      toast.warning(
+        `Fell back to the parent product (fewer parts on the target line): ${affected.join(', ')}`,
+      );
+    }
+  }, [selectedRequestTagId, tags, tagRefs, undoBulkApply, resolved]);
 
   // Cmd/Ctrl+Z restores the one pending bulk apply (AC-S5-3) - only while
   // there is one: with nothing armed, the key falls through untouched to
@@ -979,11 +1028,6 @@ export function RequestTagDesigner({
     [selectedRequestTagId, flush],
   );
 
-  // -- Open groups: Split into N tags / Pick one (D3, AC-S3-4) ---------------
-
-  /** The tag an open-group action is in flight on, so its row can say so. */
-  const [tagActionId, setTagActionId] = useState<string | null>(null);
-
   /**
    * The request's tag set changed under us (a split), so re-read it and the
    * per-tag resolver rows with it. The placements in `tags` are untouched: the
@@ -1042,26 +1086,6 @@ export function RequestTagDesigner({
     }
   }, [request.id, reloadRequest]);
 
-  const handleSplitTag = useCallback(
-    async (tagId: string, role: string) => {
-      setTagActionId(tagId);
-      try {
-        // The design of the tag being split is what the siblings start from,
-        // so the pending edit has to be on the server before the split copies
-        // its geometry.
-        await flush();
-        await splitRequestTag(request.id, tagId, role);
-        await reloadRequest();
-        toast.success(`Split into one tag per ${role.toLowerCase()}`);
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Could not split the tag');
-      } finally {
-        setTagActionId(null);
-      }
-    },
-    [request.id, flush, reloadRequest],
-  );
-
   /**
    * Removing a tag asks nothing (D7, AC-S3-6): the row parks the removal on the
    * server for its grace window and a toast carries the countdown, the same way
@@ -1087,21 +1111,6 @@ export function RequestTagDesigner({
       tagDeletion.run({ id: tag.id, subject: `Tag ${tag.label}` });
     },
     [flush, tagDeletion],
-  );
-
-  const handlePickOne = useCallback(
-    async (tagId: string, role: string, productId: string) => {
-      setTagActionId(tagId);
-      try {
-        await updateRequestTag(request.id, tagId, { choices: { [role]: productId } });
-        await reloadRequest();
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : 'Could not set the choice');
-      } finally {
-        setTagActionId(null);
-      }
-    },
-    [request.id, reloadRequest],
   );
 
   /** Same idea for Design <-> Arrange (AC-S8-3). */
@@ -1342,10 +1351,7 @@ export function RequestTagDesigner({
         onUseTemplate={setPickerLineId}
         canApplyToAll={Boolean(selectedTag) && tagRefs.length > 1}
         onApplyToAll={handleApplyDesignToAll}
-        onSplit={handleSplitTag}
-        onPickOne={handlePickOne}
         onRemoveTag={handleRemoveTag}
-        busyTagId={tagActionId}
         removingTagId={tagDeletion.isPending ? tagDeletion.targetId : null}
       />
       {selectedTag ? (
@@ -1540,7 +1546,9 @@ export function RequestTagDesigner({
               key={selectedTag.id}
               doc={selectedDoc}
               onChange={() => void save()}
-              promotionId={request.promotion_id}
+              // D1: a promotion is a LINE fact now, not the request's - the
+              // selected tag's own line carries it.
+              promotionId={selectedLine?.promotion_id ?? null}
               boundData={boundData}
               leftRail={rail}
               onLayersChange={handleLayersChange}
@@ -1707,10 +1715,7 @@ function LinesRail({
   onUseTemplate,
   canApplyToAll,
   onApplyToAll,
-  onSplit,
-  onPickOne,
   onRemoveTag,
-  busyTagId,
   removingTagId,
 }: {
   lines: PriceTagRequestLine[];
@@ -1729,14 +1734,14 @@ function LinesRail({
   /** Something is selected AND there is more than one tag to spread it to (AC-S5-1). */
   canApplyToAll: boolean;
   onApplyToAll: () => void;
-  onSplit: (tagId: string, role: string) => void;
-  onPickOne: (tagId: string, role: string, productId: string) => void;
   onRemoveTag: (tag: PriceTagRequestTag) => void;
-  busyTagId: string | null;
   removingTagId: string | null;
 }) {
   return (
-    <div className="flex max-h-[45%] shrink-0 flex-col border-b border-r">
+    // D9 (AC-S3-2/S3-3): the 45% cap is gone - LINES fills whatever height
+    // TAG SIZE (shrink-0, right below it) does not need, so the two sit
+    // foot-to-foot with no dead space between them and no new splitter.
+    <div className="flex min-h-0 flex-1 flex-col border-b border-r">
       <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-3">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           Lines
@@ -1872,7 +1877,6 @@ function LinesRail({
                         data={resolved.get(tag.id)}
                         designed={Boolean(tags[tag.id])}
                         selected={selectedRequestTagId === tag.id}
-                        busy={busyTagId === tag.id}
                         canRemove={lineTags.length > 1}
                         removing={removingTagId === tag.id}
                         openPins={openPinsByTag.get(tag.id) ?? 0}
@@ -1880,8 +1884,6 @@ function LinesRail({
                         onReview={onReviewTag}
                         onSelect={onSelect}
                         onUseTemplate={onUseTemplate}
-                        onSplit={onSplit}
-                        onPickOne={onPickOne}
                         onRemove={onRemoveTag}
                       />
                     ))}
@@ -1900,9 +1902,10 @@ function LinesRail({
  * D8 (AC-S4-1/S4-2): a line with exactly one tag, no parts and no open group
  * is one selectable block on the rail - the line's own identity (type, code,
  * name, warning, remarks) plus that one tag's price, designed check and
- * action group folded into it, with no "1a" underneath. Everything else
- * (Split / Pick one on an open group, a second tag, a part) keeps
- * `TagRailRow`'s separate row instead.
+ * action group folded into it, with no "1a" underneath. Everything else (a
+ * second tag, a part) keeps `TagRailRow`'s separate row instead. An open
+ * group never reaches the rail any more (D6) - every choice is a tag by the
+ * time a request opens here.
  */
 function FoldedLineBlock({
   line,
@@ -2040,17 +2043,16 @@ function FoldedLineBlock({
  * One tag under a line in the rail (D3, AC-S3-3/4).
  *
  * Shown as "1a"/"1b" - the line's position plus a letter - never an id
- * (AC-X-2). A tag whose line left a choice group open carries an "Open: Basin"
- * pill and the two ways to answer it: Split into N tags, which keeps this tag
- * on the first candidate and creates a sibling for each of the rest, or Pick
- * one, which resolves the group on this tag alone.
+ * (AC-X-2). D6 (PLAN-price-tag-line-promo-combo-subject.md): a choice group
+ * is split into one tag per candidate at submit time, before the designer
+ * ever opens - so this row never carries an open group, a Split button or a
+ * Pick one select any more.
  */
 function TagRailRow({
   tag,
   data,
   designed,
   selected,
-  busy,
   canRemove,
   removing,
   openPins,
@@ -2058,15 +2060,12 @@ function TagRailRow({
   onReview,
   onSelect,
   onUseTemplate,
-  onSplit,
-  onPickOne,
   onRemove,
 }: {
   tag: PriceTagRequestTag;
   data: LineTagData | undefined;
   designed: boolean;
   selected: boolean;
-  busy: boolean;
   /** False on a line's ONLY tag: a line with no tags can never be printed and
    *  never designed, so the server refuses that one (AC-S3-6). */
   canRemove: boolean;
@@ -2078,11 +2077,12 @@ function TagRailRow({
   onReview: (tagId: string) => void;
   onSelect: (tagId: string) => void;
   onUseTemplate: (tagId: string) => void;
-  onSplit: (tagId: string, role: string) => void;
-  onPickOne: (tagId: string, role: string, productId: string) => void;
   onRemove: (tag: PriceTagRequestTag) => void;
 }) {
-  const openGroup = tag.open_groups[0] ?? null;
+  // D6: every choice group is resolved into its own tag at submit now (the
+  // tag builder), so `open_groups` is always empty by the time a request
+  // reaches the designer - no Open pill, no Split, no Pick one anywhere in
+  // this rail (AC-S3-1).
   const chosen = tag.choices_display.map((choice) => choice.code).join(', ');
   return (
     <div className={cn('relative border-b last:border-b-0', selected && 'bg-accent')}>
@@ -2095,15 +2095,7 @@ function TagRailRow({
           <span className="shrink-0 font-mono text-2xs text-muted-foreground">
             {tag.label}
           </span>
-          {openGroup ? (
-            <Badge
-              variant="warning"
-              appearance="light"
-              className="shrink-0 px-1.5 py-0 text-2xs font-normal"
-            >
-              Open: {openGroup.role}
-            </Badge>
-          ) : chosen ? (
+          {chosen ? (
             <span className="truncate font-mono text-2xs" title={chosen}>
               {chosen}
             </span>
@@ -2122,40 +2114,6 @@ function TagRailRow({
             : ''}
         </p>
       </button>
-      {openGroup && (
-        <div className="flex flex-wrap items-center gap-1.5 pb-1.5 pl-6 pr-2">
-          <button
-            type="button"
-            className="rounded px-1.5 py-0.5 text-2xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-            disabled={busy}
-            onClick={() => onSplit(tag.id, openGroup.role)}
-          >
-            {busy ? 'Working...' : `Split into ${openGroup.candidates.length} tags`}
-          </button>
-          <span className="text-2xs text-muted-foreground">or</span>
-          {/* One select, not N chips: every dropdown-select in this app is a
-              SearchableSelect (AC-X-1), and a row of four codes reads as four
-              buttons rather than as one choice with four answers. */}
-          <div className="min-w-0 flex-1">
-            <SearchableSelect
-              clearable
-              truncateTriggerLabel
-              size="sm"
-              value=""
-              onChange={(productId) => {
-                if (productId) onPickOne(tag.id, openGroup.role, productId);
-              }}
-              options={openGroup.candidates.map((candidate) => ({
-                value: candidate.product_id,
-                label: candidate.code,
-              }))}
-              placeholder="Pick one"
-              emptyMessage="No options."
-              disabled={busy}
-            />
-          </div>
-        </div>
-      )}
       <div className="absolute right-1 top-1 flex items-center gap-0.5">
         {/* D12: the open-pins count is a SIBLING of the row button, first in
             this group, so it never overlaps Use template / Remove at any

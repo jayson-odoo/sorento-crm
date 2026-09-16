@@ -313,11 +313,19 @@ def _portal_client(db, contact_id: str) -> TestClient:
 
 
 def test_cross_company_tag_routes_404_and_change_nothing(db, monkeypatch):
-    """A Sorento user cannot PATCH, split or DELETE Mocha's tags - and 404, not 403.
+    """A Sorento user cannot PATCH or DELETE Mocha's tags, or PATCH Mocha's
+    line's price - and 404, not 403.
 
-    404 rather than 403 on purpose: never confirm another company's id is real.
-    The byte-for-byte check afterwards is the point of the test - the first
-    version of these routes answered an error AND had already written.
+    404 rather than 403 on purpose: never confirm another company's id is
+    real. The byte-for-byte check afterwards is the point of the test - the
+    first version of these routes answered an error AND had already
+    written. D6 (PLAN-price-tag-line-promo-combo-subject.md) retires
+    `POST .../tags/{tag_id}/split` outright - that assertion moved to
+    `test_price_tag_auto_split.py::test_split_route_gone_and_choices_rejected`,
+    which proves the route answers 404/405 for EVERY caller, not just a
+    cross-company one, so it is no longer this test's concern. D5/S11 adds
+    `PATCH .../lines/{line_id}` in its place - the new line-level route this
+    test now covers instead.
     """
     _mocha(db)
     request, basins = _request_with_open_tag(db, company_id=MOCHA, candidates=2)
@@ -332,6 +340,7 @@ def test_cross_company_tag_routes_404_and_change_nothing(db, monkeypatch):
         "override": tag.marketing_price_override,
         "reason": tag.marketing_override_reason,
         "tag_count": len(_tags_of(db, request)),
+        "line_promotion_id": request.lines[0].promotion_id,
     }
 
     client = _crm_client(db, monkeypatch, allow={VIEW, PROCESS}, company_id=SORENTO)
@@ -342,22 +351,25 @@ def test_cross_company_tag_routes_404_and_change_nothing(db, monkeypatch):
     )
     assert patched.status_code == 404, patched.text
 
-    split = client.post(
-        f"{_BASE}/{request.id}/tags/{tag.id}/split", json={"role": "Basin"}
+    line_patched = client.patch(
+        f"{_BASE}/{request.id}/lines/{request.lines[0].id}",
+        json={"manual_sell_price": 1.00},
     )
-    assert split.status_code == 404, split.text
+    assert line_patched.status_code == 404, line_patched.text
 
     deleted = client.delete(f"{_BASE}/{request.id}/tags/{tag.id}")
     assert deleted.status_code == 404, deleted.text
 
     db.expire_all()
     after = _tags_of(db, request)
-    assert len(after) == before["tag_count"], "split must not have added a sibling"
+    assert len(after) == before["tag_count"]
     fresh = after[0]
     assert fresh.quantity == before["quantity"]
     assert dict(fresh.choices or {}) == before["choices"]
     assert fresh.marketing_price_override == before["override"]
     assert fresh.marketing_override_reason == before["reason"]
+    db.refresh(request.lines[0])
+    assert request.lines[0].promotion_id == before["line_promotion_id"]
 
 
 def test_cross_company_delete_leaves_the_saved_design_untouched(db, monkeypatch):
@@ -573,6 +585,11 @@ def test_every_read_still_answers_after_a_valid_parts_submit(db, monkeypatch):
     damage shows up in the portal detail, the CRM detail, resolve-prices and the
     print payload rather than at the write. A valid submit has to leave all four
     working.
+
+    D6: `_request_with_open_tag`'s default (2 Basin candidates) auto-splits
+    into 2 tags at submit, not the 1 this test used to expect - the line
+    itself still carries the same parts either way, which is what this test
+    is actually about.
     """
     request, _basins = _request_with_open_tag(db, company_id=SORENTO)
     contact_id = request.contact_id
@@ -590,12 +607,13 @@ def test_every_read_still_answers_after_a_valid_parts_submit(db, monkeypatch):
 
     resolved = crm.post(f"{_BASE}/{request.id}/resolve-prices", json=None)
     assert resolved.status_code == 200, resolved.text
-    assert len(resolved.json()) == 1
+    assert len(resolved.json()) == 2, "D6: one row per auto-split tag"
 
     from app.services.dealer_kit import tag_data_service
 
     rows = tag_data_service.resolve_request_line_data(db, request)
-    assert len(rows) == 1 and rows[0]["parts"], "the print payload resolves the parts"
+    assert len(rows) == 2
+    assert all(row["parts"] for row in rows), "the print payload resolves the parts"
 
 
 def test_a_package_warning_never_names_a_uuid(db):
@@ -705,100 +723,21 @@ def test_portal_combos_lookup_404s_on_another_companys_product(db):
 # --------------------------------------------------------------------------- S3
 
 
-def test_pick_one_refuses_a_role_the_line_never_opened(db, monkeypatch):
-    """`choices` used to be a free write of any key onto any tag.
-
-    A role the line never asked about is not a typo to be stored - it is a
-    choice nobody offered, and it would be resolved onto the printed tag.
-    """
-    request, basins = _request_with_open_tag(db, company_id=SORENTO)
-    tag = _tags_of(db, request)[0]
-    client = _crm_client(db, monkeypatch, allow={VIEW, PROCESS}, company_id=SORENTO)
-
-    response = client.patch(
-        f"{_BASE}/{request.id}/tags/{tag.id}",
-        json={"choices": {"Tap": basins[0].id}},
-    )
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "INVALID_CHOICE"
-
-    db.expire_all()
-    assert dict(_tags_of(db, request)[0].choices or {}) == {}
-
-
-def test_pick_one_refuses_a_product_outside_the_candidates(db, monkeypatch):
-    """The right group, the wrong product: still a basin nobody offered."""
-    _mocha(db)
-    request, _basins = _request_with_open_tag(db, company_id=SORENTO)
-    tag = _tags_of(db, request)[0]
-    intruder = _product(db, "MOCHA-BASIN", company_id=MOCHA)
-    client = _crm_client(db, monkeypatch, allow={VIEW, PROCESS}, company_id=SORENTO)
-
-    response = client.patch(
-        f"{_BASE}/{request.id}/tags/{tag.id}",
-        json={"choices": {"Basin": intruder.id}},
-    )
-    assert response.status_code == 422, response.text
-    assert response.json()["code"] == "INVALID_CHOICE"
-
-    db.expire_all()
-    assert dict(_tags_of(db, request)[0].choices or {}) == {}
-
-
-def test_pick_one_accepts_a_real_candidate_and_stores_it(db, monkeypatch):
-    """The guard must not refuse the thing it exists to allow."""
-    request, basins = _request_with_open_tag(db, company_id=SORENTO)
-    tag = _tags_of(db, request)[0]
-    client = _crm_client(db, monkeypatch, allow={VIEW, PROCESS}, company_id=SORENTO)
-
-    response = client.patch(
-        f"{_BASE}/{request.id}/tags/{tag.id}",
-        json={"choices": {"Basin": basins[1].id}},
-    )
-    assert response.status_code == 200, response.text
-    assert response.json()["choices"] == {"Basin": basins[1].id}
-
-    db.expire_all()
-    fresh = _tags_of(db, request)
-    assert len(fresh) == 1, "picking one never mints a sibling"
-    assert dict(fresh[0].choices) == {"Basin": basins[1].id}
-
-
-# --------------------------------------------------------------------------- review B1
-
-
-def test_split_resolves_the_request_once(db, monkeypatch):
-    """One resolve for the whole split, not one per tag it just created.
-
-    `resolve_request_line_data` walks every line, every tag and the pricing
-    engine for each. Called once per new sibling it is quadratic in the number
-    of candidates, on the request path, for an answer that does not change
-    between the calls.
-    """
-    from app.api.v1.dealer_kit import price_tag_requests as routes
-
-    request, _basins = _request_with_open_tag(db, company_id=SORENTO, candidates=4)
-    tag = _tags_of(db, request)[0]
-
-    calls = {"n": 0}
-    original = routes.tag_data_service.resolve_request_line_data
-
-    def _counting(*args, **kwargs):
-        calls["n"] += 1
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(
-        routes.tag_data_service, "resolve_request_line_data", _counting
-    )
-
-    client = _crm_client(db, monkeypatch, allow={VIEW, PROCESS}, company_id=SORENTO)
-    response = client.post(
-        f"{_BASE}/{request.id}/tags/{tag.id}/split", json={"role": "Basin"}
-    )
-
-    assert response.status_code == 200, response.text
-    assert len(response.json()) == 4, "4 candidates -> 4 tags"
-    assert calls["n"] == 1, f"resolved {calls['n']} times for one split"
+# D6 (PLAN-price-tag-line-promo-combo-subject.md, owner ruling): Split and
+# Pick one are retired outright - a line's open choice group auto-splits into
+# one tag per candidate at submit (`_add_line_tags`), so there is no
+# "one tag, still open" state left for either action to reach.
+# `test_pick_one_refuses_a_role_the_line_never_opened`,
+# `test_pick_one_refuses_a_product_outside_the_candidates` and
+# `test_pick_one_accepts_a_real_candidate_and_stores_it` all exercised
+# `choices` on `PATCH .../tags/{tag_id}`, a field this revision refuses
+# outright; `test_split_resolves_the_request_once` (review B1) benchmarked
+# the now-gone `POST .../tags/{tag_id}/split` route. The replacement
+# coverage: `test_price_tag_auto_split.py::test_split_route_gone_and_choices_rejected`
+# proves the route is gone and `choices` is refused, and
+# `test_price_tag_auto_split.py::test_one_open_group_makes_n_tags`/
+# `test_two_open_groups_cartesian` prove the auto-split shape (N candidates
+# -> N tags, one resolve for the whole line) these tests used to pin by hand.
 
 
 # --------------------------------------------------------------------------- review S6
@@ -834,13 +773,15 @@ def test_revise_carries_the_quantity_onto_a_single_tag(db):
 
     The tag's quantity is seeded from the line's at submit; a salesperson
     revising 1 to 9 has changed how many tags they want, and a tag left at 1
-    prints one.
+    prints one. `candidates=1`: D6 auto-splits a real open group into one
+    tag PER candidate, so a single-candidate group is what still leaves the
+    line with exactly one tag to carry the new quantity onto.
     """
     from app.models.portal import PortalToken
     from app.services.portal_revision_service import PortalRevisionService
 
     _revision_config(db)
-    request, _basins = _request_with_open_tag(db, company_id=SORENTO)
+    request, _basins = _request_with_open_tag(db, company_id=SORENTO, candidates=1)
     line = request.lines[0]
     product_id = line.product_id
     assert _tags_of(db, request)[0].quantity == 1
@@ -866,9 +807,12 @@ def test_revise_carries_the_quantity_onto_a_single_tag(db):
 def test_revise_leaves_a_split_lines_per_tag_quantities_alone(db):
     """Marketing's own numbers survive a revision of the line they hang off.
 
-    Once a line is split, each tag carries a quantity marketing set for THAT
-    candidate. Overwriting them from the line's single number would undo that
-    work on every remark the salesperson fixes.
+    Once a line has more than one tag, each carries a quantity marketing set
+    for THAT candidate. Overwriting them from the line's single number would
+    undo that work on every remark the salesperson fixes. D6: the two tags
+    already exist (auto-split off the one open Basin group at submit) - this
+    sets marketing's own quantities on the EXISTING pair rather than
+    building a second, duplicate pair by hand.
     """
     from app.models.portal import PortalToken
     from app.services.portal_revision_service import PortalRevisionService
@@ -878,18 +822,10 @@ def test_revise_leaves_a_split_lines_per_tag_quantities_alone(db):
     line = request.lines[0]
     product_id = line.product_id
 
-    first = _tags_of(db, request)[0]
-    first.quantity = 2
-    first.choices = {"Basin": basins[0].id}
-    db.add(
-        PriceTagRequestTag(
-            id=_uid(),
-            line_id=line.id,
-            sort_order=1,
-            quantity=3,
-            choices={"Basin": basins[1].id},
-        )
-    )
+    tags = _tags_of(db, request)
+    assert len(tags) == 2, "D6: auto-split off the one open Basin group"
+    tags[0].quantity = 2
+    tags[1].quantity = 3
     db.commit()
 
     token = PortalToken(id=_uid(), contact_id=request.contact_id, space_id="zzt-space")

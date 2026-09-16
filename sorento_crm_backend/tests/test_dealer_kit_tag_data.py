@@ -547,16 +547,21 @@ class TestResolveLines:
             data={
                 "debtor_name": "ZZT Dealer",
                 "needed_by_date": date.today() + timedelta(days=7),
-                "promotion_id": promotion_id,
-                # D5: show_promo_price is DERIVED from price_mode on save, not
-                # taken from the line payload - "selling" is what makes the
-                # line resolve to True.
+                # D1 (S6): a promotion is a LINE fact - the header convenience
+                # is gone, so it goes on the line's own dict. AC-S6-5: it must
+                # cover the line's product (`_promotion` seeds a
+                # `PromotionProduct` row for it) and be visible to the
+                # viewer's audience - `create_request`'s default viewer is
+                # `staff_viewer()`, which is not audience-gated, so
+                # `_promotion`'s own `access_levels` default already covers
+                # it.
                 "price_mode": "selling",
                 "lines": [
                     {
                         "line_type": "product",
                         "product_id": product.id,
                         "quantity": 1,
+                        **({"promotion_id": promotion_id} if promotion_id else {}),
                     }
                 ],
             },
@@ -865,3 +870,106 @@ class TestLineSpecs:
         db.flush()
 
         assert tag_data_service.resolve_request_line_data(db, request)[0]["specs"] == []
+
+
+# ---------------------------------------------------------------------------
+# Photo tiebreak by attachment type (S10, D8). Written test-FIRST: today's
+# ``gallery_images`` orders `is_primary DESC, sort_order NULLS LAST, created_at`
+# with no attachment-type CASE at all, so a Technical Specifications image
+# linked before a Product Photos one wins on `created_at` - the SRTKS8547 bug
+# the plan measured on the 0907 copy.
+# ---------------------------------------------------------------------------
+
+
+def _attachment_type(db, type_name: str):
+    from app.models.resources import AttachmentType
+
+    row = AttachmentType(
+        id=str(uuid.uuid4()), type_name=type_name, allowed_extensions="jpg,jpeg,png"
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _image_typed(db, product, *, type_name: str, is_primary: bool = False, sort_order: int = 0):
+    from app.models.product import ProductAttachment
+    from app.models.resources import Attachment
+
+    name = unique_code("zztimgtype")
+    attachment_type = _attachment_type(db, type_name)
+    attachment = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename=f"{name}.jpg",
+        stored_filename=f"{name}.jpg",
+        file_path=f"https://cdn.example.test/products/{name}.jpg",
+        mime_type="image/jpeg",
+        storage_provider="s3",
+        company_id=SORENTO,
+        is_deleted=False,
+        attachment_type_id=attachment_type.id,
+    )
+    db.add(attachment)
+    db.flush()
+    db.add(
+        ProductAttachment(
+            id=str(uuid.uuid4()),
+            product_id=product.id,
+            attachment_id=attachment.id,
+            is_primary=is_primary,
+            sort_order=sort_order,
+            access_levels=["dealer", "end_user"],
+            company_id=SORENTO,
+        )
+    )
+    db.flush()
+    return attachment
+
+
+class TestProductPhotoTiebreak:
+    def test_product_photo_beats_technical_drawing_when_no_primary(self, db):
+        """AC-S10-1/2: the drawing was linked FIRST (wins on `created_at` today);
+        the type-rank CASE must put the Product Photos row ahead of it anyway."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db)
+        drawing = _image_typed(db, product, type_name="Technical Specifications")
+        photo = _image_typed(db, product, type_name="Product Photos")
+
+        images = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )["images"]
+
+        assert images[0]["attachment_id"] == photo.id, (
+            f"drawing {drawing.id} still won the tiebreak"
+        )
+
+    def test_primary_still_wins(self, db):
+        """AC-S10-1: `is_primary DESC` stays the FIRST ordering key."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db)
+        drawing_primary = _image_typed(
+            db, product, type_name="Technical Specifications", is_primary=True
+        )
+        _image_typed(db, product, type_name="Product Photos")
+
+        images = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )["images"]
+
+        assert images[0]["attachment_id"] == drawing_primary.id
+
+    def test_only_drawing_still_resolves(self, db):
+        """AC-S10-3: the tiebreak is an ORDERING rule, never a filter."""
+        from app.services.dealer_kit import tag_data_service
+
+        product = _product(db)
+        drawing = _image_typed(db, product, type_name="Technical Specifications")
+
+        images = tag_data_service.product_tag_data(
+            db, product, tag_data_service.staff_viewer()
+        )["images"]
+
+        assert len(images) == 1
+        assert images[0]["attachment_id"] == drawing.id

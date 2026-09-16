@@ -19,6 +19,7 @@
 
 import type {
   GroupBinding,
+  LineTagData,
   ProductSetMemberTagData,
   ProductSetTagData,
   ProductTagData,
@@ -26,7 +27,9 @@ import type {
   TagBindingData,
   TagImage,
   TagLayer,
+  TagLayerProps,
   TagLayerType,
+  TagPartData,
   TextLayerProps,
 } from './tag-template-types';
 import {
@@ -63,6 +66,126 @@ export function formatSetMemberLine(member: ProductSetMemberTagData): string {
 }
 
 /**
+ * Which part index a layer's props point at, for the subject-aware kinds
+ * only (D7). Every other layer kind has no such concept and reads null.
+ */
+function subjectPartOf(props: TagLayerProps): number | undefined {
+  switch (props.kind) {
+    case 'text':
+    case 'product_slot':
+    case 'price_badge':
+    case 'barcode':
+    // Browser finding: the designer's own photo slots are `image` layers
+    // (bound via `slot_binding: 'product_image'`), not `product_slot` -
+    // they read product data exactly the same way and need the same
+    // per-layer subject.
+    case 'image':
+      return props.subjectPart;
+    default:
+      return undefined;
+  }
+}
+
+/** The parent host's OWN price, alone - never the tag's roll-up (D7,
+ *  AC-S4-4). `parent_list_price`/`parent_sell_price` are the real answer,
+ *  resolved server-side; absent (an older pinned/cached row, or a test
+ *  fixture that predates them), it is recovered by subtracting every part's
+ *  own price from the roll-up - the same arithmetic that built the roll-up
+ *  in the first place, run in reverse. */
+function parentAlonePrice(line: LineTagData, field: 'list_price' | 'sell_price'): number | null {
+  const total = field === 'list_price' ? line.list_price : line.sell_price;
+  if (total == null) return null;
+  const partsTotal = line.parts.reduce((sum, part) => {
+    if (field === 'list_price') return sum + (part.list_price ?? 0);
+    // F6 (reviewer S8): the roll-up's SELL side follows the same rule the
+    // tag's own price does per part - the part's offer when it has one,
+    // else its LIST price (AC-S1-8/S7-3: an uncovered part still prints,
+    // and contributes to the total, at list - it is not absent). `?? 0`
+    // alone treated an at-list part as contributing NOTHING, so
+    // subtracting it under-subtracted and left the recovered parent offer
+    // reading as the parent's plain list price instead.
+    return sum + (part.sell_price ?? part.list_price ?? 0);
+  }, 0);
+  return total - partsTotal;
+}
+
+/** The parent's own fields, shaped like a single product (D7) - what a
+ *  price badge's `subjectPart: -1` and an out-of-range part both fall back
+ *  to (AC-S4-4/S4-6). */
+function productFromLineParent(line: LineTagData): ProductTagData {
+  return {
+    id: '',
+    code: line.code,
+    name: line.name,
+    dimensions: line.dimensions,
+    spec_lines: line.spec_lines ? line.spec_lines.split('\n') : [],
+    specs: line.specs,
+    images: line.images,
+    list_price: line.parent_list_price ?? parentAlonePrice(line, 'list_price'),
+    offer_price: line.show_promo_price
+      ? (line.parent_sell_price ?? parentAlonePrice(line, 'sell_price'))
+      : null,
+    promotion_id: null,
+    barcode: line.barcode,
+  };
+}
+
+/** One part, shaped like a single product (D7) - a Phase 1 part carries only
+ *  code/name/dimensions, so every other field reads as "this part has none"
+ *  (AC-S4-5) until Phase 2 resolves them per part. */
+function productFromPart(part: TagPartData): ProductTagData {
+  return {
+    id: part.product_id ?? '',
+    code: part.code,
+    name: part.name,
+    dimensions: part.dimensions,
+    spec_lines: part.spec_lines ?? [],
+    specs: part.specs ?? [],
+    images: part.images ?? [],
+    list_price: part.list_price ?? null,
+    offer_price: part.sell_price ?? null,
+    promotion_id: null,
+    barcode: part.barcode ?? null,
+  };
+}
+
+/**
+ * D7: the product data a layer actually reads, once its own `subjectPart` is
+ * taken into account.
+ *
+ * A tag binding that is not a combo LINE (a bare product or set block) has no
+ * parts to point at and passes through unchanged - single products never ask
+ * (AC-S4-2). Absent `subjectPart` also passes the line through unchanged: for
+ * every slot but a price badge that means "the parent", exactly as before
+ * this field existed; a price badge alone reads absent as the whole-tag
+ * total, because `priceBadgeInput`'s own line-kind branch already sums
+ * parent + parts (AC-S4-4) - `subjectOf` does not have to special-case that,
+ * it only has to leave the line's own data alone. `-1` and an out-of-range
+ * index both resolve to the parent ALONE (AC-S4-4/S4-6), which is why they
+ * share one helper below.
+ *
+ * Every resolver that reads product data - `resolveSlotText`,
+ * `slotImageAttachmentId`, `priceBadgeInput`, merge-field rendering - calls
+ * this first, so the subject only has to be computed once per kind of read.
+ */
+export function subjectOf(
+  data: TagBindingData | null | undefined,
+  layer: { props?: TagLayerProps } | undefined,
+): TagBindingData | null | undefined {
+  if (!data || data.kind !== 'line') return data;
+  const subjectPart = layer?.props ? subjectPartOf(layer.props) : undefined;
+  if (subjectPart === undefined) return data;
+  if (subjectPart === -1) {
+    return { kind: 'product', product: productFromLineParent(data.line) };
+  }
+  const part = data.line.parts[subjectPart];
+  return {
+    kind: 'product',
+    product: part ? productFromPart(part) : productFromLineParent(data.line),
+  };
+}
+
+/**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
  *
@@ -70,10 +193,11 @@ export function formatSetMemberLine(member: ProductSetMemberTagData): string {
  * text, and "no data yet" must not blank a tag that already reads correctly.
  */
 export function resolveSlotText(
-  layer: Pick<TagLayer, 'slot_binding'>,
+  layer: { slot_binding: SlotBinding; props?: TagLayerProps },
   data: TagBindingData | null | undefined,
 ): string | null {
-  if (!layer.slot_binding || !data) return null;
+  const subject = subjectOf(data, layer);
+  if (!layer.slot_binding || !subject) return null;
 
   // A price on a TEXT layer, which is not the same thing as a price badge and
   // does not replace it. The flyer prints `LP: RM 1,550` as an ordinary line
@@ -83,47 +207,47 @@ export function resolveSlotText(
   // here. The BADGE stays the way a promotional price is drawn (D26); this is
   // the plain line beside it.
   if (layer.slot_binding === 'list_price' || layer.slot_binding === 'sell_price') {
-    const { listPrice, offerPrice } = priceBadgeInput(data);
+    const { listPrice, offerPrice } = priceBadgeInput(subject);
     const amount = layer.slot_binding === 'list_price' ? listPrice : offerPrice;
     return amount == null ? null : formatTagPrice(amount);
   }
 
-  if (data.kind === 'line') {
+  if (subject.kind === 'line') {
     switch (layer.slot_binding) {
       case 'code':
-        return data.line.code;
+        return subject.line.code;
       case 'name':
-        return nameOrBlankIfCode(data.line.name, data.line.code);
+        return nameOrBlankIfCode(subject.line.name, subject.line.code);
       case 'dimensions':
-        return data.line.dimensions;
+        return subject.line.dimensions;
       case 'spec_lines':
-        return data.line.spec_lines;
+        return subject.line.spec_lines;
       case 'set_members':
-        return data.line.set_members;
+        return subject.line.set_members;
       case 'included_accessories':
-        return data.line.included_accessories;
+        return subject.line.included_accessories;
       case 'barcode':
-        return data.line.barcode;
+        return subject.line.barcode;
       default:
         return null;
     }
   }
 
-  if (data.kind === 'set') {
+  if (subject.kind === 'set') {
     switch (layer.slot_binding) {
       case 'code':
-        return data.set.set_code;
+        return subject.set.set_code;
       case 'name':
-        return nameOrBlankIfCode(data.set.name, data.set.set_code);
+        return nameOrBlankIfCode(subject.set.name, subject.set.set_code);
       case 'set_members':
-        return data.set.members.map(formatSetMemberLine).join('\n');
+        return subject.set.members.map(formatSetMemberLine).join('\n');
       // A set has no barcode of its own (S7) - falls through to null.
       default:
         return null;
     }
   }
 
-  const product = data.product;
+  const product = subject.product;
   switch (layer.slot_binding) {
     case 'code':
       return product.code;
@@ -152,10 +276,13 @@ export function resolveSlotText(
  * this instead of reading `text_override` themselves.
  */
 export function resolveBarcodeValue(
-  layer: Pick<TagLayer, 'text_override'>,
+  layer: Pick<TagLayer, 'text_override' | 'props'>,
   data: TagBindingData | null | undefined,
 ): string | null {
-  return layer.text_override ?? resolveSlotText({ slot_binding: 'barcode' }, data);
+  return (
+    layer.text_override ??
+    resolveSlotText({ slot_binding: 'barcode', props: layer.props }, data)
+  );
 }
 
 /** The photo a product leads with: the one marked primary, else the first. */
@@ -177,6 +304,13 @@ export function primaryImageOf(images: TagImage[]): TagImage | undefined {
  * has the payload's. An `asset` source answers null, being the caller's own
  * business, and so does an image layer bound to no slot: a picture nobody chose
  * is decoration, not the product.
+ *
+ * Still takes a pre-extracted image list rather than the whole binding
+ * (unchanged signature) - D7's subject-awareness is the CALLER's job
+ * (`boundImageUrl` below, and the print page's own equivalent): both resolve
+ * `imagesOf(subjectOf(data, layer))` before calling this, so a layer pointed
+ * at a part draws THAT part's photos, and a part with none draws the empty
+ * placeholder rather than the parent's (AC-S4-5).
  */
 export function slotImageAttachmentId(
   layer: Pick<TagLayer, 'slot_binding' | 'props'>,
@@ -249,24 +383,35 @@ export function layerText(
     layer.text_override ??
     resolveSlotText(layer, data) ??
     (layer.props.kind === 'text' ? layer.props.text : '');
-  return renderMergeFields(raw, data, mode);
+  return renderMergeFields(raw, data, mode, layer);
 }
 
-/** The two figures a price badge draws, taken off whichever thing is bound. */
+/**
+ * The two figures a price badge draws, taken off whichever thing is bound.
+ *
+ * `layer` is optional so a caller that already resolved the subject itself
+ * (`resolveSlotText`'s own `list_price`/`sell_price` branch, which passes the
+ * subject as `data` with no `layer`) does not run `subjectOf` a second time;
+ * a caller reading a `price_badge` layer directly passes it, so `-1`/`n`
+ * pick a single product's own price and absent keeps today's Tag total
+ * (AC-S4-1/S4-4).
+ */
 export function priceBadgeInput(
   data: TagBindingData | null | undefined,
+  layer?: Pick<TagLayer, 'props'>,
 ): PriceBadgeInput {
-  if (!data) return { listPrice: null, offerPrice: null };
-  if (data.kind === 'line') {
+  const subject = layer ? subjectOf(data, layer) : data;
+  if (!subject) return { listPrice: null, offerPrice: null };
+  if (subject.kind === 'line') {
     // A line whose promo price is switched off prints its list price, whatever
     // the promotion says: `show_promo_price` is the salesperson's per-line
     // choice (D8).
     return {
-      listPrice: data.line.list_price,
-      offerPrice: data.line.show_promo_price ? data.line.sell_price : null,
+      listPrice: subject.line.list_price,
+      offerPrice: subject.line.show_promo_price ? subject.line.sell_price : null,
     };
   }
-  const source = data.kind === 'product' ? data.product : data.set;
+  const source = subject.kind === 'product' ? subject.product : subject.set;
   return { listPrice: source.list_price, offerPrice: source.offer_price };
 }
 
@@ -822,6 +967,23 @@ export function layerDisplayName(layer: TagLayer): string {
 }
 
 /**
+ * D7/AC-S4-7: ` - CODE` when this layer's subject is a specific PART, so a
+ * scan of the Layers panel says which product each layer draws. Nothing for
+ * the parent (absent or `-1`) or a price badge's Tag total - only a part
+ * subject is worth calling out, since everything else is the tag's own
+ * default reading.
+ */
+export function layerSubjectSuffix(
+  layer: Pick<TagLayer, 'props'>,
+  parts: TagPartData[] | undefined,
+): string {
+  const subjectPart = subjectPartOf(layer.props);
+  if (subjectPart === undefined || subjectPart < 0) return '';
+  const part = parts?.[subjectPart];
+  return part ? ` - ${part.code}` : '';
+}
+
+/**
  * Everything a layer needs in order to draw itself against live data.
  *
  * `assetUrls` are library artwork, signed; the product's own photos come off
@@ -838,7 +1000,7 @@ export function layerDisplay(
       return { text: layerText(layer, data) };
 
     case 'price_badge':
-      return { price: priceBadgeInput(data) };
+      return { price: priceBadgeInput(data, layer) };
 
     case 'badge':
       return { imageUrl: assetUrls[layer.props.assetId] ?? null };
@@ -846,7 +1008,7 @@ export function layerDisplay(
     case 'barcode':
       return {
         text: resolveBarcodeValue(layer, data) ?? undefined,
-        code: resolveSlotText({ slot_binding: 'code' }, data),
+        code: resolveSlotText({ slot_binding: 'code', props: layer.props }, data),
       };
 
     case 'image': {
@@ -865,7 +1027,7 @@ export function layerDisplay(
       // resolve through the same function; nothing resolved means the layer
       // keeps its dashed placeholder rather than drawing an empty box.
       const text = resolveSlotText(
-        { slot_binding: layer.props.fieldKey as SlotBinding },
+        { slot_binding: layer.props.fieldKey as SlotBinding, props: layer.props },
         data,
       );
       return text == null ? undefined : { text };
@@ -877,18 +1039,19 @@ export function layerDisplay(
 }
 
 /** The photos of whatever is bound. A set has none of its own. */
-function imagesOf(data: TagBindingData | null | undefined): TagImage[] {
+export function imagesOf(data: TagBindingData | null | undefined): TagImage[] {
   if (data?.kind === 'product') return data.product.images;
   if (data?.kind === 'line') return data.line.images;
   return [];
 }
 
-/** The URL a product-photo slot draws, resolved by D42 against the bound data. */
+/** The URL a product-photo slot draws, resolved by D42 against the bound data.
+ *  D7: resolves the subject's own images first - see `slotImageAttachmentId`. */
 function boundImageUrl(
   layer: Pick<TagLayer, 'slot_binding' | 'props'>,
   data: TagBindingData | null | undefined,
 ): string | null {
-  const images = imagesOf(data);
+  const images = imagesOf(subjectOf(data, layer));
   const attachmentId = slotImageAttachmentId(layer, images);
   if (!attachmentId) return null;
   return images.find((image) => image.attachment_id === attachmentId)?.url ?? null;

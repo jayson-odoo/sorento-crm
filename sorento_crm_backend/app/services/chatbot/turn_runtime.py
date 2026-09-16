@@ -488,6 +488,10 @@ def resolve_kinds(
     # The has/no stamps are the PICKER's, and the picker writes them onto its own
     # annotated item (the `offer` exit), not onto the gate it was handed. Fall back to
     # the gate so a turn that never reached the picker still groups its candidates.
+    # Every customer option shows the NAME; the code is the fallback, not the default
+    # (captain ruling, 16 Sep 2026, browser pass 3 turn 10).
+    fill_customer_names(db, compatible)
+
     annotated = payload.get("annotate_incoming")
     if not isinstance(annotated, dict) and stamp_incoming and compatible:
         # The roster this turn is about to print IS the incoming picker's roster, reached
@@ -506,6 +510,54 @@ def resolve_kinds(
         annotated = pickers.annotate_incoming(copy.deepcopy(gate), probe=probe)
     stamps_from = annotated if isinstance(annotated, dict) else gate
     return by_token, compatible, predicate, candidates_by_kind(stamps_from, compatible)
+
+
+def fill_customer_names(db: Session, entities: list[dict[str, Any]]) -> None:
+    """Give every customer row the CRM's own name for it, where the resolver gave none.
+
+    `gate._display_name` can only carry a name the resolver's match already had
+    (`display.customer_name` / `debtor_name`), and several probes match a customer
+    without one - so a roster printed "1. 300-C043  2. 300-C124  3. 300-C001  4. CHIN
+    CHUN HARDWARE SDN BHD - [A/C I]" and asked the reader to choose between three
+    account codes nobody has ever typed and one name (browser pass 3, turn 10). The
+    names are in `customers`, keyed by the very uuid the match carries, so they are read
+    back here - one indexed query, on a path that has already made an LLM call and a
+    resolver run - and the roster, the answer header and the report's own `Customer:`
+    echo then all say the same thing.
+
+    Read through the ORM (`_customer_echo` reads the same column the same way), written
+    onto the row IN PLACE so the fetch's own entities carry it too. A row whose
+    `customer_name` is empty keeps its code: falling back to the code is the honest
+    answer when there is no name to print.
+    """
+    from app.models.order import Customer
+
+    wanted: dict[str, list[dict[str, Any]]] = {}
+    for row in entities:
+        if jsc.nullish_str(row.get("entity_type")).strip().lower() != "customer":
+            continue
+        display = row.get("display_name")
+        if isinstance(display, str) and display.strip():
+            continue
+        uuid = row.get("uuid")
+        if uuid:
+            wanted.setdefault(str(uuid), []).append(row)
+    if not wanted:
+        return
+    try:
+        found = (
+            db.query(Customer.id, Customer.customer_name)
+            .filter(Customer.id.in_(list(wanted)))
+            .all()
+        )
+    except Exception:  # noqa: BLE001 - a name nobody could read is a code, not a failure
+        logger.warning("chatbot: the customer names did not come back", exc_info=True)
+        return
+    for customer_id, name in found:
+        if not name or not str(name).strip():
+            continue
+        for row in wanted.get(str(customer_id), []):
+            row["display_name"] = str(name).strip()
 
 
 def candidates_by_kind(

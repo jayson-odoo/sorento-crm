@@ -332,30 +332,93 @@ def _serialize_price_tag_lines(db: Session, row: Any) -> list[dict]:
             "product_set_id": ln.product_set_id,
             "quantity": _jsonable(ln.quantity),
             "remarks": ln.remarks,
+            # D1/D5 (this round): without these two, a revision's history
+            # diff could not show a promotion pick or a hand-typed price
+            # changing - the two facts this whole slice moved onto the line.
+            "promotion_id": ln.promotion_id,
+            "manual_sell_price": _jsonable(ln.manual_sell_price),
         }
         for ln in lines
     ]
 
 
-def _convert_ptag_revise_line(raw: dict) -> dict:
+def _convert_ptag_revise_line(raw: dict, idx: int) -> dict:
     """A revise payload line names a product/set by id and a quantity, the
     same shape the portal PUT/create routes already read - never a
-    `line_type`, which those routes require. Derived here instead."""
-    if raw.get("product_set_id"):
-        return {
+    `line_type`, which those routes require. Derived here instead.
+
+    D1/D5: `promotion_id` / `manual_sell_price`, when the raw line sends
+    them, carry straight through - the salesperson's own line-level control
+    over the price basis is not a create/update-only feature.
+    `replace_lines` -> `_add_lines` validates promotion coverage exactly
+    like create/update do (AC-S6-5, 422 naming the line), one gate, not a
+    second copy of it here. Left OFF the dict (not defaulted to `None`)
+    when the raw line does not carry the key at all, so
+    `_apply_price_tag_lines`'s carry-over step below can tell "cleared"
+    from "not sent" and fall back to the old line's own value for the
+    latter, the same way it already does for `included_accessories` /
+    `combo_id` / `parts`.
+
+    R6 (security review): `raw` is validated through `PriceTagReviseLineIn`
+    FIRST - the revise composer's payload never ran through pydantic at
+    all, so a bad `manual_sell_price` ("abc", -5, 0, an absurd `1E+400`)
+    reached `Decimal()` completely unvalidated. `.get(...)` below reads off
+    the VALIDATED model, not the raw dict, so what flows into `converted`
+    is already bound-checked.
+    """
+    from pydantic import ValidationError
+
+    from app.schemas.price_tag import PriceTagReviseLineIn
+    from app.services.error_handler import AppException
+
+    try:
+        validated = PriceTagReviseLineIn(**raw)
+    except ValidationError as exc:
+        # Review round 2: every refusal here read "this line's price could
+        # not be saved", including a quantity of 0 - the composer put the
+        # message on a line whose price was fine and the salesperson had
+        # nothing to act on. Named from the field that actually failed.
+        labels = {
+            "quantity": "quantity",
+            "manual_sell_price": "price",
+            "promotion_id": "promotion",
+        }
+        failed = [
+            labels[str(error["loc"][0])]
+            for error in exc.errors()
+            if error.get("loc") and str(error["loc"][0]) in labels
+        ]
+        field = failed[0] if failed else "details"
+        raise AppException(
+            status_code=422,
+            message=f"This line's {field} could not be saved.",
+            detail=f"line:{idx}",
+            code="VALIDATION_ERROR",
+        ) from exc
+    clean = validated.model_dump()
+
+    converted = (
+        {
             "line_type": "product_set",
             "product_id": None,
-            "product_set_id": raw.get("product_set_id"),
-            "quantity": raw.get("quantity", 1),
-            "remarks": raw.get("remarks"),
+            "product_set_id": clean.get("product_set_id"),
+            "quantity": clean.get("quantity", 1),
+            "remarks": clean.get("remarks"),
         }
-    return {
-        "line_type": "product",
-        "product_id": raw.get("product_id"),
-        "product_set_id": None,
-        "quantity": raw.get("quantity", 1),
-        "remarks": raw.get("remarks"),
-    }
+        if clean.get("product_set_id")
+        else {
+            "line_type": "product",
+            "product_id": clean.get("product_id"),
+            "product_set_id": None,
+            "quantity": clean.get("quantity", 1),
+            "remarks": clean.get("remarks"),
+        }
+    )
+    if "promotion_id" in raw:
+        converted["promotion_id"] = clean.get("promotion_id")
+    if "manual_sell_price" in raw:
+        converted["manual_sell_price"] = clean.get("manual_sell_price")
+    return converted
 
 
 def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
@@ -366,13 +429,14 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
     immediately, so a guard raised only AFTER calling it would still have
     wiped the request's existing lines on a refused revision.
     """
+    from app.services.dealer_kit import tag_data_service
     from app.services.error_handler import AppException
     from app.services.price_tag_request_service import PriceTagRequestService
 
-    # Review round 3: `price_mode` reaches the row the same bare-setattr way
-    # `promotion_id` does (`portal._apply_payload`) - create/update validate
-    # it through pydantic's `Literal["list", "selling"]`, but a revise payload
-    # is a raw dict with no schema, so nothing stopped a bad or null value
+    # Review round 3: `price_mode` reaches the row via bare-setattr
+    # (`portal._apply_payload`) - create/update validate it through
+    # pydantic's `Literal["list", "selling"]`, but a revise payload is a raw
+    # dict with no schema, so nothing stopped a bad or null value
     # (`setattr(row, "price_mode", None)`) landing on a NOT NULL column.
     if "price_mode" in payload and payload.get("price_mode") not in ("list", "selling"):
         raise AppException(
@@ -391,19 +455,14 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
     # later guard gets a chance to refuse it - "nothing written" on a refusal
     # has to mean nothing FLUSHED, not just nothing committed.
     with db.no_autoflush:
-        # Gap A (security review of S10): a revise payload setattrs
-        # `promotion_id` straight onto the row via the generic
-        # field-whitelist writer - nothing gated a promotion this contact's
-        # audience cannot see, or one belonging to another company, the way
-        # create/update already do.
-        if "promotion_id" in payload:
-            from app.models.base import company_scope
-
-            with company_scope(db, frozenset({row.company_id})):
-                PriceTagRequestService.validate_promotion_access(
-                    db, row.contact_id, payload.get("promotion_id")
-                )
-
+        # D1 (S6): the promotion moved to the LINE - there is no header
+        # `promotion_id` left on the row for a revise payload to set, so the
+        # old per-revision audience check (Gap A, security review of S10)
+        # has nothing left to guard here. A line's own `promotion_id` /
+        # `manual_sell_price` go through `_convert_ptag_revise_line` and
+        # `_add_lines`' AC-S6-4/S6-5 checks inside `replace_lines` below -
+        # the same gate create/update already run, so a revise cannot accept
+        # something either of those would refuse.
         if "products" not in payload:
             # No lines in this revision - still has to clear the same bar
             # with whatever the row already carries. `require_debtor=True`:
@@ -414,7 +473,10 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
             # does not hold here.
             PriceTagRequestService.validate_submittable(row, require_debtor=True)
             return
-        converted = [_convert_ptag_revise_line(d) for d in (payload.get("products") or [])]
+        converted = [
+            _convert_ptag_revise_line(d, idx)
+            for idx, d in enumerate(payload.get("products") or [])
+        ]
         if not converted:
             raise AppException(
                 status_code=422,
@@ -440,7 +502,10 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
         # reason it has none for `marketing_price_override` (review round
         # 2's own carry-over) - so a revise silently wiped both back to `[]`
         # / `None`. Carried from the OLD rows, keyed by product/set, same
-        # mechanism.
+        # mechanism. D1/D5: a line's `promotion_id` / `manual_sell_price`
+        # carry the same way - a revision that only touches a remark must
+        # not silently drop a promotion or a hand-typed price the
+        # salesperson had already set on this line.
         old_by_key = {
             (old.product_id, old.product_set_id): (
                 old.included_accessories,
@@ -455,13 +520,21 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                         old.parts or [], key=lambda p: (p.sort_order or 0, p.id)
                     )
                 ],
+                old.promotion_id,
+                old.manual_sell_price,
             )
             for old in row.lines
         }
         for line in converted:
             key = (line.get("product_id"), line.get("product_set_id"))
             if key in old_by_key:
-                included_accessories, combo_id, parts = old_by_key[key]
+                (
+                    included_accessories,
+                    combo_id,
+                    parts,
+                    promotion_id,
+                    manual_sell_price,
+                ) = old_by_key[key]
                 line["included_accessories"] = included_accessories
                 # Same carry-over reason as `included_accessories` above, now
                 # for the package: the revise composer has no field for it, so
@@ -475,7 +548,34 @@ def _apply_price_tag_lines(db: Session, row: Any, payload: dict) -> None:
                 # source is this carry-over, and it is checked anyway.
                 line.setdefault("combo_id", combo_id)
                 line.setdefault("parts", parts)
-    PriceTagRequestService.replace_lines(db, row, converted)
+                # `_convert_ptag_revise_line` only sets these keys when the raw
+                # payload line sent them explicitly (including an explicit
+                # `null`, which clears one) - `setdefault` therefore only
+                # falls back to the old value when the key is absent, never
+                # overriding a deliberate clear.
+                line.setdefault("promotion_id", promotion_id)
+                line.setdefault("manual_sell_price", manual_sell_price)
+        # Security review (this round): a revision is a PORTAL CONTACT
+        # writing, exactly like create/update - `replace_lines` with no
+        # viewer falls back to `staff_viewer()` (`is_internal_copy=True`),
+        # which `_may_see_offer` never gates, so a promotion outside this
+        # contact's own audience passed AC-S6-5's check here even though the
+        # identical create/update payload would have been refused. The SAME
+        # viewer create/update already pass (`tag_data_service.contact_viewer`).
+        viewer = tag_data_service.contact_viewer(db, row.contact_id)
+    # Security review (this round, M2): `_covering_promotions`' query for a
+    # line's own promotion is scoped through the ORM's company filter, so
+    # without a scope set here it ran UNSCOPED - the same class of gap R5's
+    # own regression test already covers under the request's SINGLE company
+    # (green because the request row itself is company-scoped elsewhere),
+    # but a genuinely multi-company caller reaching this code path with no
+    # scope set at all would see every company's promotions. Scoped exactly
+    # like create (`portal_create_price_tag_request`) and update
+    # (`portal_update_price_tag_request`) already are.
+    from app.models.base import company_scope
+
+    with company_scope(db, frozenset({row.company_id})):
+        PriceTagRequestService.replace_lines(db, row, converted, viewer=viewer)
     # Where the retired set guard ran, the D2 warning is stamped instead - on the
     # rows that now exist, so submit and revise cannot answer differently.
     PriceTagRequestService.apply_package_warnings(db, row)
@@ -488,10 +588,10 @@ _PTAG_ADAPTER = RevisionAdapter(
     label="price tag request",
     number_attr="doc_number",
     snapshot_extra_fields=("doc_number", "status"),
+    # D1 (S6): `promotion_id` is a LINE fact now, not a header snapshot field.
     snapshot_form_fields=(
         "debtor_code",
         "debtor_name",
-        "promotion_id",
         "needed_by_date",
         "notes",
         "price_mode",

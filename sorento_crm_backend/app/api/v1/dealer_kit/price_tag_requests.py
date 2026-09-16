@@ -30,13 +30,15 @@ from app.models.user import User
 from app.schemas.price_tag import (
     PriceTagRequestLineResponse,
     LineDataChange,
+    LinePricingRequest,
+    LinePricingRow,
+    PriceTagRequestLinePricePatch,
     PriceTagRequestOfficeUpdate,
     RequestVersionSummary,
     ResolvedLineData,
     ReviewCommentResolvePayload,
     ReviewCommentResponse,
     PriceTagRequestTagResponse,
-    PriceTagRequestTagSplit,
     PriceTagRequestTagUpdate,
     TagDataChangeSet,
     TagPinPayload,
@@ -187,6 +189,37 @@ def get_price_tag_request(
 
 
 # ---------------------------------------------------------------------------
+# Line pricing (D2-D4, S7). Same engine and contract as the portal's own
+# route - the CRM lines table (S5) and this line PATCH route both call it.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/line-pricing", response_model=list[LinePricingRow])
+def price_tag_request_line_pricing(
+    payload: LinePricingRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """What every line of the CRM detail's lines table currently costs.
+
+    Gated by ``process`` (not ``view``): pricing a line is part of changing
+    it, the same permission the line PATCH route and every other CRM write on
+    this request needs. Staff audience (``staff_viewer()``), not a portal
+    contact's - the CRM has no contact to check, same rule ``_add_lines``
+    already follows for a header-less create/update from this side.
+    """
+    from app.services.dealer_kit.pricing import line_pricing
+    from app.services.dealer_kit.tag_data_service import staff_viewer
+
+    rows = line_pricing(
+        db,
+        lines=[line.model_dump() for line in payload.lines],
+        viewer=staff_viewer(),
+    )
+    return [LinePricingRow(**row) for row in rows]
+
+
+# ---------------------------------------------------------------------------
 # Claim
 # ---------------------------------------------------------------------------
 
@@ -316,6 +349,74 @@ def update_price_tag_request(
                 code="INVALID_PRINT_BY",
             )
         req.print_by = choice
+    db.flush()
+    db.commit()
+    return _with_resolved_lines(db, req)
+
+
+def _line_or_404(
+    db: Session, request_id: str, line_id: str
+) -> tuple[PriceTagRequest, PriceTagRequestLine]:
+    """One line of THIS request, or 404 (D5/AC-S11-2).
+
+    Same shape as ``_tag_or_404`` and for the same reason: the request is
+    resolved FIRST through ``get_request``, which is company-scoped, so a
+    line id from another company - or another request entirely - reads here
+    exactly like one that does not exist.
+    """
+    request = PriceTagRequestService.get_request(db, request_id)
+    if request is None:
+        raise AppException(
+            status_code=404, message="Price tag request not found.", code="NOT_FOUND"
+        )
+    line = (
+        db.query(PriceTagRequestLine)
+        .filter(
+            PriceTagRequestLine.id == line_id,
+            PriceTagRequestLine.request_id == request.id,
+        )
+        .first()
+    )
+    if line is None:
+        raise AppException(
+            status_code=404, message="Line not found on this request.", code="NOT_FOUND"
+        )
+    return request, line
+
+
+@router.patch(
+    "/{request_id}/lines/{line_id}", response_model=PriceTagRequestResponse
+)
+def update_price_tag_request_line_price(
+    request_id: str,
+    line_id: str,
+    payload: PriceTagRequestLinePricePatch,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_PROCESS),
+):
+    """D5/AC-S11-1: the office changing ONE line's own promotion or manual
+    price on a request the salesperson already sent in - the same
+    flexibility the portal form has, for the same three-way basis AC-S6-4/5
+    validates.
+
+    Refused once the request is finished (AC-S11-2): the price a customer was
+    quoted is history at that point, not a figure still open to change.
+    """
+    request_id = validate_uuid_path(request_id, resource="Price tag request")
+    # R8a (security review): `line_id` skipped this gate while `request_id`
+    # did not - a malformed line id reached `PriceTagRequestLine.id ==
+    # line_id` (a UUID column) as a Postgres `DataError` (500) instead of
+    # the guaranteed-missing 404 every other bad-format id here answers with.
+    line_id = validate_uuid_path(line_id, resource="Price tag request line")
+    req, line = _line_or_404(db, request_id, line_id)
+    if PriceTagRequestService.is_terminal(req):
+        raise AppException(
+            status_code=409,
+            message="This request is finished and can no longer be changed.",
+            code="INVALID_STATE",
+        )
+    data = payload.model_dump(exclude_unset=True)
+    PriceTagRequestService.set_line_price(db, req, line, data)
     db.flush()
     db.commit()
     return _with_resolved_lines(db, req)
@@ -772,11 +873,13 @@ def update_price_tag_request_tag(
     db: Session = Depends(get_db),
     _user: dict = Depends(_PROCESS),
 ):
-    """Quantity, the marketing override and its reason, and "Pick one" (D3).
+    """Quantity and the marketing override and its reason (D3).
 
-    All four are tag facts: two tags split off one line print two different
+    Both are tag facts: two tags split off one line print two different
     basins at two different prices, and a line-level figure would put the same
-    hand-set number on both.
+    hand-set number on both. `choices` is gone with Split / Pick one (D6,
+    AC-S8-4) - `PriceTagRequestTagUpdate` rejects it with 422 before this body
+    ever runs.
     """
     tag = _tag_or_404(db, request_id, tag_id)
     data = payload.model_dump(exclude_unset=True)
@@ -786,60 +889,12 @@ def update_price_tag_request_tag(
         tag.marketing_price_override = data["marketing_price_override"]
     if "marketing_override_reason" in data:
         tag.marketing_override_reason = data["marketing_override_reason"]
-    if data.get("choices") is not None:
-        # MERGED, not replaced: a line may leave two groups open and Pick one
-        # answers them one at a time.
-        PriceTagRequestService.validate_choices(db, tag, data["choices"])
-        tag.choices = {**dict(tag.choices or {}), **data["choices"]}
-        # Answering a choice changes WHICH products this tag prints, so the pin
-        # taken before it describes a different tag (r9 D16). Dropping it makes
-        # the next resolve re-pin, instead of reporting marketing's own decision
-        # back to marketing as "master data moved".
-        tag.pinned_tag_data = None
-        tag.pinned_at = None
-        tag.data_change_ack_hash = None
     # The body is built BEFORE the commit: it goes back through the resolver, and
     # a failure there used to leave the write applied and answer 500.
     db.flush()
     body = _tag_body(tag, _resolved_by_tag(db, request_id))
     db.commit()
     return body
-
-
-@router.post(
-    "/{request_id}/tags/{tag_id}/split",
-    response_model=list[PriceTagRequestTagResponse],
-)
-def split_price_tag_request_tag(
-    request_id: str,
-    tag_id: str,
-    payload: PriceTagRequestTagSplit,
-    db: Session = Depends(get_db),
-    _user: dict = Depends(_PROCESS),
-):
-    """"Split into N tags" (AC-S3-4): one tag per candidate of an open group.
-
-    The tag that is there KEEPS ITS ID and takes candidate 1, so it keeps its
-    geometry in the saved document and its review pins; N-1 siblings follow it,
-    each resolved to one of the remaining candidates in combo order. A split that
-    minted N fresh tags would throw away the design marketing had already drawn.
-
-    Answers the LINE's tags, in order, because that is what the rail redraws.
-    """
-    tag = _tag_or_404(db, request_id, tag_id)
-    tags = PriceTagRequestService.split_tag(db, tag, payload.role)
-    # Every tag of the split now resolves a different candidate, the original
-    # included, so none of their pins still describes what they print (r9 D16).
-    # Cleared here and re-taken by the resolve below.
-    for row in tags:
-        row.pinned_tag_data = None
-        row.pinned_at = None
-        row.data_change_ack_hash = None
-    db.flush()
-    resolved = _resolved_by_tag(db, request_id)
-    bodies = [_tag_body(row, resolved) for row in tags]
-    db.commit()
-    return bodies
 
 
 @router.delete("/{request_id}/tags/{tag_id}", status_code=204)
