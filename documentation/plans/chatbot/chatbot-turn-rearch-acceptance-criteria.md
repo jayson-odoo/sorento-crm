@@ -286,6 +286,12 @@ domain. No decisions; Retry if needed.
   contact off on the Contact > Access > Chatbot card ("Stock checks" toggle, same PUT as recall).
   Contract line 61 reads this column; 62 unchanged. Owner: "our contact should have the field and by
   default everyone should be on".
+- An open question is answered only when the PARSER says so. `answers_open_question`
+  `{resolved, picks, answer}` becomes a declared parser schema key (it was read by APPLY but never
+  produced: the parser only emits `reference_positions`). APPLY: `resolved: true` = apply the picks;
+  `resolved: false` with an attempt = re-print the same question; absent/null = the message is not
+  an answer, run it for what it is and CARRY the pending unchanged (sticky, never repeated). Owner:
+  "follow the old bot, it is smarter, no hard coding, LLM aware". Cluster 4 ruled this way.
 - The console borrows only a real inbound envelope (`ingress = webhook`, `is_test = false`); a
   console or smoke turn's synthetic envelope is never a base. Found when a smoke turn's empty
   `custom_fields` poisoned every later console turn.

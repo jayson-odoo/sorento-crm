@@ -229,6 +229,8 @@ class ContactChatbotUpdate(BaseModel):
 
     chatbot_profile: dict | None = None
     chatbot_recall_enabled: bool | None = None
+    # S6: absent = leave alone, same rule as the two above.
+    chatbot_stock_allowed: bool | None = None
 
 
 @router.put("/{contact_id}/chatbot", response_model=RespondContactResponse)
@@ -251,7 +253,12 @@ async def update_contact_chatbot(
             contact.chatbot_profile = body.chatbot_profile
         if body.chatbot_recall_enabled is not None:
             contact.chatbot_recall_enabled = body.chatbot_recall_enabled
-        db.flush()
+        if body.chatbot_stock_allowed is not None:
+            contact.chatbot_stock_allowed = body.chatbot_stock_allowed
+        # `get_db` never commits (it only closes), so a flush here rolled back on
+        # return: PUT 200, row untouched. Main's convention is the commit in the route.
+        db.commit()
+        db.refresh(contact)
         return RespondContactResponse.model_validate(
             ContactService.contact_to_response_dict(contact)
         )

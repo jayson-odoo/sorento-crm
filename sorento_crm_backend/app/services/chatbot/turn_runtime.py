@@ -104,7 +104,9 @@ def contact_phone(db: Session, contact_respond_id: str) -> str | None:
 
 
 def load_profile(db: Session, contact_respond_id: str) -> tuple[Profile, bool]:
-    """`respond_contacts.chatbot_profile` + `chatbot_recall_enabled` (AC-1503, AC-1548).
+    """`respond_contacts.chatbot_profile` + `chatbot_recall_enabled` (AC-1503, AC-1548),
+    and `chatbot_stock_allowed` onto `Profile.stock_allowed` (S6) - one SELECT for the
+    three contact facts the engine reads before it routes.
 
     `grants` stays None - unrestricted. The per-domain reveal gate is the one the
     business lane and `output_structurer` already run off `ctx.access.attributes`
@@ -115,7 +117,8 @@ def load_profile(db: Session, contact_respond_id: str) -> tuple[Profile, bool]:
     try:
         row = db.execute(
             text(
-                "SELECT chatbot_profile, chatbot_recall_enabled FROM respond_contacts "
+                "SELECT chatbot_profile, chatbot_recall_enabled, chatbot_stock_allowed "
+                "FROM respond_contacts "
                 "WHERE respond_io_id = :cid"
             ),
             {"cid": contact_respond_id},
@@ -132,6 +135,9 @@ def load_profile(db: Session, contact_respond_id: str) -> tuple[Profile, bool]:
             language=raw.get("language"),
             grants=None,
             default_ledgers=list(ledgers) if isinstance(ledgers, list) else None,
+            # NULL cannot happen (NOT NULL, default true); `is not False` keeps the
+            # fail-open reading if it ever did.
+            stock_allowed=row[2] is not False,
         ),
         bool(row[1]),
     )

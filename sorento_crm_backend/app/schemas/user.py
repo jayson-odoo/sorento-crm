@@ -60,6 +60,8 @@ class RespondContactResponse(RespondContactBase):
     # Chatbot turn re-architecture (AC-1503).
     chatbot_profile: dict = {}
     chatbot_recall_enabled: bool = False
+    # S6: stock allowance on the contact row, default on.
+    chatbot_stock_allowed: bool = True
 
     class Config:
         from_attributes = True

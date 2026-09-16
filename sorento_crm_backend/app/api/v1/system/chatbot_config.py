@@ -230,7 +230,7 @@ def create_domain(
         )
     row = ChatbotDomain(**body.model_dump())
     db.add(row)
-    db.flush()
+    db.commit()
     db.refresh(row)  # server_default `updated_at`/`created_at` are not on `row` until reloaded
     return _domain_out(row)
 
@@ -247,7 +247,7 @@ def update_domain(
     _validate_domain(db, body)
     for field, value in body.model_dump().items():
         setattr(row, field, value)
-    db.flush()
+    db.commit()
     db.refresh(row)  # `onupdate=func.now()` is server-side - reload it before responding
     return _domain_out(row)
 
@@ -262,7 +262,7 @@ def delete_domain(
     archived state worth keeping - the row is the policy, not a record of anything."""
     _ = current_user
     db.delete(_find_domain(db, domain_id))
-    db.flush()
+    db.commit()
     return None
 
 
@@ -327,7 +327,8 @@ def create_entity_kind(
     values["label"] = values.get("label") or body.kind.replace("_", " ").title()
     row = ChatbotEntityKind(**values, sort_order=0)
     db.add(row)
-    db.flush()
+    db.commit()
+    db.refresh(row)
     return _kind_out(row)
 
 
@@ -344,7 +345,8 @@ def update_entity_kind(
     values["label"] = values.get("label") or row.label
     for field, value in values.items():
         setattr(row, field, value)
-    db.flush()
+    db.commit()
+    db.refresh(row)
     return _kind_out(row)
 
 
@@ -356,5 +358,5 @@ def delete_entity_kind(
 ):
     _ = current_user
     db.delete(_find_kind(db, kind))
-    db.flush()
+    db.commit()
     return None
