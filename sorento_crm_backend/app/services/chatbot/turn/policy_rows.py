@@ -128,7 +128,10 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
             "delivery", "deliveries", "deliver", "delivered",
             "penghantaran", "hantar", "dihantar",
         ],
-        narrowing={"customer": "must_narrow_one"},
+        # S6d (owner hand pass 2, item 6): the product token on an order ask resolves
+        # and FILTERS the answer. Without a policy of its own it contributed neither an
+        # entity nor a filter, and the outstanding report ran over every product.
+        narrowing={"customer": "must_narrow_one", "product": "optional_filter"},
         # answer._OUTSTANDING_SO_GRANT ("sales_orders.outstanding"): the SO arm of an
         # outstanding-order answer is refused without it.
         reveal_key="sales_orders.outstanding",
@@ -236,7 +239,9 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         tools=["crm_procurement_po_last_cost_list"],
         escalation_team_code="purchasing",
         switch_words=[],
-        narrowing={"product": "narrow_to_code"},
+        # S6d (owner hand pass 2, item 3): the cost answer LISTS every variant, the way
+        # inventory does - a family was a picker before the answer (turn 70be252c).
+        narrowing={"product": "list_all"},
         # answer.DOMAIN_GRANT_REQUIRED["purchase_cost"]: the whole domain is refused
         # without it.
         reveal_key="purchase_orders.cost",
