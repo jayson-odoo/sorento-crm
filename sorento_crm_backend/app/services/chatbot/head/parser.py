@@ -217,7 +217,16 @@ def _build_json_schema() -> dict[str, Any]:
             # Turn re-architecture (AC-1506): the v3 shape's three new top-level keys.
             # `document` is a LIST of document kinds ("DO", "SO") or null/empty for
             # "no document named" - never a third "both" value (PLAN's own framing).
-            "document": {"type": ["array", "null"], "items": {"type": "string"}},
+            # The papers the message named, from a CLOSED set: `turn/apply.py::
+            # DOMAIN_BY_DOCUMENT` and `turn_runtime._DOCUMENT_STATUS_TO_ORDER_STATUS`
+            # both key off these exact five codes, so a free string here is a document
+            # nothing downstream can read. Declared as an enum so the provider cannot
+            # emit one (hand pass 2 item 12: "Outstsnding DO for 7445" came back with
+            # `document: []` and the CRM asked which document the message had named).
+            "document": {
+                "type": ["array", "null"],
+                "items": {"type": "string", "enum": ["SO", "DO", "PO", "SPO", "GRN"]},
+            },
             # The delivery/order status axis - "outstanding", "delivered", or null.
             # Replaces the old flat `order_status` key on the OUTPUT side too, kept
             # above only because live emissions before this prompt version still carry
