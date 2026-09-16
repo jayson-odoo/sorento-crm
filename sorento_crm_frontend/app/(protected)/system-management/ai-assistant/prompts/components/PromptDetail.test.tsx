@@ -234,6 +234,9 @@ describe('PromptDetail', () => {
 
     const editor = screen.getByTestId('prompt-editor') as HTMLTextAreaElement;
     expect(editor.value).toBe('RULE TEXT');
+    // Browser re-check: `baseVersion` never resolves with no saved version,
+    // so "(base: v{baseVersion})" would have printed "(base: vnull)".
+    expect(screen.getByText(/\(base: code default\)/)).toBeInTheDocument();
   });
 
   it('loads the saved version template, not fallback_text, when a version exists', () => {

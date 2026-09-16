@@ -346,7 +346,11 @@ export function PromptDetail({ name }: { name: string }) {
               <CardTitle className="text-base">
                 Editor{' '}
                 <span className="text-xs font-normal text-muted-foreground">
-                  (base: v{baseVersion}
+                  {/* Slice E: no saved version means `baseVersion` never
+                      resolves, so "v{baseVersion}" would print "vnull" - the
+                      draft came off `fallback_text` instead, and the label
+                      says so. */}
+                  (base: {meta?.versions.length === 0 ? 'code default' : `v${baseVersion}`}
                   {dirty ? ' · unsaved changes' : ''})
                 </span>
               </CardTitle>
