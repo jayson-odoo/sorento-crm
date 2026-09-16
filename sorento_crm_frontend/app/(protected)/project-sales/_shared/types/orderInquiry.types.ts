@@ -418,6 +418,13 @@ export interface OrderInquiryWorklistParams {
    */
   delivery_from?: string;
   delivery_to?: string;
+  /**
+   * The same cell's axis (S3): equality on the very column the matrix grouped by, which
+   * is what the drilldown narrows on rather than a text match on the printed label. Both
+   * together or neither - `axis` names the column, `axis_key` the value.
+   */
+  axis?: OrderInquiryMatrixAxis;
+  axis_key?: string;
   page?: number;
   limit?: number;
   sort?: string;

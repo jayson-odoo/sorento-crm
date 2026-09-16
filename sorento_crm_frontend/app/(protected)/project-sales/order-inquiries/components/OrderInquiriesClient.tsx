@@ -121,12 +121,28 @@ function countLabel(base: string, eligible: number, ticked: number): string {
 }
 
 /** A row this screen still owes a document to (S4, R-A/R-B): raised, partly linked or
- * placed, some quantity still unlinked, and not a row CS has already refused. */
+ * placed, some quantity still unlinked, and not a row CS has already refused.
+ *
+ * The remainder is `qty - linked - BUNDLED` (SF-4), the row's own share of the server's
+ * `_UNLINKED_QTY`: quantity that rides inside another row's line is not this row's to
+ * place. Reading `qty - linked` alone counted a wholly bundled row as still needing a
+ * document, so "Link selected" posted an id `auto_place_for_rows` has nothing to place
+ * for. `remaining_open` is deliberately NOT read here - it is the LINE's remainder,
+ * already net of every sibling row's links, so subtracting this row's links from it
+ * again would take them off twice. */
 function isLinkable(
-  row: OrderInquiryAckFields & { state: string; qty: string; linked_qty?: string },
+  row: OrderInquiryAckFields & {
+    state: string;
+    qty: string;
+    linked_qty?: string;
+    bundled_qty?: string;
+  },
 ): boolean {
   if (!['raised', 'partly_linked', 'placed'].includes(row.state)) return false;
-  const unlinked = Number(row.qty ?? '0') - Number(row.linked_qty ?? '0');
+  const unlinked =
+    Number(row.qty ?? '0') -
+    Number(row.linked_qty ?? '0') -
+    Number(row.bundled_qty ?? '0');
   if (!(unlinked > 0)) return false;
   return ackStateOf(row) !== 'rejected';
 }
@@ -299,19 +315,30 @@ export function OrderInquiriesClient() {
   // S1, R-K: Location, Agent, SO month, PO number, SPO number. The last two are text -
   // a buyer types the number they already hold, never picks it from a list - so they
   // get the same debounce the search box does rather than filtering on every keystroke.
-  const [locationFilter, setLocationFilter] = React.useState('');
-  const [agentFilter, setAgentFilter] = React.useState('');
-  const [soMonthFilter, setSoMonthFilter] = React.useState('');
+  //
+  // All five are seeded from the URL and written back to it, exactly as `query` and
+  // `delivery_month` beside them are (AC-F1): a filter that reaches the request and the
+  // Filters badge but not the address bar is one a reload silently drops, and one the
+  // buyer cannot send to anybody.
+  const [locationFilter, setLocationFilter] = React.useState(
+    () => searchParams.get('location') ?? '',
+  );
+  const [agentFilter, setAgentFilter] = React.useState(
+    () => searchParams.get('agent') ?? '',
+  );
+  const [soMonthFilter, setSoMonthFilter] = React.useState(
+    () => searchParams.get('so_month') ?? '',
+  );
   const {
     value: poNumberInput,
     setValue: setPoNumberInput,
     debouncedValue: poNumberFilter,
-  } = useDebouncedSearch('');
+  } = useDebouncedSearch(searchParams.get('po_number') ?? '');
   const {
     value: spoNumberInput,
     setValue: setSpoNumberInput,
     debouncedValue: spoNumberFilter,
-  } = useDebouncedSearch('');
+  } = useDebouncedSearch(searchParams.get('spo_number') ?? '');
   const soMonthChoices = React.useMemo(() => soMonthOptions(), []);
   // Sourced from `?ack=` on mount and kept URL-synced, like `view` and `query`: the plan
   // page's "N to confirm" chip links straight into this list narrowed to them, and a chip
@@ -430,6 +457,19 @@ export function OrderInquiriesClient() {
     // or a shared link opens on the same tab the buyer pressed.
     if (month) next.set('delivery_month', month);
     else next.delete('delivery_month');
+    // S1, R-K (AC-F1): the five Filters-popover values travel too, so a reload keeps them
+    // and a shared link opens on the same narrowed list. Cleared means the parameter
+    // goes, which is what "Clear filters" then says in the address bar.
+    for (const [key, value] of [
+      ['location', locationFilter],
+      ['agent', agentFilter],
+      ['so_month', soMonthFilter],
+      ['po_number', poNumberFilter],
+      ['spo_number', spoNumberFilter],
+    ] as const) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
     // A CLEARED Confirmed filter says so out loud, because an absent `ack` is what the
     // DEFAULT is read from (AC-D12): dropping the parameter would put To confirm back on
     // the next reload and read as the clear having failed.
@@ -453,6 +493,11 @@ export function OrderInquiriesClient() {
     debounced,
     month,
     ackFilter,
+    locationFilter,
+    agentFilter,
+    soMonthFilter,
+    poNumberFilter,
+    spoNumberFilter,
     linkUpTo,
     horizonCleared,
     pathname,
@@ -1378,6 +1423,7 @@ export function OrderInquiriesClient() {
           {openCell && (
             <OrderInquiryMatrixCellDrilldown
               cell={openCell}
+              axis={matrixAxis}
               granularity={matrixGranularity}
               filters={listFilters}
               rowLabel={openCell.axis_label}

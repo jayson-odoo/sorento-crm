@@ -1030,3 +1030,52 @@ describe('exports the set the screen is showing, not the whole book', () => {
     await waitFor(() => expect(saveBlobAs).toHaveBeenCalled());
   });
 });
+
+describe('AC-F1: the five S1 filters travel in the URL', () => {
+  const FACETS = {
+    locations: [{ id: 'SRT-HQ', label: 'SRT-HQ', rows: 3 }],
+    agents: [{ id: 'agent-1', label: 'AG01', rows: 2 }],
+  };
+
+  it('choosing a Location writes location= to the URL', async () => {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      ...FACETS,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Every location'), {
+      target: { value: 'SRT-HQ' },
+    });
+
+    await waitFor(() =>
+      expect(routerReplace).toHaveBeenCalledWith(
+        expect.stringContaining('location=SRT-HQ'),
+        expect.objectContaining({ scroll: false }),
+      ),
+    );
+  });
+
+  it('a URL carrying agent= seeds the Agent select and the request', async () => {
+    currentSearchParams = new URLSearchParams('agent=agent-1');
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      ...FACETS,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: 'agent-1' }),
+      ),
+    );
+    openFilters();
+    const select = (await screen.findByLabelText(
+      'Every agent',
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('agent-1');
+  });
+});

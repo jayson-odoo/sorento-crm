@@ -489,7 +489,10 @@ export function useOrderInquiryWorklistColumns({
         id: 'po_number',
         accessorFn: (row) => documentsOf(row, 'po')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
-        size: 150,
+        // Wide enough for `202605-S0005` AND the "via SPO" tag beside it at 1280 (review
+        // round): at 150 the number itself truncated the moment a row's PO was derived,
+        // which is the one row where reading the whole number matters.
+        size: 200,
         meta: { headerTitle: 'PO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row, table }) => {
           const bundled = row.original.bundled_with;
@@ -545,7 +548,9 @@ export function useOrderInquiryWorklistColumns({
         id: 'spo_number',
         accessorFn: (row) => documentsOf(row, 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        size: 160,
+        // Same width as PO beside it, for the same reason - plus "awaiting shipment",
+        // which this column prints in full.
+        size: 200,
         meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
           // A bundled row's documents are the anchor's, and the PO cell already says so

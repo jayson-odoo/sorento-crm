@@ -20,6 +20,8 @@
  *   reading the worklist a second way, not a second grant. `axis`/`by` outside the
  *   closed set above is a 422, never a silent fall back.
  */
+import { format } from 'date-fns';
+
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 import { worklistParams } from './orderInquiryService';
@@ -33,21 +35,24 @@ const BASE = '/api/v1/project-sales';
 
 /** The last day a period covers - what a cell's drilldown asks the list for as
  * `delivery_to`. Client-side only: the server never has to answer it, since the
- * drilldown re-asks the list rather than reading rows back out of the matrix. */
+ * drilldown re-asks the list rather than reading rows back out of the matrix.
+ *
+ * Formatted as a LOCAL date (AC-X7), never through `toISOString()`. `new Date(
+ * '2026-04-13T00:00:00')` is local midnight, and converting that to UTC in Malaysia
+ * (+08) lands on the previous evening - so every bucket's last day read one day early
+ * and the drilldown silently dropped a delivery on the 30th of the month. */
 export function periodEnd(period: string, by: OrderInquiryMatrixGranularity): string {
   const date = new Date(`${period}T00:00:00`);
   if (by === 'day') return period;
   if (by === 'week') {
     const end = new Date(date);
     end.setDate(end.getDate() + 6);
-    return end.toISOString().slice(0, 10);
+    return format(end, 'yyyy-MM-dd');
   }
   if (by === 'month') {
-    const end = new Date(date.getFullYear(), date.getMonth() + 1, 0);
-    return end.toISOString().slice(0, 10);
+    return format(new Date(date.getFullYear(), date.getMonth() + 1, 0), 'yyyy-MM-dd');
   }
-  const end = new Date(date.getFullYear(), 11, 31);
-  return end.toISOString().slice(0, 10);
+  return format(new Date(date.getFullYear(), 11, 31), 'yyyy-MM-dd');
 }
 
 /**

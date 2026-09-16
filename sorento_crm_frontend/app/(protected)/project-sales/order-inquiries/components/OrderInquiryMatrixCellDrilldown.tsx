@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useOrderInquiryWorklist } from '../../_shared/hooks/useOrderInquiry';
 import { periodEnd } from '../../_shared/services/orderInquiryMatrixService';
 import type {
+  OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
   OrderInquiryWorklistParams,
@@ -33,12 +34,17 @@ import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
  * S3: the matrix no longer carries a cell's own rows - the server groups them and answers
  * only the sums (PLAN section 3, "the drilldown keeps calling the list"). So this asks
  * the SAME list the worklist itself reads, scoped to this cell's own bucket
- * (`delivery_from`/`delivery_to`) and narrowed to the axis value by name - the list's own
- * search already matches item code, S/O number, customer and agent, which is every axis
- * this screen offers.
+ * (`delivery_from`/`delivery_to`) and to the cell's OWN axis value (`axis`/`axis_key`,
+ * equality on the very column the matrix grouped by).
+ *
+ * NOT through the search box (SF-2). It used to send `query = cell.axis_label`, which
+ * threw away whatever the user had typed in the toolbar - so a cell opened while a
+ * search was running showed rows that search excluded - and matched a fuzzy `ILIKE` on
+ * a printed label two products can share.
  */
 export function OrderInquiryMatrixCellDrilldown({
   cell,
+  axis = 'product',
   granularity,
   filters,
   rowLabel,
@@ -46,6 +52,9 @@ export function OrderInquiryMatrixCellDrilldown({
   onClose,
 }: {
   cell: OrderInquiryMatrixCell;
+  /** The axis the matrix grouped by - what `cell.axis_key` is a key OF. Defaults to the
+   * matrix's own default axis, so the cell and its drilldown cannot read two columns. */
+  axis?: OrderInquiryMatrixAxis;
   granularity: OrderInquiryMatrixGranularity;
   /** The list filters already narrowing the matrix (month, supplier, ack, kind, ...) -
    * every one of them still applies to what a cell drills down to. */
@@ -58,12 +67,13 @@ export function OrderInquiryMatrixCellDrilldown({
   const params = React.useMemo<OrderInquiryWorklistParams>(
     () => ({
       ...filters,
-      query: cell.axis_label,
+      axis,
+      axis_key: cell.axis_key,
       delivery_from: cell.period,
       delivery_to: periodEnd(cell.period, granularity),
       limit: 1000,
     }),
-    [filters, cell.axis_label, cell.period, granularity],
+    [filters, axis, cell.axis_key, cell.period, granularity],
   );
   const list = useOrderInquiryWorklist(params, { enabled: true });
   const rows = list.data?.data ?? [];

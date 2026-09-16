@@ -1,6 +1,8 @@
 'use client';
 
 import * as React from 'react';
+import { format } from 'date-fns';
+
 import { cn } from '@/lib/utils';
 import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryMonthTotal } from '../../_shared/types/orderInquiry.types';
@@ -16,6 +18,11 @@ import type { OrderInquiryMonthTotal } from '../../_shared/types/orderInquiry.ty
  * first open WITHOUT selecting it (the owner did not ask for a pre-filter; "All" stays
  * the default), so a buyer opening the page mid-month lands where they would look first
  * without the list narrowing itself for them.
+ *
+ * "All" SITS OUTSIDE THE SCROLLER (review round). It is the way back to the unfiltered
+ * list, and the same first-open scroll that puts the current month in view had pushed it
+ * off the left edge - the one tab a buyer reaches for after pressing a month was the one
+ * tab they could not see.
  */
 export function OrderInquiryMonthStrip({
   months,
@@ -27,7 +34,10 @@ export function OrderInquiryMonthStrip({
   active: string;
   onSelect: (month: string) => void;
 }) {
-  const currentMonth = React.useMemo(() => new Date().toISOString().slice(0, 7), []);
+  // The LOCAL month, never `toISOString()`: in Malaysia (+08) the first eight hours of
+  // every 1st of the month are still the previous month in UTC, so the strip would have
+  // scrolled to the month that just ended.
+  const currentMonth = React.useMemo(() => format(new Date(), 'yyyy-MM'), []);
   const currentRef = React.useRef<HTMLButtonElement | null>(null);
   const scrolled = React.useRef(false);
 
@@ -43,7 +53,7 @@ export function OrderInquiryMonthStrip({
   return (
     <div
       data-testid="order-inquiry-month-strip"
-      className="flex gap-1.5 overflow-x-auto pb-1"
+      className="flex items-start gap-1.5 pb-1"
     >
       <MonthTab
         label="All"
@@ -51,16 +61,18 @@ export function OrderInquiryMonthStrip({
         selected={active === ''}
         onClick={() => onSelect('')}
       />
-      {withRows.map((entry) => (
-        <MonthTab
-          key={entry.month}
-          ref={entry.month === currentMonth ? currentRef : undefined}
-          label={entry.label ?? deliveryMonthLabel(entry.month) ?? entry.month}
-          count={entry.rows}
-          selected={active === entry.month}
-          onClick={() => onSelect(entry.month)}
-        />
-      ))}
+      <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
+        {withRows.map((entry) => (
+          <MonthTab
+            key={entry.month}
+            ref={entry.month === currentMonth ? currentRef : undefined}
+            label={entry.label ?? deliveryMonthLabel(entry.month) ?? entry.month}
+            count={entry.rows}
+            selected={active === entry.month}
+            onClick={() => onSelect(entry.month)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

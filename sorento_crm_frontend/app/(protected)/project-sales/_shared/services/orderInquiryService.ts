@@ -136,7 +136,8 @@ export async function markOrderInquiryRows(
  *        partly linked. 409 `order_inquiry_over_allocated` when the allocations total
  *        more than the row's own quantity; 409 `order_inquiry_po_line_short` naming the
  *        line that cannot cover what was asked of it; 409
- *        `order_inquiry_spo_not_order_back` when a non-ORDER BACK row names an SPO.
+ *        `order_inquiry_spo_not_linkable` when a row whose verb cannot be linked at all
+ *        names a document (every linkable verb may name either book since 27 Aug).
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/unplace  { link_id? }
  *        -> OrderInquiryRowOut. With a `link_id` that ONE link goes; without one every
@@ -512,6 +513,10 @@ export function worklistParams(params: OrderInquiryWorklistParams, limit: number
       spo_number: params.spo_number,
       delivery_from: params.delivery_from,
       delivery_to: params.delivery_to,
+      // S3: a Schedule cell's own drilldown. The pair is sent as the pair - the server
+      // ignores either half alone.
+      axis: params.axis,
+      axis_key: params.axis_key,
     },
   );
 }

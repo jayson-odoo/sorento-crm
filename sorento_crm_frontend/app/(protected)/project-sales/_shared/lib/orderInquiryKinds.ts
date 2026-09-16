@@ -21,7 +21,7 @@
  *
  * A ROW IS THE UNIT AND IT IS NEVER SPLIT BETWEEN CELLS. A row linked 5 of 8 to a
  * purchase order carries BOTH `po` 5 and `buy` 3, which is what makes the bar a split
- * bar and the label read "PO 5 · Buy 3".
+ * bar and the label read "Purchased 5 · Buy 3".
  *
  * Everything is derived from the row's own `links[]` - never from `linked_qty` beside
  * them - so the bar, the label and the cards cannot disagree with the documents the
@@ -48,13 +48,6 @@ export const KIND_LABELS: Record<OrderInquiryKind, string> = {
   buy: 'Buy',
   po: 'Purchased',
   spo: 'Incoming',
-};
-
-/** The same three, short enough for a matrix cell: "PO 5 · Buy 3". */
-export const KIND_SHORT_LABELS: Record<OrderInquiryKind, string> = {
-  spo: 'SPO',
-  po: 'PO',
-  buy: 'Buy',
 };
 
 /** The board's own paint, not a second palette (see the file header). */
@@ -149,7 +142,13 @@ export function fullyLinkedTotals(totals: Pick<OrderInquiryKindTotals, 'buy'>): 
 }
 
 /**
- * A composition in the fewest words that still name it: "Buy 3", "PO 8", "PO 5 · Buy 3".
+ * A composition in the fewest words that still name it: "Buy 3", "Purchased 8",
+ * "Purchased 5 · Buy 3".
+ *
+ * `KIND_LABELS`, the SAME words the cards and the bar's own legend carry (review round).
+ * The matrix cell used to abbreviate them to "PO" and "SPO" - the names of the DOCUMENTS
+ * rather than of the stages - so one screen taught a buyer two vocabularies for one
+ * fact, and "SPO 10" beside a card reading "Incoming" read as two different numbers.
  *
  * Every kind with a quantity, not just the largest one: a cell that is half bought and
  * half not is the cell somebody has to act on, and naming only its bigger half is how a
@@ -158,7 +157,7 @@ export function fullyLinkedTotals(totals: Pick<OrderInquiryKindTotals, 'buy'>): 
  */
 export function kindText(segments: OrderInquiryKindSegment[]): string {
   return segments
-    .map((segment) => `${KIND_SHORT_LABELS[segment.kind]} ${segment.qty}`)
+    .map((segment) => `${KIND_LABELS[segment.kind]} ${segment.qty}`)
     .join(' · ');
 }
 

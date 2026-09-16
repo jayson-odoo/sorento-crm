@@ -45,9 +45,10 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import event, func, or_
+from sqlalchemy import event, func, or_, tuple_
 from sqlalchemy.orm import Session, aliased
 
+from app.models.base import get_company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
@@ -105,6 +106,7 @@ from app.models.projects import (
     ProjectPurchaseOrder,
     ProjectTask,
 )
+from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
 from app.services.scm.pool_predicate import is_site_pool
@@ -2234,7 +2236,11 @@ class ProjectOrderInquiryService:
         # S5, R-D: every PO-kind link's own (po_number, product_id) - what a derived SPO
         # allocation has to match. Collected while the loop is on the real links anyway,
         # so the second query below runs once for the whole page rather than once per row.
-        po_pairs_by_row: Dict[str, Tuple[str, str]] = {}
+        #
+        # A SET PER ROW (AC-D13), never one pair: a row linked to two purchase orders
+        # has two pairs, and a dict of one pair per row silently kept the LAST link's
+        # and showed only that purchase order's derived SPO.
+        po_pairs_by_row: Dict[str, set] = {}
         for (
             link,
             stock_location,
@@ -2256,7 +2262,9 @@ class ProjectOrderInquiryService:
         ) in rows:
             is_spo = link.spo_allocation_id is not None
             if not is_spo and po_number and po_product_id:
-                po_pairs_by_row[link.row_id] = (po_number, str(po_product_id))
+                po_pairs_by_row.setdefault(link.row_id, set()).add(
+                    (po_number, str(po_product_id))
+                )
             location = warehouse_code or (spo_location_code if is_spo else None)
             tier, _sub = link_location_tier(stock_location, location, pools)
             arrives = spo_expected_date if is_spo else po_expected_date
@@ -2321,25 +2329,36 @@ class ProjectOrderInquiryService:
         return out
 
     def _append_derived_spo_entries(
-        self, out: Dict[str, List[Dict[str, Any]]], po_pairs_by_row: Dict[str, Tuple[str, str]]
+        self, out: Dict[str, List[Dict[str, Any]]], po_pairs_by_row: Dict[str, set]
     ) -> None:
         """S5 (R-D, R-E; coordinator's 16 Sep addendum): a SYNTHETIC `spo`-kind entry per
-        row, for every OPEN SPO allocation the row's own PO link's PO has for the same
+        row, for every OPEN SPO allocation the row's own PO links' POs have for the same
         product - `from_po_number = po_number AND product_id = po_line.product_id`. OPEN
         is `spo_supply.open_incoming_clauses()` (line open, not received, shipment not
         landed) AND `retired_at IS NULL` AND `allocated_quantity > coalesce(quantity_
         received, 0)` - a landed shipment has already measured out, not incoming any
         more. Two open allocations on the same PO and product both appear; there is no
-        tie-break to pick between them (the owner's ruling, 16 Sep).
+        tie-break to pick between them (the owner's ruling, 16 Sep). A row linked to two
+        purchase orders carries BOTH POs' allocations (AC-D13), which is why the map
+        above holds a SET of pairs per row.
+
+        COMPANY-SCOPED BY HAND (AC-D14), not only by the session listener. The join is
+        on `from_po_number` (plain text off the AutoCount feed) and `product_id`, and
+        neither is company-scoped in itself, so another company's allocation naming the
+        same PO number string and the same product would otherwise read as this row's
+        incoming stock. The listener does fire here - `SPOAllocation` is an entity of
+        this query - but the worklist's own reader states the predicate explicitly, and
+        the two seams must not be able to differ if the listener ever changes.
 
         Written nowhere: this never creates an `order_inquiry_links` row, so
         `committed_v` and every demand read stay on real links only.
         """
         if not po_pairs_by_row:
             return
-        from sqlalchemy import and_, tuple_
-
-        pairs = list(set(po_pairs_by_row.values()))
+        pairs = sorted({pair for pairs_ in po_pairs_by_row.values() for pair in pairs_})
+        company_predicate = build_company_predicate(
+            SPOAllocation, get_company_scope(self.db)
+        )
         allocations = (
             self.db.query(
                 SPOAllocation.spo_number,
@@ -2359,6 +2378,7 @@ class ProjectOrderInquiryService:
             .filter(
                 tuple_(SPOAllocation.from_po_number, SPOAllocation.product_id).in_(pairs),
                 *derived_spo_open_clauses(),
+                *((company_predicate,) if company_predicate is not None else ()),
             )
             .all()
         )
@@ -2388,10 +2408,11 @@ class ProjectOrderInquiryService:
                     "expected_date": expected_date,
                 }
             )
-        for row_id, pair in po_pairs_by_row.items():
-            entries = by_pair.get(pair)
-            if entries:
-                out.setdefault(row_id, []).extend(entries)
+        for row_id, row_pairs in po_pairs_by_row.items():
+            for pair in sorted(row_pairs):
+                entries = by_pair.get(pair)
+                if entries:
+                    out.setdefault(row_id, []).extend(entries)
 
     def _context_for(
         self, rows: Sequence[OrderInquiryRow]
@@ -4727,8 +4748,9 @@ class ProjectOrderInquiryService:
         by the table's own CHECK.
 
         Refuses, in the words the buyer needs: a line that is no longer open, a line for a
-        different product, an SPO allocation named by a row whose verb is not ORDER BACK,
-        an allocation bigger than what the line has left, and a total bigger than what the
+        different product, a document named by a row whose verb is not linkable at all
+        (R5, 27 August: every linkable verb may name either book, SPO first then PO), an
+        allocation bigger than what the line has left, and a total bigger than what the
         row still needs.
         """
         row = self._row_or_404(row_id)
@@ -5919,12 +5941,15 @@ class ProjectOrderInquiryService:
         The exact predicate `po_candidates_for_row` answers per row, computed ONCE for a
         whole listing, so the row action's offer and the dialog can never disagree.
 
-        Two sets, because the answer depends on the ROW's verb and not only on its
-        product: an ORDER row may link to a purchase order line, and an ORDER BACK row may
-        link to either that or an `spo_allocations` row (part 2 section 4b). Answering with
-        one set left an order back whose ONLY open cover was a shipping order reading "no
-        candidate", and the screen then offered no Link at all on the one row the feature
-        was built for.
+        Two sets because the two books are asked different questions, NOT because the
+        verb narrows which book answers: since R5 (27 August,
+        `PLAN-scm-oi-draft-links.md`) EVERY linkable verb - ORDER, RESERVE & ORDER and
+        ORDER BACK alike - may name either a purchase order line or an
+        `spo_allocations` row, SPO first and then PO (`_SPO_LINKABLE_VERBS` equals
+        `_LINKABLE_VERBS`). The 25 August rule this docstring used to state - that a
+        shipping order answers an ORDER BACK alone - is retired, and the sets are kept
+        apart only so a caller can ask "is there an open PO line" and "is there open
+        incoming" separately.
 
         SPO- prefixed PURCHASE orders are excluded from the `po` set as they are in the
         walk: since migration 420 a shipping order is an `spo_allocations` row, and one
