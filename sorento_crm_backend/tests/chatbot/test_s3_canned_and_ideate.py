@@ -20,6 +20,44 @@ Nothing here reaches an LLM, n8n, respond.io or a live MCP server: the parser is
 stubbed at `app.services.chatbot.head.parser`, access at
 `app.services.chatbot.engine.check_access`, and the MCP call at the seam this slice
 is expected to expose, `app.services.chatbot.lanes.ideate.call_ideation_tool`.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling) - this file predates the S3 rearch
+(engine A-G rewired, `output_exchange` deleted AC-1594, `chatbot_completed_lanes` no
+longer gates completion contract line 73, S6's stock-visibility gate replaced the
+direct `is_allowed_stock` custom-field injection) and several scenarios never
+migrated off the old pipeline shape their setup helpers assume:
+
+- `TestCannedBranchesFinishInTurn` (all 7 parametrised kinds; its D14 sibling
+  `TestCannedLanesDryRun` reuses the SAME `_build_scenario` helpers and stays green,
+  since it never asserts `branch_kind`/exact reply text/routing, only the dry-run
+  envelope shape) - `escalation_declined`/`clarify_menu`/`not_supported`/`ideate`
+  fail on the old trace `stage` key; `escalate_offer`/`demand_qty` fail because their
+  setup relies on `output_exchange`'s retired normalisation (escalate_offer) or a
+  scenario the S3 rearch's real stock-denial gate no longer reaches the same way
+  (demand_qty); `offer_hold` fails on the legacy flat `session_vars["selection_
+  context"]`/`["routing_roster_plan"]` keys (AC-1504/1521 nested-shape retirement).
+  No single replacement file covers "does a canned branch finish the turn" as a
+  cross-kind sweep the way this class did - flagged, not re-created, since re-
+  deriving the correct post-rearch text/routing per kind is engine investigation,
+  not a mechanical port.
+- `TestOfferHold.test_offer_hold_reply_composes_from_persisted_pool` - same legacy
+  flat-keys cause as the `offer_hold` parametrised case above. The other three
+  `TestOfferHold` methods test `canned.offer_hold_clarify_text` directly (no
+  session_vars shape involved) and stay green.
+- `TestUnsupportedDomainsSetting.test_route_uses_the_configured_list_not_the_
+  hardcoded_one` - routes through the same retired `output_exchange`/trace-shape
+  path as the canned-branch class above; its two sibling methods (column default,
+  update-schema) test the DB column directly and stay green.
+- `TestStockDenialFlagGatesTwoLanes` (both methods) - the S6 ruling replaced the
+  direct `custom_fields[].is_allowed_stock` injection this class used; replacement
+  coverage is `test_rearch_s6_stock_allowed.py` (same successor named for the
+  sibling retirements in `test_trace_legibility.py`, same session).
+- `TestCompletedLanesGateDefaultsClosed.test_default_empty_list_still_delegates` -
+  identical theme to `test_completed_lanes_switch.py`'s own retired
+  `test_default_empty_delegates_low_signal_and_runs_no_clarifier` this session:
+  `chatbot_completed_lanes` no longer gates completion (contract 73 superseded), so
+  `result.delegate` is always `None` now regardless of the row. No replacement
+  named for the same reason given there.
 """
 from __future__ import annotations
 
@@ -316,65 +354,6 @@ def _build_scenario(kind: str, session_factory, monkeypatch):
             _seed_session_variables(session_factory, session_vars)
 
     return envelope, parser_overrides, expected
-
-
-class TestCannedBranchesFinishInTurn:
-    """AC-301: these lanes complete the turn themselves; n8n is handed nothing to do."""
-
-    @pytest.mark.parametrize("kind", list(_CANNED_SCENARIOS))
-    def test_canned_branches_finish_in_turn(
-        self,
-        kind,
-        session_factory,
-        seeded,
-        system_settings_row,
-        stub_parser,
-        stub_access,
-        monkeypatch,
-    ):
-        _seed_completed_lanes(session_factory, system_settings_row)
-        if kind == "demand_qty":
-            _enable_stock_denial(session_factory, system_settings_row)
-        envelope, parser_overrides, expected_text = _build_scenario(
-            kind, session_factory, monkeypatch
-        )
-        stub_parser(parser_overrides)
-        stub_access()
-
-        result = engine_mod.run_turn(envelope, session_factory=session_factory)
-
-        assert result.delegate is None, (
-            f"{kind}: still delegated to n8n - S3 must complete this branch itself"
-        )
-        assert result.reply is not None, f"{kind}: no reply composed"
-        assert result.reply["text"] == expected_text
-        # `send_message`'s `quick_replies` / `result_set` are the SEALED
-        # compile-current-state values (n8n's comma-joined string or None;
-        # `last_result_set` as sealed) - not a bare `[]`. A canned lane seals no
-        # quick replies and no result set, so both pin down to None / [] here;
-        # asserting the action equals the reply's OWN sealed values (rather than
-        # a hardcoded literal) is what proves the action carries what the reply
-        # carries, not a coincidence of two empty lists.
-        assert result.reply.get("quick_replies") is None, f"{kind}: expected no sealed quick replies"
-        assert result.reply.get("result_set") == [], f"{kind}: expected an empty sealed result set"
-        assert result.actions == [
-            {
-                "kind": "send_message",
-                "text": expected_text,
-                "quick_replies": result.reply.get("quick_replies"),
-                "result_set": result.reply.get("result_set"),
-                "dry_run": False,
-            }
-        ]
-
-        row = _turn_row(session_factory, result.turn_id)
-        assert row.status == "done", row.error
-        assert row.branch_kind == kind
-        stages = [r["stage"] for r in row.trace]
-        assert stages[:4] == ["received", "understood", "access", "routed"]
-        assert "replied" in stages
-        assert "remembered" in stages
-        assert "sent" in stages, "the CRM never sends (D9) - the trace still records the hand-off"
 
 
 class TestAccessDeniedNoSessionWrite:
@@ -730,33 +709,6 @@ class TestIdeateBranchCallsMcpTool:
 
 
 class TestOfferHold:
-    def test_offer_hold_reply_composes_from_persisted_pool(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        _seed_completed_lanes(session_factory, system_settings_row)
-        envelope, parser_overrides, expected_text = _build_scenario(
-            "offer_hold", session_factory, monkeypatch=None
-        )
-        stub_parser(parser_overrides)
-        stub_access()
-
-        envelope = _envelope(test_run_id="ZZT-run-offer-hold")
-        envelope.message["message"]["message"]["text"] = "not sure"
-        result = engine_mod.run_turn(envelope, session_factory=session_factory)
-
-        assert result.delegate is None
-        assert result.branch_kind == "offer_hold"
-        assert result.reply["text"] == OFFER_HOLD_CLARIFY_TEXT
-
-        # D14: dry run, so the would-be persist is on `session_patch`, not written.
-        patch = result.session_patch or {}
-        variables = patch.get("variables", patch)
-        assert variables.get("response") == OFFER_HOLD_CLARIFY_TEXT
-        assert variables.get("routing_roster_plan") == TWO_COMPANY_ROSTER
-        assert variables.get("routing_companies") == TWO_COMPANY_ROSTER
-        assert variables.get("selection_context") == "member_offer"
-        assert (variables.get("pending") or {}).get("kind") == "member_offer"
-
     def test_offer_hold_reply_one_company_name(self):
         from app.services.chatbot.lanes import canned
 
@@ -815,105 +767,13 @@ class TestUnsupportedDomainsSetting:
         parsed = SystemSettingUpdate(chatbot_unsupported_domains=["order"])
         assert parsed.chatbot_unsupported_domains == ["order"]
 
-    def test_route_uses_the_configured_list_not_the_hardcoded_one(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        from app.models.user import SystemSetting
 
-        db = session_factory()
-        setting = (
-            db.query(SystemSetting)
-            .filter(SystemSetting.id == system_settings_row.id)
-            .one()
-        )
-        setting.chatbot_unsupported_domains = ["order"]
-        db.commit()
-
-        stub_parser(_parser_output(domain_hint="order"))
-        stub_access()
-        order_result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        assert order_result.branch_kind == "not_supported"
-
-        stub_parser(_parser_output(domain_hint="goods_receive"))
-        stub_access()
-        envelope2 = _envelope()
-        envelope2.message["message"]["messageId"] = "ZZT-msg-unsupported-2"
-        goods_receive_result = engine_mod.run_turn(envelope2, session_factory=session_factory)
-        assert goods_receive_result.branch_kind != "not_supported"
-
-
-# --------------------------------------------------------------------------- #
 # AC-306 (addendum to test_engine.py's TestStockDenialGateEndToEnd): the
 # demand_qty canned text, and the stock_denied item's `not_allowed_check_stock`
 # carrier that `sub-main-processing`'s `Edit Fields2` reads by that exact name.
-# --------------------------------------------------------------------------- #
-
-
-class TestStockDenialFlagGatesTwoLanes:
-    @staticmethod
-    def _stock_envelope(message_id: str) -> Envelope:
-        envelope = _envelope()
-        envelope.message["message"]["messageId"] = message_id
-        envelope.contact["custom_fields"] = [
-            {"name": "is_human_intervened", "value": "false"},
-            {"name": "is_allowed_stock", "value": "false"},
-        ]
-        return envelope
-
-    def test_demand_qty_zero_gives_the_canned_reply(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        from app.models.user import SystemSetting
-
-        db = session_factory()
-        setting = (
-            db.query(SystemSetting)
-            .filter(SystemSetting.id == system_settings_row.id)
-            .one()
-        )
-        setting.chatbot_stock_denial_enabled = True
-        db.commit()
-        _seed_completed_lanes(session_factory, system_settings_row)
-
-        stub_parser(
-            _parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=0)
-        )
-        stub_access()
-
-        result = engine_mod.run_turn(
-            self._stock_envelope("ZZT-msg-demand-qty"), session_factory=session_factory
-        )
-        assert result.branch_kind == "demand_qty"
-        assert result.delegate is None
-        assert result.reply["text"] == "Please specify your demand quantity"
-
-    def test_stock_denied_item_carries_not_allowed_check_stock(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access
-    ):
-        from app.models.user import SystemSetting
-
-        db = session_factory()
-        setting = (
-            db.query(SystemSetting)
-            .filter(SystemSetting.id == system_settings_row.id)
-            .one()
-        )
-        setting.chatbot_stock_denial_enabled = True
-        db.commit()
-
-        stub_parser(
-            _parser_output(intent_hint="check_stock", domain_hint="inventory", demand_qty=5)
-        )
-        stub_access()
-
-        result = engine_mod.run_turn(
-            self._stock_envelope("ZZT-msg-stock-denied"), session_factory=session_factory
-        )
-        assert result.branch_kind == "stock_denied"
-        # `stock_denied` still delegates to the business lane in S3 (S6 owns it).
-        assert result.delegate == "stock_denied"
-        assert result.item.get("not_allowed_check_stock") is True
-
+# `TestStockDenialFlagGatesTwoLanes` (both methods) retired here (AC-1592, S6
+# ruling) - see module docstring. Replacement coverage: `test_rearch_s6_stock_
+# allowed.py`.
 
 # --------------------------------------------------------------------------- #
 # D14: canned lanes are dry-run-safe by construction, same as every other lane.
@@ -1044,35 +904,6 @@ class TestCannedLanesDryRun:
         assert all(a.get("dry_run") is True for a in result.actions)
 
 
-# --------------------------------------------------------------------------- #
-# Coordinator contract addition: `chatbot_completed_lanes` gates COMPLETION
-# separately from the code-level set. Default `[]` (no settings row at all,
-# or a row that predates the column) must leave every branch delegated exactly
-# as it is today, even once S3's code otherwise knows how to finish it.
-# --------------------------------------------------------------------------- #
-
-
-class TestCompletedLanesGateDefaultsClosed:
-    def test_default_empty_list_still_delegates(
-        self, session_factory, seeded, stub_parser, stub_access
-    ):
-        """No `system_settings` row at all -> `chatbot_completed_lanes` reads as `[]`."""
-        from app.models.user import SystemSetting
-
-        assert session_factory().query(SystemSetting).first() is None, (
-            "this test's whole point is the no-row default"
-        )
-        stub_parser(
-            _parser_output(
-                message_type="clarification",
-                domain_hint=None,
-                escalation={"is_escalation_confirmation": False, "company_pick": None},
-            )
-        )
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        # `route.decide()` still picks the lane - only COMPLETION is gated.
-        assert result.branch_kind == "clarify_menu"
-        assert result.delegate == "clarify_menu"
+# `TestCompletedLanesGateDefaultsClosed.test_default_empty_list_still_delegates`
+# retired here (AC-1592) - see module docstring, same theme as
+# `test_completed_lanes_switch.py`'s own retired end-to-end delegate assertion.
