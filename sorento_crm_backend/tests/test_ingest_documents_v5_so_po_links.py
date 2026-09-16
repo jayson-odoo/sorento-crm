@@ -33,12 +33,24 @@ suite.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import text
 
 from app.api.v1.external.contract import FIELDS_ADDED
 from app.models.order import SalesOrder, SalesOrderLine
+from app.models.procurement import PurchaseOrderLine, SPOAllocation
 from app.models.product import Product
+from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
+    INQUIRY_RAISED,
+    IV_ORDER,
+    OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+)
 from app.services.scm import order_link_service
 
 from tests.test_ingest_documents import (
@@ -51,6 +63,7 @@ from tests.test_ingest_documents import (
 )
 from tests.test_ingest_shipping_orders import (
     INGEST_SPO,
+    _seed_legacy_row,
     _spo_line,
     _spo_record,
 )
@@ -859,3 +872,433 @@ class TestFromSoLineRefAndExternalCanCoexist:
         po_line = env.po_lines(header["id"])[0]
         assert po_line["from_so_line_ref"] == so_ref
         assert po_line["from_so_external"] == external
+
+
+# ================================================================ AC-RL-40 to AC-RL-46
+# S5 (`PLAN-oi-replan-received-links.md`): "our link follows the book pairing" -
+# `ProjectOrderInquiryService.follow_book_repairing` does not exist yet, so every red
+# state below is that missing hook (an unmoved link, or an unchanged `row_a.note`),
+# never an import error.
+
+
+def _mirror_row(env, *, core_line, product_id, qty: str, line_no: int = 1):
+    """A project mirror of `core_line`, with its own RAISED order inquiry row - the
+    row a `from_so_line_ref` move has to find (or fail to find) on the NEW line.
+    `project_id=None` / `status="adopted"` mirrors `_seed()`'s own adopted shape in
+    `test_order_inquiry_worklist.py` - an AutoCount order this suite never registers.
+    """
+    pso = ProjectSalesOrder(
+        id=str(uuid.uuid4()), company_id=env.company_a, project_id=None,
+        so_id=core_line.sales_order_id, provisional_ref=f"{MARKER}-PSO-{uuid.uuid4().hex[:8]}",
+        status="adopted",
+    )
+    env.db.add(pso)
+    env.db.flush()
+    mirror_line = ProjectSalesOrderLine(
+        id=str(uuid.uuid4()), company_id=env.company_a, project_sales_order_id=pso.id,
+        line_no=line_no, core_sales_order_line_id=core_line.id, product_id=product_id,
+        description=f"{MARKER} mirror", qty=Decimal(qty), uom="UNIT",
+        unit_price=Decimal("10.00"), amount=Decimal("0"),
+    )
+    env.db.add(mirror_line)
+    env.db.flush()
+    inquiry = OrderInquiry(
+        id=str(uuid.uuid4()), company_id=env.company_a, project_sales_order_id=pso.id,
+    )
+    env.db.add(inquiry)
+    env.db.flush()
+    row = OrderInquiryRow(
+        id=str(uuid.uuid4()), company_id=env.company_a, order_inquiry_id=inquiry.id,
+        so_line_id=mirror_line.id, qty=Decimal(qty), verb=IV_ORDER, state=INQUIRY_RAISED,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    env.db.add(row)
+    env.db.flush()
+    env.db.commit()
+    return pso, mirror_line, inquiry, row
+
+
+class TestLinkFollowsBookPairing:
+    """AC-RL-40 to AC-RL-46. `follow_book_repairing` is the hook `ingest.py` calls
+    after the existing relink hook for POs and beside the forward-match hook for
+    SPOs (S5's own words), so every scenario here is a real re-push through the
+    real ingest routes - never a direct call into a service method that does not
+    exist yet."""
+
+    def test_po_line_ref_moved_follows_to_new_line_row(self, env):
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        so_b, core_line_b = _seed_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="90",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="120",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=90)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+
+        # Row A's own link - never written by the ingest (claims never create
+        # links, the plan's own "Facts" section) - stands in for what purchasing
+        # already arranged before the book moved.
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("90"),
+            auto=True,
+        ))
+        env.db.commit()
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=90)
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+        env.db.refresh(row_a)
+
+        assert links_a == []
+        assert "AutoCount moved" in (row_a.note or ""), row_a.note
+        assert record["po_number"] in (row_a.note or ""), row_a.note
+        assert so_b.so_number in (row_a.note or ""), row_a.note
+        assert row_a.state == INQUIRY_RAISED
+        assert len(links_b) == 1, links_b
+        assert str(links_b[0].po_line_id) == str(po_line["id"])
+        assert Decimal(str(links_b[0].qty)) == Decimal("90")
+        assert links_b[0].auto is True
+
+    def test_po_line_ref_moved_no_row_unlinks_only(self, env):
+        """AC-RL-41: SO line B has no linkable row at all - the link comes off row
+        A and nothing is placed anywhere; the PO line's capacity is genuinely
+        free (`_linked_by_target` reads no link naming it)."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        # SO line B exists in the core book but has NO project mirror / OI row.
+        _seed_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="60",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=60)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("60"),
+            auto=True,
+        ))
+        env.db.commit()
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=60)
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        assert links_a == []
+        remaining = (
+            env.db.query(OrderInquiryLink)
+            .filter(OrderInquiryLink.po_line_id == po_line["id"])
+            .all()
+        )
+        assert remaining == [], "the PO line's capacity must be genuinely free"
+
+    def test_spo_ref_moved_follows(self, env):
+        """AC-RL-42 (in-place repush): the SPO twin of AC-RL-40 - an ordinary
+        re-push of an ALREADY-REF'D allocation, not the supersede path."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        so_b, core_line_b = _seed_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="12",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="20",
+        )
+
+        line = _spo_line(env, from_so_line_ref=ref_a, qty_ordered=12)
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+        res = env.post(INGEST_SPO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        allocation = _spo_rows(env, record["spo_number"])[0]
+
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            spo_allocation_id=allocation["id"], document=record["spo_number"],
+            qty=Decimal("12"), auto=True,
+        ))
+        env.db.commit()
+
+        repush_line = _spo_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=12)
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_SPO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+        env.db.refresh(row_a)
+
+        assert links_a == []
+        assert "AutoCount moved" in (row_a.note or ""), row_a.note
+        assert len(links_b) == 1, links_b
+        assert str(links_b[0].spo_allocation_id) == str(allocation["id"])
+
+    def test_spo_ref_moved_through_supersede_follows(self, env):
+        """AC-RL-42 (through `_supersede_xlsx_rows`): the link sits on an XLSX-ERA
+        allocation with no ref at all. The ESB's first push for this SPO/product/
+        location supersedes it (D25) - a NEW allocation row, under a NEW id,
+        carrying the payload's `from_so_line_ref` naming SO line B. `follow_book_
+        repairing` has to read the supersede's own move record, not merely a ref
+        that changed on the SAME row - `_supersede_xlsx_rows` "records the
+        superseded row's ref against the new row" (the plan's own S5 facts)."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        wh_code = env.db.execute(
+            text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": wh_id}
+        ).scalar()
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        so_b, core_line_b = _seed_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="10",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="15",
+        )
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        legacy = _seed_legacy_row(
+            env, spo_number=number, spo_line_number=1, location_code=wh_code,
+            allocated_quantity=10,
+        )
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            spo_allocation_id=legacy.id, document=number, qty=Decimal("10"), auto=True,
+        ))
+        env.db.commit()
+
+        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=10, from_so_line_ref=ref_b)
+        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+        res = env.post(INGEST_SPO, [record])
+        assert res.json()["records"][0].get("lines", {}).get("superseded") == 1, res.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+
+        assert links_a == []
+        assert len(links_b) == 1, links_b
+        new_rows = {str(r["id"]) for r in _spo_rows(env, number)}
+        assert str(links_b[0].spo_allocation_id) in new_rows
+
+    def test_received_document_ref_move_changes_nothing(self, env):
+        """AC-RL-43: a fully received PO line's ref moves too, but S2 owns a
+        received document - the link is left exactly where it is."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        _seed_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="4",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=4, qty_received=4)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["line_status"] == "closed", "the fixture has to be genuinely received"
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("4"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+
+        repush_line = _po_line(
+            env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=4, qty_received=4,
+        )
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        assert len(links_a) == 1, links_a
+        assert str(links_a[0].id) == link_id_before
+        assert str(links_a[0].po_line_id) == str(po_line["id"])
+
+    def test_manual_link_follows_book(self, env):
+        """AC-RL-44: a link written BY HAND (`auto=False`) follows the book the
+        same way an automatic one does - the same shape as AC-RL-40."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        so_b, core_line_b = _seed_so_line(
+            env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_b,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="25",
+        )
+        _pso_b, _line_b, _inquiry_b, row_b = _mirror_row(
+            env, core_line=core_line_b, product_id=product_id, qty="40",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=25)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("25"),
+            auto=False,
+        ))
+        env.db.commit()
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=25)
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        links_b = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).all()
+        assert links_a == []
+        assert len(links_b) == 1, links_b
+        assert str(links_b[0].po_line_id) == str(po_line["id"])
+
+    def test_ref_cleared_unlinks(self, env):
+        """AC-RL-45 (first half): a re-push with `from_so_line_ref: null` removes
+        the link with the `AutoCount removed` note, and places nothing."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a = _ref("SOLA")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="18",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=18)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("18"),
+            auto=True,
+        ))
+        env.db.commit()
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=None, qty_ordered=18)
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        env.db.refresh(row_a)
+
+        assert links_a == []
+        assert "AutoCount removed" in (row_a.note or ""), row_a.note
+        assert record["po_number"] in (row_a.note or ""), row_a.note
+
+    def test_same_ref_repush_changes_nothing(self, env):
+        """AC-RL-45 (second half): a re-push with the SAME ref moves nothing at
+        all - no note, the same link untouched."""
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        ref_a = _ref("SOLA")
+        so_a, core_line_a = _seed_so_line(
+            env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
+            source_ref=ref_a,
+        )
+        _pso_a, _line_a, _inquiry_a, row_a = _mirror_row(
+            env, core_line=core_line_a, product_id=product_id, qty="9",
+        )
+
+        line = _po_line(env, from_so_line_ref=ref_a, qty_ordered=9)
+        record = _po_record(env, lines=[line])
+        res = env.post(INGEST_PO, [record])
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        env.db.add(OrderInquiryLink(
+            id=str(uuid.uuid4()), company_id=env.company_a, row_id=row_a.id,
+            po_line_id=po_line["id"], document=record["po_number"], qty=Decimal("9"),
+            auto=True,
+        ))
+        env.db.commit()
+        link_id_before = str(
+            env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).one().id
+        )
+        note_before = row_a.note
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=ref_a, qty_ordered=9)
+        repush = dict(record, lines=[repush_line])
+        res2 = env.post(INGEST_PO, [repush])
+        assert res2.json()["records"][0]["outcome"] == "updated", res2.text
+
+        env.db.expire_all()
+        links_a = env.db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_a.id).all()
+        env.db.refresh(row_a)
+
+        assert len(links_a) == 1, links_a
+        assert str(links_a[0].id) == link_id_before
+        assert row_a.note == note_before

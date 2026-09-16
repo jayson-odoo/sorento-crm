@@ -24,13 +24,14 @@ from decimal import Decimal
 
 import openpyxl
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from app.models.company import Company
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.procurement import (
     InboundShipment,
+    ProductSupplier,
     PurchaseOrder,
     PurchaseOrderLine,
     SPOAllocation,
@@ -38,6 +39,7 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.project_so import (
+    ACK_ACKNOWLEDGED,
     INQUIRY_ACTIONED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -1274,6 +1276,362 @@ def test_link_dict_carries_received_qty_and_received(api):
     po_link = by_document[po.po_number]
     assert po_link["received"] is False
     assert po_link["received_qty"] == "0"
+
+
+# ---------------------------------------------------------------------------
+# S1b: the repoint / unlink suggestion on an open link
+# (`PLAN-oi-replan-received-links.md` S1b, AC-RL-20 to AC-RL-24)
+# ---------------------------------------------------------------------------
+
+
+def _lead_time(db, company_id: str, product: Product, *, days: int) -> ProductSupplier:
+    """The STATED source `ProjectSupplyService.lead_times` reads (`standard_lead_time_
+    days`) - no `SupplierPerformance` row is seeded, so the MEASURED source never
+    outranks it."""
+    supplier = Supplier(
+        id=_uid(),
+        company_id=company_id,
+        supplier_code=f"ZZT-{_uid()[:8]}",
+        supplier_name=f"{MARKER} lead supplier",
+    )
+    db.add(supplier)
+    db.flush()
+    row = ProductSupplier(
+        id=_uid(),
+        company_id=company_id,
+        product_id=product.id,
+        supplier_id=supplier.id,
+        standard_lead_time_days=days,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _line_for(
+    db, company_id: str, seeded: dict, *, product: Product, qty: str, delivery_date, line_no: int
+) -> ProjectSalesOrderLine:
+    """A fresh line on the seed's own AUTHORED order - the row this suggestion is
+    ABOUT, named the way `_line_on_authored_order` is, but for an explicit product
+    rather than a fresh one per call: a suggestion trigger needs several rows sharing
+    ONE product."""
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=seeded["authored"].id,
+        line_no=line_no,
+        product_id=product.id,
+        description=f"{MARKER} suggestion line",
+        qty=Decimal(qty),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("0"),
+        delivery_date=delivery_date,
+    )
+    db.add(line)
+    db.flush()
+    return line
+
+
+def _candidate_row(
+    db, company_id: str, *, product: Product, qty: str, delivery_date, so_number: str
+):
+    """A row on its OWN sales order (the adopted shape `_seed` already uses) - the
+    candidate a suggestion may name. Its own SO, its own inquiry, so `suggestion.
+    inquiry_no` / `so_number` genuinely trace back to IT rather than being read off
+    whatever inquiry the row under test happens to share."""
+    core = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=so_number, order_date=date(2026, 1, 1)
+    )
+    db.add(core)
+    db.flush()
+    order = ProjectSalesOrder(
+        id=_uid(),
+        company_id=company_id,
+        project_id=None,
+        so_id=core.id,
+        provisional_ref=so_number,
+        autocount_doc_no=so_number,
+        status="adopted",
+    )
+    db.add(order)
+    db.flush()
+    line = ProjectSalesOrderLine(
+        id=_uid(),
+        company_id=company_id,
+        project_sales_order_id=order.id,
+        line_no=1,
+        product_id=product.id,
+        description=f"{MARKER} candidate",
+        qty=Decimal(qty),
+        uom="UNIT",
+        unit_price=Decimal("10.00"),
+        amount=Decimal("0"),
+        delivery_date=delivery_date,
+    )
+    db.add(line)
+    db.flush()
+    inquiry = _inquiry_for(db, company_id, order)
+    row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=product.product_code,
+        qty=qty,
+        state=INQUIRY_RAISED,
+        delivery_date=delivery_date,
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    return order, inquiry, row
+
+
+def _early_link(
+    db, company_id: str, seeded: dict, inquiry, *, product, qty, delivery_date, expected_date,
+    line_no,
+):
+    """A row of `qty` wholly on ONE open purchase-order line whose `expected_date`
+    the caller states - the shape every S1b scenario starts from."""
+    line = _line_for(
+        db, company_id, seeded, product=product, qty=qty, delivery_date=delivery_date,
+        line_no=line_no,
+    )
+    po_line = _purchase_order(db, company_id, expected_date=expected_date)["line"]
+    # `_purchase_order` mints its OWN product - this link has to be on the SAME one
+    # the row (and the lead time) is seeded for.
+    po_line.product_id = product.id
+    po_line.qty_ordered = Decimal(qty)
+    db.flush()
+    row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=line.id,
+        item_code=product.product_code,
+        qty=qty,
+        state="partly_linked",
+        delivery_date=delivery_date,
+        po_line_id=po_line.id,
+    )
+    return row
+
+
+def test_link_suggests_repoint_to_soonest_open_row(api):
+    """AC-RL-20: an open link that lands well inside the product's lead-time window
+    suggests repointing to the SOONEST other linkable row of the same product with
+    open need - never a row on the SAME SO line - the earliest delivery date wins,
+    and a tie on that date is broken by the larger open need."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    # -- earliest date wins
+    product = _product(db, f"ZZT-SUGGEST-{_uid()[:6]}", f"{MARKER} suggest")
+    _lead_time(db, company_id, product, days=60)
+    row_x = _early_link(
+        db, company_id, seeded, inquiry, product=product, qty="158",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=201,
+    )
+    # W: on the SAME SO line as X - must never be offered, however early its own date.
+    _row(
+        db, company_id, inquiry, so_line_id=row_x.so_line_id, item_code=product.product_code,
+        qty="20", state=INQUIRY_RAISED, delivery_date=date(2026, 10, 1),
+        ack_state=ACK_ACKNOWLEDGED,
+    )
+    _order_y, inquiry_y, row_y = _candidate_row(
+        db, company_id, product=product, qty="90", delivery_date=date(2026, 12, 1),
+        so_number=f"ZZT-CANDY-{_uid()[:6]}",
+    )
+    _candidate_row(
+        db, company_id, product=product, qty="300", delivery_date=date(2027, 1, 15),
+        so_number=f"ZZT-CANDZ-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
+    [link] = wire_row["links"]
+    suggestion = link["suggestion"]
+
+    assert suggestion["kind"] == "repoint"
+    assert suggestion["inquiry_no"] == inquiry_y.inquiry_no
+    assert suggestion["item_code"] == product.product_code
+    assert suggestion["so_number"] == _order_y.autocount_doc_no
+    assert suggestion["delivery_date"] == "2026-12-01"
+    assert suggestion["open_qty"] == "90"
+
+    # -- tie on date: the LARGER open need wins
+    product2 = _product(db, f"ZZT-TIE-{_uid()[:6]}", f"{MARKER} tie")
+    _lead_time(db, company_id, product2, days=60)
+    row_x2 = _early_link(
+        db, company_id, seeded, inquiry, product=product2, qty="50",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=211,
+    )
+    _candidate_row(
+        db, company_id, product=product2, qty="40", delivery_date=date(2026, 12, 1),
+        so_number=f"ZZT-TIESMALL-{_uid()[:6]}",
+    )
+    _order_big, inquiry_big, _row_big = _candidate_row(
+        db, company_id, product=product2, qty="120", delivery_date=date(2026, 12, 1),
+        so_number=f"ZZT-TIEBIG-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body2 = client.get(LIST, params={"limit": 200}).json()
+    wire_row2 = next(r for r in body2["data"] if r["id"] == row_x2.id)
+    [link2] = wire_row2["links"]
+    suggestion2 = link2["suggestion"]
+
+    assert suggestion2["kind"] == "repoint"
+    assert suggestion2["inquiry_no"] == inquiry_big.inquiry_no
+    assert suggestion2["open_qty"] == "120"
+
+
+def test_link_suggests_unlink_when_no_sooner_row(api):
+    """AC-RL-21: the same early-link shape, with no candidate at all (a decoy of a
+    DIFFERENT product is seeded to prove it is not offered) - `suggestion.kind` reads
+    `unlink`."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    product = _product(db, f"ZZT-NOSOON-{_uid()[:6]}", f"{MARKER} no sooner")
+    _lead_time(db, company_id, product, days=60)
+    row_x = _early_link(
+        db, company_id, seeded, inquiry, product=product, qty="80",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=301,
+    )
+    other_product = _product(db, f"ZZT-OTHERP-{_uid()[:6]}", f"{MARKER} other product")
+    _candidate_row(
+        db, company_id, product=other_product, qty="10", delivery_date=date(2026, 11, 1),
+        so_number=f"ZZT-DECOY-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
+    [link] = wire_row["links"]
+
+    assert link["suggestion"]["kind"] == "unlink"
+
+
+def test_no_suggestion_inside_lead_time_or_received(api):
+    """AC-RL-22: a link inside the lead-time window (not enough slack to redirect and
+    still rebuy in time) states no suggestion, and neither does a fully received
+    link - however early it landed - even with a real candidate waiting."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    # -- inside the window: only 30 days of slack against a 60-day lead time.
+    product_a = _product(db, f"ZZT-INWIN-{_uid()[:6]}", f"{MARKER} in window")
+    _lead_time(db, company_id, product_a, days=60)
+    row_a = _early_link(
+        db, company_id, seeded, inquiry, product=product_a, qty="40",
+        delivery_date=date(2027, 4, 14), expected_date=date(2027, 3, 15), line_no=401,
+    )
+    _candidate_row(
+        db, company_id, product=product_a, qty="15", delivery_date=date(2026, 10, 1),
+        so_number=f"ZZT-INWINCAND-{_uid()[:6]}",
+    )
+
+    # -- fully received: goods are in, whatever the date says.
+    product_b = _product(db, f"ZZT-RECV-{_uid()[:6]}", f"{MARKER} received")
+    _lead_time(db, company_id, product_b, days=60)
+    row_b = _early_link(
+        db, company_id, seeded, inquiry, product=product_b, qty="25",
+        delivery_date=date(2027, 4, 1), expected_date=date(2025, 1, 1), line_no=402,
+    )
+    po_line_b = db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row_b.id).one().po_line_id
+    db.query(PurchaseOrderLine).filter(PurchaseOrderLine.id == po_line_b).update(
+        {"qty_received": Decimal("25")}
+    )
+    _candidate_row(
+        db, company_id, product=product_b, qty="30", delivery_date=date(2026, 10, 1),
+        so_number=f"ZZT-RECVCAND-{_uid()[:6]}",
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_a = next(r for r in body["data"] if r["id"] == row_a.id)
+    wire_b = next(r for r in body["data"] if r["id"] == row_b.id)
+    [link_a] = wire_a["links"]
+    [link_b] = wire_b["links"]
+
+    assert link_a["suggestion"] is None
+    assert link_b["received"] is True, "the fixture has to be genuinely received for this to mean anything"
+    assert link_b["suggestion"] is None
+
+
+def test_worklist_api_declares_link_suggestion(api):
+    """AC-RL-23 (first half): `OrderInquiryLinkOut` declares `suggestion` - through the
+    worklist ROUTE, so `response_model` is what is actually exercised."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    product = _product(db, f"ZZT-WIRE-{_uid()[:6]}", f"{MARKER} wire")
+    _lead_time(db, company_id, product, days=60)
+    row = _early_link(
+        db, company_id, seeded, inquiry, product=product, qty="15",
+        delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=501,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 200}).json()
+    wire_row = next(r for r in body["data"] if r["id"] == row.id)
+    [link] = wire_row["links"]
+
+    assert "suggestion" in link
+    assert link["suggestion"]["kind"] == "unlink"
+
+
+def test_suggestion_is_one_grouped_query_per_page(api):
+    """AC-RL-23 (second half): the suggestion is computed with ONE grouped query per
+    page, the same "five bulk maps, then a query-free `_serialize`" pattern the
+    worklist already uses - so the SQL statement count for a page of 5 suggestion-
+    bearing rows must not exceed a page of 1."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    connection = db.get_bind()
+
+    def _seed_early_row(tag: str, line_no: int):
+        product = _product(db, f"ZZT-{tag}-{_uid()[:6]}", f"{MARKER} {tag}")
+        _lead_time(db, company_id, product, days=60)
+        return _early_link(
+            db, company_id, seeded, inquiry, product=product, qty="50",
+            delivery_date=date(2026, 6, 1), expected_date=date(2025, 1, 1),
+            line_no=line_no,
+        )
+
+    _seed_early_row("QCOUNT-ONE", 601)
+    for i in range(5):
+        _seed_early_row(f"QCOUNT-FIVE{i}", 610 + i)
+    db.commit()
+
+    def _query_count(query: str) -> tuple:
+        # SELECT only: a SAVEPOINT / RELEASE the test's OWN transaction management
+        # emits per request is not a query the route issued, and counting it would
+        # measure the harness rather than the page's own read pattern.
+        calls: list = []
+
+        def _capture(conn, cursor, statement, *_a, **_kw):
+            if statement.strip().upper().startswith("SELECT"):
+                calls.append(statement)
+
+        event.listen(connection, "before_cursor_execute", _capture)
+        try:
+            response = client.get(LIST, params={"query": query, "limit": 50})
+        finally:
+            event.remove(connection, "before_cursor_execute", _capture)
+        assert response.status_code == 200, response.text
+        return response, calls
+
+    resp_one, calls_one = _query_count("ZZT-QCOUNT-ONE")
+    resp_five, calls_five = _query_count("ZZT-QCOUNT-FIVE")
+
+    assert len(resp_one.json()["data"]) == 1
+    assert len(resp_five.json()["data"]) == 5
+    assert len(calls_five) == len(calls_one), (
+        "the suggestion lookup must be one grouped query per page, not one per row: "
+        f"{len(calls_one)} statements for 1 row, {len(calls_five)} for 5"
+    )
 
 
 def test_an_unplaced_lines_row_reports_zero_taken_and_its_full_qty_as_remaining(api):

@@ -901,6 +901,121 @@ describe('AC-RL-02/03/04 (`PLAN-oi-replan-received-links.md` S1/S3): received an
   });
 });
 
+// RED until the coder builds S1b/S5 (`PLAN-oi-replan-received-links.md`) - the marks,
+// the popover and the move note none exist on this column yet (grepped before writing
+// these). Every failure here is "text/element not found", never a fixture bug.
+describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlink suggestion', () => {
+  it('a link with a REPOINT suggestion carries a muted "repoint" word, and tapping it opens the instruction', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-repoint',
+          qty: '158',
+          linked_qty: '158',
+          links: [
+            {
+              id: 'l1',
+              kind: 'spo',
+              document: 'SPO-2026/01-0143',
+              qty: '158',
+              suggestion: {
+                kind: 'repoint',
+                inquiry_no: 'OI-000539',
+                item_code: 'CB2805A-DIY',
+                so_number: 'SO420100',
+                delivery_date: '2026-12-01',
+                open_qty: '90',
+              },
+            },
+          ],
+        }),
+      ],
+      'spo_number',
+    );
+
+    const row = screen.getByTestId('row-row-repoint');
+    const mark = within(row).getByText('repoint');
+    // No reason text, no "early" (AC-RL-24) - the word alone in the cell.
+    expect(mark).toBeInTheDocument();
+
+    fireEvent.click(mark);
+    expect(
+      screen.getByText('Repoint to OI-000539 · CB2805A-DIY · needed 01/12/2026 · open 90'),
+    ).toBeInTheDocument();
+  });
+
+  it('a link with an UNLINK suggestion carries a muted "unlink" word, and tapping it opens the instruction', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-unlink',
+          qty: '80',
+          linked_qty: '80',
+          links: [
+            {
+              id: 'l1',
+              kind: 'po',
+              document: '202607-S0105',
+              qty: '80',
+              suggestion: { kind: 'unlink' },
+            },
+          ],
+        }),
+      ],
+      'po_number',
+    );
+
+    const row = screen.getByTestId('row-row-unlink');
+    const mark = within(row).getByText('unlink');
+    expect(mark).toBeInTheDocument();
+
+    fireEvent.click(mark);
+    expect(
+      screen.getByText('Unlink · no sooner inquiry needs this item'),
+    ).toBeInTheDocument();
+  });
+
+  it('a link with NO suggestion carries neither word', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-no-suggestion',
+          qty: '40',
+          linked_qty: '40',
+          links: [{ id: 'l1', kind: 'po', document: '202607-S0110', qty: '40', suggestion: null }],
+        }),
+      ],
+      'po_number',
+    );
+
+    const row = screen.getByTestId('row-row-no-suggestion');
+    expect(within(row).queryByText('repoint')).not.toBeInTheDocument();
+    expect(within(row).queryByText('unlink')).not.toBeInTheDocument();
+  });
+});
+
+describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): the move note reaches the backing-documents popover', () => {
+  it('a row AutoCount moved a document off - now carrying no links - still opens its popover, and the move note is shown', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-moved',
+        qty: '90',
+        linked_qty: '0',
+        links: [],
+        note: 'AutoCount moved 202606-S0018 to SO420103 on 16 Sep 2026',
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-moved');
+    fireEvent.click(within(row).getByTestId('backing-documents-trigger-row-moved'));
+
+    const dialog = screen.getByTestId('backing-documents-row-moved');
+    expect(
+      within(dialog).getByText('AutoCount moved 202606-S0018 to SO420103 on 16 Sep 2026'),
+    ).toBeInTheDocument();
+  });
+});
+
 describe('the PO and SPO columns (S3, owner 14 Sep 2026)', () => {
   it('AC-R-26/AC-D4: one PO link prints that number as the trigger, with no pill and no headline, and the SPO cell reads "awaiting shipment"', () => {
     const row = worklistRow({
