@@ -279,3 +279,19 @@ Owner SIGNED cluster 1a (`send_attachments` missing where NO real files exist - 
 - prod_sample/out-of-scope-445239409-chain-001-no-run-id.json: action_kinds: old n8n-side engine emitted a `send_attachments` action on every business turn regardless of content and left n8n to decide whether to actually send; this case has no real files (empty attachments / no tool_results carrying any), so the current engine correctly omits it - owner ruling, cluster 1a (signed JT 2026-09-16)
 - prod_sample/out-of-scope-477071889-chain-001-no-run-id.json: action_kinds: old n8n-side engine emitted a `send_attachments` action on every business turn regardless of content and left n8n to decide whether to actually send; this case has no real files (empty attachments / no tool_results carrying any), so the current engine correctly omits it - owner ruling, cluster 1a (signed JT 2026-09-16)
 - prod_sample/stock-denied-430229069-chain-001-no-run-id.json: action_kinds: old n8n-side engine emitted a `send_attachments` action on every business turn regardless of content and left n8n to decide whether to actually send; this case has no real files (empty attachments / no tool_results carrying any), so the current engine correctly omits it - owner ruling, cluster 1a (signed JT 2026-09-16)
+
+## Cluster 6 stock-allowed column, 4 cases signed 16 Sep 2026 (owner S6 ruling,
+relayed by the coordinator)
+
+The 4 prod_sample chains recorded under the OLD envelope-based stock-denial shape
+(contact 423729473 and 430229069, each recorded twice under a `demand-qty-*` and a
+`stock-denied-*` slug for the same underlying turn ids) now diverge on `branch_kind`
+because the ruling makes both contacts ALLOWED by default (no explicit
+`chatbot_stock_allowed=false` row seeded for them in the replay harness):
+
+- prod_sample/demand-qty-423729473-chain-001-no-run-id.json: branch_kind: stock allowance moved to respond_contacts.chatbot_stock_allowed, default on (S6 ruling); the respond.io field is ignored (signed JT 2026-09-16)
+- prod_sample/demand-qty-430229069-chain-001-no-run-id.json: branch_kind: stock allowance moved to respond_contacts.chatbot_stock_allowed, default on (S6 ruling); the respond.io field is ignored (signed JT 2026-09-16)
+- prod_sample/stock-denied-423729473-chain-001-no-run-id.json: branch_kind: stock allowance moved to respond_contacts.chatbot_stock_allowed, default on (S6 ruling); the respond.io field is ignored (signed JT 2026-09-16)
+- prod_sample/stock-denied-430229069-chain-001-no-run-id.json: branch_kind: stock allowance moved to respond_contacts.chatbot_stock_allowed, default on (S6 ruling); the respond.io field is ignored (signed JT 2026-09-16)
+
+**Signing this does NOT turn these 4 green, flagged rather than silently left** - measured this session: once the contact is allowed, the engine reaches the REAL fetch (`crm_inventory_stock_balance_list` / `crm_master_products_list`) and `test_turn_replay.py::_fake_call_tool` raises `AssertionError: replay case called tool ... with no recorded tool_results entry for it` BEFORE `_compare` (and therefore before any DIVERGENCES.md signature) ever runs - there is no recorded tool result for the corrected happy path, the same limitation `console/handpass1-001-stock-allowed-check-stock.json` (this session's other stock-allowance case) already documents. These 4 stay red until re-recorded from a live corrected run, or are retired as no-longer-representative of any reachable branch under the new default (the scenario "stock denied" now requires a contact ROW explicitly set to false, which none of the 4 originally-sampled prod contacts carry).
