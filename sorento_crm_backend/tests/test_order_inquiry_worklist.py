@@ -1398,9 +1398,15 @@ def _early_link(
     )
     po_line = _purchase_order(db, company_id, expected_date=expected_date)["line"]
     # `_purchase_order` mints its OWN product - this link has to be on the SAME one
-    # the row (and the lead time) is seeded for.
+    # the row (and the lead time) is seeded for. `_purchase_order`'s own `expected_date`
+    # kwarg only stamps the ORDER header, never the LINE `links_for_rows` actually reads
+    # (`PurchaseOrderLine.expected_date`), and its line is seeded `qty_received=15`
+    # unconditionally - both restated here so this really is the OPEN line at the
+    # caller's own `expected_date` every S1b scenario needs.
     po_line.product_id = product.id
     po_line.qty_ordered = Decimal(qty)
+    po_line.qty_received = Decimal("0")
+    po_line.expected_date = expected_date
     db.flush()
     row = _row(
         db,

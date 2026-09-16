@@ -38,6 +38,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from app.api.v1.external.contract import FIELDS_ADDED
+from app.models.inventory import Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrderLine, SPOAllocation
 from app.models.product import Product
@@ -886,11 +887,25 @@ def _mirror_row(env, *, core_line, product_id, qty: str, line_no: int = 1):
     row a `from_so_line_ref` move has to find (or fail to find) on the NEW line.
     `project_id=None` / `status="adopted"` mirrors `_seed()`'s own adopted shape in
     `test_order_inquiry_worklist.py` - an AutoCount order this suite never registers.
+
+    `autocount_doc_no` is stamped to the CORE order's own `so_number` - `claim_
+    identity`/`_row_so_number` reads `autocount_doc_no or provisional_ref` as a
+    row's "own SO" identity, the same one G7 dedication (`_dedication_for_target`)
+    exempts a candidate from being refused for. Left unset, that identity falls
+    back to the random `provisional_ref` below, which never matches the REAL
+    `so_number` the ingest's own ref-resolution claim was written under - so a
+    genuinely-its-own-SO placement onto the mirror row reads as "dedicated to a
+    different SO" and `place_on_po_allocations` refuses it (`follow_book_
+    repairing`'s own `except AppException` swallows the refusal silently).
     """
+    so_number = env.db.execute(
+        text("SELECT so_number FROM sales_orders WHERE id = :id"),
+        {"id": core_line.sales_order_id},
+    ).scalar()
     pso = ProjectSalesOrder(
         id=str(uuid.uuid4()), company_id=env.company_a, project_id=None,
         so_id=core_line.sales_order_id, provisional_ref=f"{MARKER}-PSO-{uuid.uuid4().hex[:8]}",
-        status="adopted",
+        autocount_doc_no=so_number, status="adopted",
     )
     env.db.add(pso)
     env.db.flush()
@@ -918,6 +933,59 @@ def _mirror_row(env, *, core_line, product_id, qty: str, line_no: int = 1):
     return pso, mirror_line, inquiry, row
 
 
+def _seed_ref_only_so_line(env, *, so_number: str, product_id: str, source_ref: str):
+    """A `_seed_so_line` row whose only purpose is giving `from_so_line_ref` something
+    real to resolve against - never competing demand of its own.
+
+    `write_line_ref_claims` (the ingest's own ref-resolution) opens a REAL claim
+    against whatever this line's `source_ref` resolves to, through `claim_placed_on_
+    po` - a genuine, correct side effect of AutoCount pairing, not a bug. But
+    `order_link_service`'s own claim-outstanding read (`_claims_of`: `line_status ==
+    'open' and qty_ordered - qty_delivered`) then reserves that claim's SHARE of the
+    PO line's capacity via G7 dedication (`_dedication_for_target`) - and `_seed_so_
+    line`'s own default (`qty_ordered=10, qty_delivered` unset) leaves that share
+    genuinely outstanding, competing with `TestLinkFollowsBookPairing`'s own 90 / 120
+    mirror-row need for capacity the fixture never meant to contest. Fully delivered
+    here so that claim's outstanding reads zero and drops out of dedication entirely.
+    """
+    so, line = _seed_so_line(
+        env, so_number=so_number, product_id=product_id, source_ref=source_ref,
+    )
+    line.qty_delivered = line.qty_ordered
+    env.db.commit()
+    return so, line
+
+
+def _pool_warehouse_ref(env) -> str:
+    """A genuine POOL location - a warehouse SOME OTHER warehouse's `pool_warehouse_
+    id` points at, the FK-based test `_pool_codes()` reads (R11, `PLAN-scm-oi-draft-
+    links.md`): the AUTOMATIC (`manual=False`) SPO candidate walk in `_candidates_
+    for_row` offers only a pool line, and `place_on_po_allocations` runs `follow_book_
+    repairing`'s own placement in automatic mode (`auto_trigger=trigger`, never
+    `None`). `env.warehouse_ref`'s plain depot is not a pool - nothing points its own
+    `pool_warehouse_id` at it - so an SPO allocation seeded there is SHOWN (visible in
+    the lightbox) but never OFFERED to the automatic walk, the same fixture shape
+    `test_order_inquiry_draft_links.py::_pooled` exists for.
+    """
+    pool = Warehouse(
+        id=str(uuid.uuid4()), company_id=env.company_a,
+        warehouse_code=f"{MARKER}POOL{uuid.uuid4().hex[:6]}",
+        warehouse_name=f"{MARKER} pool",
+    )
+    env.db.add(pool)
+    env.db.flush()
+    child = Warehouse(
+        id=str(uuid.uuid4()), company_id=env.company_a,
+        warehouse_code=f"{MARKER}SIB{uuid.uuid4().hex[:6]}",
+        warehouse_name=f"{MARKER} sub-inventory",
+        pool_warehouse_id=pool.id,
+    )
+    env.db.add(child)
+    env.db.flush()
+    env.db.commit()
+    return env._link("warehouses", pool.id, "POOL")
+
+
 class TestLinkFollowsBookPairing:
     """AC-RL-40 to AC-RL-46. `follow_book_repairing` is the hook `ingest.py` calls
     after the existing relink hook for POs and beside the forward-match hook for
@@ -928,11 +996,11 @@ class TestLinkFollowsBookPairing:
     def test_po_line_ref_moved_follows_to_new_line_row(self, env):
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
-        so_b, core_line_b = _seed_so_line(
+        so_b, core_line_b = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
@@ -986,12 +1054,12 @@ class TestLinkFollowsBookPairing:
         free (`_linked_by_target` reads no link naming it)."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
         # SO line B exists in the core book but has NO project mirror / OI row.
-        _seed_so_line(
+        _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
@@ -1032,11 +1100,11 @@ class TestLinkFollowsBookPairing:
         re-push of an ALREADY-REF'D allocation, not the supersede path."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
-        so_b, core_line_b = _seed_so_line(
+        so_b, core_line_b = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
@@ -1047,7 +1115,8 @@ class TestLinkFollowsBookPairing:
             env, core_line=core_line_b, product_id=product_id, qty="20",
         )
 
-        line = _spo_line(env, from_so_line_ref=ref_a, qty_ordered=12)
+        pool_ref = _pool_warehouse_ref(env)
+        line = _spo_line(env, from_so_line_ref=ref_a, qty_ordered=12, warehouse_ref=pool_ref)
         record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
         res = env.post(INGEST_SPO, [record])
         assert res.json()["records"][0]["outcome"] == "created", res.text
@@ -1060,7 +1129,10 @@ class TestLinkFollowsBookPairing:
         ))
         env.db.commit()
 
-        repush_line = _spo_line(env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=12)
+        repush_line = _spo_line(
+            env, ref=line["source_ref"], from_so_line_ref=ref_b, qty_ordered=12,
+            warehouse_ref=pool_ref,
+        )
         repush = dict(record, lines=[repush_line])
         res2 = env.post(INGEST_SPO, [repush])
         assert res2.json()["records"][0]["outcome"] == "updated", res2.text
@@ -1084,16 +1156,20 @@ class TestLinkFollowsBookPairing:
         that changed on the SAME row - `_supersede_xlsx_rows` "records the
         superseded row's ref against the new row" (the plan's own S5 facts)."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
-        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        # A genuine POOL location, not `env.warehouse_ref`'s plain depot - the automatic
+        # SPO walk (R11) offers only a pool line, and the placement onto row B runs in
+        # automatic mode (`follow_book_repairing`'s own `auto_trigger=trigger`).
+        pool_ref = _pool_warehouse_ref(env)
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=pool_ref)
         wh_code = env.db.execute(
             text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": wh_id}
         ).scalar()
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
-        so_b, core_line_b = _seed_so_line(
+        so_b, core_line_b = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
@@ -1115,7 +1191,7 @@ class TestLinkFollowsBookPairing:
         ))
         env.db.commit()
 
-        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=10, from_so_line_ref=ref_b)
+        line = _spo_line(env, warehouse_ref=pool_ref, qty_ordered=10, from_so_line_ref=ref_b)
         record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
         res = env.post(INGEST_SPO, [record])
         assert res.json()["records"][0].get("lines", {}).get("superseded") == 1, res.text
@@ -1134,11 +1210,11 @@ class TestLinkFollowsBookPairing:
         received document - the link is left exactly where it is."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
-        _seed_so_line(
+        _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
@@ -1181,11 +1257,11 @@ class TestLinkFollowsBookPairing:
         same way an automatic one does - the same shape as AC-RL-40."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a, ref_b = _ref("SOLA"), _ref("SOLB")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
-        so_b, core_line_b = _seed_so_line(
+        so_b, core_line_b = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_b,
         )
@@ -1226,7 +1302,7 @@ class TestLinkFollowsBookPairing:
         the link with the `AutoCount removed` note, and places nothing."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a = _ref("SOLA")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
@@ -1265,7 +1341,7 @@ class TestLinkFollowsBookPairing:
         all - no note, the same link untouched."""
         product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         ref_a = _ref("SOLA")
-        so_a, core_line_a = _seed_so_line(
+        so_a, core_line_a = _seed_ref_only_so_line(
             env, so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}", product_id=product_id,
             source_ref=ref_a,
         )
