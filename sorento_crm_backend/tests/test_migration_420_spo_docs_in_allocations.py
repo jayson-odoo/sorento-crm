@@ -709,3 +709,28 @@ def test_every_referrer_the_delete_checks_is_indexed_first():
             # The whole upgrade still runs on top of it.
             module.upgrade()
             assert _index_names(db) >= wanted
+
+
+def test_migration_439_indexes_a_database_that_stamped_420_before_the_fix():
+    """Prod ran 420 before PR #353 added the indexes to it, so 439 carries the same step."""
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = _MIGRATION_PATH.with_name("439_line_referrer_indexes.py")
+    spec = importlib.util.spec_from_file_location("zzt_migration_439", path)
+    m439 = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m439)
+    wanted = {name for _s, _t, _c, name in _migration()._LINE_REFERRER_INDEXES}
+
+    with blank_session() as db:
+        scm = db.execute(text("SELECT current_schema()")).scalar() + "_scm"
+        for name in wanted:
+            db.execute(text(f'DROP INDEX "{scm}"."{name}"'))
+        context = MigrationContext.configure(connection=db.connection())
+        with Operations.context(context):
+            m439.upgrade()
+            assert _index_names(db) >= wanted
+            m439.downgrade()
+            assert not (_index_names(db) & wanted)
+            m439.upgrade()
+            assert _index_names(db) >= wanted
