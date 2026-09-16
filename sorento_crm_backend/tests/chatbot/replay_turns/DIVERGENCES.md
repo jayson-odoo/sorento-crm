@@ -397,3 +397,59 @@ Owner SIGNED the clarify_menu-removal cluster (R1): every case below showed ONLY
 - console/owner-15sep-chain-013-console-check-1789444091.json: tools: the old engine offered a domain-roster clarify_menu ('orders'/'stock'/'product attachments', a pending with NO tool call) before ever fetching data; the current engine treats the same ask as a business_query and fetches directly on the first turn (owner ruling: a narrowing question is business_query not clarify_menu, R1 coder report, corpus measured) - the recorded turn's `pending`/`tools` reflect the retired two-step menu-then-fetch path, and where the same step's `entity_ids` also differ, that is the direct/narrower first fetch this ruling produces, not a second divergence (signed JT 2026-09-16, narrowing-question-business-query)
 - console/owner-15sep-chain-014-console-check-1789444723.json: pending: the old engine offered a domain-roster clarify_menu ('orders'/'stock'/'product attachments', a pending with NO tool call) before ever fetching data; the current engine treats the same ask as a business_query and fetches directly on the first turn (owner ruling: a narrowing question is business_query not clarify_menu, R1 coder report, corpus measured) - the recorded turn's `pending`/`tools` reflect the retired two-step menu-then-fetch path, and where the same step's `entity_ids` also differ, that is the direct/narrower first fetch this ruling produces, not a second divergence (signed JT 2026-09-16, narrowing-question-business-query)
 - console/owner-15sep-chain-014-console-check-1789444723.json: tools: the old engine offered a domain-roster clarify_menu ('orders'/'stock'/'product attachments', a pending with NO tool call) before ever fetching data; the current engine treats the same ask as a business_query and fetches directly on the first turn (owner ruling: a narrowing question is business_query not clarify_menu, R1 coder report, corpus measured) - the recorded turn's `pending`/`tools` reflect the retired two-step menu-then-fetch path, and where the same step's `entity_ids` also differ, that is the direct/narrower first fetch this ruling produces, not a second divergence (signed JT 2026-09-16, narrowing-question-business-query)
+
+## B5 fallout triage table, 16 Sep 2026 (tester, this session)
+
+Starting point (post-merge of coder 8's review-fix round, head `7d85b68e3`, before this
+session's signing): `pytest tests/chatbot/test_turn_replay.py` = **156 failed, 38 passed**.
+After the two ruled clusters below: **117 failed, 77 passed**. Method: parsed every
+`step N <field>: expected X, got Y` line out of a `--tb=short` run (not the truncated
+`--tb=line` form) into `(case_id, step, field)` tuples, then clustered by the concrete
+`(expected, actual)` shape per field - not just the field name, per the coordinator's
+"same underlying cause" instruction.
+
+| cluster | field(s) | occurrences | files | disposition |
+| --- | --- | --- | --- | --- |
+| outstanding-report scope tool switch | tools, entity_ids, pending, branch_kind | 36 lines | 16 | **SIGNED** (owner ruling, see section above) |
+| narrowing-question-is-business_query | pending, tools, entity_ids | 56 lines | 23 | **SIGNED** (owner ruling R1, see section above) |
+| entity_ids undercount, no other field fails | entity_ids only | ~90 lines | 24 | **T4 root cause, not signable** - see below |
+| `tools` args missing `product_ids`/`customer_ids` | tools (+ downstream entity_ids) | ~81 lines | overlaps T4 | **Likely the SAME T4 root cause** - see below |
+| composite/cascading multi-cause chains | all 5 fields, dozens of steps each | remainder | `owner-15sep-chain-{003,004,005,...}`, most `prod_sample/*` chains | **PENDING-LIVE-RERUN.md** - see that file |
+
+### T4 diagnosed, not fixed this session (harness gap, tester's to fix - captain's priority 6)
+
+**Measured root cause for the single biggest remaining cluster**: a case file recorded
+from a REAL prod conversation captures its first turn's tool call with `product_ids`
+(or another entity-id arg) carrying MORE uuids than that turn's own `resolutions` field
+resolves - e.g. `console/case-001` resolves 3 tokens (`MWT5727SS-CR`, `MHS1028`,
+`MSK11A-QT`) to 3 uuids, but the recorded `crm_inventory_stock_balance_list` call sent
+**5** `product_ids`. The other 2 came from the SOURCE contact's session `focus`
+(`entity_op: replace_combine` merges new resolutions into whatever focus already
+existed) at the moment that turn was recorded - real prior conversation history this
+lane's corpus doesn't capture as a separate turn. `test_turn_replay.py::_seed_contact`
+creates a brand-new contact row with `session_vars = '{}'`, so the replay engine only
+ever sees the 3 freshly-resolved ids and the recorded 5-id call is structurally
+unreachable - not a behavior change, an environment gap. This is exactly captain's T4
+("chain step 1 starts from EMPTY session_vars in the harness; the recorder must capture
+the contact's session as of the FIRST recorded turn... and the harness must seed it
+before step 1 runs"), confirmed on 3 independent samples this session
+(`console/case-001`, `console/case-002`, `console/case-051`, `contract/line-001`): every
+`entity_ids` "extra" uuid in `expected` traces to zero matches in that turn's own
+`resolutions`.
+
+**Scope wider than originally scoped**: 24 files fail on `entity_ids` ALONE (pure T4
+signal - `console/case-{001,002,007,016,018,019,020,021,023,024,037,044,045,051,052,
+053,054,055,056}`, `contract/line-001-stock-by-location.json`,
+`prod_sample/business-query-{445239384,477071889}`,
+`prod_sample/out-of-scope-{423755030,445239384}`). The `tools` args-key-diff cluster
+this session also measured (`(extra=(), missing=('product_ids',))` etc., ~64+ occurrences
+before the two signed clusters removed some overlap) is very likely the SAME root cause
+wearing a different field name: if the CURRENT engine's call ends up with an EMPTY
+`product_ids` list (no carried focus to add to), some call-sites may omit the key
+entirely rather than send `product_ids: []` - not verified line-by-line this session,
+flagged for whoever implements T4 to re-measure after the fix, since a real fix should
+collapse both clusters together, not just the entity_ids-only one.
+
+**Not fixed this session** - captain's own priority order puts T4 after B2/B3/B4/S9/S4/
+S1/S10/S2; flagging the wider-than-scoped blast radius rather than jumping the queue
+without a word.
