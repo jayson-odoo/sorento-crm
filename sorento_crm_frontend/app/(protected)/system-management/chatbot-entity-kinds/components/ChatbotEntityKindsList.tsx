@@ -129,6 +129,7 @@ export default function ChatbotEntityKindsList() {
     columns,
     getRowId: (row) => row.code,
     getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
   });
 
   const openCreate = () => {
