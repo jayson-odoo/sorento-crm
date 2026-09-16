@@ -17,7 +17,7 @@ hand edit, never deliver a fix (a body/config fix ships as its own migration).
 database with none (CI's blank schema).
 
 Revision ID: oihe_0001_seed_handover
-Revises: ptag_0011_line_promo
+Revises: ptag_0012_data_change_cache
 Create Date: 2026-09-16
 """
 from __future__ import annotations
@@ -29,7 +29,7 @@ from alembic import op
 
 
 revision = "oihe_0001_seed_handover"
-down_revision = "ptag_0011_line_promo"
+down_revision = "ptag_0012_data_change_cache"
 branch_labels = None
 depends_on = None
 
