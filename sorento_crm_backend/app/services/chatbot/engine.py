@@ -1318,6 +1318,11 @@ def _run_stages(  # noqa: PLR0915
     )
     turn_trace.add("prompt_text", {"text": user_block})
 
+    # The routing default lands ONCE, here, after the last parse and before the access
+    # read (finding 2b): every reader downstream - access, the lanes, the trace - sees
+    # the same `suggested_agent`.
+    verdict = turn_runtime.with_routing_agent_default(verdict)
+
     # -- access, C APPLY, D ROUTE ------------------------------------------- #
     stage[0] = "access"
     hard_failure: TurnResult | None = None
