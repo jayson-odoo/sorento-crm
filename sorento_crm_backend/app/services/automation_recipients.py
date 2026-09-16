@@ -31,6 +31,9 @@ def resolve_recipients(
     - include_promotion_owner: bool
     - include_assigned_cs_pic: bool  (needs source_id; resolves the active
         customer-service form-SLA assignee for that entity)
+    - include_actor: bool  (Cc the person who raised the triggering event, read
+        from `promotion_context["actor"]["email"]`; a trigger with no actor adds
+        nothing)
     - extra_emails: list[str]
     """
     config = config or {}
@@ -95,6 +98,11 @@ def resolve_recipients(
             )
             if pic is not None:
                 add(getattr(pic, "email", None), getattr(pic, "name", None), str(getattr(pic, "id")))
+
+    if config.get("include_actor") and promotion_context:
+        actor = promotion_context.get("actor") or {}
+        if actor.get("email"):
+            add(actor.get("email"), actor.get("name"))
 
     if config.get("include_promotion_owner") and promotion_context:
         owner_id = (promotion_context.get("promotion") or {}).get("created_by")

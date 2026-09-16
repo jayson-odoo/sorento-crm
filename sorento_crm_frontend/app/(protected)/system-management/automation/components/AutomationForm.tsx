@@ -100,12 +100,12 @@ export default function AutomationForm({ open, onOpenChange, automation, onSaved
         typeof cfg?.days_before === 'number' ? cfg.days_before : (savedDefault ?? 7),
       );
       setEmailTemplateId(automation.email_template_id);
-      setRecipientConfig({
-        user_ids: automation.recipient_config?.user_ids ?? [],
-        role_ids: automation.recipient_config?.role_ids ?? [],
-        include_promotion_owner: automation.recipient_config?.include_promotion_owner ?? false,
-        extra_emails: automation.recipient_config?.extra_emails ?? [],
-      });
+      // Spread the fetched config over the defaults rather than listing keys (AC-H16
+      // round-trip): a hand-picked list silently drops any key the type declares that
+      // this list forgets to name - `include_assigned_cs_pic` and `include_actor` both
+      // hydrated `false` regardless of what was saved, and an unchanged Save then wrote
+      // that `false` back for real.
+      setRecipientConfig({ ...emptyRecipients, ...(automation.recipient_config ?? {}) });
       setGroupMatches(automation.group_matches ?? true);
       setScheduleType(automation.schedule_type);
       setRunTime(automation.run_time ? automation.run_time.slice(0, 5) : '09:00');

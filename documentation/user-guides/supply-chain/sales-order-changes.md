@@ -163,3 +163,5 @@ All on SO419772 / B2155-NL-BLUE, own location BRW-IB, pool BRW, unless another o
 * [Upload the data a reorder plan is built from](upload-plan-data.md) (the sales order book this
   flow reacts to)
 * [Run a reorder plan](run-a-reorder-plan.md)
+* [Order inquiry handover email to purchasing](order-inquiry-handover-email.md) - the parallel-run
+  email this same Confirm/Amend triggers, separate from the in-app notification above
