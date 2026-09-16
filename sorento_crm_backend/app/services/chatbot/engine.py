@@ -2003,7 +2003,29 @@ def _write_episode(
     db: Session, *, contact_respond_id: str, before: dict[str, Any], turn_id: str
 ) -> None:
     """AC-1546: the topic this turn RESET is the one that just closed, so it is the one
-    written. Never mid-topic, and never the topic this turn is opening."""
+    written. Never mid-topic, and never the topic this turn is opening.
+
+    **It writes on the TURN's session, and `memory.write_episode` commits it.** Review
+    asked for a session of its own, the way the escalation lane owns one
+    (`escalation_services.production_session`); both ways of doing that were measured on
+    16 Sep 2026 and neither works today:
+
+    * An own session NESTED inside this stage's block loses the write in every test.
+      `tests/chatbot/conftest.py::session_factory` binds every session to ONE connection
+      with `join_transaction_mode="create_savepoint"`, so an inner session's commit only
+      releases into the enclosing session's savepoint and the enclosing session's close
+      rolls it back. Probed directly: the frame was written, read back as 1 immediately
+      after, and 0 at the end of the test. Production is unaffected (each `SessionLocal`
+      takes its own connection), but the whole engine suite would be red.
+    * Moving the call out of the stage block instead reintroduces the bug this line was
+      put here to fix: a turn whose fetch failed or whose lane refused must still close
+      the topic it ended, which is why the write sits where APPLY decides `topic_reset`
+      rather than on the answer arm.
+
+    Trigger for revisiting: a test fixture that gives each session its OWN connection.
+    At that point this takes `session_factory` and opens one through `_session`, and the
+    nesting stops mattering.
+    """
     focus_before = before.get("focus") if isinstance(before.get("focus"), dict) else {}
     domains = focus_before.get("domains") or []
     domain = domains[0] if domains else None
