@@ -59,12 +59,14 @@ def _prompt():
 
 
 def _bodies():
-    from app.services.chatbot_parser_prompt import (
-        SEMANTIC_PARSER_PROMPT,
-        SEMANTIC_PARSER_PROMPT_SLIM,
-    )
+    """AC-1592/D8 port (like `test_parser_warehouse_arrival_cue.py`'s SLIM retirement):
+    `SEMANTIC_PARSER_PROMPT_SLIM` is retired outright ("one prompt lineage (v3 shape),
+    v1 and SLIM retired") - there is no second body left to assert on, so every test
+    below that loops `for name, body in _bodies().items()` naturally becomes a
+    single-body (FULL-only) check without needing its own rewrite."""
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
 
-    return {"FULL": SEMANTIC_PARSER_PROMPT, "SLIM": SEMANTIC_PARSER_PROMPT_SLIM}
+    return {"FULL": SEMANTIC_PARSER_PROMPT}
 
 
 # --------------------------------------------------------------------------- #
@@ -74,9 +76,10 @@ def _bodies():
 
 class TestBothPublishedBodiesCarryTheVocabulary:
     def test_the_addendum_is_appended_to_both_bodies(self) -> None:
-        """Both texts ship: prod's `production` label is on the FULL body and dev's is on
-        the SLIM one, so a vocabulary published to only one is taught to only one
-        environment - which reads as "works on dev, silent in prod"."""
+        """One body ships now (D8, AC-1594: SLIM retired) - `_bodies()` carries only
+        `FULL`, so this loop is a single-body check; kept generic (not rewritten as a
+        bare assertion) so a future second lineage, if one is ever added, is covered
+        for free."""
         _mod, addendum = _prompt()
         for name, body in _bodies().items():
             assert body.endswith(addendum), (

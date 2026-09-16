@@ -176,3 +176,60 @@ def _no_real_mcp_calls(monkeypatch):
         )
 
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", _forbidden)
+
+
+@pytest.fixture(autouse=True)
+def _stub_casual_llm(request, monkeypatch):
+    """T3 (coordinator ruling, 16 Sep 2026): no test under `tests/chatbot/` may reach a
+    real LLM provider through the `low_signal` lane's clarifier.
+
+    Measured root cause of the largest single cluster in the 16 Sep full-suite triage
+    (`documentation/plans/chatbot/evidence/turn-rearch/full-suite-triage-16sep.md`,
+    ~78 occurrences): `lanes.casual.resolve_clarifier_config` raises `ClarifierError(
+    "no API key configured for provider ...")` in every test environment (the private
+    test DB starts with no `ai_assistant_config` row), which `engine.py`'s own setup-
+    error branch turns into the SAME generic `CLARIFIER_UNAVAILABLE_REPLY` ("Sorry, I
+    can't reply to that right now...") a real provider outage would produce - 42 of
+    those in `test_worlds.py` alone (`... failed at casual_llm: None`), the rest as
+    that literal sentence surfacing where `test_outstanding_lane.py`,
+    `test_pass5_item2_member_offer_business_query_filter_route.py` and the replay gate
+    (`test_turn_replay.py`) expected a real reply.
+
+    Stubs BOTH halves of the call - config resolution AND the provider round trip
+    itself, which `resolve_clarifier_config`'s own docstring treats as one logical
+    call split only so the DB session can close before the provider I/O - with a
+    deterministic fake that never touches a real provider or the AI-assistant config
+    table. Returns a PLAIN STRING with no `{` in it (`central_exchange`'s own fourth
+    arm: no brace anywhere returns the raw string unchanged), so `reply_text` hands it
+    straight back as the reply text - a real, inspectable value a test can assert on,
+    not a placeholder that happens to render blank.
+
+    A test that means to exercise the clarifier's OWN setup or call failure paths (the
+    unavailable-reply sentence, `ClarifierError` handling) opts out with
+    `@pytest.mark.real_casual_llm` - it still reaches no real network (nothing else in
+    this fixture changes), it just does not get the deterministic success stub.
+    """
+    if request.node.get_closest_marker("real_casual_llm") is not None:
+        yield None
+        return
+
+    from app.services.chatbot.lanes import casual as casual_mod
+
+    calls: list[dict[str, Any]] = []
+
+    def _fake_resolve_clarifier_config(db, *, override_version_id=None):
+        return casual_mod.ClarifierConfig(
+            system_prompt="ZZT stub clarifier system prompt",
+            prompt_version=None,
+            provider="zzt-stub",
+            model="zzt-stub-model",
+            api_key="ZZT-stub-api-key",
+        )
+
+    def _fake_call_clarifier(config, user_prompt):
+        calls.append({"config": config, "user_prompt": user_prompt})
+        return "ZZT stubbed casual reply."
+
+    monkeypatch.setattr(casual_mod, "resolve_clarifier_config", _fake_resolve_clarifier_config)
+    monkeypatch.setattr(casual_mod, "call_clarifier", _fake_call_clarifier)
+    yield calls

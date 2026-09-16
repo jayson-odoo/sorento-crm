@@ -502,6 +502,20 @@ def _record_row(row: dict[str, Any], *, db_label: str, switches: dict[str, Any])
         ),
         "access": _access_of(trace),
         "resolutions": _derive_resolutions(verdict, tool_events),
+        # T4 (coordinator ruling, 16 Sep 2026): the "received" stage's own `raw.
+        # session_vars` - what the contact's REAL session held the instant this turn
+        # started, before this turn's own write. `test_turn_replay.py`'s harness seeds
+        # a brand-new contact with `session_vars = "{}"` for a chain's first step, so a
+        # recorded call that carried ids/focus from the contact's PRIOR real
+        # conversation (never itself a turn in this file) was structurally unreachable
+        # in replay - measured as the single largest remaining cluster after the two
+        # signed rulings (`replay_turns/DIVERGENCES.md`'s "T4 diagnosed" section, 24
+        # files failing on `entity_ids` alone). Present on every turn in a chain, not
+        # only the first - the harness decides which one it actually needs (step 1
+        # only; later steps already carry state forward via `session_patch`).
+        "received_session_vars": _scrub_nested_pii(
+            (_stage(trace, "received") or {}).get("raw", {}).get("session_vars")
+        ),
         "expected": _expected_of(row, trace, tool_events),
         "switches": switches,
     }

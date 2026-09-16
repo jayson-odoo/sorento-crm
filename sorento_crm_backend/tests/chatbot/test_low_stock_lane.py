@@ -37,7 +37,6 @@ from typing import Any
 
 import pytest
 
-from app.services.chatbot import contracts
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business.services import FetchServices
 from tests.chatbot.test_engine import CONTACT_ID, _parser_output, seeded  # noqa: F401
@@ -165,8 +164,15 @@ class TestDomainWiring:
     def test_inventory_domain_spec_lists_the_tool_but_not_first(self) -> None:
         """AC-62's own emphasis: `tools += (...)`, NOT `tools[0]`. `select_tool` falls back
         to the first-listed tool for a domain, so putting this one in front would send
-        every plain stock ask ("how many CB100 in BRW") into a full reorder run."""
-        spec = contracts.DOMAIN_SPEC["inventory"]
+        every plain stock ask ("how many CB100 in BRW") into a full reorder run.
+
+        AC-1592/B2 port: `contracts.DOMAIN_SPEC` is deleted (AC-1594); the same data is
+        `turn.policy_rows.DEFAULT_DOMAIN_ROWS`, read through `turn.policy.default_policy()`
+        the way every pure `lanes/business/` reader with no live `db` session does
+        (`default_policy`'s own docstring)."""
+        from app.services.chatbot.turn.policy import default_policy
+
+        spec = default_policy().domain("inventory")
         assert TOOL in spec.tools, f"inventory's tool pool must include {TOOL}: {spec.tools}"
         assert spec.tools[0] != TOOL, (
             f"{TOOL} must not be inventory's default tool - a plain stock ask would run a "
@@ -174,7 +180,11 @@ class TestDomainWiring:
         )
 
     def test_inventory_domain_spec_carries_the_intent_and_switch_words(self) -> None:
-        spec = contracts.DOMAIN_SPEC["inventory"]
+        """AC-1592/B2 port: see the sibling test above for the DOMAIN_SPEC -> policy
+        rationale."""
+        from app.services.chatbot.turn.policy import default_policy
+
+        spec = default_policy().domain("inventory")
         assert "low_stock_report" in spec.intents, (
             f"inventory's intents must include low_stock_report: {spec.intents}"
         )
@@ -193,8 +203,21 @@ class TestDomainWiring:
         )
 
     def test_domain_claimed_tools_lists_the_tool(self) -> None:
-        assert TOOL in contracts.DOMAIN_CLAIMED_TOOLS, (
-            f"DOMAIN_CLAIMED_TOOLS must claim {TOOL} or the pinned-set CI test fails"
+        """AC-1592/B2 port: `contracts.DOMAIN_CLAIMED_TOOLS` is deleted (AC-1594) with no
+        direct successor - `contracts.py`'s own retirement comment says the data is
+        `chatbot_domains` now, read as `turn.policy.Policy`, and names `lanes/business/
+        fetch.select_tool` / `CHATBOT_READ_ONLY_TOOLS` as the tool-view replacements for
+        OTHER retired views, not this one specifically. The equivalent claim for THIS
+        single tool is inventory's own domain row claiming it - the same fact the sibling
+        `test_inventory_domain_spec_lists_the_tool_but_not_first` above already asserts;
+        kept as its own test (not merged) since it is pinned separately and a future
+        multi-domain claimed-tools view, if one is ever added, should replace this
+        specific assertion rather than the sibling's narrower one."""
+        from app.services.chatbot.turn.policy import default_policy
+
+        spec = default_policy().domain("inventory")
+        assert TOOL in spec.tools, (
+            f"inventory's domain row must claim {TOOL} or the pinned-set CI test fails: {spec.tools}"
         )
 
 

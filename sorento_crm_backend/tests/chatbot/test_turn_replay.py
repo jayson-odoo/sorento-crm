@@ -514,6 +514,20 @@ def test_replay(case_path: Path, session_factory, stub_parser, monkeypatch) -> N
 
     contact_id = ((turns[0].get("envelope") or {}).get("contact") or {}).get("id") or 999999999
     _seed_contact(session_factory, contact_id=contact_id)
+    # T4 (coordinator ruling, 16 Sep 2026): `_seed_contact` above leaves a brand-new
+    # contact's `session_vars` at `{}`. A recorded chain's step 1 ran against the
+    # SOURCE contact's REAL prior session (never itself a recorded turn in this file)
+    # - `scripts/chatbot_record_turn.py` now captures that as `received_session_vars`
+    # (the "received" trace stage's own `raw.session_vars`, PII-scrubbed). Writing it
+    # here, BEFORE step 1, is what makes a step-1 tool call that carried ids/focus
+    # from real prior conversation state reachable in replay - measured as the single
+    # largest remaining cluster after the two signed DIVERGENCES.md rulings (24 files
+    # failing on `entity_ids` alone). A case recorded before this field existed
+    # (`received_session_vars` absent/null) is a no-op, unchanged from before - same
+    # pattern `_apply_switches` already uses for a pre-existing field.
+    chain_start_session_vars = turns[0].get("received_session_vars")
+    if chain_start_session_vars:
+        _write_session_vars(session_factory, contact_id=contact_id, payload=chain_start_session_vars)
 
     failures: list[str] = []
     for step_no, turn in enumerate(turns, start=1):

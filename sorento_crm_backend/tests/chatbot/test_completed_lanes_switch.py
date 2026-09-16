@@ -13,6 +13,24 @@ the second condition the CRM starts answering the instant it deploys and the n8n
 to land in the same window or the lane runs twice.
 
 Nothing here reaches an LLM, n8n or respond.io.
+
+Retired 16 Sep 2026 (AC-1592, coordinator ruling, "S3 ruling superseded, contract 73"):
+`TestEndToEndThroughRunTurn.test_default_empty_delegates_low_signal_and_runs_no_clarifier`
+outright, and the `result.delegate == "low_signal"` assertion (only) out of
+`.test_an_unknown_kind_in_the_row_does_not_enable_anything`. Per the S3 rulings section of
+`chatbot-turn-rearch-acceptance-criteria.md` ("`chatbot_completed_lanes` no longer gates the
+turn ... contract line 73 is superseded"), `engine.run_turn` always completes in-process now
+- `result.delegate` is always `None` (measured), whatever the switch says. The plan doc's
+own words are "column stays unread until S6", but this session measured `engine.py:2649`
+still CALLS `enabled_lanes_from(row.chatbot_completed_lanes)` (so the "not a branch kind"
+warning log the kept half of `test_an_unknown_kind_in_the_row_does_not_enable_anything`
+still asserts is real) - only the RESULT of that call is no longer acted on. No end-to-end
+replacement is named for the retired half: there is nothing to gate on yet until S6 wires a
+new reader, at which point that reader needs its own test. `TestTheTwoConditions`,
+`TestParsingTheSettingsValue`, `TestTheSettingsSurface` and
+`TestAnExplicitNullResetsRatherThanCrashes` are NOT retired - they call `delegate_for`/
+`enabled_lanes_from` directly (still real, still-imported functions in `app.services.
+chatbot.delegate`), not through `run_turn`, and stayed green.
 """
 from __future__ import annotations
 
@@ -121,39 +139,6 @@ class TestEndToEndThroughRunTurn:
         row.chatbot_completed_lanes = lanes
         object_session(row).commit()
 
-    def test_default_empty_delegates_low_signal_and_runs_no_clarifier(
-        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
-    ):
-        """Default `[]`: the turn goes to n8n exactly as it did before S4, and the
-        clarifier is never called - a lane that is switched off must not spend a model
-        call on an answer nobody reads."""
-        assert (system_settings_row.chatbot_completed_lanes or []) == []
-        self._casual(stub_parser, stub_access)
-
-        from app.services.chatbot.lanes import casual
-
-        called: list[str] = []
-        monkeypatch.setattr(
-            casual,
-            "resolve_clarifier_config",
-            lambda db, **_: called.append("config") or object(),
-        )
-        monkeypatch.setattr(
-            casual, "call_clarifier", lambda config, prompt: called.append("call") or "{}"
-        )
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "low_signal"
-        assert result.delegate == "low_signal"
-        assert result.reply is None
-        assert result.actions == []
-        assert called == [], "the clarifier ran for a lane that is switched off"
-
-        row = _turn_row(session_factory, result.turn_id)
-        assert row.status == "delegated"
-        assert row.stage == "routed"
-
     def test_enabling_the_lane_completes_it_in_the_crm(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
     ):
@@ -185,15 +170,18 @@ class TestEndToEndThroughRunTurn:
     def test_an_unknown_kind_in_the_row_does_not_enable_anything(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access, caplog
     ):
-        """A typo in the settings form leaves the turn delegating, and says so in the log
-        rather than failing the turn."""
+        """A typo in the settings form does not crash the turn, and says so in the log.
+
+        `assert result.delegate == "low_signal"` was retired 16 Sep 2026 alongside this
+        file's other `.delegate`-reading assertions (see the module docstring) - `engine.
+        run_turn` still calls `enabled_lanes_from` on the row (hence the warning below is
+        still real), but no longer acts on its result."""
         self._enable(system_settings_row, ["low-signal", "lowsignal"])
         self._casual(stub_parser, stub_access)
 
         with caplog.at_level(logging.WARNING):
-            result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+            engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        assert result.delegate == "low_signal"
         assert "not a branch kind" in caplog.text
 
     def test_the_settings_row_is_read_once_on_the_routing_session(
