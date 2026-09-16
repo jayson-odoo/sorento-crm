@@ -1,0 +1,901 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "Order Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Golden win delivery status",
+              "type": "text"
+            },
+            "messageId": "console-5e54a55b824e",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H118",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              }
+            ],
+            "date_window": null,
+            "document": [],
+            "domains": [
+              "order"
+            ],
+            "extra": {
+              "outstanding_scope": [],
+              "tier": [
+                {
+                  "canonical_code": "office",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "tier",
+                  "raw": "office",
+                  "uuid": "office"
+                }
+              ]
+            },
+            "products": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "hint_confident": true,
+                "raw": "7445"
+              }
+            ],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1828,
+            "expects": "pick",
+            "kind": "outstanding_scope",
+            "options": [
+              {
+                "entity_type": "outstanding_scope",
+                "label": "Sales orders",
+                "payload": {
+                  "value": "so"
+                },
+                "position": 1
+              },
+              {
+                "entity_type": "outstanding_scope",
+                "label": "Delivery orders",
+                "payload": {
+                  "value": "do"
+                },
+                "position": 2
+              },
+              {
+                "entity_type": "outstanding_scope",
+                "label": "Both",
+                "payload": {
+                  "value": "both"
+                },
+                "position": 3
+              }
+            ],
+            "payload": {
+              "domain": "order",
+              "filters": {
+                "customer_ids": [
+                  "6b52807a-537b-437d-9f55-12f7fda29df8"
+                ],
+                "date_filter_end": null,
+                "date_filter_start": null,
+                "location_token": null,
+                "product_code": null,
+                "warehouse_codes": []
+              }
+            },
+            "team": null
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "965268d8-6f6d-46a7-84db-d42d0a129fca"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-c9f021e2-2cd0-4f00-8aea-d8834dca22e6"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "GOLDEN WIN HARDWARE SDN BHD - [A/C I]",
+            "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]"
+          ]
+        },
+        "text": "Which customer do you mean?\n1. GOLDEN WIN HARDWARE SDN BHD - [A/C I]\n2. GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]",
+        "tools": []
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H118",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                }
+              ],
+              "date_window": null,
+              "document": [],
+              "domains": [
+                "order"
+              ],
+              "extra": {
+                "outstanding_scope": [],
+                "tier": [
+                  {
+                    "canonical_code": "office",
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "tier",
+                    "raw": "office",
+                    "uuid": "office"
+                  }
+                ]
+              },
+              "products": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "hint_confident": true,
+                  "raw": "7445"
+                }
+              ],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1828,
+              "expects": "pick",
+              "kind": "outstanding_scope",
+              "options": [
+                {
+                  "entity_type": "outstanding_scope",
+                  "label": "Sales orders",
+                  "payload": {
+                    "value": "so"
+                  },
+                  "position": 1
+                },
+                {
+                  "entity_type": "outstanding_scope",
+                  "label": "Delivery orders",
+                  "payload": {
+                    "value": "do"
+                  },
+                  "position": 2
+                },
+                {
+                  "entity_type": "outstanding_scope",
+                  "label": "Both",
+                  "payload": {
+                    "value": "both"
+                  },
+                  "position": 3
+                }
+              ],
+              "payload": {
+                "domain": "order",
+                "filters": {
+                  "customer_ids": [
+                    "6b52807a-537b-437d-9f55-12f7fda29df8"
+                  ],
+                  "date_filter_end": null,
+                  "date_filter_start": null,
+                  "location_token": null,
+                  "product_code": null,
+                  "warehouse_codes": []
+                }
+              },
+              "team": null
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "ambiguous": true,
+            "matches": [
+              {
+                "canonical_code": "300-G013",
+                "customer_name": "GOLDEN WIN HARDWARE SDN BHD - [A/C I]",
+                "entity_type": "customer",
+                "uuid": "32d49e9b-5b55-4d23-9764-279306de295d"
+              },
+              {
+                "canonical_code": "300-G014",
+                "customer_name": "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]",
+                "entity_type": "customer",
+                "uuid": "47a7ded5-86ce-4763-b598-d4b0cb16715d"
+              }
+            ],
+            "resolved": false,
+            "token": "Golden win"
+          }
+        ],
+        "tokens": [
+          "Golden win"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 23,
+        "recorded_at": "2026-09-16T16:48:52.950695+09:00",
+        "turn_id": "45e7950a-31e5-49eb-a0e8-8be17f5d0d2c"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": "order",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "customer",
+            "hint_confident": true,
+            "raw": "Golden win"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_order",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+          "delivery"
+        ],
+        "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to check delivery status for Golden win"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-23cf41d31b86",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "hint_confident": true,
+                "raw": "Golden win"
+              }
+            ],
+            "date_window": null,
+            "document": [],
+            "domains": [
+              "order"
+            ],
+            "extra": {
+              "outstanding_scope": [],
+              "tier": [
+                {
+                  "canonical_code": "office",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "tier",
+                  "raw": "office",
+                  "uuid": "office"
+                }
+              ]
+            },
+            "products": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "hint_confident": true,
+                "raw": "7445"
+              }
+            ],
+            "set_page": null,
+            "status": "outstanding",
+            "tier": [],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1829,
+            "expects": "pick",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "code": "300-G013",
+                "entity_type": "customer",
+                "label": "GOLDEN WIN HARDWARE SDN BHD - [A/C I]",
+                "name": "GOLDEN WIN HARDWARE SDN BHD - [A/C I]",
+                "payload": {},
+                "position": 1,
+                "uuid": "32d49e9b-5b55-4d23-9764-279306de295d",
+                "uuids": [
+                  "32d49e9b-5b55-4d23-9764-279306de295d"
+                ]
+              },
+              {
+                "code": "300-G014",
+                "entity_type": "customer",
+                "label": "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]",
+                "name": "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]",
+                "payload": {},
+                "position": 2,
+                "uuid": "47a7ded5-86ce-4763-b598-d4b0cb16715d",
+                "uuids": [
+                  "47a7ded5-86ce-4763-b598-d4b0cb16715d"
+                ]
+              }
+            ],
+            "payload": {
+              "domain": "order"
+            },
+            "team": "customer_service"
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "965268d8-6f6d-46a7-84db-d42d0a129fca"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-c9f021e2-2cd0-4f00-8aea-d8834dca22e6"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "Sales orders",
+            "Delivery orders",
+            "Both"
+          ]
+        },
+        "text": "*orders* for GOLDEN WIN HARDWARE SDN BHD - [A/C I]:\nProduct: all\nCustomer: GOLDEN WIN HARDWARE SDN BHD - [A/C I]\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
+        "tools": [
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "hint_confident": true,
+                  "raw": "Golden win"
+                }
+              ],
+              "date_window": null,
+              "document": [],
+              "domains": [
+                "order"
+              ],
+              "extra": {
+                "outstanding_scope": [],
+                "tier": [
+                  {
+                    "canonical_code": "office",
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "tier",
+                    "raw": "office",
+                    "uuid": "office"
+                  }
+                ]
+              },
+              "products": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "hint_confident": true,
+                  "raw": "7445"
+                }
+              ],
+              "set_page": null,
+              "status": "outstanding",
+              "tier": [],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1829,
+              "expects": "pick",
+              "kind": "customer_pick",
+              "options": [
+                {
+                  "code": "300-G013",
+                  "entity_type": "customer",
+                  "label": "GOLDEN WIN HARDWARE SDN BHD - [A/C I]",
+                  "name": "GOLDEN WIN HARDWARE SDN BHD - [A/C I]",
+                  "payload": {},
+                  "position": 1,
+                  "uuid": "32d49e9b-5b55-4d23-9764-279306de295d",
+                  "uuids": [
+                    "32d49e9b-5b55-4d23-9764-279306de295d"
+                  ]
+                },
+                {
+                  "code": "300-G014",
+                  "entity_type": "customer",
+                  "label": "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]",
+                  "name": "GOLDEN WIN HARDWARE SDN BHD - [CERAMIC]",
+                  "payload": {},
+                  "position": 2,
+                  "uuid": "47a7ded5-86ce-4763-b598-d4b0cb16715d",
+                  "uuids": [
+                    "47a7ded5-86ce-4763-b598-d4b0cb16715d"
+                  ]
+                }
+              ],
+              "payload": {
+                "domain": "order"
+              },
+              "team": "customer_service"
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 23,
+        "recorded_at": "2026-09-16T16:49:01.211893+09:00",
+        "turn_id": "555c5020-7ec7-4f3e-9908-39212e1da579"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "1",
+          "picks": [
+            1
+          ],
+          "resolved": true
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to select the first customer option"
+      }
+    }
+  ]
+}

@@ -1,0 +1,2163 @@
+{
+  "turns": [
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "Last purchase cost for srtwc286",
+              "type": "text"
+            },
+            "messageId": "console-0a7c786436d7",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H118",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              }
+            ],
+            "date_window": null,
+            "document": [],
+            "domains": [
+              "order"
+            ],
+            "extra": {
+              "tier": [
+                {
+                  "canonical_code": "office",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "tier",
+                  "raw": "office",
+                  "uuid": "office"
+                }
+              ]
+            },
+            "products": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "hint_confident": true,
+                "raw": "srtwc286"
+              }
+            ],
+            "set_page": null,
+            "status": null,
+            "tier": [],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1817,
+            "expects": "pick",
+            "kind": "customer_pick",
+            "options": [
+              {
+                "code": "300-H070",
+                "entity_type": "customer",
+                "label": "HANLIM TRADING SDN BHD [A/C II]",
+                "name": "HANLIM TRADING SDN BHD [A/C II]",
+                "payload": {},
+                "position": 1,
+                "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                "uuids": [
+                  "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                ]
+              },
+              {
+                "code": "300-H030",
+                "entity_type": "customer",
+                "label": "HANLIM TRADING SDN BHD [A/C I]",
+                "name": "HANLIM TRADING SDN BHD [A/C I]",
+                "payload": {},
+                "position": 2,
+                "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                "uuids": [
+                  "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                ]
+              },
+              {
+                "code": "300-H118",
+                "entity_type": "customer",
+                "label": "HANLIM TRADING SDN BHD [A/C III]",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "payload": {},
+                "position": 3,
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8",
+                "uuids": [
+                  "6b52807a-537b-437d-9f55-12f7fda29df8"
+                ]
+              },
+              {
+                "code": "300-H119",
+                "entity_type": "customer",
+                "label": "HANLIM TRADING SDN BHD [A/C IV]",
+                "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                "payload": {},
+                "position": 4,
+                "uuid": "2a4575e0-836b-4a5d-8566-73223465020d",
+                "uuids": [
+                  "2a4575e0-836b-4a5d-8566-73223465020d"
+                ]
+              },
+              {
+                "code": "300-H030",
+                "entity_type": "customer",
+                "label": "HANLIM TRADING SDN BHD",
+                "name": "HANLIM TRADING SDN BHD",
+                "payload": {},
+                "position": 5,
+                "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                "uuids": [
+                  "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                ]
+              },
+              {
+                "code": "300-H118",
+                "entity_type": "customer",
+                "label": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                "payload": {},
+                "position": 6,
+                "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+                "uuids": [
+                  "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                ]
+              }
+            ],
+            "payload": {
+              "answered_positions": [
+                3,
+                5
+              ],
+              "domain": "order"
+            },
+            "team": "customer_service"
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "965268d8-6f6d-46a7-84db-d42d0a129fca"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-c9f021e2-2cd0-4f00-8aea-d8834dca22e6"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "SRTWC286-SH-200",
+            "SRTWC286-SH-P",
+            "SRTWC286-SH-PP",
+            "SRTWC286-SH",
+            "SRTWC286-SH-UF",
+            "SRTWC286-SH-NEW-150",
+            "SRTWC286-SH-150",
+            "SRTWC286-SH-NEW-P",
+            "SRTWC286-SH-NEW-200",
+            "SRTWC286-SH-NEW"
+          ]
+        },
+        "text": "Which product do you mean?\n1. SRTWC286-SH-200\n2. SRTWC286-SH-P\n3. SRTWC286-SH-PP\n4. SRTWC286-SH\n5. SRTWC286-SH-UF\n6. SRTWC286-SH-NEW-150\n7. SRTWC286-SH-150\n8. SRTWC286-SH-NEW-P\n9. SRTWC286-SH-NEW-200\n10. SRTWC286-SH-NEW",
+        "tools": []
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H118",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                }
+              ],
+              "date_window": null,
+              "document": [],
+              "domains": [
+                "order"
+              ],
+              "extra": {
+                "tier": [
+                  {
+                    "canonical_code": "office",
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "tier",
+                    "raw": "office",
+                    "uuid": "office"
+                  }
+                ]
+              },
+              "products": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "hint_confident": true,
+                  "raw": "srtwc286"
+                }
+              ],
+              "set_page": null,
+              "status": null,
+              "tier": [],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1817,
+              "expects": "pick",
+              "kind": "customer_pick",
+              "options": [
+                {
+                  "code": "300-H070",
+                  "entity_type": "customer",
+                  "label": "HANLIM TRADING SDN BHD [A/C II]",
+                  "name": "HANLIM TRADING SDN BHD [A/C II]",
+                  "payload": {},
+                  "position": 1,
+                  "uuid": "6f5a419b-840a-4e4d-8107-291971dd3bb8",
+                  "uuids": [
+                    "6f5a419b-840a-4e4d-8107-291971dd3bb8"
+                  ]
+                },
+                {
+                  "code": "300-H030",
+                  "entity_type": "customer",
+                  "label": "HANLIM TRADING SDN BHD [A/C I]",
+                  "name": "HANLIM TRADING SDN BHD [A/C I]",
+                  "payload": {},
+                  "position": 2,
+                  "uuid": "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3",
+                  "uuids": [
+                    "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
+                  ]
+                },
+                {
+                  "code": "300-H118",
+                  "entity_type": "customer",
+                  "label": "HANLIM TRADING SDN BHD [A/C III]",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "payload": {},
+                  "position": 3,
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8",
+                  "uuids": [
+                    "6b52807a-537b-437d-9f55-12f7fda29df8"
+                  ]
+                },
+                {
+                  "code": "300-H119",
+                  "entity_type": "customer",
+                  "label": "HANLIM TRADING SDN BHD [A/C IV]",
+                  "name": "HANLIM TRADING SDN BHD [A/C IV]",
+                  "payload": {},
+                  "position": 4,
+                  "uuid": "2a4575e0-836b-4a5d-8566-73223465020d",
+                  "uuids": [
+                    "2a4575e0-836b-4a5d-8566-73223465020d"
+                  ]
+                },
+                {
+                  "code": "300-H030",
+                  "entity_type": "customer",
+                  "label": "HANLIM TRADING SDN BHD",
+                  "name": "HANLIM TRADING SDN BHD",
+                  "payload": {},
+                  "position": 5,
+                  "uuid": "3c15f4e4-be46-4fd7-9de8-3430a9b1217a",
+                  "uuids": [
+                    "3c15f4e4-be46-4fd7-9de8-3430a9b1217a"
+                  ]
+                },
+                {
+                  "code": "300-H118",
+                  "entity_type": "customer",
+                  "label": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                  "name": "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                  "payload": {},
+                  "position": 6,
+                  "uuid": "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44",
+                  "uuids": [
+                    "2d0cd958-9f5e-4eee-8b6e-ed31a94bee44"
+                  ]
+                }
+              ],
+              "payload": {
+                "answered_positions": [
+                  3,
+                  5
+                ],
+                "domain": "order"
+              },
+              "team": "customer_service"
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [
+          {
+            "ambiguous": true,
+            "matches": [
+              {
+                "canonical_code": "SRTWC286-SH",
+                "entity_type": "product",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-150",
+                "entity_type": "product",
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-200",
+                "entity_type": "product",
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW",
+                "entity_type": "product",
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-150",
+                "entity_type": "product",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-200",
+                "entity_type": "product",
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-P",
+                "entity_type": "product",
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-P",
+                "entity_type": "product",
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-PP",
+                "entity_type": "product",
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-UF",
+                "entity_type": "product",
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+              }
+            ],
+            "resolved": false,
+            "token": "srtwc286"
+          }
+        ],
+        "tokens": [
+          "srtwc286"
+        ],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 23,
+        "recorded_at": "2026-09-16T16:45:50.485600+09:00",
+        "turn_id": "70be252c-3310-45bc-8173-5bdfa0bef77d"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": null,
+          "picks": null,
+          "resolved": null
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": "purchase_cost",
+        "entities": [
+          {
+            "canonical_code": null,
+            "confident": true,
+            "current_message": true,
+            "hint": "product",
+            "hint_confident": true,
+            "raw": "srtwc286"
+          }
+        ],
+        "entity_op": "replace_combine",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": "check_po_cost",
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "business_query",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": "general_enquiries",
+          "suggested_team": "purchasing"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to check the last purchase cost for srtwc286"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "All",
+              "type": "text"
+            },
+            "messageId": "console-c6d4639d201f",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H118",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              }
+            ],
+            "date_window": null,
+            "document": [],
+            "domains": [
+              "purchase_cost"
+            ],
+            "extra": {
+              "tier": [
+                {
+                  "canonical_code": "office",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "tier",
+                  "raw": "office",
+                  "uuid": "office"
+                }
+              ]
+            },
+            "products": [
+              {
+                "canonical_code": null,
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "hint_confident": true,
+                "raw": "srtwc286"
+              }
+            ],
+            "set_page": null,
+            "status": null,
+            "tier": [],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1820,
+            "expects": "pick",
+            "kind": "product_pick",
+            "options": [
+              {
+                "code": "SRTWC286-SH-200",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-200",
+                "payload": {},
+                "position": 1,
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                "uuids": [
+                  "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-P",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-P",
+                "payload": {},
+                "position": 2,
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                "uuids": [
+                  "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-PP",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-PP",
+                "payload": {},
+                "position": 3,
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                "uuids": [
+                  "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH",
+                "entity_type": "product",
+                "label": "SRTWC286-SH",
+                "payload": {},
+                "position": 4,
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                "uuids": [
+                  "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-UF",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-UF",
+                "payload": {},
+                "position": 5,
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                "uuids": [
+                  "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-150",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-150",
+                "payload": {},
+                "position": 6,
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                "uuids": [
+                  "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-150",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-150",
+                "payload": {},
+                "position": 7,
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                "uuids": [
+                  "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-P",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-P",
+                "payload": {},
+                "position": 8,
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                "uuids": [
+                  "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-200",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-200",
+                "payload": {},
+                "position": 9,
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                "uuids": [
+                  "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW",
+                "payload": {},
+                "position": 10,
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                "uuids": [
+                  "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                ]
+              }
+            ],
+            "payload": {
+              "domain": "purchase_cost"
+            },
+            "team": "purchasing"
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "965268d8-6f6d-46a7-84db-d42d0a129fca"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-c9f021e2-2cd0-4f00-8aea-d8834dca22e6"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [],
+        "focus_after": null,
+        "pending": {
+          "kind": null,
+          "option_labels": [
+            "SRTWC286-SH-200",
+            "SRTWC286-SH-P",
+            "SRTWC286-SH-PP",
+            "SRTWC286-SH",
+            "SRTWC286-SH-UF",
+            "SRTWC286-SH-NEW-150",
+            "SRTWC286-SH-150",
+            "SRTWC286-SH-NEW-P",
+            "SRTWC286-SH-NEW-200",
+            "SRTWC286-SH-NEW"
+          ]
+        },
+        "text": "Which product do you mean?\n1. SRTWC286-SH-200\n2. SRTWC286-SH-P\n3. SRTWC286-SH-PP\n4. SRTWC286-SH\n5. SRTWC286-SH-UF\n6. SRTWC286-SH-NEW-150\n7. SRTWC286-SH-150\n8. SRTWC286-SH-NEW-P\n9. SRTWC286-SH-NEW-200\n10. SRTWC286-SH-NEW",
+        "tools": []
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H118",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                }
+              ],
+              "date_window": null,
+              "document": [],
+              "domains": [
+                "purchase_cost"
+              ],
+              "extra": {
+                "tier": [
+                  {
+                    "canonical_code": "office",
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "tier",
+                    "raw": "office",
+                    "uuid": "office"
+                  }
+                ]
+              },
+              "products": [
+                {
+                  "canonical_code": null,
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "hint_confident": true,
+                  "raw": "srtwc286"
+                }
+              ],
+              "set_page": null,
+              "status": null,
+              "tier": [],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1820,
+              "expects": "pick",
+              "kind": "product_pick",
+              "options": [
+                {
+                  "code": "SRTWC286-SH-200",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-200",
+                  "payload": {},
+                  "position": 1,
+                  "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                  "uuids": [
+                    "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-P",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-P",
+                  "payload": {},
+                  "position": 2,
+                  "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                  "uuids": [
+                    "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-PP",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-PP",
+                  "payload": {},
+                  "position": 3,
+                  "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                  "uuids": [
+                    "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH",
+                  "payload": {},
+                  "position": 4,
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                  "uuids": [
+                    "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-UF",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-UF",
+                  "payload": {},
+                  "position": 5,
+                  "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                  "uuids": [
+                    "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-150",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-150",
+                  "payload": {},
+                  "position": 6,
+                  "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                  "uuids": [
+                    "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-150",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-150",
+                  "payload": {},
+                  "position": 7,
+                  "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                  "uuids": [
+                    "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-P",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-P",
+                  "payload": {},
+                  "position": 8,
+                  "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                  "uuids": [
+                    "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-200",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-200",
+                  "payload": {},
+                  "position": 9,
+                  "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                  "uuids": [
+                    "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW",
+                  "payload": {},
+                  "position": 10,
+                  "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                  "uuids": [
+                    "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                  ]
+                }
+              ],
+              "payload": {
+                "domain": "purchase_cost"
+              },
+              "team": "purchasing"
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 23,
+        "recorded_at": "2026-09-16T16:45:59.262788+09:00",
+        "turn_id": "0a181cfd-9e58-4570-b18e-265d75acdc38"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "All",
+          "picks": "all",
+          "resolved": true
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to select all of the offered product options"
+      }
+    },
+    {
+      "access": {
+        "agent_name": "General Enquiries",
+        "all_attributes_allowed": false,
+        "allowed": true,
+        "attributes": [
+          "inventory.sellable",
+          "purchase_orders.cost",
+          "purchase_orders.placed",
+          "purchase_orders.supplier",
+          "sales_orders.outstanding"
+        ],
+        "decision": "allow",
+        "hidden_spec_keys": [
+          "board_thickness",
+          "thickness"
+        ]
+      },
+      "envelope": {
+        "contact": {
+          "assignee": {
+            "email": "zzt-agent-971724@example.invalid",
+            "firstName": "ZZT-agent",
+            "id": 971724,
+            "lastName": ""
+          },
+          "countryCode": "MY",
+          "created_at": 1777336715,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "end_user"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://internal.example.invalid/contacts/437264483"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "email": null,
+          "firstName": "ZZT-437264483",
+          "id": "437264483",
+          "isBlocked": false,
+          "language": null,
+          "lastName": "",
+          "lifecycle": null,
+          "locale": null,
+          "phone": "+60437264483",
+          "profilePic": null,
+          "status": "open",
+          "tags": []
+        },
+        "ingress": "console",
+        "is_test": true,
+        "media": null,
+        "message": {
+          "channel": {
+            "created_at": 1767682908,
+            "id": 453209,
+            "meta": "{\"meta\": {\"profile\": {\"name\": \"ZZT\"}, \"wa_id\": \"60100000000\", \"user_id\": \"MY.26947315341558761\", \"firstName\": \"ZZT\", \"lastName\": \"\"}}",
+            "name": "Internal (scrubbed)",
+            "source": "whatsapp_business"
+          },
+          "contact": {
+            "id": "437264483"
+          },
+          "event_id": "137c9fa1-9264-458d-aa84-643bab966c05",
+          "event_type": "message.received",
+          "message": {
+            "channelId": 453209,
+            "channelMessageId": "wamid.HBgLNjAxNjY3NTMzMjgVAgASGBQzQTEwODNFOTFGRkI4ODQyMTU4NwA=",
+            "contactId": "437264483",
+            "message": {
+              "text": "1",
+              "type": "text"
+            },
+            "messageId": "console-d8269122a9a4",
+            "timestamp": 1789402880000,
+            "traffic": "incoming"
+          },
+          "sender": {
+            "broadcastHistoryId": null,
+            "source": "contact",
+            "teamId": null,
+            "userId": null,
+            "workflowId": null
+          }
+        },
+        "mode": null,
+        "previous_conversation_state": {
+          "access_levels": [],
+          "contains_flyer": false,
+          "focus": {
+            "brands": [],
+            "customers": [
+              {
+                "canonical_code": "300-H118",
+                "confident": true,
+                "current_message": true,
+                "hint": "customer",
+                "name": "HANLIM TRADING SDN BHD [A/C III]",
+                "raw": "300-H118",
+                "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+              }
+            ],
+            "date_window": null,
+            "document": [],
+            "domains": [
+              "purchase_cost"
+            ],
+            "extra": {
+              "tier": [
+                {
+                  "canonical_code": "office",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "tier",
+                  "raw": "office",
+                  "uuid": "office"
+                }
+              ]
+            },
+            "products": [
+              {
+                "canonical_code": "SRTWC286-SH-200",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-200",
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-P",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-P",
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-PP",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-PP",
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+              },
+              {
+                "canonical_code": "SRTWC286-SH",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH",
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-UF",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-UF",
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-150",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-150",
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-150",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-150",
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-P",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-P",
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW-200",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW-200",
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+              },
+              {
+                "canonical_code": "SRTWC286-SH-NEW",
+                "confident": true,
+                "current_message": true,
+                "hint": "product",
+                "raw": "SRTWC286-SH-NEW",
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+              }
+            ],
+            "set_page": null,
+            "status": null,
+            "tier": [],
+            "warehouse": []
+          },
+          "ideation": null,
+          "open_question": {
+            "asked_at_turn": 1821,
+            "expects": "pick",
+            "kind": "product_pick",
+            "options": [
+              {
+                "code": "SRTWC286-SH-200",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-200",
+                "payload": {},
+                "position": 1,
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                "uuids": [
+                  "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-P",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-P",
+                "payload": {},
+                "position": 2,
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                "uuids": [
+                  "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-PP",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-PP",
+                "payload": {},
+                "position": 3,
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                "uuids": [
+                  "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH",
+                "entity_type": "product",
+                "label": "SRTWC286-SH",
+                "payload": {},
+                "position": 4,
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                "uuids": [
+                  "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-UF",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-UF",
+                "payload": {},
+                "position": 5,
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                "uuids": [
+                  "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-150",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-150",
+                "payload": {},
+                "position": 6,
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                "uuids": [
+                  "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-150",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-150",
+                "payload": {},
+                "position": 7,
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                "uuids": [
+                  "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-P",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-P",
+                "payload": {},
+                "position": 8,
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                "uuids": [
+                  "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW-200",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW-200",
+                "payload": {},
+                "position": 9,
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                "uuids": [
+                  "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                ]
+              },
+              {
+                "code": "SRTWC286-SH-NEW",
+                "entity_type": "product",
+                "label": "SRTWC286-SH-NEW",
+                "payload": {},
+                "position": 10,
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                "uuids": [
+                  "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                ]
+              }
+            ],
+            "payload": {
+              "domain": "purchase_cost"
+            },
+            "team": "purchasing"
+          }
+        },
+        "prompt_overrides": {
+          "chatbot_semantic_parser": "965268d8-6f6d-46a7-84db-d42d0a129fca"
+        },
+        "scope": null,
+        "shadow_of": null,
+        "test_run_id": "console-c9f021e2-2cd0-4f00-8aea-d8834dca22e6"
+      },
+      "expected": {
+        "action_kinds": [
+          "send_message"
+        ],
+        "branch_kind": "business_query",
+        "canned": [],
+        "entity_ids": [
+          "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+        ],
+        "focus_after": null,
+        "pending": null,
+        "text": "*last purchase cost* for SRTWC286-SH-200:\n1. *PO Number:* 202606-S0072\n*Product Code:* SRTWC286-SH-200\n*PO Quantity:* 100\n*PO Date:* 2026-06-19\n*Cost / unit:* CNY 0.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 0.00\n*Warehouse:* BRW\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n2. *PO Number:* 202604-S0031\n*Product Code:* SRTWC286-SH-200\n*PO Quantity:* 15\n*PO Date:* 2026-04-08\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-HP\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD\n\n3. *PO Number:* 202601-S0025\n*Product Code:* SRTWC286-SH-200\n*PO Quantity:* 2\n*PO Date:* 2026-01-09\n*Cost / unit:* CNY 285.00\n*Discount / unit:* CNY 0.00\n*Cost after discount / unit:* CNY 285.00\n*Warehouse:* BRW-AM\n*Supplier:* CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD",
+        "tools": [
+          {
+            "args_keys": [
+              "_diagnostics",
+              "access_levels",
+              "contact_id",
+              "date_mode",
+              "is_active",
+              "product_ids",
+              "space_id",
+              "view"
+            ],
+            "tool": "crm_procurement_po_last_cost_list"
+          },
+          {
+            "args_keys": [],
+            "tool": null
+          }
+        ]
+      },
+      "received_session_vars": {
+        "respond_io_id": "437264483",
+        "session_vars": {
+          "user_response": "Stock summary for the requested products.\n\n1. *Product Code:* SRTWC283-SH-UF\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
+          "variables": {
+            "access_levels": [],
+            "contains_flyer": false,
+            "focus": {
+              "brands": [],
+              "customers": [
+                {
+                  "canonical_code": "300-H118",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "customer",
+                  "name": "HANLIM TRADING SDN BHD [A/C III]",
+                  "raw": "300-H118",
+                  "uuid": "6b52807a-537b-437d-9f55-12f7fda29df8"
+                }
+              ],
+              "date_window": null,
+              "document": [],
+              "domains": [
+                "purchase_cost"
+              ],
+              "extra": {
+                "tier": [
+                  {
+                    "canonical_code": "office",
+                    "confident": true,
+                    "current_message": true,
+                    "hint": "tier",
+                    "raw": "office",
+                    "uuid": "office"
+                  }
+                ]
+              },
+              "products": [
+                {
+                  "canonical_code": "SRTWC286-SH-200",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-200",
+                  "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-P",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-P",
+                  "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-PP",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-PP",
+                  "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH",
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-UF",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-UF",
+                  "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-150",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-150",
+                  "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-150",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-150",
+                  "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-P",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-P",
+                  "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW-200",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW-200",
+                  "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                },
+                {
+                  "canonical_code": "SRTWC286-SH-NEW",
+                  "confident": true,
+                  "current_message": true,
+                  "hint": "product",
+                  "raw": "SRTWC286-SH-NEW",
+                  "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                }
+              ],
+              "set_page": null,
+              "status": null,
+              "tier": [],
+              "warehouse": []
+            },
+            "ideation": null,
+            "open_question": {
+              "asked_at_turn": 1821,
+              "expects": "pick",
+              "kind": "product_pick",
+              "options": [
+                {
+                  "code": "SRTWC286-SH-200",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-200",
+                  "payload": {},
+                  "position": 1,
+                  "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                  "uuids": [
+                    "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-P",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-P",
+                  "payload": {},
+                  "position": 2,
+                  "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                  "uuids": [
+                    "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-PP",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-PP",
+                  "payload": {},
+                  "position": 3,
+                  "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                  "uuids": [
+                    "7a8f2543-ef3b-4e5f-9dad-e29f6f688485"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH",
+                  "payload": {},
+                  "position": 4,
+                  "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                  "uuids": [
+                    "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-UF",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-UF",
+                  "payload": {},
+                  "position": 5,
+                  "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                  "uuids": [
+                    "d55d8829-5e3d-4386-ab77-6c93e26d73e7"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-150",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-150",
+                  "payload": {},
+                  "position": 6,
+                  "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                  "uuids": [
+                    "13ffa633-91db-4db6-9050-5de7a0deb9b8"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-150",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-150",
+                  "payload": {},
+                  "position": 7,
+                  "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                  "uuids": [
+                    "78c96bfa-edea-4695-a215-4a02cc0c53a0"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-P",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-P",
+                  "payload": {},
+                  "position": 8,
+                  "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                  "uuids": [
+                    "677b6eb7-f21f-4a65-8195-b969a0a465dd"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW-200",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW-200",
+                  "payload": {},
+                  "position": 9,
+                  "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                  "uuids": [
+                    "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
+                  ]
+                },
+                {
+                  "code": "SRTWC286-SH-NEW",
+                  "entity_type": "product",
+                  "label": "SRTWC286-SH-NEW",
+                  "payload": {},
+                  "position": 10,
+                  "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                  "uuids": [
+                    "77a5e4da-877a-462d-a0f8-cc558fdc5a51"
+                  ]
+                }
+              ],
+              "payload": {
+                "domain": "purchase_cost"
+              },
+              "team": "purchasing"
+            }
+          }
+        }
+      },
+      "resolutions": {
+        "resolutions": [],
+        "tokens": [],
+        "unresolved_tokens": []
+      },
+      "source": {
+        "db": "sorento_ai_automation_rearch",
+        "expected_from": "recorded",
+        "prompt_version": 23,
+        "recorded_at": "2026-09-16T16:46:52.875320+09:00",
+        "turn_id": "0955b7c7-de3d-41a0-83f9-2f267bd209ab"
+      },
+      "switches": {
+        "chatbot_business_lane_enabled": true,
+        "chatbot_completed_lanes": [
+          "out_of_scope",
+          "access_denied",
+          "demand_qty",
+          "clarify_menu",
+          "escalate_offer",
+          "escalation_declined",
+          "ideate",
+          "low_signal",
+          "not_supported",
+          "offer_hold",
+          "stock_denied",
+          "check_promotion",
+          "business_query"
+        ],
+        "chatbot_crossdomain_ladder": {
+          "incoming": [
+            "inventory",
+            "purchase_order"
+          ],
+          "inventory": [
+            "incoming",
+            "purchase_order"
+          ]
+        },
+        "chatbot_ordering_enabled": true,
+        "chatbot_stock_denial_enabled": true,
+        "chatbot_tier_order": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "chatbot_unsupported_domains": [
+          "goods_receive"
+        ],
+        "switches_source": "source_db_at_record_time"
+      },
+      "tool_results": [
+        {
+          "args": {
+            "_diagnostics": {
+              "entities_in": 1,
+              "scalar_truncated": [],
+              "skipped": [],
+              "total_uuids_passed": 1,
+              "unmapped_types": []
+            },
+            "access_levels": [],
+            "contact_id": "437264483",
+            "date_mode": null,
+            "is_active": null,
+            "product_ids": [
+              "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+            ],
+            "space_id": "364817",
+            "view": "render"
+          },
+          "envelope": {
+            "action_links": [],
+            "attachments": [],
+            "has_result": true,
+            "intro": "Here is the last purchase cost per product and location.",
+            "items": [
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202606-S0072"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-200"
+                  },
+                  {
+                    "key": "po_quantity",
+                    "label": "PO Quantity",
+                    "value": "100"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-06-19"
+                  },
+                  {
+                    "key": "unit_cost",
+                    "label": "Cost / unit",
+                    "value": "CNY 0.00"
+                  },
+                  {
+                    "key": "discount_per_unit",
+                    "label": "Discount / unit",
+                    "value": "CNY 0.00"
+                  },
+                  {
+                    "key": "unit_cost_after_discount",
+                    "label": "Cost after discount / unit",
+                    "value": "CNY 0.00"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BRW"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "202606-S0072"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202604-S0031"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-200"
+                  },
+                  {
+                    "key": "po_quantity",
+                    "label": "PO Quantity",
+                    "value": "15"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-04-08"
+                  },
+                  {
+                    "key": "unit_cost",
+                    "label": "Cost / unit",
+                    "value": "CNY 285.00"
+                  },
+                  {
+                    "key": "discount_per_unit",
+                    "label": "Discount / unit",
+                    "value": "CNY 0.00"
+                  },
+                  {
+                    "key": "unit_cost_after_discount",
+                    "label": "Cost after discount / unit",
+                    "value": "CNY 285.00"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BRW-HP"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "202604-S0031"
+              },
+              {
+                "fields": [
+                  {
+                    "key": "po_number",
+                    "label": "PO Number",
+                    "value": "202601-S0025"
+                  },
+                  {
+                    "key": "product_code",
+                    "label": "Product Code",
+                    "value": "SRTWC286-SH-200"
+                  },
+                  {
+                    "key": "po_quantity",
+                    "label": "PO Quantity",
+                    "value": "2"
+                  },
+                  {
+                    "key": "po_date",
+                    "label": "PO Date",
+                    "value": "2026-01-09"
+                  },
+                  {
+                    "key": "unit_cost",
+                    "label": "Cost / unit",
+                    "value": "CNY 285.00"
+                  },
+                  {
+                    "key": "discount_per_unit",
+                    "label": "Discount / unit",
+                    "value": "CNY 0.00"
+                  },
+                  {
+                    "key": "unit_cost_after_discount",
+                    "label": "Cost after discount / unit",
+                    "value": "CNY 285.00"
+                  },
+                  {
+                    "key": "warehouse",
+                    "label": "Warehouse",
+                    "value": "BRW-AM"
+                  },
+                  {
+                    "key": "supplier",
+                    "label": "Supplier",
+                    "value": "CHAOZHOU JINBAICHUAN SANITARY WARE CO., LTD"
+                  }
+                ],
+                "flags": {
+                  "discontinued": false,
+                  "expired": false,
+                  "expiring_soon": false,
+                  "partially_allocated": false,
+                  "unallocated": false
+                },
+                "title": "202601-S0025"
+              }
+            ],
+            "last_updated_at": null,
+            "restricted_fields": {
+              "discount_per_unit": "purchase_orders.cost",
+              "supplier": "purchase_orders.supplier",
+              "unit_cost": "purchase_orders.cost",
+              "unit_cost_after_discount": "purchase_orders.cost"
+            },
+            "result_type": "po_last_cost"
+          },
+          "tool": "crm_procurement_po_last_cost_list"
+        },
+        {
+          "args": null,
+          "envelope": null,
+          "tool": null
+        }
+      ],
+      "verdict": {
+        "access_levels": [],
+        "anaphora": {
+          "backward_reference": false
+        },
+        "answers_open_question": {
+          "answer": "1",
+          "picks": [
+            1
+          ],
+          "resolved": true
+        },
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "continuation": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "document": [],
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+          "company_pick": null,
+          "is_escalation_confirmation": false
+        },
+        "group_by": null,
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [
+          1
+        ],
+        "reference_target": "result",
+        "requested_attributes": [],
+        "routing": {
+          "suggested_agent": null,
+          "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "status": null,
+        "top_n": null,
+        "user_goal": "trying to select the first product option"
+      }
+    }
+  ]
+}
