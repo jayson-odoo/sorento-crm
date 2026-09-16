@@ -71,8 +71,8 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     stub_access,
     stub_parser,
 )
+from tests.chatbot.test_s6c_answer_lane import stub_resolve_gate_bundle
 from tests.chatbot.test_s6c_engine_paths import (
-    _EngineWiring,
     _no_probe_answer_services,
     _srtwc8517_resolved_bundle,
 )
@@ -134,7 +134,7 @@ def _wire_business_lane(engine_mod_ref: Any, monkeypatch: Any) -> None:
     switches on) reach the SAME `not_found` outcome through `run_until_exit` +
     `run_fetch`, run for real - the only thing standing in for the network is the MCP
     seam and the two probes `_no_probe_answer_services` names as unreached on this arm."""
-    bundle = _EngineWiring._stub_bundle([])
+    bundle = stub_resolve_gate_bundle([])
     monkeypatch.setattr(
         engine_mod_ref.business_services, "production_services", lambda db, *, space_id=None: bundle
     )

@@ -749,6 +749,31 @@ class TestIf6Dispatch:
 # --------------------------------------------------------------------------- #
 
 
+def stub_resolve_gate_bundle(calls: list[str]):
+    """A `ResolveGateServices` bundle that records which of its three seams a turn
+    reached, without resolving anything for real. Kept as a MODULE function (not a
+    retired class's staticmethod) - `test_s6c_engine_paths.py` and
+    `test_s6_s7_integration.py` both import this by name, unrelated to the S6a shadow-
+    lane classes retired above."""
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    def _access_types(*, contact_id, space_id):
+        calls.append("access_types")
+        return [{"name": "Sorento Dealer"}]
+
+    def _resolve_entity(body):
+        calls.append("resolve_entity")
+        return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+
+    def _probe(**kwargs):
+        calls.append("probe")
+        return None
+
+    return ResolveGateServices(
+        access_types=_access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=_probe
+    )
+
+
 class TestErrorArmRendersTheMissLane:
     """The other half of AC-604: what `complete_answer` DOES with the error arm.
 

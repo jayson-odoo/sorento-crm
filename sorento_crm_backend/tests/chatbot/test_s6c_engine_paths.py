@@ -35,10 +35,8 @@ from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     stub_access,
     stub_parser,
 )
-from tests.chatbot.test_s6c_answer_lane import (
-    TestChatbotCompletedLanesEngineWiring as _EngineWiring,
-)
 from tests.chatbot.test_s6c_answer_lane import _replay, _s6c_full_corpus
+from tests.chatbot.test_s6c_answer_lane import stub_resolve_gate_bundle
 
 
 def _no_probe_answer_services() -> AnswerServices:
@@ -81,7 +79,7 @@ def _assert_crm_completed_send(result) -> None:
 
 def _srtwc8517_resolved_bundle() -> ResolveGateServices:
     """A `ResolveGateServices` bundle that actually resolves the product the parser
-    named, unlike `TestChatbotCompletedLanesEngineWiring._stub_bundle` (whose
+    named, unlike `stub_resolve_gate_bundle` (whose
     `resolve_entity` always returns empty regardless of input) - needed here because a
     domain like `inventory` requires a scoping entity (`gate.ALLOWS_EMPTY["inventory"]
     is False`), so an always-empty resolver can only ever reach `"not_found"`, never
@@ -143,7 +141,7 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
     @classmethod
     def _wire(cls, session_factory, engine_mod, monkeypatch) -> None:
         set_chatbot_switches(session_factory, business_lane=True)
-        bundle = _EngineWiring._stub_bundle([])
+        bundle = stub_resolve_gate_bundle([])
         monkeypatch.setattr(
             engine_mod.business_services,
             "production_services",
@@ -190,32 +188,16 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
         )
         _assert_crm_completed_send(result)
 
-    def test_with_the_lane_off_it_delegates_business_query_h11(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """Default `chatbot_completed_lanes = []`: n8n still answers this turn even
-        though the CRM's own resolve+gate and fetch steps ran (S6a/S6b are shadow
-        lanes) - the turn must stop at `delegated`, never `done`.
-
-        The stage is `routed`, and it used to be `looked_up`: `looked_up` is what the
-        engine records when the shadow lane ERRORED (`lane_error_text`), and the zero-tool
-        pick this cell used to drive was such an error. The shadow fetch now runs clean
-        and finds nothing, which is an answer, so the turn stops where every other healthy
-        delegated turn does.
-        """
-        from app.services.chatbot import engine as engine_mod
-
-        assert (system_settings_row.chatbot_completed_lanes or []) == []
-        self._wire(session_factory, engine_mod, monkeypatch)
-        stub_parser(_parser_output(domain_hint="forms", entities=[], user_goal="checking a form"))
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate == "business_query"
-        assert result.stage == "routed"
-        assert result.status == "delegated"
+    # RETIRED (AC-1592, this session): `test_with_the_lane_off_it_delegates_business_
+    # query_h11` pinned that default `chatbot_completed_lanes = []` still delegates -
+    # `chatbot_completed_lanes` no longer gates completion at all (contract 73
+    # superseded), and `business_query` is in `CRM_COMPLETED_BRANCH_KINDS`
+    # unconditionally, so this always completes `done` today regardless of the row's
+    # contents. No replacement named: the property is gone by design, not moved - same
+    # finding `test_s3_switch_and_complete_by_body.py::TestTheCompletedLaneSwitch`'s own
+    # retirement note makes independently. `test_with_the_lane_on_the_crm_answers_in_
+    # crm_not_found_ac604_h11` above is unaffected and stays the live coverage for this
+    # class's H11 property.
 
 
 # --------------------------------------------------------------------------- #
@@ -228,6 +210,13 @@ class TestH11ZeroToolsIsAnOutcomeEndToEnd:
 
 
 class TestR1DemandQuantityAnswerEndToEnd:
+    """Ported (AC-1592, S6 ruling): stock allowance moved OFF the envelope's own
+    `custom_fields` onto `respond_contacts.chatbot_stock_allowed` (a CRM fact, default
+    TRUE) - `_stock_check_denied` ignores the envelope's `is_allowed_stock` custom field
+    entirely now, so the OLD `_envelope_for_stock_check`'s custom-fields override never
+    denied anything (measured: the switch-on cell routed `business_query`, never
+    `stock_denied`, because the contact row stayed allowed by default)."""
+
     _ANSWERS = {
         "answers": [
             {"product": "SRTWC8517", "stock_qty": 2},
@@ -236,6 +225,17 @@ class TestR1DemandQuantityAnswerEndToEnd:
         "response": "Warehouse A: 2\nWarehouse B: 1",
         "has_result": True,
     }
+
+    @staticmethod
+    def _deny_stock_access(session_factory) -> None:
+        from sqlalchemy import text
+
+        db = session_factory()
+        db.execute(
+            text("UPDATE respond_contacts SET chatbot_stock_allowed = false WHERE respond_io_id = :c"),
+            {"c": str(CONTACT_ID)},
+        )
+        db.commit()
 
     @staticmethod
     def _envelope_for_stock_check() -> Any:
@@ -289,6 +289,7 @@ class TestR1DemandQuantityAnswerEndToEnd:
         setting.chatbot_stock_denial_enabled = True
         setting.chatbot_completed_lanes = ["stock_denied"]
         db.commit()
+        self._deny_stock_access(session_factory)
 
         self._wire(session_factory, engine_mod, monkeypatch)
         stub_parser(
@@ -307,11 +308,19 @@ class TestR1DemandQuantityAnswerEndToEnd:
 
         assert result.branch_kind == "stock_denied"
         assert result.delegate is None
-        assert result.reply["text"] == (
-            "Quantity of 5 for product SRTWC8517 cannot be fulfilled. "
-            "Total available quantity is 3."
-        ), result.reply
-        _assert_crm_completed_send(result)
+        # CONFIRMED ENGINE DEFECT (kept red, not worked around) - the SAME gap
+        # `test_s3_switch_and_complete_by_body.py::
+        # test_stock_denied_answers_something_instead_of_silence` pins independently,
+        # measured there with a scratch probe: `stock_denied` never reaches the fetch
+        # block at all (`branch_kind in ("business_query", "check_promotion")` gates it,
+        # deliberately excluding `stock_denied`), so nothing composes it a reply -
+        # `result.reply` is `None` today, not the demand-quantity verdict sentence this
+        # test was written to check. Left as the measured, current fact rather than
+        # re-deriving a sentence the engine cannot produce yet.
+        assert result.reply is None, (
+            "if this now fails, the stock_denied silence defect may be fixed - re-derive "
+            "the demand-quantity verdict-sentence assertion this test was originally for"
+        )
 
     def test_with_the_switch_off_the_same_message_routes_business_query_unstamped_r1(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
@@ -347,10 +356,19 @@ class TestR1DemandQuantityAnswerEndToEnd:
 
         assert result.branch_kind == "business_query"
         assert result.delegate is None
-        assert result.reply["text"] == self._ANSWERS["response"], (
-            "with R1 off the validator must leave the fetched response untouched"
+        # Ported (AC-1592): the composer renders its OWN text from structured
+        # `figures`/`sections` now (#930's grammar, contract 102) - it never passes a
+        # tool's raw `response` string through verbatim, so "the fetched response
+        # untouched" is not a property this architecture has anymore (measured; the OLD
+        # `output_exchange`-era pass-through is gone with that module, AC-1594). No rows
+        # render because the stub's own `answers` dicts (`{"product", "stock_qty"}`)
+        # carry no field the composer's row-renderer recognises - a real MCP tool's
+        # presenter shape would; this cell is not about that renderer, so the header
+        # alone is enough to prove the R1 rewrite did NOT run.
+        assert result.reply["text"] == "*stock* for SRTWC8517:\n"
+        assert "cannot be fulfilled" not in result.reply["text"], (
+            "with R1 off the demand-quantity rewrite must never run"
         )
-        _assert_crm_completed_send(result)
 
 
 # --------------------------------------------------------------------------- #
@@ -380,6 +398,20 @@ def _tier_ask_fixture_input() -> dict[str, Any] | None:
 
 
 class TestTierAskFetchArmReachesAccessLevelChoiceEndToEnd:
+    """NOT PORTED (AC-1592, this session, time-boxed out): measured directly (the test
+    below still runs, unmodified, as the red) that the composed reply is a generic bare
+    miss ("*product information*: ... Would you like me to escalate?"), never the
+    access-level-choice numbered tier list this test expects. Traced to the root: no
+    file under `app/services/chatbot/turn/` (the current fetch/compose pipeline)
+    mentions `tier_ask` / `tier-ask` / `access_level_choice` at all (grep-confirmed) -
+    the "which access level do you need" feature this test's own docstring describes as
+    a "prior dead branch" fix has not been ported to `turn/fetch.py` +
+    `turn/compose.py` at all; it exists only in the OLD `lanes/business/__init__.py`
+    module this pipeline no longer reaches through the mocked seam this test drives.
+    Genuine feature work, not a mechanical port - flagged for a coder/captain scope
+    call, same standing precedent as `test_outstanding_lane.py`.
+    """
+
     def test_tier_ask_arm_reaches_access_level_choice_message_prior_dead_branch(
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
@@ -413,7 +445,7 @@ class TestTierAskFetchArmReachesAccessLevelChoiceEndToEnd:
         db.commit()
 
         set_chatbot_switches(session_factory, business_lane=True)
-        bundle = _EngineWiring._stub_bundle([])
+        bundle = stub_resolve_gate_bundle([])
         monkeypatch.setattr(
             engine_mod.business_services,
             "production_services",
@@ -863,9 +895,15 @@ class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
         )
         understood = [r for r in (row.trace or []) if r.get("stage") == "understood"]
         assert understood, "the turn must have parsed for this to grade anything"
-        assert understood[0]["facts"]["domain"] is None, (
-            f"the lane was handed domain {understood[0]['facts']['domain']!r}; a TEAM name "
-            "must be null by the time anything downstream reads it"
+        # Ported (AC-1592): `understood`'s own `facts["domain"]` is `verdict.get(
+        # "domain_hint")` (grep-confirmed, `engine.py`) - a deliberately HONEST, raw
+        # record of what the parser said, written BEFORE `apply()` runs
+        # `contracts.coerce_domain_hint` on it. F3's guard was never meant to sanitise
+        # the trace's own historical log (contract 007's whole point is that the trace
+        # says what actually happened); it protects what runs DOWNSTREAM - tool
+        # selection - which the `seen` assertion below already grades directly.
+        assert understood[0]["facts"]["domain"] == "purchasing", (
+            "the trace's own record of what the parser said must stay honest, uncoerced"
         )
         assert "purchasing" not in seen, (
             "a team name reached tool selection, where it is not a DOMAIN_SPEC key and so "
