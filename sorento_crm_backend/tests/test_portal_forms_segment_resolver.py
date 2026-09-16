@@ -84,3 +84,20 @@ def test_resolver_override_false_hides_a_base_kind_and_true_shows_price_tag():
         assert "complaint" not in visible
         assert "price_tag_request" in visible
         assert visible == (set(SUPPORTED_TYPES) - {"complaint"}) | {"price_tag_request"}
+
+
+# --------------------------------------------------------------------------- AC-R6
+
+
+def test_resolver_ignores_an_inactive_segments_grant():
+    """r4/SEC3: deactivating a segment revokes what it granted, without
+    needing to also unassign every contact from it first."""
+    with blank_session() as db:
+        contact_id = _contact(db)
+        segment = seed_segment(db, kinds=["price_tag_request"], is_active=False)
+        link_contact_segment(db, contact_id, segment.code)
+
+        visible = resolve_visible_form_types(db, contact_id)
+
+        assert "price_tag_request" not in visible
+        assert visible == set(SUPPORTED_TYPES)

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user, require_permission
+from app.dependencies import require_permission
 from app.schemas.market_segment import (
     MarketSegmentCreate,
     MarketSegmentResponse,
@@ -41,7 +41,7 @@ async def list_market_segments(
 @router.post("/", response_model=MarketSegmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_market_segment(
     data: MarketSegmentCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.reference_data.manage")),
     db: Session = Depends(get_db),
 ):
     """Create a market segment. Duplicate code → 409."""
@@ -65,7 +65,7 @@ async def create_market_segment(
 async def update_market_segment(
     code: str,
     data: MarketSegmentUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.reference_data.manage")),
     db: Session = Depends(get_db),
 ):
     """Rename / toggle active / reorder a market segment."""

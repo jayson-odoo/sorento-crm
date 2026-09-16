@@ -35,6 +35,24 @@ from app.services.error_handler import (
 logger = logging.getLogger(__name__)
 
 
+def _clean_portal_form_types(value: Optional[list[str]]) -> list[str]:
+    """Coerce the admin-supplied portal form kinds to a clean, order-preserving
+    list (N2). Membership is already checked by the schema (unknown kind =
+    422); this only strips blanks and duplicates so the stored array is
+    exactly what the admin picked, once each."""
+    if not value:
+        return []
+    out: list[str] = []
+    seen: set[str] = set()
+    for v in value:
+        s = str(v or "").strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
 def segment_key_for(segments) -> str:
     """Canonical round-robin cursor key for a set of segment codes.
 
@@ -136,7 +154,7 @@ class MarketSegmentService:
             is_active=is_active,
             sort_order=sort_order,
             is_requestor_selectable=is_requestor_selectable,
-            portal_form_types=list(portal_form_types or []),
+            portal_form_types=_clean_portal_form_types(portal_form_types),
         )
         self.db.add(seg)
         self.db.commit()
@@ -170,7 +188,7 @@ class MarketSegmentService:
         if is_requestor_selectable is not None:
             seg.is_requestor_selectable = is_requestor_selectable
         if portal_form_types is not None:
-            seg.portal_form_types = list(portal_form_types)
+            seg.portal_form_types = _clean_portal_form_types(portal_form_types)
         self.db.commit()
         self.db.refresh(seg)
         return seg

@@ -41,17 +41,22 @@ def grant_portal_forms(db: Session, contact_id: str, kinds) -> None:
     db.flush()
 
 
-def seed_segment(db: Session, *, code: str | None = None, kinds=()) -> MarketSegment:
+def seed_segment(
+    db: Session, *, code: str | None = None, kinds=(), is_active: bool = True
+) -> MarketSegment:
     """A ``MarketSegment`` row granting ``kinds`` beyond the base four (D3/D4).
 
     ``portal_form_types`` does not exist on the model until D1 lands - this
     call is itself red until then.
+
+    ``is_active=False`` seeds a deactivated segment - its grant does not
+    reach the resolver (r4/SEC3, AC-R6).
     """
     code = code or f"zzt-seg-{uuid.uuid4().hex[:8]}"
     segment = MarketSegment(
         code=code,
         name=f"ZZT segment {code}",
-        is_active=True,
+        is_active=is_active,
         portal_form_types=list(kinds),
     )
     db.add(segment)

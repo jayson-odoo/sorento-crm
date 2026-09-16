@@ -276,6 +276,101 @@ def test_hidden_kind_attachment_delete_is_403(client):
     _assert_gated(response)
 
 
+def _purchase_request(db, contact, space_id: str, *, request_type: str):
+    from app.models.procurement import PurchaseRequestHeader
+
+    row = PurchaseRequestHeader(
+        id=str(uuid.uuid4()),
+        request_type=request_type,
+        contact_id=contact.id,
+        space_id=space_id,
+        status="new",
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def test_hidden_sponsorship_form_attachment_download_is_403(client, monkeypatch):
+    """AC-G2 r4: sponsorship_form attachments live under
+    ``entity_type=purchase_request`` (the two kinds share one table) - the
+    row-derived gate must resolve the AMBIGUOUS entity_type to the real
+    kind and gate on THAT, not on ``purchase_request``."""
+    import app.services.storage_router as storage_router
+
+    c, db = client
+    contact = _contact(db)
+    token = _token(db, contact)
+    sponsorship = _purchase_request(db, contact, token.space_id, request_type="sponsorship_form")
+    _hide(db, contact.id, "sponsorship_form")
+    att, _link = _attachment_and_link(db, "purchase_request", sponsorship.id)
+
+    class _FakeBackend:
+        def download_file(self, key):
+            return b"bytes"
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider=None: _FakeBackend())
+
+    response = c.get(f"{BASE}/attachments/{att.id}/download", headers=_headers(token))
+
+    _assert_gated(response)
+
+
+def test_hidden_sponsorship_form_attachment_delete_is_403(client):
+    c, db = client
+    contact = _contact(db)
+    token = _token(db, contact)
+    sponsorship = _purchase_request(db, contact, token.space_id, request_type="sponsorship_form")
+    _hide(db, contact.id, "sponsorship_form")
+    _att, link = _attachment_and_link(db, "purchase_request", sponsorship.id)
+
+    response = c.delete(f"{BASE}/attachments/{link.id}", headers=_headers(token))
+
+    _assert_gated(response)
+
+
+def test_hidden_kind_attachment_in_revision_history_download_is_403(client):
+    """AC-G2 r4: an attachment unlinked by a revision (UAC G6, no live
+    ``EntityAttachmentLink`` left) is still resolved through
+    ``PortalFormRevision.attachments_json`` - the same gate must fire there
+    too, not just on the live-link arm."""
+    from app.models.portal import PortalFormRevision
+
+    c, db = client
+    contact = _contact(db)
+    token = _token(db, contact)
+    complaint = _complaint(db, contact, token.space_id)
+    _hide(db, contact.id, "complaint")
+
+    att = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename="zzt-history.txt",
+        stored_filename="zzt-history.txt",
+        file_path=f"https://cdn.test/{uuid.uuid4().hex}.txt",
+        mime_type="text/plain",
+        file_size_bytes=5,
+        uploader_kind="contact",
+    )
+    db.add(att)
+    db.flush()
+    db.add(
+        PortalFormRevision(
+            id=str(uuid.uuid4()),
+            source_entity_type="complaint",
+            source_entity_id=complaint.id,
+            version_no=1,
+            revision_no=0,
+            kind="original",
+            attachments_json=[{"attachment_id": str(att.id)}],
+        )
+    )
+    db.commit()
+
+    response = c.get(f"{BASE}/attachments/{att.id}/download", headers=_headers(token))
+
+    _assert_gated(response)
+
+
 # ---------------------------------------------------------------------------
 # AC-G4 - /me visible_form_types
 # ---------------------------------------------------------------------------

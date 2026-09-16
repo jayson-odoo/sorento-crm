@@ -44,7 +44,10 @@ from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.entity_attachment_service import (
     list_attachments_for_entity as _list_attachments_for,
 )
-from app.services.portal_form_visibility_service import resolve_visible_form_types
+from app.services.portal_form_visibility_service import (
+    require_form_visible,
+    resolve_visible_form_types,
+)
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -698,28 +701,11 @@ def _flatten_payload(payload: SubmissionPayload) -> dict:
     return body
 
 
-def _require_form_visible(db: Session, contact_id: str, kind: str) -> None:
-    """The one gate (D5): 403 FORM_TYPE_NOT_VISIBLE when the contact's resolved
-    ``visible_form_types`` excludes ``kind``. Called from every ``_check_*_kind``
-    helper below and from the two attachment routes that derive their kind from
-    the ``EntityAttachmentLink`` row rather than a path/query param, so a hidden
-    kind gates the same way everywhere it can be reached (PLAN-portal-forms-
-    market-segment D2)."""
-    if kind in resolve_visible_form_types(db, contact_id):
-        return
-    label = kind.replace("_", " ").capitalize()
-    raise AppException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        message=f"{label} is not available for your account.",
-        code="FORM_TYPE_NOT_VISIBLE",
-    )
-
-
 def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
-    _require_form_visible(db, token.contact_id, k)
+    require_form_visible(db, token.contact_id, k)
     return k
 
 
@@ -741,7 +727,7 @@ def _check_revisable_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES and k not in ADAPTERS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
-    _require_form_visible(db, token.contact_id, k)
+    require_form_visible(db, token.contact_id, k)
     return k
 
 
@@ -779,7 +765,7 @@ def _check_attachment_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
     if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
-    _require_form_visible(db, token.contact_id, k)
+    require_form_visible(db, token.contact_id, k)
     return k
 
 
@@ -816,7 +802,7 @@ def _require_own_price_tag_request(
 
     submission_id = validate_uuid_path(submission_id, resource="Price tag request")
     if check_visibility:
-        _require_form_visible(db, token.contact_id, "price_tag_request")
+        require_form_visible(db, token.contact_id, "price_tag_request")
     row = db.query(PriceTagRequest).filter(PriceTagRequest.id == submission_id).first()
     if row is None or str(row.contact_id) != str(token.contact_id):
         raise handle_not_found("Price tag request", submission_id)
@@ -1281,7 +1267,7 @@ def _attachment_is_on_own_submission(
             # Ownership confirmed for `kind` - AC-G2: the visibility gate raises
             # its OWN 403 here, outside the catch above, so a hidden kind reads
             # as "not visible" rather than being swallowed into "not owned".
-            _require_form_visible(db, token.contact_id, kind)
+            require_form_visible(db, token.contact_id, kind)
             return True
     return False
 
@@ -1327,7 +1313,7 @@ def _attachment_is_in_own_revision_history(
             entity_type, str(entity_id)
         ):
             # Ownership confirmed - same gate as the live-link path (AC-G2).
-            _require_form_visible(db, token.contact_id, entity_type)
+            require_form_visible(db, token.contact_id, entity_type)
             return True
     return False
 
@@ -1525,12 +1511,18 @@ def portal_delete_attachment(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
         # AC-G2: ownership resolved which kind this is - the gate raises its
         # own 403 here rather than folding into the "not owned" 404 above.
-        _require_form_visible(db, token.contact_id, owned_kind)
+        require_form_visible(db, token.contact_id, owned_kind)
     elif raw_kind == "price_tag_request":
-        _require_own_price_tag_request(db, token, link.entity_id, require_editable=True)
+        # SEC5: ownership first (same ordering the other two arms use), the
+        # visibility gate after - so a link that is not this contact's own
+        # 404s before it ever reveals whether the kind itself is hidden.
+        _require_own_price_tag_request(
+            db, token, link.entity_id, require_editable=True, check_visibility=False
+        )
+        require_form_visible(db, token.contact_id, "price_tag_request")
     else:
         portal.get_submission(token, raw_kind, link.entity_id)
-        _require_form_visible(db, token.contact_id, raw_kind)
+        require_form_visible(db, token.contact_id, raw_kind)
 
     # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
     # the portal, even by a contact who owns the submission. FE gating alone is
