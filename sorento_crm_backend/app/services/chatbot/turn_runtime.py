@@ -863,7 +863,7 @@ def make_tool_runner(
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
             gate["predicate"] = block
-        payload = {"gate": gate, "tier_gate": _tier_gate(spec), "ctx": lane_ctx}
+        payload = {"gate": gate, "tier_gate": _tier_gate(spec, verdict, focus), "ctx": lane_ctx}
         fragment = business.run_fetch(
             payload,
             services=business_services.fetch_services(db),
@@ -965,15 +965,48 @@ def page_the_set(db: Session, carry: dict[str, Any], *, access_levels: list[str]
     return predicate, page_ids
 
 
-def _tier_gate(spec: FetchSpec) -> dict[str, Any] | None:
-    """The tier the narrower already settled, in the shape the kept fetch reads."""
+def _tier_gate(spec: FetchSpec, verdict: dict[str, Any], focus: Focus) -> dict[str, Any] | None:
+    """The tier the narrower already settled, in the shape the kept fetch reads.
+
+    `access_levels_recomposed` is what `lanes/business._fetch_semantic_input` sends to
+    the tool as `access_levels`, and that parameter takes access-level NAMES: the route
+    (`api/v1/marketing/promotions.py`) translates them through
+    `contact_access_types.name` before it overlaps them with the promotion's own JSONB
+    of CODES, and an unrecognised name translates to an empty code list, which the
+    service reads as "filter by these and there are none" (`marketing_service`'s own
+    `q.filter(text("false"))`). Sending the bare tier `"dealer"` therefore answered
+    every promotion question with "No matching results found." while 50 dealer
+    promotions sat on the clone (browser pass 6, turn 0bd47e62).
+
+    The tier x brand recomposition is the KEPT lane's own rule and it is called, never
+    copied (`lanes/business/tier_gate.recompose`): the tier the customer picked plus the
+    brands this conversation is about, intersected with the entitlement NAMES the
+    envelope carries, is the set of compound levels the CRM understands
+    ("dealer" + `["Sorento Dealer", "Mocha Dealer"]` -> both). A tier the contact does
+    not hold falls back to their real entitlement, which is the kept lane's own Q23
+    reading - answer at what they may see rather than at nothing.
+    """
     tier = spec.filters.get("tier")
     if not tier:
         return None
-    return {"tier_pick": tier, "tier_pick_domain": spec.domain, "access_levels_recomposed": [tier]}
+    from app.services.chatbot.lanes.business.tier_gate import recompose
+
+    entitled = [
+        a for a in (verdict.get("access_levels") or []) if isinstance(a, str) and a.strip()
+    ]
+    recomposed = recompose([tier], list(focus.brands or []), entitled)["access_levels"]
+    if not recomposed:
+        recomposed = sorted(entitled, key=jsc.js_string)
+    return {
+        "tier_pick": tier,
+        "tier_pick_domain": spec.domain,
+        "access_levels_recomposed": recomposed,
+    }
 
 
-def with_carried_entities(parse_output: dict[str, Any], focus: Focus) -> dict[str, Any]:
+def with_carried_entities(
+    parse_output: dict[str, Any], focus: Focus, *, unsettled_only: bool = False
+) -> dict[str, Any]:
     """What the RESOLVER is asked about on a turn that named nothing (contract 33, 35).
 
     "incoming", typed after an inventory answer about ten SRTWC286 variants, names no
@@ -985,6 +1018,15 @@ def with_carried_entities(parse_output: dict[str, Any], focus: Focus) -> dict[st
     outstanding report's typed-code match) still can.
 
     A turn that names its own entities is untouched - this is the EMPTY case only.
+
+    `unsettled_only` is the FETCH turn's version of the same question, and the narrower
+    reading of it. A carry that already holds a `uuid` is settled: it is in the plan
+    already, and re-resolving it is how a stale subject gets back into an answer. A
+    carry that holds only a TOKEN is in the plan as a word no `*_ids` param can be built
+    from, so the fetch either drops it (promotion, browser pass 6 turn 0bd47e62: "Promo
+    for srtwc286" then "1" fetched every dealer promotion, scoped to no product at all)
+    or sends the token where a uuid belongs. Those rows, and only those, are handed over
+    on a turn that fetches.
     """
     if parse_output.get("entities"):
         return parse_output
@@ -992,6 +1034,8 @@ def with_carried_entities(parse_output: dict[str, Any], focus: Focus) -> dict[st
     for kind, attr in KIND_FIELD_MAP.items():
         for row in getattr(focus, attr, []) or []:
             if not isinstance(row, dict):
+                continue
+            if unsettled_only and row.get("uuid"):
                 continue
             code = row.get("canonical_code") or row.get("raw")
             if not jsc.truthy(code):
