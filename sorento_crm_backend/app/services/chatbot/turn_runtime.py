@@ -1068,38 +1068,53 @@ def _code_of(entity: dict[str, Any]) -> str:
     return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
 
 
+def _spec_row(entity: dict[str, Any]) -> dict[str, Any]:
+    """A plan entity in the shape the gate's own rows use.
+
+    `code` is the name every code reader downstream (`fetch.outstanding_product_code`,
+    the low-stock prune, the report's typed-code match) reads first: a spec entity that
+    reaches the tool without it is a product with no code at all.
+    """
+    return {
+        "entity_type": entity.get("hint"),
+        "uuid": entity.get("uuid") or entity.get("canonical_code"),
+        "code": entity.get("canonical_code") or entity.get("raw"),
+        "canonical_code": entity.get("canonical_code") or entity.get("raw"),
+        "raw": entity.get("raw"),
+        **({"display_name": entity["name"]} if entity.get("name") else {}),
+    }
+
+
 def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The resolver's own rows for the kinds this spec narrowed to, else the spec's."""
+    """The resolver's own rows for the kinds it answered for this turn, plus the plan's
+    own rows for every kind it did not.
+
+    A kind this spec NARROWED to keeps only what the narrower chose. Every OTHER kind the
+    resolver matched passes through untouched: the order domain narrows on customer as
+    well as product, and filtering the whole list down to one kind dropped the product and
+    the location out of "SRTWT7445 outstanding for Dealer A in IB" - the report then
+    printed `Product: all` over a question about one product.
+
+    The second half is the CARRY, and it is what made "i want to see hanlim only customer"
+    answer for every product HANLIM ever bought (turn 834ac587, 16 Sep 2026). The
+    conversation was about three SRTWC286 variants, the message named a customer, and
+    `_focus_rules` kept both halves on the focus exactly as it should - but the resolver
+    is only ever asked about the tokens THIS message named, so `compatible` held the six
+    HANLIM ledgers and no product at all, and a filter that keeps only resolver rows kept
+    only the customer. A kind the resolver did not answer for this turn is a kind whose
+    subject was settled on an earlier one, so the plan's own rows are the only evidence
+    there is about it, and they are the same rows this function has always fallen back to
+    when the resolver answered nothing at all.
+    """
     kinds = {e.get("hint") for e in spec.entities if e.get("hint")}
     codes = {_code_of(e) for e in spec.entities}
     picked = [
         e
         for e in compatible
-        # A kind this spec NARROWED to keeps only what the narrower chose. Every OTHER
-        # kind the resolver matched passes through untouched: the order domain narrows
-        # on customer alone, and filtering the whole list down to that kind dropped the
-        # product and the location out of "SRTWT7445 outstanding for Dealer A in IB" -
-        # the report then printed `Product: all` over a question about one product.
         if e.get("entity_type") not in kinds or not codes or _code_of(e) in codes
     ]
-    if picked:
-        return picked
-    return [
-        {
-            "entity_type": e.get("hint"),
-            "uuid": e.get("uuid") or e.get("canonical_code"),
-            # `code` is the name the gate's own rows use, and every code reader
-            # downstream (`fetch.outstanding_product_code`, the low-stock prune, the
-            # report's typed-code match) reads it first: a spec entity that reaches the
-            # tool through this fallback has to answer to the same name, or a picked
-            # product is a product with no code at all.
-            "code": e.get("canonical_code") or e.get("raw"),
-            "canonical_code": e.get("canonical_code") or e.get("raw"),
-            "raw": e.get("raw"),
-            **({"display_name": e["name"]} if e.get("name") else {}),
-        }
-        for e in spec.entities
-    ]
+    answered = {e.get("entity_type") for e in picked}
+    return picked + [e for e in map(_spec_row, spec.entities) if e["entity_type"] not in answered]
 
 
 #: A uuid is an internal identity and never a subject a person reads (the frontend's own
