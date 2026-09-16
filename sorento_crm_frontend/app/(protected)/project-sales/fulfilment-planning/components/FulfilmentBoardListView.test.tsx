@@ -500,6 +500,90 @@ describe('FulfilmentBoardListView says what was suggested and what was decided',
 });
 
 /**
+ * AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling, "board too"): the SAME
+ * word the OI worklist chip carries shows up beside the inquiry number here, so CS
+ * reads the stage before confirming - `received` once every document behind the line
+ * is fully received, `used` once the row was itself redirected (AC-RL-10). RED: neither
+ * word renders yet (grepped `FulfilmentBoardListView.tsx` before writing these -
+ * `contributionInquiryDecision` prints only `inquiry_no`).
+ */
+describe('AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the inquiry cell also reads "received" / "used"', () => {
+  it('reads the word "received" beside the inquiry number when every document behind the line is received', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: null,
+          proposed: null,
+          trail: [],
+          sources: [],
+          order_inquiry: {
+            inquiry_no: 'OI-000418',
+            state: 'partly_linked',
+            ack_state: 'acknowledged',
+            documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+            redirected: false,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('OI-000418')).toBeInTheDocument();
+    expect(screen.getByText('received')).toBeInTheDocument();
+  });
+
+  it('reads the word "used" instead when the row was redirected - never "received" alongside it', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: null,
+          proposed: null,
+          trail: [],
+          sources: [],
+          order_inquiry: {
+            inquiry_no: 'OI-000477',
+            state: 'partly_linked',
+            ack_state: 'acknowledged',
+            documents: [{ document: 'SPO-2026/01-0143', kind: 'spo', received: true }],
+            redirected: true,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('OI-000477')).toBeInTheDocument();
+    expect(screen.getByText('used')).toBeInTheDocument();
+    expect(screen.queryByText('received')).not.toBeInTheDocument();
+  });
+
+  it('reads neither word when the documents are not all received and the row was not redirected', async () => {
+    renderView({
+      contributions: [
+        contribution({
+          covered: true,
+          decision: null,
+          proposed: null,
+          trail: [],
+          sources: [],
+          order_inquiry: {
+            inquiry_no: 'OI-000900',
+            state: 'raised',
+            ack_state: 'acknowledged',
+            documents: [{ document: '202607-S0105', kind: 'po', received: false }],
+            redirected: false,
+          },
+        }),
+      ],
+    });
+
+    expect(await screen.findByText('OI-000900')).toBeInTheDocument();
+    expect(screen.queryByText('received')).not.toBeInTheDocument();
+    expect(screen.queryByText('used')).not.toBeInTheDocument();
+  });
+});
+
+/**
  * D14 (the captain: a quick save for the lines that need nothing amended, and a per-line Undo
  * for the one that a quick save was wrong for).
  */

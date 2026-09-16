@@ -787,22 +787,41 @@ function columnDefs() {
   >;
 }
 
-describe('AC-RL-02/03/04 (`PLAN-oi-replan-received-links.md` S1/S3): received and redirected marks', () => {
-  it('AC-RL-02: a received link shows the document, a muted "received" mark, and a title stating the receipt', () => {
+// Owner alignment markup, 17 Sep (SECOND round on the same day): words, not icons.
+// Each mark is ONE short word rendered as the existing muted PILL style (`via PO`'s own
+// `text-2xs text-muted-foreground` span, now a clickable button) - `received` /
+// `reallocate` / `unlink` / `used` / `note` - clicking the word opens the lightbox. RED
+// against the CURRENT build (still icon-shaped with no visible word for most of these,
+// and `repoint` where `reallocate` belongs) - grepped this file for the literal strings
+// "redirected" and "received" as visible cell text before writing these; every
+// remaining "redirected" occurrence below is a `queryByText`/`not.toMatch` guard, never
+// an assertion that it renders.
+describe('AC-RL-02 (`PLAN-oi-replan-received-links.md` S1, 17 Sep rulings): a received document is the word "received", one muted pill', () => {
+  it('a received link shows the word "received" as a muted pill, and clicking it opens the dialog reading "Received 158 of 158" for it and nothing for an open link', () => {
     renderRows(
       [
         worklistRow({
-          id: 'row-received',
+          id: 'row-mixed',
           qty: '182',
-          linked_qty: '158',
+          linked_qty: '178',
           links: [
             {
               id: 'l1',
               kind: 'spo',
               document: 'SPO-2026/01-0143',
               qty: '158',
+              location: 'BRW-IR',
               received: true,
               received_qty: '158',
+            },
+            {
+              id: 'l2',
+              kind: 'po',
+              document: '202607-S0105',
+              qty: '20',
+              location: 'BRW-IB',
+              received: false,
+              received_qty: '0',
             },
           ],
         }),
@@ -810,16 +829,19 @@ describe('AC-RL-02/03/04 (`PLAN-oi-replan-received-links.md` S1/S3): received an
       'spo_number',
     );
 
-    const row = screen.getByTestId('row-row-received');
-    const trigger = within(row).getByTestId('backing-documents-trigger-spo-row-received');
-    expect(trigger.textContent).toBe('SPO-2026/01-0143');
-    expect(trigger.getAttribute('title')).toBe('SPO-2026/01-0143 - received 158 of 158');
-    expect(
-      within(row).getByTestId('backing-documents-received-spo-row-received'),
-    ).toHaveTextContent('received');
+    const row = screen.getByTestId('row-row-mixed');
+    const mark = within(row).getByTestId('backing-documents-received-spo-row-mixed');
+    expect(mark.textContent).toBe('received');
+    // One line: no block-level child hides the row height.
+    expect(row.querySelectorAll('div')).toHaveLength(0);
+
+    fireEvent.click(mark);
+    const dialog = screen.getByTestId('backing-documents-row-mixed');
+    expect(within(dialog).getByText('Received 158 of 158')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Received 20/)).not.toBeInTheDocument();
   });
 
-  it('AC-RL-02: an OPEN link shows neither the mark nor a receipt in the title', () => {
+  it('an OPEN link carries no "received" pill', () => {
     renderRows([
       worklistRow({
         id: 'row-open',
@@ -831,100 +853,89 @@ describe('AC-RL-02/03/04 (`PLAN-oi-replan-received-links.md` S1/S3): received an
     ]);
 
     const row = screen.getByTestId('row-row-open');
-    const trigger = within(row).getByTestId('backing-documents-trigger-row-open');
-    expect(trigger.getAttribute('title')).toBe('202607-S0105');
     expect(
       within(row).queryByTestId('backing-documents-received-row-open'),
     ).not.toBeInTheDocument();
+    expect(within(row).queryByText('received')).not.toBeInTheDocument();
   });
+});
 
-  it('AC-RL-03: the backing-documents dialog prints "received <qty>" beside a received link, and nothing extra beside an open one', () => {
-    renderRows([
-      worklistRow({
-        id: 'row-mixed',
-        qty: '182',
-        linked_qty: '178',
-        links: [
-          {
-            id: 'l1',
-            kind: 'spo',
-            document: 'SPO-2026/01-0143',
-            qty: '158',
-            location: 'BRW-IR',
-            received: true,
-            received_qty: '158',
-          },
-          {
-            id: 'l2',
-            kind: 'po',
-            document: '202607-S0105',
-            qty: '20',
-            location: 'BRW-IB',
-            received: false,
-            received_qty: '0',
-          },
-        ],
-      }),
-    ]);
-
-    fireEvent.click(screen.getByTestId('backing-documents-trigger-row-mixed'));
-    const dialog = screen.getByTestId('backing-documents-row-mixed');
-    expect(within(dialog).getByText(/BRW-IR · 158 · received 158/)).toBeInTheDocument();
-    const openLine = within(dialog).getByText(/BRW-IB · 20/);
-    expect(openLine.textContent).not.toContain('received');
-  });
-
-  it('AC-RL-04: a redirected row carries a muted "redirected" mark on its qty cell', () => {
+describe('AC-RL-04 (`PLAN-oi-replan-received-links.md` S3, 17 Sep rulings): a redirected row reads "used", never "redirected"', () => {
+  it('a redirected row carries the word "used" as a muted pill on its Qty cell, no visible "redirected" text anywhere, and clicking it opens the Qty annotation lightbox showing the note', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-redirected',
         qty: '182',
         ack_state: 'acknowledged',
         redirected_to_pool: true,
+        note:
+          'SPO-2026/01-0143 received 19 Jan 2026 into BRW-IR, used by earlier orders. ' +
+          'Bought again at revision 4: see the new row',
       }),
     ]);
 
     const row = screen.getByTestId('row-row-redirected');
     expect(within(row).getByText('182')).toBeInTheDocument();
-    expect(within(row).getByTestId('redirected-mark-row-redirected')).toHaveTextContent(
-      'redirected',
-    );
+    // The word "redirected" must not appear anywhere in the rendered row (17 Sep
+    // ruling) - text nodes only, so this only passes once the OLD literal mark is gone.
+    expect(row.textContent ?? '').not.toMatch(/redirected/i);
+
+    const mark = within(row).getByTestId('qty-annotation-trigger-row-redirected');
+    expect(mark.textContent).toBe('used');
+    expect(row.querySelectorAll('div')).toHaveLength(0);
+
+    fireEvent.click(mark);
+    const dialog = screen.getByTestId('qty-annotation-row-redirected');
+    expect(
+      within(dialog).getByText(
+        'SPO-2026/01-0143 received 19 Jan 2026 into BRW-IR, used by earlier orders. ' +
+          'Bought again at revision 4: see the new row',
+      ),
+    ).toBeInTheDocument();
   });
 
-  it('AC-RL-04: an ordinary row carries no redirected mark', () => {
+  it('an ordinary row carries no "used" pill', () => {
     renderQtyCell([
       worklistRow({ id: 'row-plain-2', qty: '10', ack_state: 'acknowledged' }),
     ]);
 
     const row = screen.getByTestId('row-row-plain-2');
-    expect(within(row).queryByTestId('redirected-mark-row-plain-2')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('qty-annotation-trigger-row-plain-2'),
+    ).not.toBeInTheDocument();
+    expect(within(row).queryByText('used')).not.toBeInTheDocument();
   });
 });
 
-// RED until the coder builds S1b/S5 (`PLAN-oi-replan-received-links.md`) - the marks,
-// the popover and the move note none exist on this column yet (grepped before writing
-// these). Every failure here is "text/element not found", never a fixture bug.
-describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlink suggestion', () => {
-  it('a link with a REPOINT suggestion carries a muted "repoint" word, and tapping it opens the instruction', () => {
+describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b, 17 Sep rulings): the word "reallocate" or "unlink", a lightbox listing every candidate', () => {
+  it('a REALLOCATE suggestion shows the word "reallocate" as a muted amber pill, and clicking it opens a lightbox listing every candidate earliest first with the footer instruction - never the word "repoint"', () => {
     renderRows(
       [
         worklistRow({
-          id: 'row-repoint',
+          id: 'row-reallocate',
           qty: '158',
           linked_qty: '158',
+          item_code: 'B2154-NL',
           links: [
             {
               id: 'l1',
               kind: 'spo',
               document: 'SPO-2026/01-0143',
               qty: '158',
+              location: 'BRW-IR',
+              expected_date: '2026-09-01',
               suggestion: {
-                kind: 'repoint',
-                inquiry_no: 'OI-000539',
-                item_code: 'CB2805A-DIY',
-                so_number: 'SO420100',
-                delivery_date: '2026-12-01',
-                open_qty: '90',
+                kind: 'reallocate',
+                candidates: [
+                  {
+                    inquiry_no: 'OI-000539', item_code: 'CB2805A-DIY',
+                    so_number: 'SO420100', delivery_date: '2026-12-01', open_qty: '90',
+                  },
+                  {
+                    inquiry_no: 'OI-000540', item_code: 'CB2805A-DIY',
+                    so_number: 'SO420200', delivery_date: '2027-01-15', open_qty: '300',
+                  },
+                ],
               },
             },
           ],
@@ -933,18 +944,36 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlin
       'spo_number',
     );
 
-    const row = screen.getByTestId('row-row-repoint');
-    const mark = within(row).getByText('repoint');
-    // No reason text, no "early" (AC-RL-24) - the word alone in the cell.
-    expect(mark).toBeInTheDocument();
+    const row = screen.getByTestId('row-row-reallocate');
+    const mark = within(row).getByTestId('backing-documents-suggestion-spo-row-reallocate');
+    expect(mark.textContent).toBe('reallocate');
+    expect(within(row).queryByText('repoint')).not.toBeInTheDocument();
+    expect(row.querySelectorAll('div')).toHaveLength(0);
 
     fireEvent.click(mark);
+    const lightbox = screen.getByTestId('link-suggestion-row-reallocate');
+    // Headed by the document, item and quantity.
+    expect(within(lightbox).getByText('SPO-2026/01-0143')).toBeInTheDocument();
+    expect(within(lightbox).getByText(/B2154-NL/)).toBeInTheDocument();
+    // Candidates earliest first, the first marked "Reallocate to", the rest plain -
+    // never "Repoint to" anywhere in the lightbox.
     expect(
-      screen.getByText('Repoint to OI-000539 · CB2805A-DIY · needed 01/12/2026 · open 90'),
+      within(lightbox).getByText(
+        'Reallocate to OI-000539 · SO420100 · needed 01/12/2026 · open 90',
+      ),
+    ).toBeInTheDocument();
+    expect(
+      within(lightbox).getByText('OI-000540 · SO420200 · needed 15/01/2027 · open 300'),
+    ).toBeInTheDocument();
+    expect(within(lightbox).queryByText(/repoint/i)).not.toBeInTheDocument();
+    expect(
+      within(lightbox).getByText(
+        'Re-key the line to the chosen sales order in AutoCount; the link moves at the next upload',
+      ),
     ).toBeInTheDocument();
   });
 
-  it('a link with an UNLINK suggestion carries a muted "unlink" word, and tapping it opens the instruction', () => {
+  it('an UNLINK suggestion shows the word "unlink" as a muted amber pill, and clicking it opens a lightbox reading "Unlink · no sooner inquiry needs this item"', () => {
     renderRows(
       [
         worklistRow({
@@ -953,10 +982,7 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlin
           linked_qty: '80',
           links: [
             {
-              id: 'l1',
-              kind: 'po',
-              document: '202607-S0105',
-              qty: '80',
+              id: 'l1', kind: 'po', document: '202607-S0105', qty: '80',
               suggestion: { kind: 'unlink' },
             },
           ],
@@ -966,16 +992,18 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlin
     );
 
     const row = screen.getByTestId('row-row-unlink');
-    const mark = within(row).getByText('unlink');
-    expect(mark).toBeInTheDocument();
+    const mark = within(row).getByTestId('backing-documents-suggestion-row-unlink');
+    expect(mark.textContent).toBe('unlink');
+    expect(row.querySelectorAll('div')).toHaveLength(0);
 
     fireEvent.click(mark);
+    const lightbox = screen.getByTestId('link-suggestion-row-unlink');
     expect(
-      screen.getByText('Unlink · no sooner inquiry needs this item'),
+      within(lightbox).getByText('Unlink · no sooner inquiry needs this item'),
     ).toBeInTheDocument();
   });
 
-  it('a link with NO suggestion carries neither word', () => {
+  it('a link with NO suggestion carries neither pill', () => {
     renderRows(
       [
         worklistRow({
@@ -989,19 +1017,22 @@ describe('AC-RL-24 (`PLAN-oi-replan-received-links.md` S1b): the repoint / unlin
     );
 
     const row = screen.getByTestId('row-row-no-suggestion');
-    expect(within(row).queryByText('repoint')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('backing-documents-suggestion-row-no-suggestion'),
+    ).not.toBeInTheDocument();
+    expect(within(row).queryByText('reallocate')).not.toBeInTheDocument();
     expect(within(row).queryByText('unlink')).not.toBeInTheDocument();
   });
 });
 
-describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): the move note reaches the existing Qty annotation dialog', () => {
-  it('a row AutoCount moved a document off - now carrying no links - renders the existing Qty annotation trigger, and opening it shows the move note', () => {
-    // Captain's ruling, 16 Sep (second round): reuse the SAME affordance rejected and
-    // settled rows already use (`OrderInquiryQtyAnnotationDialog` / `qty-annotation-
-    // trigger-<id>`) - never a new trigger on `OrderInquiryBackingDocumentsDialog`. This
-    // row is neither rejected nor carries a `previous_qty` (a settle never touched it -
-    // the row was redirected, not amended), so today's trigger condition (`rejected ||
-    // changed`) has no reason to fire at all.
+describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5, 17 Sep rulings): the move note reaches the existing Qty annotation dialog via the word "note"', () => {
+  it('a row AutoCount moved a document off - now carrying no links - renders the word "note" as a muted pill, and clicking it shows the move note', () => {
+    // Reuses the SAME affordance rejected/settled/redirected rows already use
+    // (`OrderInquiryQtyAnnotationDialog` / `qty-annotation-trigger-<id>`) - never a new
+    // trigger on `OrderInquiryBackingDocumentsDialog`. This row is neither rejected nor
+    // carries a `previous_qty` nor `redirected_to_pool` (a settle never touched it, and
+    // it was not itself the redirected row - it is AC-RL-40's row A after a book move),
+    // so today's trigger condition (`rejected || changed`) has no reason to fire at all.
     renderQtyCell([
       worklistRow({
         id: 'row-moved',
@@ -1013,8 +1044,10 @@ describe('AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): the move note reache
     ]);
 
     const row = screen.getByTestId('row-row-moved');
-    fireEvent.click(within(row).getByTestId('qty-annotation-trigger-row-moved'));
+    const mark = within(row).getByTestId('qty-annotation-trigger-row-moved');
+    expect(mark.textContent).toBe('note');
 
+    fireEvent.click(mark);
     const dialog = screen.getByTestId('qty-annotation-row-moved');
     expect(within(dialog).getByText('AutoCount moved 202607-S0077 to SO314595')).toBeInTheDocument();
   });

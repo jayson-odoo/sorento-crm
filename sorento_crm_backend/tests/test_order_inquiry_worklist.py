@@ -1279,7 +1279,7 @@ def test_link_dict_carries_received_qty_and_received(api):
 
 
 # ---------------------------------------------------------------------------
-# S1b: the repoint / unlink suggestion on an open link
+# S1b: the reallocate / unlink suggestion on an open link
 # (`PLAN-oi-replan-received-links.md` S1b, AC-RL-20 to AC-RL-24)
 # ---------------------------------------------------------------------------
 
@@ -1422,15 +1422,16 @@ def _early_link(
     return row
 
 
-def test_link_suggests_repoint_to_soonest_open_row(api):
-    """AC-RL-20: an open link that lands well inside the product's lead-time window
-    suggests repointing to the SOONEST other linkable row of the same product with
-    open need - never a row on the SAME SO line - the earliest delivery date wins,
-    and a tie on that date is broken by the larger open need."""
+def test_link_suggests_reallocate_to_every_sooner_open_row(api):
+    """AC-RL-20 (17 Sep rulings): an open link that lands well inside the product's
+    lead-time window suggests reallocating to EVERY OTHER linkable row of the same
+    product with open need - never a row on the SAME SO line - ordered delivery date
+    ascending then open need descending; the first candidate is the suggested
+    target."""
     client, db, company_id, seeded = api
     inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
 
-    # -- earliest date wins
+    # -- earliest date wins, and every qualifying row is listed
     product = _product(db, f"ZZT-SUGGEST-{_uid()[:6]}", f"{MARKER} suggest")
     _lead_time(db, company_id, product, days=60)
     row_x = _early_link(
@@ -1447,7 +1448,7 @@ def test_link_suggests_repoint_to_soonest_open_row(api):
         db, company_id, product=product, qty="90", delivery_date=date(2026, 12, 1),
         so_number=f"ZZT-CANDY-{_uid()[:6]}",
     )
-    _candidate_row(
+    _order_z, inquiry_z, row_z = _candidate_row(
         db, company_id, product=product, qty="300", delivery_date=date(2027, 1, 15),
         so_number=f"ZZT-CANDZ-{_uid()[:6]}",
     )
@@ -1458,21 +1459,31 @@ def test_link_suggests_repoint_to_soonest_open_row(api):
     [link] = wire_row["links"]
     suggestion = link["suggestion"]
 
-    assert suggestion["kind"] == "repoint"
-    assert suggestion["inquiry_no"] == inquiry_y.inquiry_no
-    assert suggestion["item_code"] == product.product_code
-    assert suggestion["so_number"] == _order_y.autocount_doc_no
-    assert suggestion["delivery_date"] == "2026-12-01"
-    assert suggestion["open_qty"] == "90"
+    assert suggestion["kind"] == "reallocate"
+    assert [c["inquiry_no"] for c in suggestion["candidates"]] == [
+        inquiry_y.inquiry_no, inquiry_z.inquiry_no,
+    ], "Y (2026-12-01) must lead Z (2027-01-15) - earliest date first"
 
-    # -- tie on date: the LARGER open need wins
+    first = suggestion["candidates"][0]
+    assert first["item_code"] == product.product_code
+    assert first["so_number"] == _order_y.autocount_doc_no
+    assert first["delivery_date"] == "2026-12-01"
+    assert first["open_qty"] == "90"
+
+    second = suggestion["candidates"][1]
+    assert second["item_code"] == product.product_code
+    assert second["so_number"] == _order_z.autocount_doc_no
+    assert second["delivery_date"] == "2027-01-15"
+    assert second["open_qty"] == "300"
+
+    # -- tie on date: the LARGER open need leads
     product2 = _product(db, f"ZZT-TIE-{_uid()[:6]}", f"{MARKER} tie")
     _lead_time(db, company_id, product2, days=60)
     row_x2 = _early_link(
         db, company_id, seeded, inquiry, product=product2, qty="50",
         delivery_date=date(2027, 4, 1), expected_date=date(2026, 9, 1), line_no=211,
     )
-    _candidate_row(
+    _order_small, inquiry_small, _row_small = _candidate_row(
         db, company_id, product=product2, qty="40", delivery_date=date(2026, 12, 1),
         so_number=f"ZZT-TIESMALL-{_uid()[:6]}",
     )
@@ -1487,9 +1498,11 @@ def test_link_suggests_repoint_to_soonest_open_row(api):
     [link2] = wire_row2["links"]
     suggestion2 = link2["suggestion"]
 
-    assert suggestion2["kind"] == "repoint"
-    assert suggestion2["inquiry_no"] == inquiry_big.inquiry_no
-    assert suggestion2["open_qty"] == "120"
+    assert suggestion2["kind"] == "reallocate"
+    assert [c["inquiry_no"] for c in suggestion2["candidates"]] == [
+        inquiry_big.inquiry_no, inquiry_small.inquiry_no,
+    ], "same date on both - the larger open need (120) must lead the smaller (40)"
+    assert [c["open_qty"] for c in suggestion2["candidates"]] == ["120", "40"]
 
 
 def test_link_suggests_unlink_when_no_sooner_row(api):
@@ -1516,7 +1529,8 @@ def test_link_suggests_unlink_when_no_sooner_row(api):
     wire_row = next(r for r in body["data"] if r["id"] == row_x.id)
     [link] = wire_row["links"]
 
-    assert link["suggestion"]["kind"] == "unlink"
+    # Unchanged shape (17 Sep rulings): `{"kind": "unlink"}` and nothing else.
+    assert link["suggestion"] == {"kind": "unlink"}
 
 
 def test_no_suggestion_inside_lead_time_or_received(api):

@@ -7574,6 +7574,77 @@ def test_live_inquiry_row_reads_covered_without_decision():
         assert contribution["so_qty_ahead"] is None
 
 
+def test_the_order_inquiry_dict_carries_its_documents_and_whether_it_was_redirected():
+    """AC-RL-07 (`PLAN-oi-replan-received-links.md`): the board contribution's `order_
+    inquiry` dict names what is BEHIND the instruction, not only its number - the
+    line's live row's own documents (`{document, kind, received}`) and whether that
+    row was itself redirected off a document that had already landed (AC-RL-10),
+    the exact shape S2's replan writes."""
+    from app.models.procurement import SPOAllocation
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_PARTLY_LINKED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+    )
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="182", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+
+        company_id = _sorento(db)
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id,
+            project_sales_order_id=mirrors[0].project_sales_order_id,
+            state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+        )
+        db.add(inquiry)
+        db.flush()
+        # A CLOSED, fully-received allocation - the AC-RL-10 shape a redirected row's
+        # own history link stands on.
+        allocation = SPOAllocation(
+            id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+            spo_line_number=1, product_id=product.id, warehouse_id=warehouse.id,
+            allocated_quantity=158, quantity_received=158, receipt_status="fully_received",
+            line_status="closed",
+        )
+        db.add(allocation)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirrors[0].id, item_code=f"{MARKER}-ITEM", qty=Decimal("182"),
+            verb=IV_ORDER, state=INQUIRY_PARTLY_LINKED, ack_state=ACK_ACKNOWLEDGED,
+            redirected_to_pool=True,
+        )
+        db.add(row)
+        db.flush()
+        db.add(OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number,
+            qty=Decimal("158"),
+        ))
+        db.flush()
+        db.commit()
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        order_inquiry = contribution["order_inquiry"]
+        assert order_inquiry["inquiry_no"] == inquiry.inquiry_no
+        assert order_inquiry["documents"] == [
+            {"document": allocation.spo_number, "kind": "spo", "received": True},
+        ]
+        assert order_inquiry["redirected"] is True
+
+
 # --------------------------------------------------------------------------- AC-S2-8
 
 
