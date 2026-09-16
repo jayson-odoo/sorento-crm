@@ -398,10 +398,11 @@ describe('PriceTagRequestDetail - a line with a SAVED manual price is editable, 
 
 // --------------------------------------------------------------------------- columns
 // Owner ruling after #948: Promotion / Selling price are real table columns
-// on the desktop table (md and up), not a `bg-muted/20` sub-row under the
-// line. Below md they still stack under the line - since jsdom has no CSS
-// breakpoints this is asserted only via a `data-testid="line-pricing-stack"`
-// element's presence, never its visibility.
+// on the desktop table (992px and up, `useIsMobile`'s `MOBILE_BREAKPOINT`),
+// not a `bg-muted/20` sub-row under the line. Below 992px they still stack
+// under the line - since jsdom has no CSS breakpoints this is asserted only
+// via a `data-testid="line-pricing-stack"` element's presence, never its
+// visibility.
 describe('PriceTagRequestDetail - Promotion/Selling price are table columns, not a colSpan sub-row', () => {
   it('the Lines header has Promotion and Selling price columns, and the line row (not a following colSpan row) holds the select and value', async () => {
     mockGet.mockResolvedValue({
@@ -481,5 +482,101 @@ describe('PriceTagRequestDetail - Promotion/Selling price are table columns, not
       (cell) => Number(cell.getAttribute('colspan')) > 1,
     );
     expect(colSpanCells).toHaveLength(0);
+  });
+});
+
+// --------------------------------------------------------------------------- kill: columns
+
+// Owner ruling after #948: a line's PARTS still render as their own sub-row
+// (`parts.map(...)`, ~:1326-1340) - the parts sub-row's leading `<td />` is
+// the Type column placeholder, and the SECOND `<td colSpan={columns - 1}>`
+// spans everything after it, so its colspan is the header count MINUS ONE,
+// not the full header count the edit table's own sub-rows use. `columns`
+// itself is `(showActions ? 9 : 8) + (showPriceColumns ? 2 : 0)` - a
+// hard-coded arithmetic that a header column change can silently drift
+// from with every other test in this suite green.
+describe('PriceTagRequestDetail - a parts sub-row spans the header width minus its own leading placeholder cell', () => {
+  it('Selling mode, a line with a part: the part sub-row colspan equals the header column count minus one', async () => {
+    mockGet.mockResolvedValue({
+      ...baseRequest,
+      lines: [
+        {
+          id: 'line-1',
+          line_type: 'product',
+          product_id: 'prod-1',
+          product_set_id: null,
+          name: 'Kitchen Sink',
+          code: 'SRT-1',
+          show_promo_price: true,
+          quantity: 1,
+          included_accessories: null,
+          sort_order: 0,
+          list_price: 500,
+          sell_price: 300,
+          parts: [
+            {
+              id: 'part-1',
+              product_id: 'prod-part',
+              code: 'ZZT-PART-1',
+              name: 'ZZT Part',
+              role: null,
+              candidates: [],
+            },
+          ],
+          package_warning: null,
+          promotion_id: 'promo-raya',
+          promotion_name: 'Raya',
+          manual_sell_price: null,
+          sell_price_basis: 'promotion',
+          tags: [
+            {
+              id: 'line-1',
+              sort_order: 0,
+              label: '1a',
+              quantity: 1,
+              choices: {},
+              choices_display: [],
+              open_groups: [],
+              marketing_price_override: null,
+              marketing_override_reason: null,
+              list_price: 500,
+              sell_price: 300,
+            },
+          ],
+        },
+      ],
+    } as never);
+    mockLookupLinePricing.mockResolvedValue([
+      {
+        key: 'line-1',
+        list_price: 500,
+        promotion_options: [{ id: 'promo-raya', description: 'Raya', sell_price: 300 }],
+        auto_promotion_id: 'promo-raya',
+        sell_price: 300,
+        sell_price_basis: 'promotion',
+        parts_at_list: [],
+        candidates: [],
+      },
+    ]);
+
+    renderDetail();
+    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+    switchTab('Lines');
+
+    // The part row prints `${code} - ${name}` as ONE text node (font-mono
+    // span), so it is found by the whole string.
+    await screen.findByText('ZZT-PART-1 - ZZT Part');
+
+    const linesTable = screen.getByRole('table');
+    const headerCount = within(linesTable).getAllByRole('columnheader').length;
+    const partRow = screen
+      .getAllByRole('row')
+      .find((row) => within(row).queryByText('ZZT-PART-1 - ZZT Part'));
+    expect(partRow).toBeTruthy();
+    const spannedCell = within(partRow!)
+      .getByText('ZZT-PART-1 - ZZT Part')
+      .closest('td[colspan]');
+    expect(spannedCell).not.toBeNull();
+    expect(Number(spannedCell!.getAttribute('colspan'))).toBe(headerCount - 1);
   });
 });

@@ -129,6 +129,18 @@ const COVERED = { kind: 'product' as const, id: 'prod-cov-e', code: 'CV-E', name
 const NOT_COVERED = { kind: 'product' as const, id: 'prod-nocov-a', code: 'NC-A', name: 'ZZT Not Covered A' };
 const ITEMS = [COVERED, NOT_COVERED];
 
+// A combo with one fixed part, so picking COVERED fills a part row in under
+// the line (AC-S2-1) - the kill-test target: `subRowSpan` (the sub-row
+// colSpan for guard error/package/parts/warning rows) is a hard-coded
+// `isMobile ? 5 : priceMode === 'selling' ? 8 : 6` arithmetic that a header
+// column change can silently drift from.
+const COMBO_PART = { product_id: 'prod-combo-part', code: 'CP-1', name: 'ZZT Combo Part' };
+const COMBO_WITH_PART = {
+  combo_id: 'combo-1',
+  name: 'ZZT Combo',
+  parts: [{ ...COMBO_PART, choice_group: null }],
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   asMock(lookupDebtors).mockResolvedValue(DEBTORS);
@@ -252,10 +264,11 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
   // ------------------------------------------------------- AC-S1-1/AC-S1-3 (columns)
 
   // Owner ruling after #948: List price / Promotion / Selling price are real
-  // table columns on the desktop table (md and up), not a `colSpan` sub-row
-  // under the Item cell. Below md they still stack under the item, which - since
-  // jsdom has no CSS breakpoints - is asserted only via a
-  // `data-testid="line-pricing-stack"` element's presence, never its visibility.
+  // table columns on the desktop table (992px and up, `useIsMobile`'s
+  // `MOBILE_BREAKPOINT`), not a `colSpan` sub-row under the Item cell. Below
+  // 992px they still stack under the item, which - since jsdom has no CSS
+  // breakpoints - is asserted only via a `data-testid="line-pricing-stack"`
+  // element's presence, never its visibility.
   it('List mode: the header has a List price column between Qty (tags) and Remarks, no Promotion/Selling price columns, and no colSpan pricing row (AC-S1-1)', async () => {
     await startWithALine(COVERED);
     openPriceSection();
@@ -310,5 +323,33 @@ describe('PriceTagRequestForm - line pricing (S1/S2, S12-1)', () => {
     expect(within(lineRow!).getByText('RM 723')).toBeInTheDocument();
 
     expect(document.querySelector('td[colspan]')).toBeNull();
+  });
+
+  // ----------------------------------------------------------- kill: subRowSpan
+
+  it('Selling mode with a combo line that has parts: every sub-row colspan (guard/package/parts/warning) equals the header column count', async () => {
+    mockCombos.mockResolvedValue({ host_guarded: false, combos: [COMBO_WITH_PART] } as ProductCombosLookup);
+    await startWithALine(COVERED);
+    chooseSelling();
+    // The fixed part fills in as its own sub-row (AC-S2-1) - a `td[colspan]`
+    // this line would not otherwise have. Once a part is attached, the
+    // combo's own product id joins the pricing resolve, so the line's total
+    // is no longer the bare COVERED figure other cases in this file pin -
+    // this case only needs the part row (and the "Add part" search row) to
+    // exist, not a specific RM total.
+    await waitFor(() => expect(screen.getByText(COMBO_PART.code)).toBeInTheDocument());
+    // The native `<select>` stand-in has no real `placeholder` attribute -
+    // this mock exposes it as the accessible name instead.
+    await waitFor(() =>
+      expect(screen.getByRole('combobox', { name: 'Add part' })).toBeInTheDocument(),
+    );
+
+    const headerCount = screen.getAllByRole('columnheader').length;
+    const colSpanCells = Array.from(document.querySelectorAll('td[colspan]'));
+    // At least the part row and the "Add part" search row.
+    expect(colSpanCells.length).toBeGreaterThan(0);
+    for (const cell of colSpanCells) {
+      expect(Number(cell.getAttribute('colspan'))).toBe(headerCount);
+    }
   });
 });
