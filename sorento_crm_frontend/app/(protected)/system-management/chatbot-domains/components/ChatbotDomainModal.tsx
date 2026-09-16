@@ -15,7 +15,6 @@ import StringChipInput from '@/components/common/StringChipInput';
 import OrderableList from '@/components/common/OrderableList';
 import RecordNavigation from '@/components/common/RecordNavigation';
 import { listMcpToolsCatalog } from '@/app/(protected)/system-management/mcp-tools/services/mcpAdminService';
-import { useFieldRevealKeys } from '@/app/(protected)/user-management/contacts/[id]/hooks/useContactFieldReveals';
 import { useChatbotEntityKindsQuery } from '@/app/(protected)/system-management/chatbot-entity-kinds/hooks/useChatbotEntityKinds';
 import {
   useChatbotDomainDeletion,
@@ -40,6 +39,12 @@ const BLANK: ChatbotDomainInput = {
   switch_words: [],
   narrowing: {},
   takes_date_filter: false,
+  // No control edits this. `Profile.grants` stays unrestricted in APPLY and the
+  // per-domain reveal gate is still the lanes' (S3 ruling, 16 Sep 2026), so a value
+  // set here would change nothing and read as a switch that does not work. The
+  // trigger for bringing the control back is wiring `Profile.grants` to
+  // `chatbot_domains.reveal_key` in `turn_runtime.load_profile`. An existing row's
+  // key is carried through a save untouched (the draft is a copy of the row).
   reveal_key: null,
   supported: true,
   ladder: [],
@@ -54,6 +59,9 @@ export interface ChatbotDomainModalProps {
    * precedent: a modal that steps through the SET the reader is looking at, not a server order). */
   rows: ChatbotDomain[];
   onNavigate: (id: string) => void;
+  /** `system.chatbot_config.manage`. Without it the modal reads the row and nothing more:
+   * no Save, no Delete, every field disabled. The backend enforces the same slug. */
+  canManage: boolean;
 }
 
 export default function ChatbotDomainModal({
@@ -62,6 +70,7 @@ export default function ChatbotDomainModal({
   domainId,
   rows,
   onNavigate,
+  canManage,
 }: ChatbotDomainModalProps) {
   const isNew = domainId === null;
   const current = domainId ? rows.find((r) => r.id === domainId) : null;
@@ -85,7 +94,6 @@ export default function ChatbotDomainModal({
     queryKey: ['mcp-tools-catalog'],
     queryFn: () => listMcpToolsCatalog(),
   });
-  const { data: revealKeys } = useFieldRevealKeys();
   const { data: entityKinds } = useChatbotEntityKindsQuery();
 
   const create = useCreateChatbotDomain();
@@ -145,6 +153,7 @@ export default function ChatbotDomainModal({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto px-6 py-4">
+          <fieldset disabled={!canManage} className="m-0 min-w-0 border-0 p-0">
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList>
               <TabsTrigger value="general">General</TabsTrigger>
@@ -234,17 +243,6 @@ export default function ChatbotDomainModal({
                   onCheckedChange={(v) => set('takes_date_filter', v === true)}
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label>Requires field reveal</Label>
-                <SearchableSelect
-                  value={draft.reveal_key ?? ''}
-                  onChange={(v) => set('reveal_key', v || null)}
-                  clearable
-                  placeholder="(none)"
-                  options={(revealKeys ?? []).map((k) => ({ value: k.key, label: k.label }))}
-                  emptyMessage="No restricted field exists yet."
-                />
-              </div>
               <div className="flex items-center justify-between gap-4">
                 <Label htmlFor="domain-supported" className="cursor-pointer font-normal">
                   Supported
@@ -330,11 +328,12 @@ export default function ChatbotDomainModal({
               </p>
             </TabsContent>
           </Tabs>
+          </fieldset>
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t px-6 py-4">
           <div>
-            {!isNew && (
+            {!isNew && canManage && (
               <Button type="button" variant="ghost" className="text-destructive" onClick={handleDelete}>
                 Delete
               </Button>
@@ -342,16 +341,18 @@ export default function ChatbotDomainModal({
           </div>
           <div className="flex gap-2">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {canManage ? 'Cancel' : 'Close'}
             </Button>
-            <Button
-              type="button"
-              onClick={handleSave}
-              disabled={saving || !draft.name.trim() || !draft.label.trim()}
-            >
-              {saving && <LoaderCircleIcon className="size-4 animate-spin" />}
-              Save
-            </Button>
+            {canManage && (
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !draft.name.trim() || !draft.label.trim()}
+              >
+                {saving && <LoaderCircleIcon className="size-4 animate-spin" />}
+                Save
+              </Button>
+            )}
           </div>
         </div>
       </DialogContent>

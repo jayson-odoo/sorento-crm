@@ -14,6 +14,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { useChatbotDomainsQuery } from '../hooks/useChatbotDomains';
 import {
   NARROWING_POLICY_OPTIONS,
@@ -44,6 +45,9 @@ export default function ChatbotDomainsList() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
+  // Read is `system.chat_history.view` (the nav gate); writing the policy the turn
+  // engine routes on is its own grant, and the backend enforces the same slug.
+  const canManage = useHasPermission('system.chatbot_config.manage');
   const { data, isLoading, isError } = useChatbotDomainsQuery();
   const domains = useMemo(() => data ?? [], [data]);
 
@@ -180,12 +184,12 @@ export default function ChatbotDomainsList() {
     setModalOpen(true);
   };
 
-  const listPrimaryAction = (
+  const listPrimaryAction = canManage ? (
     <Button onClick={openCreate}>
       <Plus className="size-4" />
       Add domain
     </Button>
-  );
+  ) : undefined;
 
   const teamActive = teamFilter !== '';
   const supportedActive = supportedFilter !== 'all';
@@ -284,6 +288,7 @@ export default function ChatbotDomainsList() {
         domainId={editingId}
         rows={filtered}
         onNavigate={(id) => setEditingId(id)}
+        canManage={canManage}
       />
     </>
   );
