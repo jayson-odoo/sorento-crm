@@ -4114,6 +4114,18 @@ class ProjectSupplyService:
                 code="supply_order_not_published",
             )
 
+        # Self-heal (issue #969): a core line that arrived after adoption has no mirror yet
+        # and is invisible to `lines_of()` below, so it cannot be confirmed at all and
+        # `lines_undecided` cannot count it either - a stale planning record used to need a
+        # manual Re-sync first. Additive and idempotent (`mirror_missing_lines` is a no-op
+        # once nothing is missing), so every confirm arm that reaches here - the single
+        # route, confirm-all's non-batch entries, and the planning-change apply path, all
+        # three funnel through this one method - self-heals before the line index is built,
+        # with no route-level duplication.
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
+
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}
         payload_lines = list(getattr(payload, "lines", []) or [])
