@@ -33,12 +33,16 @@ Purchasing's reorder plan sees the new lines' demand as soon as the ingest lands
 
 ## 3. Design (simplest thing that works, two seams)
 
-1. **Confirm self-heals.** At the top of the board confirm paths, for each order in the batch,
-   call `mirror_missing_lines(order)` and flush BEFORE the line index is built, so a line that
-   arrived after adoption is confirmable in the same click. Paths: `POST /sales-orders/{pso_id}/confirm`
-   (`fulfilment_planning.py:599`) and `POST /fulfilment-planning/confirm-all` (383), and the
-   planning-change apply per order if it builds the same index (coder verifies; one seam inside
-   the service that both routes pass through is preferred over two route-level calls).
+1. **Board read self-heals.** When the backend builds the fulfilment board for an adopted
+   order (`GET /fulfilment-planning/board`, `FulfilmentBoardService.build`, the one read the
+   FE's `fulfilmentBoard.ts` derives `no_mirror` from and the list confirm-all reads too), it
+   first runs `ProjectSOAdoptionService.mirror_missing_lines(order)` for each selected order
+   (gated `status = 'adopted'`, `project_id IS NULL`) and flushes, so every core line comes
+   back with a `project_line_id`. The confirm write (`POST /sales-orders/{pso_id}/confirm`,
+   `POST /fulfilment-planning/confirm-all`) stays a pure write and never mirrors on its own:
+   one seam, not two.
+   Owner ruling 17 Sep 2026 (B2): heal on the board read, so the first Confirm posts every
+   line; historical gaps heal when the board is opened.
 2. **Ingest re-mirrors.** Review round 1 found `_upsert_lines` has ONE caller, the manual FE edit
    (`PUT /sales-orders/{so_id}`); the ESB push and the book upload each write core lines their
    own way, bypassing it entirely. So the same call lands at all THREE writers, each gated on the
@@ -52,18 +56,19 @@ Purchasing's reorder plan sees the new lines' demand as soon as the ingest lands
    - `outstanding_import_service.py::apply` - the Excel book upload, called per order right
      after that order's own line-create pass, not per row.
 
-No new table, no flag, no script. Existing gaps heal on the first confirm or the first ingest.
+No new table, no flag, no script. Existing gaps heal on the first board read or the first ingest.
 
 ## 4. Tests (captain's list, tester first)
 
 | AC | test | assertion |
 | --- | --- | --- |
-| PR1 | `test_confirm_mirrors_missing_line_then_posts` | adopted order, add a core line after adoption, confirm it: no `no_mirror` skip, the mirror line exists, the decision covers it |
-| PR2 | `test_confirm_all_mirrors_for_every_order` | two adopted orders each with one late core line: confirm-all posts both |
+| PR1 | `test_board_read_mirrors_missing_line_then_confirm_posts` | adopted order, add a core line after adoption, read the board: the late line carries a `project_line_id` and its mirror exists; confirm every returned line: `lines_undecided == 0`, the decision covers it |
+| PR2 | `test_board_list_read_mirrors_for_every_order` | two adopted orders each with one late core line: the multi-order board read heals both (mirrors exist, `project_line_id` set); confirm-all posts both |
 | PR3 | `test_ingest_new_line_on_adopted_order_mirrors_it` | `_upsert_lines` with a payload adding a SKU on an adopted order: a mirror line with `core_sales_order_line_id` exists after the call, line_no = max + 1 |
 | PR4 | `test_ingest_on_unadopted_order_adds_no_mirror` | same payload on an order with no planning record: no `projects.sales_order_lines` row |
 | PR5 | `test_ingest_prune_and_mirror_in_one_pass` | payload removes one line and adds one: the empty mirror is pruned, the new one mirrored, existing mirrors keep their line_no |
-| PR6 | `test_mirror_is_idempotent_on_confirm` | confirm twice: no duplicate mirror lines |
+| PR6 | `test_mirror_is_idempotent_on_board_read` | read the board twice: no duplicate mirror lines |
+| PR8 | `test_confirm_without_a_prior_board_read_does_not_mirror` | adopted order plus a late line, confirm the existing lines directly with no board read: confirm succeeds, no mirror is created (pins the seam) |
 
 ## 5. After merge
 

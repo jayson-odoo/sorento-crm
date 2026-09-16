@@ -68,24 +68,201 @@ def _u() -> str:
 
 
 # =============================================================================================
-# AC-PR1 / AC-PR2 / AC-PR6 - the confirm route and confirm-all self-heal before posting
+# AC-PR1 / AC-PR2 / AC-PR6 / AC-PR8 - the BOARD READ self-heals; confirm never does
+#
+# Owner ruling 17 Sep 2026 (B2): heal on the board read, so the first Confirm posts every
+# line; historical gaps heal when the board is opened. `GET /fulfilment-planning/board`
+# (`FulfilmentBoardService.build`) is the one read the FE's `fulfilmentBoard.ts` derives
+# `no_mirror` from (`!contribution.project_line_id`) and the list confirm-all reads too
+# (`PlanningBoard.contributions`, never windowed). The confirm write stays a pure write.
 # =============================================================================================
 
 
-def test_confirm_mirrors_missing_line_then_posts(api):
-    """AC-PR1: an adopted order, plus a core line inserted after adoption (no mirror). CS
-    confirms the already-mirrored line; the response must not be blind to the late line -
-    a mirror row for it must exist, and the confirm's own accounting (`lines_undecided`)
-    must count it, which only happens once `lines_of()` can see it."""
+def _adopted_book_order(db, world, core_so):
+    """The planning record the AutoCount book adoption leaves: `so_id` set, `adopted`, and
+    NO project (`project_id IS NULL`), which is the heal's own gate. `_project_so` always
+    stamps `world.project`, so it cannot build this shape."""
+    from tests.test_so_supply_confirmation import _suffix
+
+    order = ProjectSalesOrder(
+        id=_u(), company_id=world.company_id, project_id=None,
+        provisional_ref=f"ZZT-PSO-{_suffix()}", status=SO_STATUS_ADOPTED, so_id=core_so.id,
+    )
+    db.add(order)
+    db.flush()
+    return order
+
+
+def _board(client, *so_numbers):
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board",
+        params={"orders": ",".join(so_numbers), "granularity": "week"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _mirrors_of(db, order, core_line):
+    return (
+        db.query(ProjectSalesOrderLine)
+        .filter(
+            ProjectSalesOrderLine.project_sales_order_id == order.id,
+            ProjectSalesOrderLine.core_sales_order_line_id == core_line.id,
+        )
+        .all()
+    )
+
+
+def _reserve_all(world, contributions):
+    """One confirm line per board contribution, reserving its whole open qty at the pool."""
+    return [
+        _line_payload(
+            c["project_line_id"],
+            reserve=[{"warehouse_id": world.pool_wh.id, "qty": c["qty"]}],
+        )
+        for c in contributions
+    ]
+
+
+def test_board_read_mirrors_missing_line_then_confirm_posts(api):
+    """AC-PR1: an adopted order plus a core line inserted after adoption (no mirror). Opening
+    the board must come back with a `project_line_id` for the late line (no `no_mirror`-shaped
+    null) and the mirror row must exist; confirming every line the board returned then posts
+    with `lines_undecided == 0` and the decision covering the late line."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=15)
+
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    order = _adopted_book_order(db, world, core_so)
+    _project_line(db, order, line_no=1, product=world.product, core_line=core_line_1)
+    late_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+    db.commit()
+
+    board = _board(client, core_so.so_number)
+    by_core = {c["line_id"]: c for c in board["contributions"]}
+    assert late_core_line.id in by_core, "the late line must be on the board"
+    late = by_core[late_core_line.id]
+    assert late["project_line_id"] is not None, (
+        "the board read must self-heal the late line's mirror so the FE never derives "
+        "`no_mirror` for it"
+    )
+    db.expire_all()
+    mirrors = _mirrors_of(db, order, late_core_line)
+    assert len(mirrors) == 1
+    assert mirrors[0].id == late["project_line_id"]
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": _reserve_all(world, board["contributions"])},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["lines_decided"] == 2, body
+    assert body["lines_undecided"] == 0, body
+
+    from app.models.project_so import SOLineAllocation, SOSupplyDecision
+
+    active = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == "active",
+        )
+        .one()
+    )
+    covered = (
+        db.query(SOLineAllocation)
+        .filter(
+            SOLineAllocation.decision_id == active.id,
+            SOLineAllocation.so_line_id == mirrors[0].id,
+        )
+        .count()
+    )
+    assert covered == 1, "the decision must cover the late line"
+
+
+def test_board_list_read_mirrors_for_every_order(api):
+    """AC-PR2: two adopted orders, each with one late core line. The multi-order board read
+    the FE's confirm-all builds from heals both (both mirrors exist, both lines carry a
+    `project_line_id`); confirm-all then posts both."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=30)
+
+    seeded = []
+    for _ in range(2):
+        core_so = _core_so(db, world.company_id)
+        core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+        order = _adopted_book_order(db, world, core_so)
+        _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+        late_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+        seeded.append((core_so, order, late_core_line))
+    db.commit()
+
+    board = _board(client, *[core_so.so_number for core_so, _o, _l in seeded])
+    by_core = {c["line_id"]: c for c in board["contributions"]}
+    db.expire_all()
+    for core_so, order, late_core_line in seeded:
+        assert late_core_line.id in by_core, f"{core_so.so_number}'s late line must be on the board"
+        assert by_core[late_core_line.id]["project_line_id"] is not None, (
+            f"{core_so.so_number}'s late line must carry a project_line_id after the read"
+        )
+        assert len(_mirrors_of(db, order, late_core_line)) == 1
+
+    by_so_number = {}
+    for c in board["contributions"]:
+        by_so_number.setdefault(c["so_number"], []).append(c)
+    payload = {
+        "orders": [
+            {"pso_id": order.id, "lines": _reserve_all(world, by_so_number[core_so.so_number])}
+            for core_so, order, _late in seeded
+        ]
+    }
+    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json=payload)
+    assert response.status_code == 200, response.text
+    results = {row["pso_id"]: row for row in response.json()["results"]}
+    for _so, order, _late in seeded:
+        assert results[order.id]["ok"] is True, results[order.id]
+        assert results[order.id]["lines_decided"] == 2, results[order.id]
+
+
+def test_mirror_is_idempotent_on_board_read(api):
+    """AC-PR6: read the board twice - exactly one mirror line per core line, never a
+    duplicate, the second heal finding nothing missing."""
+    client, world = api
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
+    order = _adopted_book_order(db, world, core_so)
+    _project_line(db, order, line_no=1, product=world.product, core_line=core_line_1)
+    late_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+    db.commit()
+
+    _board(client, core_so.so_number)
+    _board(client, core_so.so_number)
+
+    db.expire_all()
+    assert len(_mirrors_of(db, order, late_core_line)) == 1, (
+        "reading the board twice must not duplicate the mirror line"
+    )
+    assert len(_mirrors_of(db, order, core_line_1)) == 1
+
+
+def test_confirm_without_a_prior_board_read_does_not_mirror(api):
+    """AC-PR8 (pins the seam): the heal lives on the READ, not the write. Confirming the
+    existing lines directly, with no board read first, succeeds for the lines given and
+    creates NO mirror for the late line - a future "helpful" confirm-side call is caught."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=10)
 
     core_so = _core_so(db, world.company_id)
     core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
-    order = _project_so(db, world.project, status=SO_STATUS_ADOPTED, so_id=core_so.id)
+    order = _adopted_book_order(db, world, core_so)
     line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_line_1)
-    # Arrived after adoption - nobody has mirrored it.
     late_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
     db.commit()
 
@@ -93,116 +270,17 @@ def test_confirm_mirrors_missing_line_then_posts(api):
         f"{BASE}/sales-orders/{order.id}/confirm",
         json={
             "lines": [
-                _line_payload(
-                    line_1.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}]
-                )
+                _line_payload(line_1.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}])
             ]
         },
     )
     assert response.status_code == 200, response.text
-    body = response.json()
-    # The late line is on the record now - undecided, but no longer missing from it.
-    assert body["lines_undecided"] == 1, body
+    assert response.json()["lines_decided"] == 1
 
     db.expire_all()
-    mirror = (
-        db.query(ProjectSalesOrderLine)
-        .filter(
-            ProjectSalesOrderLine.project_sales_order_id == order.id,
-            ProjectSalesOrderLine.core_sales_order_line_id == late_core_line.id,
-        )
-        .first()
+    assert _mirrors_of(db, order, late_core_line) == [], (
+        "confirm is a pure write: it must not mirror the late line on its own"
     )
-    assert mirror is not None, (
-        "the late core line must gain a mirror on confirm (self-heal before the line index "
-        "is built)"
-    )
-
-
-def test_confirm_all_mirrors_for_every_order(api):
-    """AC-PR2: two adopted orders, each with one late core line - confirm-all posts both,
-    and both gain their mirror, each in its own per-order transaction."""
-    client, world = api
-    db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=20)
-
-    seeded = []
-    for _ in range(2):
-        core_so = _core_so(db, world.company_id)
-        core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
-        order = _project_so(db, world.project, status=SO_STATUS_ADOPTED, so_id=core_so.id)
-        line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
-        late_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
-        seeded.append((order, line, late_core_line))
-    db.commit()
-
-    payload = {
-        "orders": [
-            {
-                "pso_id": order.id,
-                "lines": [
-                    _line_payload(
-                        line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}]
-                    )
-                ],
-            }
-            for order, line, _late in seeded
-        ]
-    }
-    response = client.post(f"{BASE}/fulfilment-planning/confirm-all", json=payload)
-    assert response.status_code == 200, response.text
-    results = {row["pso_id"]: row for row in response.json()["results"]}
-
-    db.expire_all()
-    for order, _line, late_core_line in seeded:
-        result = results[order.id]
-        assert result["ok"] is True, result
-
-        mirror = (
-            db.query(ProjectSalesOrderLine)
-            .filter(
-                ProjectSalesOrderLine.project_sales_order_id == order.id,
-                ProjectSalesOrderLine.core_sales_order_line_id == late_core_line.id,
-            )
-            .first()
-        )
-        assert mirror is not None, f"order {order.id}'s late line must be mirrored too"
-
-
-def test_mirror_is_idempotent_on_confirm(api):
-    """AC-PR6: confirm the same order twice - exactly one mirror line per core line, never
-    a duplicate, on the second self-heal finding nothing missing."""
-    client, world = api
-    db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=10)
-
-    core_so = _core_so(db, world.company_id)
-    core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
-    order = _project_so(db, world.project, status=SO_STATUS_ADOPTED, so_id=core_so.id)
-    line_1 = _project_line(db, order, line_no=1, product=world.product, core_line=core_line_1)
-    late_core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
-    db.commit()
-
-    payload = {
-        "lines": [
-            _line_payload(line_1.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}])
-        ]
-    }
-    first = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
-    assert first.status_code == 200, first.text
-    second = client.post(f"{BASE}/sales-orders/{order.id}/confirm", json=payload)
-    assert second.status_code == 200, second.text
-
-    db.expire_all()
-    mirrors = (
-        db.query(ProjectSalesOrderLine)
-        .filter(
-            ProjectSalesOrderLine.project_sales_order_id == order.id,
-            ProjectSalesOrderLine.core_sales_order_line_id == late_core_line.id,
-        )
-        .all()
-    )
-    assert len(mirrors) == 1, "confirming twice must not duplicate the mirror line"
 
 
 # =============================================================================================
