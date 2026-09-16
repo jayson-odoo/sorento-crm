@@ -1055,6 +1055,16 @@ def _row_from_pin(db: Session, line, tag, pinned: dict, tag_label: str) -> dict:
     row["line_id"] = line.id
     row["tag_label"] = tag_label
     row["images"] = resign_images(db, pinned.get("images") or [])
+    # D7 gave every PART the host's own photos, and a part's signed link dies
+    # on exactly the same hour. Re-signed here, at the one seam both readers
+    # go through (`resolve_request_line_data` -> the export media map and
+    # `resolve-prices`' own `parts[].images[].url`), or a part-bound layer on
+    # a design opened a day after the pin draws a dead link.
+    if pinned.get("parts"):
+        row["parts"] = [
+            {**part, "images": resign_images(db, part.get("images") or [])}
+            for part in pinned["parts"]
+        ]
     row["quantity"] = tag.quantity
     # R16: NOT refreshed from `line.show_promo_price` - that column is a
     # per-LINE save-time value, and since D6 auto-split two tags off one
