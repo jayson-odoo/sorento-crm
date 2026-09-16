@@ -8,6 +8,9 @@ export interface RecipientConfig {
   /** When set, also email the actor who raised the triggering event
    * (`context.actor.email`), when the trigger provides one. */
   include_actor?: boolean;
+  /** When set, sends one email for the whole match (every resolved address on it,
+   * the actor's address last) instead of one email per recipient. */
+  one_email?: boolean;
   extra_emails: string[];
 }
 

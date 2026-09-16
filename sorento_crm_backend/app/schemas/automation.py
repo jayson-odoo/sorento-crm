@@ -16,6 +16,11 @@ class RecipientConfig(BaseModel):
     #: the trigger provides one. Reusable across triggers - not just the order
     #: inquiry handover email it was added for (AC-H11).
     include_actor: bool = False
+    #: One email for the whole match instead of one per recipient (AC-H26) - every
+    #: resolved address on it, `include_actor`'s address moved last. Off by default:
+    #: a template that personalises `{{ recipient.name }}` per copy needs the
+    #: original one-per-recipient shape.
+    one_email: bool = False
     extra_emails: list[str] = Field(default_factory=list)
 
 

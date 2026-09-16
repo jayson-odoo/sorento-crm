@@ -155,11 +155,31 @@ def _seed_template(bind) -> None:
 def _seed_automation(bind) -> None:
     existing = bind.execute(
         sa.text(
-            "SELECT id FROM automations WHERE trigger_type = :tt AND name = :name"
+            "SELECT id, recipient_config FROM automations "
+            "WHERE trigger_type = :tt AND name = :name"
         ),
         {"tt": TRIGGER_TYPE, "name": AUTOMATION_NAME},
     ).first()
     if existing:
+        # Idempotent re-run must still pick up a config key added AFTER the row was
+        # first written (AC-H26: `one_email` did not exist at first seed) - an
+        # already-seeded database (the 0915 copy, prod after deploy) needs it added
+        # once, without touching anything an admin has changed by hand since.
+        automation_id, recipient_config = existing
+        cfg = (
+            recipient_config
+            if isinstance(recipient_config, dict)
+            else json.loads(recipient_config or "{}")
+        )
+        if "one_email" not in cfg:
+            cfg["one_email"] = True
+            bind.execute(
+                sa.text(
+                    "UPDATE automations SET recipient_config = CAST(:cfg AS jsonb) "
+                    "WHERE id = :id"
+                ),
+                {"cfg": json.dumps(cfg), "id": automation_id},
+            )
         return
 
     template_row = bind.execute(
@@ -186,6 +206,9 @@ def _seed_automation(bind) -> None:
             "role_ids": [str(r) for r in role_ids],
             "extra_emails": [],
             "include_actor": True,
+            # R5: the manual mail's shape - one email, purchasing plus the raiser on
+            # one thread, not one copy per address (AC-H26).
+            "one_email": True,
         }
     )
 
