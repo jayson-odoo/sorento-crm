@@ -33,6 +33,12 @@ class Trace:
     # exactly one reader, `engine.run_turn`, which hands it to `lane_parse_output` as
     # the head of the `routing.suggested_team` chain (contract 108).
     team: str | None = None
+    # What an ANSWERED outstanding question (contract 38, 39) decided: `{kind, scope,
+    # detail}`. It lives beside `lane` and `team` for the same reason they do - the
+    # Plan's own field set is the contract (AC-1528) - and it has exactly one reader,
+    # `apply()` itself, which stamps the carry onto the turn's `FetchSpec.filters` so
+    # the runtime knows this fetch is a re-run of the question's own report.
+    outstanding: dict[str, Any] | None = None
 
 
 @dataclass

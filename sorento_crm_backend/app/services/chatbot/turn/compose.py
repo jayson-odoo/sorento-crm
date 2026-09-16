@@ -199,11 +199,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         lane_words = env.get("lane_text")
         if rows_text:
             block = header + "\n" + "\n\n".join(rows_text)
-        elif env.get("denied") and isinstance(lane_words, str) and lane_words.strip():
+        elif (env.get("denied") or env.get("own_header")) and isinstance(lane_words, str) and lane_words.strip():
             # Contract 7. A refusal is the WHOLE section and carries no header: naming
             # the domain above "Sorry, you are not allowed to access purchase cost"
             # would print the very thing the sentence is refusing to discuss. Checked
             # before the generic `lane_text` branch below for that reason.
+            #
+            # AC-1139 puts the outstanding report on the same footing: it opens with its
+            # OWN four-line scope header (`Product:` / `Customer:` / `Location:` /
+            # `Order date:`), so the generic `*orders* for SRTWT7445:` line above it
+            # states the search scope twice, in two different grammars, over one answer.
             block = lane_words.strip()
         elif isinstance(lane_words, str) and lane_words.strip():
             # The header still names the domain: one section per domain is the grammar
@@ -276,7 +281,10 @@ _ASK_HEADERS: dict[str, str] = {
     "team_pick": "Which team should take this?",
     "company_pick": "Which company do you mean?",
     "member_offer": "Who should take this?",
-    "outstanding_scope": "Sales orders, delivery orders, or both?",
+    # The lane's own wording for the same question (contract 38): the customer read
+    # "Outstanding for which document?" when it was asked, and a re-print that opened
+    # with a different sentence reads as a second, different question.
+    "outstanding_scope": "Outstanding for which document?",
     "outstanding_detail": "Which list would you like?",
     "kind_pick": "Which one do you mean?",
     "attachment_type_ask": "Which kind of file do you need?",
@@ -317,6 +325,17 @@ def compose_question(pending: Any) -> Answer:
         labels.append(printed)
         lines.append(f"{option.get('position')}. {printed}")
     body = "\n".join(lines)
+
+    # AC-1102: a question the LANE composed is re-printed in the lane's own bytes. The
+    # outstanding report's detail offer is worded by the MCP presenter (R9's one
+    # sentence for a single-scope report, the numbered list for two), and rebuilding it
+    # from the roster produced two wordings for one offer, one after the other in the
+    # same conversation. The offer's own text travels on the question's payload; every
+    # other kind has no text of its own and reads the header table above.
+    offered = (pending.payload or {}).get("filters") or {}
+    verbatim = str(offered.get("offer_text") or "").strip() if isinstance(offered, dict) else ""
+    if verbatim:
+        body = verbatim
     action: dict[str, Any] = {
         "kind": "send_message",
         "text": body,

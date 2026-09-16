@@ -99,13 +99,14 @@ def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace
 
     answers = verdict.get("answers_open_question") or {}
     picked: dict[str, Any] | None = None
-    if answers.get("resolved") is True:
+    positions = _picked_positions(pending, verdict)
+    if answers.get("resolved") is True or positions:
         # ONE option, and only a POSITION. "all" (contract 31) expands a menu of things
         # to look up, and there is no such thing as handing one conversation to every
         # team at once - so it is not an acceptance and the menu rules below keep it.
-        picks = answers.get("picks")
-        positions = picks if isinstance(picks, list) else []
-        picked = next((o for o in pending.options if o.get("position") in positions), None)
+        if answers.get("picks") == "all" or verdict.get("broaden_axis") == "all":
+            return None
+        picked = next((o for o in pending.options if o.get("position") in (positions or [])), None)
         if picked is None:
             # A position nobody offered: the re-print rule below owns it, the same as
             # for a roster.
@@ -133,6 +134,221 @@ def _answer_offer(pending: Pending, verdict: dict[str, Any], focus: Focus, trace
     return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
 
 
+#: Contract 38 and 39: the outstanding report's own two questions. Business questions,
+#: not escalation offers - answering one is a fetch (see `ESCALATION_OFFER_KINDS`).
+OUTSTANDING_KINDS: frozenset[str] = frozenset({"outstanding_scope", "outstanding_detail"})
+
+#: The scope an option names, as the documents the focus then carries. One table, read
+#: both ways: a picked option becomes a `document` list, and a `document` the parser
+#: emitted in WORDS ("sales order", "both") answers the same question.
+DOCUMENT_BY_SCOPE: dict[str, list[str]] = {"so": ["SO"], "do": ["DO"], "both": ["SO", "DO"]}
+SCOPE_BY_DOCUMENT: dict[tuple[str, ...], str] = {
+    ("SO",): "so",
+    ("DO",): "do",
+    ("DO", "SO"): "both",
+}
+
+
+def _picked_positions(pending: Pending, verdict: dict[str, Any]) -> list[int] | None:
+    """Which of the open question's positions this message picked, or None for "it did
+    not pick".
+
+    `answers_open_question` is the parser's verdict on its own question and it wins
+    (owner ruling, S6 cluster 4): true = these picks, false = it tried and missed.
+    `resolved` null is the parser saying nothing about the question - and the SAME
+    prompt also says a position "still goes to reference_positions as well", which is
+    the only signal an emission from an older prompt version (or a recorded verdict
+    replayed from one) carries at all. Read as the fallback it is, never as a second
+    opinion: a parser that HAS judged its own question is never second-guessed.
+    """
+    answers = verdict.get("answers_open_question") or {}
+    resolved = answers.get("resolved")
+    if resolved is True:
+        picks = answers.get("picks")
+        if picks == "all":
+            return [o["position"] for o in pending.options]
+        return [p for p in picks if isinstance(p, int)] if isinstance(picks, list) else []
+    if resolved is False:
+        return []
+    if pending.kind in ESCALATION_OFFER_KINDS:
+        # A handover is the most expensive thing the bot can do with a message, so it
+        # takes the parser's EXPLICIT verdict and nothing weaker. Measured on the
+        # recorded corpus (`console/handpass3-justin-escalation-offer.json` step 4): a
+        # bare "1" typed over an open escalate offer, with the parser saying nothing
+        # about the question, re-ran the order list and left the offer open - reading
+        # the position as an acceptance instead assigned a human to a conversation
+        # nobody had asked to escalate. The fallback below exists for READS.
+        return None
+    raw = verdict.get("reference_positions")
+    positions = (
+        [int(p) for p in raw if isinstance(p, (int, float)) and not isinstance(p, bool)]
+        if isinstance(raw, list)
+        else []
+    )
+    if positions:
+        return positions
+    if verdict.get("broaden_axis") == "all" and pending.options:
+        # Contract 31, R21: "all" over a numbered menu is a pick of EVERY option, not a
+        # widening of the search - the parser reads the word as a broaden (`entity_op:
+        # "clear"`, `broaden_axis: "all"`) because that is what it means anywhere else,
+        # and over an open roster it means the opposite. Read off the parser's own field
+        # rather than the word; live, "all" over a three-family customer picker ran the
+        # plain order list with no status and no dates, where "1" answered correctly.
+        return [o["position"] for o in pending.options]
+    return None
+
+
+def _drop_question_subject(focus: Focus, pending: Pending) -> None:
+    """R17: the offer dies, and its filters die with it.
+
+    The scope question and the detail offer are asked about a SUBJECT the lane resolved
+    for them (`pending.payload.filters`), and a turn that walks away with its own
+    question must not inherit it - "sales order outstanding for SRTWC8517" typed under a
+    question about another product kept the old customer and the old location and
+    answered about the wrong thing (reviewer N2). Only the axes THAT QUESTION named are
+    cleared; `_focus_rules` runs next and re-fills whatever this message named itself.
+    """
+    filters = pending.payload.get("filters")
+    if not isinstance(filters, dict):
+        return
+    if filters.get("product_code"):
+        focus.products = []
+    if filters.get("customer_ids"):
+        focus.customers = []
+    if filters.get("warehouse_codes") or filters.get("location_token"):
+        focus.warehouse = []
+    if filters.get("date_filter_start") or filters.get("date_filter_end"):
+        focus.date_window = None
+
+
+def _settle_question_subject(focus: Focus, pending: Pending) -> None:
+    """D10: the ANSWER is about what the QUESTION was about, exactly.
+
+    The lane resolved the question's subject when it asked - the code the customer
+    TYPED rather than a family sibling (AC-1119), the account ids behind a customer
+    name, the warehouses a location word expands to - and stored it on the question
+    itself (`turn/compose._lane_question`, from `fetch.outstanding_ask.filters`). The
+    focus still holds the raw token the parser emitted, because the order domain does
+    not narrow on product and nothing settled it. Settling it HERE, on the answer, is
+    what stops the re-run re-resolving a token that can land somewhere else: the answer
+    turn typed nothing, so there is nothing new to resolve.
+    """
+    filters = pending.payload.get("filters")
+    if not isinstance(filters, dict):
+        return
+    code = filters.get("product_code")
+    if code:
+        focus.products = [
+            {"raw": code, "hint": "product", "canonical_code": code, "current_message": False}
+        ]
+    ids = [u for u in (filters.get("customer_ids") or []) if u]
+    if ids:
+        focus.customers = [
+            {"uuid": uid, "hint": "customer", "current_message": False} for uid in ids
+        ]
+    codes = [c for c in (filters.get("warehouse_codes") or []) if c]
+    token = filters.get("location_token")
+    if codes or token:
+        focus.warehouse = [
+            {
+                "raw": token,
+                "hint": "warehouse",
+                "canonical_code": token,
+                "warehouse_codes": codes,
+                "current_message": False,
+            }
+        ]
+    if focus.date_window is None and (
+        filters.get("date_filter_start") or filters.get("date_filter_end")
+    ):
+        # A DEFAULT: `_focus_rules` runs next and a window this turn named itself
+        # overwrites it (N2 - "2, but only 2026" is answered over ITS dates).
+        focus.date_window = {
+            "mode": None,
+            "start": filters.get("date_filter_start"),
+            "end": filters.get("date_filter_end"),
+        }
+
+
+def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any], focus: Focus, trace: Trace):
+    """Contracts 38 and 39: the outstanding report's scope question and detail offer,
+    answered.
+
+    The retired `head/output_exchange._apply_outstanding_pending` did this by rewriting
+    the parser's emission; here the answer moves the FOCUS instead, which is the only
+    place the next fetch reads its subject from. Three outcomes and nothing else:
+
+    * a message that NAMES something of its own is a NEW ASK. The question is dropped
+      rather than mis-resolved, so a customer can leave it by asking something else
+      instead of only by answering it (D17 point 3: a stray position riding along with
+      an entity is still a new ask, because the parser is told never to emit both).
+    * an ANSWER (a picked option, or the scope named in words on `document`) writes
+      `focus.document` - which is what `turn_runtime.lane_parse_output` projects back
+      onto the order tools' one `order_status` bucket, so the SAME turn re-runs the
+      report for the scope just named and the question cannot re-arm itself
+      (`outstanding_scope_ask_candidate` reads that bucket).
+    * anything else leaves the question open, untouched.
+
+    The scope question clears when it is answered; the detail offer does not (contract
+    39, owner ruling 13 Sep 2026 - "after '1' (SO list), typing '2' must give the DO
+    list"), so it is the one offer kind that stays on screen across its own pick.
+    """
+    entities = [e for e in (verdict.get("entities") or []) if e]
+    asked_for = pending.payload.get("domain")
+    if entities:
+        # A turn that NAMES something is a new ask, and D17 point 3's defensive guard is
+        # this line: a stray position riding along with an entity ("2" + "delivery to
+        # hanlim") is still a new ask, because the parser is told never to emit both.
+        # A message that merely names another DOMAIN and nothing else is NOT dropped
+        # here - the owner's S6 cluster 4 ruling keeps the question open across an
+        # aside, and it is the entity that makes this one a different subject.
+        trace.rules_fired.append("outstanding_pending_dropped")
+        _drop_question_subject(focus, pending)
+        return focus, None, None, False
+
+    positions = _picked_positions(pending, verdict)
+    matched = (
+        [o for o in pending.options if o.get("position") in positions] if positions else []
+    )
+    values = [(o.get("payload") or {}).get("value") for o in matched]
+    # "all" over the scope question picks every option, and every option at once IS the
+    # widest one - answering "both" rather than the first row on the list.
+    scope = "both" if "both" in values else next((v for v in values if v), None)
+    if scope not in DOCUMENT_BY_SCOPE:
+        scope = None
+    if scope is None and pending.kind == "outstanding_scope":
+        # The same question, answered in words. The parser emits a named document on its
+        # own `document` slot ("sales order outstanding" and a bare "sales orders" are
+        # the same emission), so there is no second vocabulary to teach it.
+        named = tuple(sorted(str(d).strip().upper() for d in (verdict.get("document") or [])))
+        scope = SCOPE_BY_DOCUMENT.get(named)
+
+    if scope is None:
+        # Not an answer to this question. Every other reading of the turn - the generic
+        # re-print of an out-of-range position, the aside that carries the question
+        # forward unrepeated (owner ruling, S6 cluster 4) - is the same rule for every
+        # pending kind and is settled below, in one place.
+        return None
+
+    _settle_question_subject(focus, pending)
+    focus.document = list(DOCUMENT_BY_SCOPE[scope])
+    focus.status = "outstanding"
+    if asked_for:
+        # Contract 121: the answer goes back to the domain the question was asked for.
+        focus.domains = [asked_for]
+    trace.rules_fired.append("answer_outstanding")
+    trace.outstanding = {
+        "kind": pending.kind,
+        "scope": scope,
+        # Contract 39: "1" asks for one of the report's LISTS, which is the same tool
+        # call with a `detail` argument. The scope question asks which document the
+        # report itself is about, and that is the `document` axis alone.
+        "detail": scope if pending.kind == "outstanding_detail" else None,
+    }
+    carried = pending if pending.kind == "outstanding_detail" else None
+    return focus, carried, None, True
+
+
 def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
     # Returns (focus_after, pending_after, short_circuit_plan, domain_locked).
     pending = state.pending
@@ -140,6 +356,14 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
 
     if pending is None:
         return focus, None, None, False
+
+    if pending.kind in OUTSTANDING_KINDS:
+        # BEFORE the generic roster path: these options are a SCOPE, not an entity to
+        # fetch with, and building one into an entity sent "Both" to the resolver as an
+        # order token (console run 4, finding 6).
+        answered = _answer_outstanding(state, pending, verdict, focus, trace)
+        if answered is not None:
+            return answered
 
     if pending.kind in ESCALATION_OFFER_KINDS:
         # BEFORE the roster path: an accepted escalation offer is a handover, never a
@@ -149,15 +373,8 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
             return accepted
 
     answers = verdict.get("answers_open_question") or {}
-    if answers.get("resolved") is True:
-        picks = answers.get("picks")
-        if picks == "all":
-            positions = [o["position"] for o in pending.options]
-        elif isinstance(picks, list):
-            positions = picks
-        else:
-            positions = []
-
+    positions = _picked_positions(pending, verdict) or []
+    if answers.get("resolved") is True or positions:
         matched = [o for o in pending.options if o.get("position") in positions]
         if not matched:
             # The parser said this WAS an answer, but nothing it picked is on the list -
@@ -768,5 +985,14 @@ def apply(
         a for a in (verdict.get("requested_attributes") or []) if isinstance(a, str) and a
     )
     plan = _narrow_and_plan(focus, policy, domains, new_state, trace, attributes, candidates)
+
+    if trace.outstanding is not None:
+        # Contract 38/39: this fetch is the ANSWERED question's own report re-running.
+        # Stamped on the spec rather than read off the focus by the runtime, because the
+        # focus alone cannot tell "the customer just answered the question about this
+        # product" from "this product is what the conversation happens to be about" -
+        # and only the first may override the resolver's own read of a typed code (D10).
+        for spec in plan.fetch:
+            spec.filters["outstanding"] = dict(trace.outstanding)
 
     return new_state, plan

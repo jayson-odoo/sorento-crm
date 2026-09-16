@@ -85,9 +85,9 @@ def turn_number(db: Session, contact_respond_id: str) -> int:
 
     Uses the ORM, not raw SQL, for the same reason `previous_reply_text` does: the table
     is `chatbot.turns`, and only ORM constructs go through the test fixture's
-    `schema_translate_map`. A literal `chatbot.turns` inside a `text()` query reads the
-    REAL schema under pytest - which the blank-schema fixture never writes to - so this
-    counted 0 on every turn and every `asked_at_turn` stamp came out 1.
+    `schema_translate_map`. A literal `chatbot.turns` in a text() query reads the REAL
+    schema under pytest - which the blank-schema fixture never writes to - so this
+    counted 0 on every turn and every `asked_at_turn` stamp was 1.
     """
     from app.models.chatbot_turn import ChatbotTurn
 
@@ -635,6 +635,64 @@ def candidates_by_kind(
     return grouped
 
 
+def outstanding_carry(
+    out: dict[str, Any], focus: Focus, answered: dict[str, Any]
+) -> dict[str, Any]:
+    """The ANSWERED outstanding question's own subject, as the lane's carried keys.
+
+    Contract 38 and 39: the turn that answers "1" / "2" / "both" types no product, no
+    customer and no location of its own - the subject rode in on the FOCUS, already
+    resolved, and it has to ride back out on it or the re-run silently widens to every
+    customer and every warehouse under a header that says otherwise. Read off `focus`
+    and nothing else: the retired head kept a second copy of this on a session key of
+    its own (`outstanding_filters`) and the two could disagree about what the question
+    had been about.
+
+    Only on an ANSWERING turn (`FetchSpec.filters["outstanding"]`, stamped by
+    `turn/apply.py`): D10 says the carried code WINS over re-resolution, and on an
+    ordinary turn that would override the resolver's own exact-code pick with whatever
+    token the customer happened to type (AC-1119).
+    """
+    out = dict(out)
+    detail = answered.get("detail")
+    if detail in ("so", "do", "both"):
+        # AC-1138: the same tool, one argument more - the MCP layer swaps in the
+        # numbered list. Not a different question and not a different report.
+        out["outstanding_detail_pick"] = detail
+
+    for entity in focus.products:
+        if not isinstance(entity, dict):
+            continue
+        code = entity.get("canonical_code") or entity.get("code") or entity.get("raw")
+        if code:
+            out["outstanding_carried_product_code"] = str(code)
+        break
+    ids = [e["uuid"] for e in focus.customers if isinstance(e, dict) and e.get("uuid")]
+    if ids:
+        out["outstanding_carried_customer_ids"] = ids
+    for entity in focus.warehouse:
+        if not isinstance(entity, dict):
+            continue
+        codes = [c for c in (entity.get("warehouse_codes") or []) if c]
+        if codes:
+            out["outstanding_carried_warehouse_codes"] = codes
+        token = entity.get("raw") or entity.get("canonical_code")
+        if token:
+            out["outstanding_carried_location_token"] = str(token)
+        break  # D5/AC-1105: one location per report
+
+    window = focus.date_window or {}
+    if not out.get("date_filter_start") and not out.get("date_filter_end"):
+        # N2: the carried window is a DEFAULT, not an override - a pick that narrows the
+        # window ("2, but only 2026") is answered over ITS dates, not the old ones.
+        if window.get("start") or window.get("end"):
+            out["date_filter_start"] = window.get("start")
+            out["date_filter_end"] = window.get("end")
+            if not out.get("date_mode"):
+                out["date_mode"] = window.get("mode")
+    return out
+
+
 def make_tool_runner(
     db: Session,
     *,
@@ -665,12 +723,13 @@ def make_tool_runner(
             page_predicate, page_ids = page_the_set(
                 db, carry, access_levels=list(verdict.get("access_levels") or [])
             )
+        lane_out = lane_parse_output(verdict, focus=focus, domain=domain)
+        answered = spec.filters.get("outstanding")
+        if isinstance(answered, dict):
+            lane_out = outstanding_carry(lane_out, focus, answered)
         lane_ctx = {
             **ctx,
-            "parse": {
-                **(ctx.get("parse") or {}),
-                "output": lane_parse_output(verdict, focus=focus, domain=domain),
-            },
+            "parse": {**(ctx.get("parse") or {}), "output": lane_out},
         }
         entities = (
             [
@@ -851,8 +910,12 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     picked = [
         e
         for e in compatible
-        if (not kinds or e.get("entity_type") in kinds)
-        and (not codes or _code_of(e) in codes)
+        # A kind this spec NARROWED to keeps only what the narrower chose. Every OTHER
+        # kind the resolver matched passes through untouched: the order domain narrows
+        # on customer alone, and filtering the whole list down to that kind dropped the
+        # product and the location out of "SRTWT7445 outstanding for Dealer A in IB" -
+        # the report then printed `Product: all` over a question about one product.
+        if e.get("entity_type") not in kinds or not codes or _code_of(e) in codes
     ]
     if picked:
         return picked
@@ -975,6 +1038,11 @@ def envelope_of(
         # ESCALATE offer instead, and the "1" that came back resolved against the wrong
         # roster.
         "lane_ask": fetched.get("outstanding_ask"),
+        # AC-1139: this reply already states the scope it searched, in its own words
+        # and its own order (the report's four header lines, and the same four above
+        # the scope question). The composer's generic `*orders* for <code>:` line would
+        # say it a second time, differently, above the answer.
+        "own_header": bool(fetched.get("outstanding_report")),
         "outcome": fragment.get("outcome"),
         "tool": (fetched.get("tool") or {}).get("name") if isinstance(fetched.get("tool"), dict) else None,
     }

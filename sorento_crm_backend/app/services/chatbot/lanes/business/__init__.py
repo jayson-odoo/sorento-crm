@@ -999,11 +999,20 @@ def run_fetch(
         # re-run over every warehouse under a header that says otherwise.
         if not semantic_input.get("outstanding_warehouse_codes"):
             carried_codes = parse_output.get("outstanding_carried_warehouse_codes")
+            carried_token = jsc.js_string(
+                parse_output.get("outstanding_carried_location_token") or ""
+            ).strip()
+            if not (isinstance(carried_codes, list) and carried_codes) and carried_token and db is not None:
+                # The focus carries the WORD the customer said; a focus written by a turn
+                # that predates the codes riding along with it (or by any build that only
+                # ever kept the word) still has to answer for the same warehouses, and a
+                # location word resolves the same way on every turn - unlike a product
+                # code, which D10 forbids re-resolving because a family sibling can take
+                # its place.
+                carried_codes = resolve_warehouse_token(db, carried_token)
             if isinstance(carried_codes, list) and carried_codes:
                 semantic_input["outstanding_warehouse_codes"] = carried_codes
-                semantic_input["outstanding_location_token"] = parse_output.get(
-                    "outstanding_carried_location_token"
-                )
+                semantic_input["outstanding_location_token"] = carried_token or None
 
         # -- R19: the NAMES for the question's own `Customer:` line ------------ #
         # Worked out once, here, and stored on both filter builders. The ids are uuids
