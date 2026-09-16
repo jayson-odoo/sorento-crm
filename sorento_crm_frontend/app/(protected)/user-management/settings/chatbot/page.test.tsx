@@ -225,7 +225,7 @@ describe('ChatbotSettingsPage - one consolidated Save (browser pass 1 finding, 1
     expect(switchesMutate.mock.calls[0][0]).toMatchObject({ chatbot_stock_denial_enabled: true });
 
     expect(tierOrderMutate).toHaveBeenCalledTimes(1);
-    expect(tierOrderMutate.mock.calls[0][0]).toEqual(['office', 'dealer', 'end_user']);
+    expect(tierOrderMutate.mock.calls[0][0]).toEqual(['dealer', 'end_user', 'office']);
   });
 });
 
