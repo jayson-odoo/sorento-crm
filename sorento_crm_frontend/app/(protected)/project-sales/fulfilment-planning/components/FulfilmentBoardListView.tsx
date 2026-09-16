@@ -26,6 +26,7 @@ import type { BoardChangeAnnotation } from '../../_shared/lib/boardChangeAnnotat
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import { contributionMatchesSearch } from '../../_shared/lib/fulfilmentBoard';
 import {
+  boardOrderInquiryWord,
   contributionDecision,
   contributionInquiryDecision,
   contributionSuggestion,
@@ -302,14 +303,28 @@ export function FulfilmentBoardListView({
         id: 'product',
         accessorFn: (row) => row.item_code,
         header: 'Product',
-        cell: ({ row }) => (
-          <span
-            className="block truncate tabular-nums"
-            title={row.original.item_code}
-          >
-            {row.original.item_code}
-          </span>
-        ),
+        cell: ({ row }) => {
+          // AC-RL-06 amended (17 Sep, "beside the PRODUCT"): the same one-word pill the OI
+          // worklist carries, on every line regardless of verdict, draft or decision - see
+          // `boardOrderInquiryWord`'s own note for why this reads the inquiry directly
+          // rather than through the Decided cell's gated `contributionInquiryDecision`.
+          const word = boardOrderInquiryWord(row.original.order_inquiry);
+          return (
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span
+                className="block min-w-0 truncate tabular-nums"
+                title={row.original.item_code}
+              >
+                {row.original.item_code}
+              </span>
+              {word ? (
+                <Badge size="sm" appearance="light" variant="secondary" className="shrink-0">
+                  {word}
+                </Badge>
+              ) : null}
+            </span>
+          );
+        },
         size: 140,
         minSize: 110,
       },
@@ -405,25 +420,16 @@ export function FulfilmentBoardListView({
             const inquiry = contributionInquiryDecision(contribution);
             if (inquiry) {
               const text = inquiry.inquiry_no ?? 'Unnumbered inquiry';
-              // AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the SAME
-              // word the OI worklist chip carries, so CS sees the stage before
-              // confirming - `used` once the row was itself redirected (AC-RL-10),
-              // `received` once every document behind the line is fully received.
-              // Informational only here, never both at once.
-              const documents = inquiry.documents ?? [];
-              const word = inquiry.redirected
-                ? 'used'
-                : documents.length > 0 && documents.every((document) => document.received)
-                  ? 'received'
-                  : null;
+              // AC-RL-06 amended (17 Sep review round): the `received`/`used` word moved
+              // beside the PRODUCT (this row's own `product` column, driven by
+              // `boardOrderInquiryWord`) so it reads on every line, not only the ones that
+              // land in this branch - printing it here too would say it twice on a line
+              // that does.
               return (
                 <span className="flex min-w-0 items-center gap-1 tabular-nums">
                   <span className="block min-w-0 truncate" title={text}>
                     {text}
                   </span>
-                  {word ? (
-                    <span className="shrink-0 text-2xs text-muted-foreground">{word}</span>
-                  ) : null}
                 </span>
               );
             }

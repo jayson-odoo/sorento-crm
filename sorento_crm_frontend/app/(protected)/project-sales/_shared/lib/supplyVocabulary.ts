@@ -858,6 +858,28 @@ export function contributionInquiryDecision(
 }
 
 /**
+ * AC-RL-06 amended again (17 Sep review round, "beside the PRODUCT"): the SAME word the OI
+ * worklist chip carries - `used` once the winning row was itself redirected (AC-RL-10),
+ * `received` once every document behind it is fully received - read directly off the
+ * inquiry's own `documents`/`redirected`, with NO gate on `covered`, `decision` or a local
+ * draft. The Decided cell's own inquiry branch answers a different question (is there a
+ * composition to print, or does an inquiry already decide this line) and stays gated by
+ * `contributionInquiryDecision` above; this one is a plain fact about the book, true or not
+ * on every line regardless of verdict.
+ */
+export function boardOrderInquiryWord(
+  inquiry: BoardLineOrderInquiry | null | undefined,
+): 'received' | 'used' | null {
+  if (!inquiry) return null;
+  if (inquiry.redirected) return 'used';
+  const documents = inquiry.documents ?? [];
+  if (documents.length > 0 && documents.every((document) => document.received)) {
+    return 'received';
+  }
+  return null;
+}
+
+/**
  * What ONE contributing line's bar is drawn from, and whether it is settled.
  *
  * The DECISION when there is one - a confirmed active revision, or an amendment ticked into
