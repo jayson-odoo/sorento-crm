@@ -93,16 +93,19 @@ Plan: `PLAN-deploy-memory-and-ci-speed.md`
       killed by exact PID afterward; `lsof -i :8085` and `ps aux | grep gunicorn` both confirmed
       clean shutdown.
 - [ ] UAC-6 CI `validate-backend` smoke still imports `app.main` and the worker entrypoint.
-- [ ] UAC-7 Prod measurement after deploy: `docker stats --no-stream` backend colour is
+- [x] UAC-7 Prod measurement after deploy: `docker stats --no-stream` backend colour is
       under 3 GB (was 4.7 GB). Both numbers recorded here.
+      Evidence: prod docker stats after run 34486480226: backend_blue 1.432 GiB (was 4.708 GiB, green, 10 Sep 09:30 UTC). Host free -m: used 4763, available 11229 (was 9637 / 6354).
 - [ ] UAC-8 Rollback path documented in the PR body: `GUNICORN_PRELOAD=0` + recreate colour.
 
 ## S2 host runbook (owner)
 
-- [ ] UAC-9 `swapon --show` lists `/swapfile` 6G; `sysctl vm.swappiness` = 10.
-- [ ] UAC-10 `docker inspect --format '{{.HostConfig.OomScoreAdj}}' sorento_crm_db` = -900;
+- [x] UAC-9 `swapon --show` lists `/swapfile` 6G; `sysctl vm.swappiness` = 10.
+      Evidence: swapon --show: /swapfile 6G; vm.swappiness = 10.
+- [x] UAC-10 `docker inspect --format '{{.HostConfig.OomScoreAdj}}' sorento_crm_db` = -900;
       backend colour, worker, worker_fast = 500.
-- [ ] UAC-11 `docker inspect --format '{{.HostConfig.LogConfig}}' sorento_crm_db` shows
+      Evidence: docker inspect: db -900, pgbouncer -500, redis -500, worker 500, worker_fast 500; colours carry 500 in compose.
+- [ ] (struck) UAC-11 `docker inspect --format '{{.HostConfig.LogConfig}}' sorento_crm_db` shows
       json-file max-size 50m max-file 3.
 
 ## S3 CI speed
@@ -131,9 +134,10 @@ Plan: `PLAN-deploy-memory-and-ci-speed.md`
       three build steps moved to `build-images`, the promote step uses
       `docker buildx imagetools`, not `build-push-action`); `IMAGE_TAG="${{ github.sha }}"` at
       `:902`, unchanged.
-- [ ] UAC-14 The PR's own CI run shows `build-images` starting within 30 s of `changes`
+- [x] UAC-14 The PR's own CI run shows `build-images` starting within 30 s of `changes`
       finishing, in parallel with the test jobs (job start times from `gh run view --json jobs`).
-- [ ] UAC-15 `typecheck-frontend` job runs `npm run typecheck` and fails on a type error
+      Evidence: run 34486480226: build-images (backend/mcp/frontend) started 14:02:58, 6 s after changes finished at 14:02:52, alongside the test jobs.
+- [ ] (not proven with a throwaway commit; the job ran green on PR run 34466215615 and main run 34486480226) UAC-15 `typecheck-frontend` job runs `npm run typecheck` and fails on a type error
       (prove once on the lane by introducing a deliberate error in a throwaway commit, then
       revert; link both runs).
 - [x] UAC-16 Frontend Dockerfile sets `NEXT_SKIP_TYPECHECK=1`; `next.config.mjs` reads it;
@@ -148,8 +152,9 @@ Plan: `PLAN-deploy-memory-and-ci-speed.md`
       Evidence: `validate-frontend` matrix `shard: [1, 2, 3, 4]` at `:602-603`; run step
       `npx vitest run --shard=${{ matrix.shard }}/4` at `:628`. "Every shard green on the PR
       run" is CI evidence, not yet gathered - pending the actual PR run (UAC-14 sibling item).
-- [ ] UAC-18 First main deploy after merge: `build-and-deploy` job wall time under 7 min
+- [x] UAC-18 First main deploy after merge: `build-and-deploy` job wall time under 7 min
       (was 15) and total run under 28 min (was 36). Numbers recorded here.
+      Evidence: run 34486480226: build-and-deploy 14:20:48 to 14:23:47 (2 min 59 s, was 15 min); total 14:02:47 to 14:23:54 (21 min 7 s, was 36). Backend image 1.1 min (cache hit), mcp 0.5, frontend 8.8 (first run, cold cache-dance). Billable minutes not recorded.
 
       Also record billable Actions minutes for that run (F12): `npm ci --force` in
       `sorento_crm_frontend` now runs up to 5 times per frontend-touching run (4 vitest shard
@@ -157,7 +162,7 @@ Plan: `PLAN-deploy-memory-and-ci-speed.md`
       clock gets faster; whether total billable minutes also improve depends on how much that
       repeated install costs against the parallelism gained - record both wall time and
       minutes so the tradeoff is visible, not assumed.
-- [ ] UAC-19 cache-dance: second consecutive main deploy shows the frontend image build
+- [ ] (open: decided on the second main deploy) UAC-19 cache-dance: second consecutive main deploy shows the frontend image build
       under 4 min (was 6.5). If not met after two runs, cache-dance is removed and this
       item is struck with the two timings.
 
@@ -168,8 +173,9 @@ Plan: `PLAN-deploy-memory-and-ci-speed.md`
       unless `package-lock.json` changed). Record the quota before and after the first two
       deploys:
       `gh api repos/jayson-odoo/sorento-crm/actions/caches --jq '[.total_count, ([.actions_caches[].size_in_bytes]|add)]'`
-- [ ] UAC-20 Follow-up issue filed for the backend pytest-split durations file (shard 3 = 21
+- [x] UAC-20 Follow-up issue filed for the backend pytest-split durations file (shard 3 = 21
       min vs shard 1 = 8 min), linked from the PR.
+      Evidence: issue #820.
 - [ ] UAC-21 Before merge, owner runs on prod:
       `docker inspect --format '{{.Config.Entrypoint}} {{.Config.Cmd}}' sorento-crm2-backend_blue-1`
       (or `_green-1`, whichever colour is live) - must show `/app/start.sh` with no command
@@ -181,3 +187,5 @@ Plan: `PLAN-deploy-memory-and-ci-speed.md`
 ## Browser verification
 
 None. No UI change. Evidence is CI job timings, prod `docker stats`, and the gunicorn log.
+
+- [x] UAC-21 Live colour entrypoint: `docker inspect sorento-crm2-backend_green-1` -> `[/bin/sh /app/start.sh] []` (owner, 10 Sep, before merge).
