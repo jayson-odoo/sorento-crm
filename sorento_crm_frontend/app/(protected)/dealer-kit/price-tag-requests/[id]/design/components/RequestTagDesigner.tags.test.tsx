@@ -132,7 +132,6 @@ vi.mock('../../../../services/tagTemplateService', () => ({
 vi.mock('../../../../services/priceTagRequestService', () => ({
   resolveRequestTags: vi.fn(),
   getPriceTagRequest: vi.fn(),
-  splitRequestTag: vi.fn(),
   updateRequestTag: vi.fn(),
   transitionPriceTagRequest: vi.fn(),
   exportTagSheet: vi.fn(),
@@ -155,7 +154,6 @@ import { listReviewComments } from '../../../../services/priceTagReviewService';
 import {
   getPriceTagRequest,
   resolveRequestTags,
-  splitRequestTag,
   updateRequestTag,
 } from '../../../../services/priceTagRequestService';
 import { RequestTagDesigner } from './RequestTagDesigner';
@@ -169,7 +167,6 @@ const mockListTemplates = vi.mocked(listPublishedTemplates);
 const mockResolve = vi.mocked(resolveRequestTags);
 const mockComments = vi.mocked(listReviewComments);
 const mockGetRequest = vi.mocked(getPriceTagRequest);
-const mockSplit = vi.mocked(splitRequestTag);
 const mockUpdateTag = vi.mocked(updateRequestTag);
 
 // ---------------------------------------------------------------------------
@@ -189,7 +186,6 @@ function tag(overrides: Partial<PriceTagRequestTag> = {}): PriceTagRequestTag {
     sort_order: 0,
     label: '1a',
     quantity: 1,
-    choices: {},
     choices_display: [],
     open_groups: [],
     marketing_price_override: null,
@@ -228,8 +224,6 @@ function request(overrides: Partial<PriceTagRequestDetail> = {}): PriceTagReques
     doc_number: 'PT-000001',
     debtor_code: null,
     debtor_name: null,
-    promotion_id: null,
-    promotion_name: null,
     needed_by_date: null,
     notes: null,
     status: 'designing',
@@ -459,84 +453,19 @@ describe('RequestTagDesigner - tags under a line (S3)', () => {
   // AC-S3-4 - Split and Pick one
   // -------------------------------------------------------------------------
 
-  it('an open tag says which group is open and offers Split into N tags', async () => {
+  // D6 (PLAN-price-tag-line-promo-combo-subject.md, S8): an unresolved choice
+  // group is split into one tag per candidate at SUBMIT, server-side, so the
+  // designer never sees an "Open" tag and the rail's Split button / Pick one
+  // select are retired along with `split_tag`/`validate_choices`. The three
+  // tests this replaces (Split, Pick one, and the "offers Split" assertion)
+  // exercised UI this slice deletes; kept as ONE defensive test instead of
+  // three, since `open_groups` stays on the wire shape (always empty per D6)
+  // and a stray non-empty value reaching the rail must still render nothing.
+  it('never offers Split or Pick one, even if a tag somehow carries open_groups (D6)', async () => {
     await mount(request({ lines: [line({ tags: [OPEN_TAG] })] }));
 
-    expect(screen.getByText('Open: Basin')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Split into 4 tags' }),
-    ).toBeInTheDocument();
-    // Pick one offers the four candidates by CODE - one choice with four
-    // answers, which is the alternative to splitting.
-    const pickOne = screen.getByLabelText('Pick one');
-    expect(
-      within(pickOne).getAllByRole('option').map((option) => option.textContent),
-    ).toEqual(['Pick one', ...BASIN_CANDIDATES.map((c) => c.code)]);
-  });
-
-  it('Split calls the server and re-reads the request, rather than splitting locally', async () => {
-    const before = request({ lines: [line({ tags: [OPEN_TAG] })] });
-    const after = request({
-      lines: [
-        line({
-          tags: BASIN_CANDIDATES.map((candidate, index) =>
-            tag({
-              id: `tag-1${'abcd'[index]}`,
-              label: `1${'abcd'[index]}`,
-              sort_order: index,
-              choices: { Basin: candidate.product_id },
-              choices_display: [{ role: 'Basin', code: candidate.code }],
-            }),
-          ),
-        }),
-      ],
-    });
-    mockSplit.mockResolvedValue(after.lines[0].tags);
-    mockGetRequest.mockResolvedValue(after);
-    await mount(before);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Split into 4 tags' }));
-
-    await waitFor(() =>
-      expect(mockSplit).toHaveBeenCalledWith('req-1', OPEN_TAG.id, 'Basin'),
-    );
-    // The siblings and their copied geometry are minted on the SERVER, so the
-    // designer has to re-read rather than invent them.
-    await waitFor(() => expect(mockGetRequest).toHaveBeenCalledWith('req-1'));
-    await waitFor(() => expect(screen.getByText('1d')).toBeInTheDocument());
-    expect(screen.queryByText('Open: Basin')).toBeNull();
-  });
-
-  it('Pick one patches THIS tag\'s choices and adds no sibling', async () => {
-    const before = request({ lines: [line({ tags: [OPEN_TAG] })] });
-    const picked = request({
-      lines: [
-        line({
-          tags: [
-            tag({
-              choices: { Basin: BASIN_CANDIDATES[1].product_id },
-              choices_display: [{ role: 'Basin', code: BASIN_CANDIDATES[1].code }],
-            }),
-          ],
-        }),
-      ],
-    });
-    mockUpdateTag.mockResolvedValue(picked.lines[0].tags[0]);
-    mockGetRequest.mockResolvedValue(picked);
-    await mount(before);
-
-    fireEvent.change(screen.getByLabelText('Pick one'), {
-      target: { value: BASIN_CANDIDATES[1].product_id },
-    });
-
-    await waitFor(() =>
-      expect(mockUpdateTag).toHaveBeenCalledWith('req-1', OPEN_TAG.id, {
-        choices: { Basin: BASIN_CANDIDATES[1].product_id },
-      }),
-    );
-    expect(mockSplit).not.toHaveBeenCalled();
-    await waitFor(() => expect(screen.queryByText('Open: Basin')).toBeNull());
-    expect(screen.queryByText('1b')).toBeNull();
+    expect(screen.queryByRole('button', { name: /split into/i })).toBeNull();
+    expect(screen.queryByLabelText('Pick one')).toBeNull();
   });
 
   // -------------------------------------------------------------------------
@@ -700,14 +629,15 @@ describe('RequestTagDesigner - one block for a single-tag, no-parts line (S4)', 
     ).toBeInTheDocument();
   });
 
-  it('AC-S4-4: a line with one tag and an open group keeps the tag row (Split / Pick one)', async () => {
+  // D6: the folded-block exception applies to a tag with NO open group; one
+  // carrying open_groups keeps the "1a" tag row - but never a Split button or
+  // Pick one select, which D6 retires (see the sibling test above).
+  it('AC-S4-4: a line with one tag and an open group keeps the tag row, no Split/Pick one', async () => {
     await mount(request({ lines: [line({ tags: [OPEN_TAG] })] }));
 
     expect(screen.getByText('1a')).toBeInTheDocument();
-    expect(screen.getByText('Open: Basin')).toBeInTheDocument();
-    expect(
-      screen.getByRole('button', { name: 'Split into 4 tags' }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /split into/i })).toBeNull();
+    expect(screen.queryByLabelText('Pick one')).toBeNull();
   });
 });
 

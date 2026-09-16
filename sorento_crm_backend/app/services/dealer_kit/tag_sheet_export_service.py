@@ -12,14 +12,13 @@ refusing to print. AC-H.2 says to return 409 with a reason.
 from __future__ import annotations
 
 import logging
-from datetime import date
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models.dealer_kit import ExportRequest, Page, PageVersion
 from app.models.download import DownloadStatus, UserDownload
-from app.models.price_tag import PriceTagRequest
+from app.models.price_tag import PriceTagRequest, PriceTagRequestLine
 from app.services.error_handler import AppException
 from app.services.price_tag_request_service import (
     STATUS_APPROVED,
@@ -40,52 +39,73 @@ def _slugify(name: str) -> str:
 
 
 def _check_promotion_expired(db: Session, request: PriceTagRequest) -> None:
-    """Raise 409 if the request's promotion has expired.
+    """Raise 409 if any LINE's own promotion has expired (D1/D10, AC-S9-5).
 
-    A tag sheet whose promotion has expired would print stale prices. Refusing
-    with a clear reason is better than printing something wrong.
+    A promotion is a line fact since S6, so a request can have several - the
+    guard walks every distinct one actually IN USE and names the first
+    offending line ("line N", 1-based by ``sort_order``), rather than reading
+    a header the request no longer carries. ``business_today()`` (MYT), the
+    same clock the pricing engine itself checks a promotion's window against,
+    not the server's own ``date.today()`` - a promotion the engine would
+    already treat as over must not export as if it were still running.
     """
-    if not request.promotion_id:
+    from app.models.marketing import Promotion
+    from app.services.dealer_kit.pricing import business_today
+
+    # Queried fresh rather than through `request.lines` - a line's promotion
+    # can be changed by the office (S11) between the request being loaded and
+    # this guard running, and the ORM relationship on an already-loaded
+    # request would otherwise still show the old value.
+    lines = (
+        db.query(PriceTagRequestLine)
+        .filter(PriceTagRequestLine.request_id == request.id)
+        .order_by(PriceTagRequestLine.sort_order, PriceTagRequestLine.id)
+        .populate_existing()
+        .all()
+    )
+    promotion_ids = {line.promotion_id for line in lines if line.promotion_id}
+    if not promotion_ids:
         return
 
-    from app.models.marketing import Promotion
+    promotions = {
+        promo.id: promo
+        for promo in db.query(Promotion).filter(Promotion.id.in_(promotion_ids)).all()
+    }
+    today = business_today()
 
-    promo = (
-        db.query(Promotion)
-        .filter(Promotion.id == request.promotion_id)
-        .first()
-    )
-    if promo is None:
-        raise AppException(
-            status_code=409,
-            message=(
-                "The promotion linked to this request no longer exists. "
-                "Remove the promotion or link a new one before exporting."
-            ),
-            code="PROMOTION_MISSING",
-        )
-
-    today = date.today()
-    if promo.end_date and promo.end_date < today:
-        raise AppException(
-            status_code=409,
-            message=(
-                f"The promotion '{promo.description or promo.id}' expired on "
-                f"{promo.end_date.isoformat()}. Extend the promotion or remove "
-                f"it from the request before exporting."
-            ),
-            code="PROMOTION_EXPIRED",
-        )
-
-    if not promo.is_active:
-        raise AppException(
-            status_code=409,
-            message=(
-                f"The promotion '{promo.description or promo.id}' is inactive. "
-                f"Reactivate it or remove it from the request before exporting."
-            ),
-            code="PROMOTION_INACTIVE",
-        )
+    for index, line in enumerate(lines, start=1):
+        if not line.promotion_id:
+            continue
+        promo = promotions.get(line.promotion_id)
+        if promo is None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"Line {index}'s promotion no longer exists. Remove the "
+                    "promotion or link a new one before exporting."
+                ),
+                code="PROMOTION_MISSING",
+            )
+        if promo.end_date and promo.end_date < today:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"Line {index}'s promotion '{promo.description or promo.id}' "
+                    f"expired on {promo.end_date.isoformat()}. Extend the "
+                    "promotion or remove it from the line before exporting."
+                ),
+                code="PROMOTION_EXPIRED",
+            )
+        if not promo.is_active:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"Line {index}'s promotion '{promo.description or promo.id}' "
+                    "is inactive. Reactivate it or remove it from the line "
+                    "before exporting."
+                ),
+                code="PROMOTION_INACTIVE",
+            )
 
 
 def request_tag_sheet_export(
@@ -368,6 +388,13 @@ def design_media(
     for row in rows:
         for image in row["images"]:
             images[image["attachment_id"]] = image["url"]
+        # R9 (reviewer B1): a layer may pick ANY part as its subject (D7),
+        # so a part's own photo needs a signed URL in this map exactly like
+        # the host's - walking only `row["images"]` left a part-bound image
+        # layer with nothing to draw in the export payload at all.
+        for part in row.get("parts") or []:
+            for image in part.get("images") or []:
+                images[image["attachment_id"]] = image["url"]
 
     return rows, {
         # assetId -> signed URL, for every library asset the document names.
@@ -398,7 +425,16 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
             "line_id": row["line_id"],
             "tag_label": row["tag_label"],
             "open_groups": row["open_groups"],
-            "parts": row["parts"],
+            # D7 (S9): full product data per part, prices leaving as floats
+            # the same way the tag's own do below.
+            "parts": [
+                {
+                    **part,
+                    "list_price": _as_float(part.get("list_price")),
+                    "sell_price": _as_float(part.get("sell_price")),
+                }
+                for part in row["parts"]
+            ],
             "code": row["code"],
             "name": row["name"],
             "dimensions": row["dimensions"],
@@ -411,6 +447,11 @@ def _resolved_payload(db: Session, inputs: dict) -> dict:
             # arithmetic already happened, in the pricing engine.
             "list_price": _as_float(row["list_price"]),
             "sell_price": _as_float(row["sell_price"]),
+            # D7 (S9): the host alone - what a price badge's `subjectPart:
+            # -1` reads, never the roll-up above.
+            "parent_list_price": _as_float(row.get("parent_list_price")),
+            "parent_sell_price": _as_float(row.get("parent_sell_price")),
+            "sell_price_basis": row.get("sell_price_basis"),
             "show_promo_price": row["show_promo_price"],
             "included_accessories": row["included_accessories"],
             "quantity": row["quantity"],

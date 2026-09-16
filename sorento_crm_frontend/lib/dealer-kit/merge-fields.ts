@@ -23,8 +23,13 @@
  * other to have finished loading.
  */
 
-import { resolveSlotText } from './product-block';
-import type { SlotBinding, TagBindingData, TagSpecValue } from './tag-template-types';
+import { resolveSlotText, subjectOf } from './product-block';
+import type {
+  SlotBinding,
+  TagBindingData,
+  TagLayer,
+  TagSpecValue,
+} from './tag-template-types';
 
 /**
  * `editor` draws an unresolvable token as itself so the designer can see what
@@ -102,10 +107,14 @@ const FIELD_LABELS: { path: string; label: string; group: MergeFieldGroup }[] = 
   { path: 'line.parts_names', label: 'Parts (names)', group: 'Line' },
 ];
 
-/** The specs the bound thing carries. A set has none of its own (D58). */
-function specsOf(data: TagBindingData): TagSpecValue[] {
-  if (data.kind === 'product') return data.product.specs ?? [];
-  if (data.kind === 'line') return data.line.specs ?? [];
+/** The specs the bound thing carries. A set has none of its own (D58).
+ *  D7: `layer`'s own subject wins when the layer has one, same as every
+ *  other product-data read - a part's specs, not the parent's. */
+function specsOf(data: TagBindingData, layer?: Pick<TagLayer, 'props'>): TagSpecValue[] {
+  const subject = layer ? subjectOf(data, layer) : data;
+  if (!subject) return [];
+  if (subject.kind === 'product') return subject.product.specs ?? [];
+  if (subject.kind === 'line') return subject.line.specs ?? [];
   return [];
 }
 
@@ -124,11 +133,17 @@ function specText(spec: TagSpecValue): string {
  *
  * Null rather than an empty string, because the caller decides what an
  * unanswered token looks like and the two modes decide it differently.
+ *
+ * D7: `layer`'s own subject applies to `spec.*` and the `product.*`/`set.*`
+ * paths in `PATH_SLOTS` - the tokens AC-S4-1 names as subject-aware. The
+ * three `line.*` paths read the LINE regardless of any subject: a quantity
+ * and a line's own parts list are facts about the line, not about whichever
+ * product a layer happens to be pointed at.
  */
-function resolvePath(path: string, data: TagBindingData): string | null {
+function resolvePath(path: string, data: TagBindingData, layer?: Pick<TagLayer, 'props'>): string | null {
   if (path.startsWith('spec.')) {
     const key = path.slice('spec.'.length);
-    const spec = specsOf(data).find((row) => row.key === key);
+    const spec = specsOf(data, layer).find((row) => row.key === key);
     return spec ? specText(spec) : null;
   }
 
@@ -148,12 +163,27 @@ function resolvePath(path: string, data: TagBindingData): string | null {
 
   const slot = PATH_SLOTS[path];
   if (!slot) return null;
-  return resolveSlotText({ slot_binding: slot }, data);
+  return resolveSlotText({ slot_binding: slot, props: layer?.props }, data);
 }
 
 /** Whether any `{{token}}` appears in this text. */
 export function hasMergeField(text: string | null | undefined): boolean {
   return Boolean(text) && tokenPattern().test(text as string);
+}
+
+/**
+ * Whether `text` holds at least one `{{product.*}}` or `{{spec.*}}` token -
+ * the only ones a subject picker can affect (D7/AC-S4-1). A text layer
+ * reading only `{{line.*}}`/`{{set.*}}` tokens is about the LINE, not a
+ * specific product on it, and gets no picker.
+ */
+export function hasSubjectAwareToken(text: string | null | undefined): boolean {
+  if (!text) return false;
+  for (const match of text.matchAll(tokenPattern())) {
+    const path = match[1];
+    if (path.startsWith('product.') || path.startsWith('spec.')) return true;
+  }
+  return false;
 }
 
 /**
@@ -186,11 +216,12 @@ export function renderMergeFields(
   text: string,
   data: TagBindingData | null | undefined,
   mode: MergeFieldMode,
+  layer?: Pick<TagLayer, 'props'>,
 ): string {
   if (!text) return text;
 
   return text.replace(tokenPattern(), (whole, path: string) => {
-    const value = data ? resolvePath(path, data) : null;
+    const value = data ? resolvePath(path, data, layer) : null;
     if (value != null) return value;
     // With nothing bound and nothing previewed, the editor shows the token so
     // the designer can see which field will fill this spot. Print never does.

@@ -97,11 +97,6 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     # has to be storable. Completeness is enforced on SUBMIT, in the service, where
     # the refusal can name the field that is missing.
     debtor_name = Column(String(255), nullable=True)
-    promotion_id = Column(
-        UUID(as_uuid=False),
-        ForeignKey("promotions.id", ondelete="SET NULL"),
-        nullable=True,
-    )
     needed_by_date = Column(Date, nullable=True)  # nullable since D48a, see debtor_name
     notes = Column(Text, nullable=True)
     # Header-level price mode (D5, r7): 'list' | 'selling'. Replaces the old
@@ -173,7 +168,6 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     __table_args__ = (
         Index("ix_price_tag_requests_status", "status"),
         Index("ix_price_tag_requests_contact_id", "contact_id"),
-        Index("ix_price_tag_requests_promotion_id", "promotion_id"),
         Index("ix_price_tag_requests_assigned_to_id", "assigned_to_id"),
         # company_id index is already created by CompanyScopedMixin (index=True).
     )
@@ -208,6 +202,18 @@ class PriceTagRequestLine(Base):
     )
     show_promo_price = Column(Boolean, nullable=False, server_default="true")
     quantity = Column(Integer, nullable=False, server_default="1")
+    # D1 (ptag_0011): the promotion moved from the header to the LINE - a
+    # request-level promotion breaks the moment two lines sit on two
+    # promotions. SET NULL, not RESTRICT: deleting a promotion is a marketing
+    # change today and must not be blocked by a request from last season.
+    promotion_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("promotions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # A hand-typed selling price, only meaningful with `promotion_id` NULL
+    # (D2) - mutually exclusive, enforced at the schema.
+    manual_sell_price = Column(Numeric(12, 2), nullable=True)
     # The catalogue package this line was asked for as (D2). SET NULL, not
     # RESTRICT: deleting a combo is a change to how the product is packaged TODAY
     # and must not be blocked by a request somebody sent last season - the line
@@ -245,6 +251,7 @@ class PriceTagRequestLine(Base):
         UniqueConstraint("request_id", "product_id", name="uq_ptag_line_request_product"),
         UniqueConstraint("request_id", "product_set_id", name="uq_ptag_line_request_set"),
         Index("ix_price_tag_request_lines_request_id", "request_id"),
+        Index("ix_price_tag_request_lines_promotion_id", "promotion_id"),
     )
 
     parts = relationship(

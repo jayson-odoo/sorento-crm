@@ -52,7 +52,12 @@ vi.mock('@/lib/dealer-kit/fonts', async (importOriginal) => {
   };
 });
 
-vi.mock('../lib/price-tag-request-service', () => ({
+vi.mock('../lib/price-tag-request-service', async () => {
+  const { computeLinePricing } = await import('@/app/(auth)/portal/components/__fixtures__/line-pricing');
+  return {
+  lookupLinePricing: vi.fn(async (mode: string, lines: unknown[]) =>
+    computeLinePricing(mode as 'list' | 'selling', lines as never),
+  ),
   lookupDebtors: vi.fn(async () => []),
   lookupPromotions: vi.fn(async () => []),
   lookupTagItems: vi.fn(async () => []),
@@ -69,7 +74,8 @@ vi.mock('../lib/price-tag-request-service', () => ({
   listReviewComments: vi.fn(async () => []),
   collectRequest: vi.fn(),
   downloadPriceTagPdf: vi.fn(),
-}));
+  };
+});
 
 vi.mock('../lib/portal-client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/portal-client')>();

@@ -503,15 +503,17 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
         data={
             "debtor_name": "ZZT Dealer",
             "needed_by_date": date.today() + timedelta(days=7),
-            "promotion_id": promotion.id,
             # D5: price_mode drives show_promo_price on save, not the line
-            # payload.
+            # payload. D1 (S6): a promotion is a LINE fact - the header
+            # convenience is gone, and `_promotion` already covers this
+            # product with a `PromotionProduct` row.
             "price_mode": "selling",
             "lines": [
                 {
                     "line_type": "product",
                     "product_id": product.id,
                     "quantity": 1,
+                    "promotion_id": promotion.id,
                 }
             ],
         },
@@ -581,15 +583,16 @@ def test_request_detail_lines_carry_code_name_and_prices(api):
         data={
             "debtor_name": "ZZT Dealer",
             "needed_by_date": date.today() + timedelta(days=7),
-            "promotion_id": promotion.id,
             # D5: price_mode drives show_promo_price on save, not the line
-            # payload.
+            # payload. D1 (S6): a promotion is a LINE fact - `_promotion`
+            # already covers this product with a `PromotionProduct` row.
             "price_mode": "selling",
             "lines": [
                 {
                     "line_type": "product",
                     "product_id": product.id,
                     "quantity": 1,
+                    "promotion_id": promotion.id,
                 }
             ],
         },

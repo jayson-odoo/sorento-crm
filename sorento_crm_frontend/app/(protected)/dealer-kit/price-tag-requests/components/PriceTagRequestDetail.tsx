@@ -58,8 +58,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import BackToList from '@/components/common/BackToList';
 import DetailActions from '@/components/common/DetailActions';
@@ -89,7 +92,11 @@ import {
   markReadyForCollection,
   markCollected,
   updatePriceTagPrintBy,
+  lookupLinePricing,
+  updatePriceTagLinePrice,
   type PriceTagRequestDetail as PriceTagRequestDetailType,
+  type PriceTagRequestLine,
+  type LinePricingResult,
 } from '../../services/priceTagRequestService';
 import {
   AUTO_COLLECT_DAYS_DEFAULT,
@@ -140,6 +147,33 @@ interface Props {
   requestId: string;
 }
 
+type LinePriceOverride = {
+  promotion_id: string | null;
+  manual_sell_price: number | null;
+  locked: boolean;
+};
+
+/** F4 (reviewer B2): every line's SAVED promotion/manual price, as the
+ *  override map already shapes it - `locked: true`, since a value the
+ *  server persisted is exactly as deliberate as a pick the viewer just
+ *  made this session, and must not be overridden by the auto pick. */
+function seedLinePriceOverrides(
+  lines: PriceTagRequestLine[],
+): Record<string, LinePriceOverride> {
+  return Object.fromEntries(
+    lines
+      .filter((line) => line.line_type === 'product' && line.product_id)
+      .map((line) => [
+        line.id,
+        {
+          promotion_id: line.promotion_id ?? null,
+          manual_sell_price: line.manual_sell_price ?? null,
+          locked: line.promotion_id != null || line.manual_sell_price != null,
+        },
+      ]),
+  );
+}
+
 export default function PriceTagRequestDetail({ requestId }: Props) {
   const router = useRouter();
   const [request, setRequest] = useState<PriceTagRequestDetailType | null>(null);
@@ -163,6 +197,18 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // card's primary CTA counts the open ones (r9 D6) and the Design section is
   // what fetches them.
   const [reviewComments, setReviewComments] = useState<ReviewComment[]>([]);
+  // D5/S5: a line's own promotion/manual price. `request.lines` already
+  // carries the SAVED value (S6-S9), but this stays a separate map: `locked`
+  // marks a deliberate pick or clear (S1's rule, mirrored here) so the auto
+  // pick never overwrites it, and it is what the select/input actually bind
+  // to while the viewer is choosing. Seeded from `request.lines` on load
+  // (`seedLinePriceOverrides`, F4) so a saved pick opens on itself, not on
+  // whatever `lookupLinePricing` auto-picks this session.
+  const [linePriceOverrides, setLinePriceOverrides] = useState<
+    Record<string, LinePriceOverride>
+  >({});
+  const [savingLinePrice, setSavingLinePrice] = useState<string | null>(null);
+  const canProcessPrice = useHasPermission('dealer_kit.price_tag_requests.process');
 
   useEffect(() => {
     let cancelled = false;
@@ -171,6 +217,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       .then((data) => {
         if (cancelled) return;
         setRequest(data);
+        // F4 (reviewer B2): without this, `linePriceOverrides` starts empty
+        // and `effectivePromotionId` falls back to the AUTO pick until the
+        // viewer makes a fresh choice this session - a line saved with a
+        // real promotion opened on whatever `lookupLinePricing` auto-picked
+        // instead of what was actually saved.
+        setLinePriceOverrides(seedLinePriceOverrides(data?.lines ?? []));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -459,6 +511,131 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // refuse (review: row action was ungated, so an `approved`/`ready`/`void`
   // request still let a row jump into the designer).
   const canDesign = actions.some((spec) => spec.action === 'design');
+
+  // D5/S5: this request's lines are terminal (collected/cancelled) once the
+  // request itself is - the SAME predicate the price tag list and the
+  // portal read view use, so the two never disagree about when a request
+  // stops accepting changes (AC-S5-3).
+  const isTerminal = request
+    ? isTerminalPriceTagStatus(request.status, request.print_by ?? null)
+    : true;
+  const canEditLinePrice = canProcessPrice && !isTerminal;
+
+  // D5/S5 (built, S7/S12): recomputed through the real `lookupLinePricing`
+  // whenever the request or a line's own override changes. `locked` means
+  // the salesperson/marketing has already decided this line's promotion
+  // (picked or cleared, or SAVED - seeded on load, F4); until then the
+  // effective promotion is the auto pick, same rule as the portal form.
+  const [linePricing, setLinePricing] = useState<Record<string, LinePricingResult>>({});
+  useEffect(() => {
+    const lines = request?.lines ?? [];
+    if (lines.length === 0) {
+      setLinePricing({});
+      return;
+    }
+    let cancelled = false;
+    lookupLinePricing(
+      request?.price_mode ?? 'list',
+      lines
+        .filter((l) => l.line_type === 'product' && l.product_id)
+        .map((l) => {
+          const override = linePriceOverrides[l.id];
+          return {
+            key: l.id,
+            product_id: l.product_id,
+            part_product_ids: (l.parts ?? [])
+              .filter((p) => p.product_id)
+              .map((p) => p.product_id as string),
+            candidate_product_ids: [],
+            promotion_id: override?.locked ? override.promotion_id : undefined,
+          };
+        }),
+    ).then((results) => {
+      if (!cancelled) setLinePricing(Object.fromEntries(results.map((r) => [r.key, r])));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [request, linePriceOverrides]);
+
+  /** The line's effective promotion: the deliberate pick/clear if there is
+   *  one, else the auto pick (S1's rule, mirrored on the CRM side). */
+  const effectivePromotionId = useCallback(
+    (lineId: string): string | null => {
+      const override = linePriceOverrides[lineId];
+      if (override?.locked) return override.promotion_id;
+      return linePricing[lineId]?.auto_promotion_id ?? null;
+    },
+    [linePriceOverrides, linePricing],
+  );
+
+  const saveLinePrice = useCallback(
+    async (
+      lineId: string,
+      patch: { promotion_id?: string | null; manual_sell_price?: number | null },
+    ) => {
+      if (!request) return;
+      setSavingLinePrice(lineId);
+      try {
+        await updatePriceTagLinePrice(request.id, lineId, patch);
+        // The route clears the line's tags' pins server-side (S11), so the
+        // data-change banner picks up the price change alongside the
+        // refreshed request - the same two calls every other mutation here
+        // makes after a write.
+        const data = await getPriceTagRequest(request.id);
+        setRequest(data);
+        loadDataChanges();
+        toast.success('Price basis updated');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to update the price');
+      } finally {
+        setSavingLinePrice(null);
+      }
+    },
+    [request, loadDataChanges],
+  );
+
+  const choosePromotion = useCallback(
+    (lineId: string, promotionId: string) => {
+      const nextPromotionId = promotionId || null;
+      setLinePriceOverrides((prev) => ({
+        ...prev,
+        [lineId]: { promotion_id: nextPromotionId, manual_sell_price: null, locked: true },
+      }));
+      // D2: picking a promotion clears any manual figure - including one
+      // still sitting, uncommitted, in the draft the manual input reads.
+      setManualPriceDraft((prev) => ({ ...prev, [lineId]: '' }));
+      void saveLinePrice(lineId, { promotion_id: nextPromotionId, manual_sell_price: null });
+    },
+    [saveLinePrice],
+  );
+
+  // F7 (reviewer S7): the raw typed text, per line - updates on every
+  // keystroke for the input's own display, but does NOT touch
+  // `linePriceOverrides`. That map is a dependency of the `lookupLinePricing`
+  // recompute effect above, so writing it per keystroke fired a network call
+  // per keystroke too; nothing about typing a manual figure changes which
+  // promotions cover the line, so there was nothing for that recompute to
+  // answer differently anyway. Committed into `linePriceOverrides` (and
+  // saved) only on blur, in `commitManualLinePrice`.
+  const [manualPriceDraft, setManualPriceDraft] = useState<Record<string, string>>({});
+
+  const setManualLinePrice = useCallback((lineId: string, value: string) => {
+    setManualPriceDraft((prev) => ({ ...prev, [lineId]: value }));
+  }, []);
+
+  const commitManualLinePrice = useCallback(
+    (lineId: string) => {
+      const draft = manualPriceDraft[lineId];
+      const manual = draft === undefined || draft === '' ? null : Number(draft);
+      setLinePriceOverrides((prev) => ({
+        ...prev,
+        [lineId]: { promotion_id: null, manual_sell_price: manual, locked: true },
+      }));
+      void saveLinePrice(lineId, { promotion_id: null, manual_sell_price: manual });
+    },
+    [manualPriceDraft, saveLinePrice],
+  );
 
   // Sales Order attachments: standard preview/download, read-only - upload
   // stays portal-only (D4). Backed by the generic attachment download route,
@@ -772,10 +949,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   <span className="text-muted-foreground block">Salesperson</span>
                   <p className="font-medium">{request.contact_name ?? '-'}</p>
                 </div>
-                <div>
-                  <span className="text-muted-foreground block">Promotion</span>
-                  <p className="font-medium">{request.promotion_name ?? '-'}</p>
-                </div>
+                {/* D1: a promotion is per LINE now (see the Lines tab) -
+                    there is no single request-level promotion to name here
+                    any more. */}
                 <div>
                   <span className="text-muted-foreground block">Price</span>
                   <p className="font-medium">
@@ -1001,6 +1177,102 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                 </td>
                               )}
                             </tr>
+                            {/* D5/S5: a line's own price basis, Selling mode
+                                only - List price alone needs no promotion
+                                pick (AC-S5-1). Editable only while the
+                                request is not terminal AND the viewer holds
+                                `dealer_kit.price_tag_requests.process`
+                                (AC-S5-3/S5-4); otherwise the same cells
+                                render read only. */}
+                            {line.line_type === 'product' &&
+                              line.product_id &&
+                              (request.price_mode ?? 'list') === 'selling' && (
+                                <tr className="border-b last:border-b-0 bg-muted/20">
+                                  <td className="py-1.5 pr-3" />
+                                  <td colSpan={columns - 1} className="py-1.5 pr-3 pl-4">
+                                    <div className="flex flex-wrap items-center gap-4">
+                                      <div className="min-w-[200px] flex-1 sm:max-w-[280px]">
+                                        <Label
+                                          htmlFor={`promotion-${line.id}`}
+                                          className="text-2xs uppercase tracking-wide text-muted-foreground"
+                                        >
+                                          Promotion
+                                        </Label>
+                                        {canEditLinePrice ? (
+                                          <SearchableSelect
+                                            id={`promotion-${line.id}`}
+                                            clearable
+                                            truncateTriggerLabel
+                                            size="sm"
+                                            value={effectivePromotionId(line.id) ?? ''}
+                                            onChange={(value) => choosePromotion(line.id, value)}
+                                            options={(linePricing[line.id]?.promotion_options ?? []).map(
+                                              (option) => ({
+                                                value: option.id,
+                                                label: `${option.description} - RM ${option.sell_price.toLocaleString('en-MY')}`,
+                                              }),
+                                            )}
+                                            placeholder="No covering promotion"
+                                            emptyMessage="No promotion covers this line."
+                                            disabled={savingLinePrice === line.id}
+                                          />
+                                        ) : (
+                                          <p className="text-sm font-medium">
+                                            {(() => {
+                                              const promoId = effectivePromotionId(line.id);
+                                              const option = linePricing[line.id]?.promotion_options.find(
+                                                (o) => o.id === promoId,
+                                              );
+                                              return option?.description ?? '-';
+                                            })()}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="min-w-[140px]">
+                                        <Label className="text-2xs uppercase tracking-wide text-muted-foreground">
+                                          Selling price
+                                        </Label>
+                                        {effectivePromotionId(line.id) ? (
+                                          <p className="text-sm font-medium">
+                                            RM{' '}
+                                            {(
+                                              linePricing[line.id]?.sell_price ?? 0
+                                            ).toLocaleString('en-MY')}
+                                          </p>
+                                        ) : canEditLinePrice ? (
+                                          <Input
+                                            type="number"
+                                            inputMode="decimal"
+                                            // `ManualSellPrice` is `gt=0` with
+                                            // 2 decimal places, so 0 is a
+                                            // refusal, not a bound.
+                                            min={0.01}
+                                            step={0.01}
+                                            variant="sm"
+                                            className="w-28"
+                                            value={
+                                              manualPriceDraft[line.id] ??
+                                              linePriceOverrides[line.id]?.manual_sell_price ??
+                                              ''
+                                            }
+                                            onChange={(e) => setManualLinePrice(line.id, e.target.value)}
+                                            onBlur={() => commitManualLinePrice(line.id)}
+                                            placeholder="Type a price"
+                                            aria-label={`Selling price for ${line.code || line.name}`}
+                                            disabled={savingLinePrice === line.id}
+                                          />
+                                        ) : (
+                                          <p className="text-sm font-medium">
+                                            {linePriceOverrides[line.id]?.manual_sell_price != null
+                                              ? `RM ${linePriceOverrides[line.id]!.manual_sell_price!.toLocaleString('en-MY')}`
+                                              : '-'}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
                             {foldedTag ? null : (
                               <>
                             {/* What the salesperson asked to come with it (S2). */}
