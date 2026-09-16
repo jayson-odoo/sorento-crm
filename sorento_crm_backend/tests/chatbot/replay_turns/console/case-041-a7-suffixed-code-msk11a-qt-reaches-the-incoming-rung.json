@@ -81,7 +81,12 @@
           "3acc5445-c496-42db-acc1-38bc51b8be15"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: MSK11A-QT\n\nBut no inventory matched these.\nNo stock for MSK11A-QT.\n\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* MSK11A-QT\n*Container:* TEMU6355180\n*ETA:* 2026-09-02\n*ETA Delay:* 2026-09-08\n*Loading:* 2026-08-21\n*ETC:* 2026-08-23\n*ETD:* 2026-08-25\n*Liner:* CMA\n*China Forwarder:* Hongxin\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento (Mocha)\n*Free Days Available:* 14\n*Incoming Quantity:* 400\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\nWould you like me to escalate to warehouse team?",
         "tools": [
           {

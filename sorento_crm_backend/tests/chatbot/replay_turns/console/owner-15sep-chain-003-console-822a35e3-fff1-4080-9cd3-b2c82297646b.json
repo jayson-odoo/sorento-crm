@@ -76,7 +76,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "wc286"
+          ]
+        },
         "text": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. SRTWC286-SH-200 - no incoming\n2. SRTWC286-SH-P - no incoming\n3. SRTWC286-SH-PP - no incoming\n4. SRTWC286-SH - no incoming\n5. SRTWC286-SH-UF - no incoming\n6. SRTWC286-SH-NEW-150 - no incoming\n7. SRTWC286-SH-150 - no incoming\n8. SRTWC286-SH-NEW-P - has incoming\n9. SRTWC286-SH-NEW-200 - has incoming\n10. SRTWC286-SH-NEW - has incoming",
         "tools": []
       },
@@ -789,7 +794,12 @@
           "65514803-1609-4fe8-8b60-2e908c8f9bd4"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "wc286"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWC286-SH-200\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWC286-SH-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWC286-SH-200\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWC286-SH-200\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\nNo incoming, stock is 0 at every location and nothing on order for SRTWC286-SH-200.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -1165,7 +1175,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Couldn't find \"SRTWT2643\" (product). Did you mean:\n1. SRTWT2632 - no stock details\n2. SRTWT2633 - no stock details\n3. SRTWT2634 - no stock details\nReply with a code to continue, or would you like me to escalate to warehouse team?",
         "tools": []
       },
@@ -1378,7 +1393,12 @@
           "a3055471-8300-4c2c-94e5-0b5cd9e84442"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWT2632\n\nBut no inventory matched these.\nNo stock, no incoming and nothing on order for SRTWT2632.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -1671,7 +1691,12 @@
           "f79939a6-8a41-4823-9e96-ab14e7a0d807"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWT2633\n\nBut no inventory matched these.\nNo stock, no incoming and nothing on order for SRTWT2633.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -1962,7 +1987,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
         "tools": []
       },
@@ -2430,7 +2460,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT) - has DO\n2. CHIN CHUN HOMEMART SDN BHD (MCH) - has DO\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT) - no DO\n4. JIMMY - I (MCH) - has DO",
         "tools": []
       },

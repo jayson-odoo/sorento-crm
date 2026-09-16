@@ -80,7 +80,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },
@@ -316,7 +321,12 @@
           "c2f38bdf-767a-4b04-b92d-1c0d56cfd4d3"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: HANLIM TRADING SDN BHD [A/C II], HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD [A/C III], HANLIM TRADING SDN BHD [A/C IV], HANLIM TRADING SDN BHD, HANLIM TRADING SDN BHD (CERAMIC & ELLECI)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 28\nOrdered: 1,324\nTransferred to DO: 0\nOutstanding: 1,324\nOrder date range: 03/10/2023 to 02/09/2026\n*_By location_*\nBRW: 1,324 (O/S: 1,324)\n*_By product_*\nSRT320-CR: 506 (O/S: 506)\nWESERP10B: 154 (O/S: 154)\nSRT79-SS: 130 (O/S: 130)\nCWC7601-S-ECO: 100 (O/S: 100)\nCB88SS-DIY: 60 (O/S: 60)\nSRT6643-GM: 60 (O/S: 60)\nSRTWT1907-DIY: 54 (O/S: 54)\nSRTKT1631SS: 35 (O/S: 35)\nSRTKT1871SS: 24 (O/S: 24)\nSRTWB248: 22 (O/S: 22)\nSRTWHBWP: 22 (O/S: 22)\nCWC7603-SH-300: 20 (O/S: 20)\nSRT6641: 20 (O/S: 20)\nCWC7603-SH-150: 15 (O/S: 15)\nCWC7603-SH-250: 15 (O/S: 15)\nSRTKT72SS: 15 (O/S: 15)\nSRTWT8203: 14 (O/S: 14)\nBK102-NL: 12 (O/S: 12)\nSRT79-SS-GM: 10 (O/S: 10)\nSRT61-CR: 8 (O/S: 8)\nSRTSS5650-GM: 5 (O/S: 5)\nSRTWB1086: 5 (O/S: 5)\nSRTFT203-NEW: 4 (O/S: 4)\nSRTWC8366-300-RL-UF: 4 (O/S: 4)\nSRTWT9606-GM: 4 (O/S: 4)\nCBF88602: 1 (O/S: 1)\nSRT454-GM: 1 (O/S: 1)\nSRTKS7051: 1 (O/S: 1)\nSRTWB8003: 1 (O/S: 1)\nSRTWC8517-SH-UF-NEW: 1 (O/S: 1)\nSRTWCX8605-S-RL-PJ: 1 (O/S: 1)\n\n*Delivery order outstanding*\nDelivery orders: 18\nDO qty: 557\nDelivered: 0\nOutstanding: 557\nDO date range: 21/04/2026 to 25/06/2026\n*_By location_*\nBRW: 553 (O/S: 553)\nBRW-REWO: 2 (O/S: 2)\nSPARE/P: 2 (O/S: 2)\n*_By product_*\nSRTWT165: 85 (O/S: 85)\nSRT59-CR: 65 (O/S: 65)\nSRTKT39SS: 40 (O/S: 40)\nSRT367-GM: 35 (O/S: 35)\nSRTKT1632SS: 35 (O/S: 35)\nSRTKT1634SS-BL: 35 (O/S: 35)\nBT009: 25 (O/S: 25)\nCB89-CR-DIY: 14 (O/S: 14)\nSRTKT71SS: 12 (O/S: 12)\nSRTWB888-A: 12 (O/S: 12)\nSRTWHBWP: 12 (O/S: 12)\nSRT79-SS-BL: 11 (O/S: 11)\nSRTKT1861SS: 11 (O/S: 11)\nSRTKT1872SS: 11 (O/S: 11)\nSRTKT31SS: 11 (O/S: 11)\nSRTSA840-BL: 11 (O/S: 11)\nSRTSH22613: 11 (O/S: 11)\nSRTSH22913-GM: 11 (O/S: 11)\nSRTSH2623-BL: 11 (O/S: 11)\nSRTWT1906-BL-DIY: 11 (O/S: 11)\nSRTWT5608: 11 (O/S: 11)\nSRTWT5841-BL: 11 (O/S: 11)\nSRTWT5866-GM: 11 (O/S: 11)\nSRTKT1871SS: 10 (O/S: 10)\nSRTSA830: 7 (O/S: 7)\nSRTW5000: 6 (O/S: 6)\nSRTSA860-GM: 5 (O/S: 5)\nCKS6407: 3 (O/S: 3)\nSRTKT1631SS: 3 (O/S: 3)\nRPACC: 2 (O/S: 2)\nSRTKSW302-BL: 2 (O/S: 2)\nSRTWC287-RL: 2 (O/S: 2)\nWESERP10B: 2 (O/S: 2)\nS-FH10PVC-DIY: 1 (O/S: 1)\nS-FH12PVC-DIY: 1 (O/S: 1)\nS-FH14PVC-DIY: 1 (O/S: 1)\nS-FH16PVC-DIY: 1 (O/S: 1)\nS-FH18PVC-DIY: 1 (O/S: 1)\nSAMPLE: 1 (O/S: 1)\nSRTBV170-DIY: 1 (O/S: 1)\nSRTWT1900-DIY: 1 (O/S: 1)\nSRTWT1905-DIY: 1 (O/S: 1)\nSRTWT1906-DIY: 1 (O/S: 1)\nSRTWT1907-DIY: 1 (O/S: 1)\nSRTWT1908-DIY: 1 (O/S: 1)\nSRTWT1914-DIY: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
         "tools": [
           {

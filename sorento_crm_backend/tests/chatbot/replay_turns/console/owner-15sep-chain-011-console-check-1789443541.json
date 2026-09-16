@@ -73,7 +73,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. BM SALES & SERVICES SDN BHD - [IBORN] (MCH)\n2. JOO SENG HARDWARE SDN BHD - [IBORN] (MCH)\n3. WISER MARKETING - [IBORN] (MCH)\n4. BP EXCEL HARDWARE TRADING SDN BHD - [IBORN] (MCH)\n5. DILOOMA SDN BHD - [IBORN] (MCH)\n6. CHIN CHUN HARDWARE SDN BHD - [IBORN] (MCH)\n7. TOONG STAR SDN BHD - [IBORN] (MCH)\n8. LTL GLOBAL SDN BHD - [IBORN] (MCH)",
         "tools": []
       },
@@ -359,7 +364,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -497,7 +507,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -625,7 +640,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -753,7 +773,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -900,7 +925,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1039,7 +1069,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1177,7 +1212,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
         "tools": []
       },
@@ -1348,7 +1388,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1474,7 +1519,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1612,7 +1662,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1750,7 +1805,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
         "tools": []
       },
@@ -1877,7 +1937,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2029,7 +2094,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2167,7 +2237,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "That would search every delivery order we have - I need at least one filter to narrow it down. Give me an order number, transporter, customer, or date range, and I can look it up.",
         "tools": []
       },

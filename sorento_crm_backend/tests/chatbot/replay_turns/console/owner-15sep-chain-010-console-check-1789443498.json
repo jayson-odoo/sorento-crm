@@ -73,7 +73,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "M218"
+          ]
+        },
         "text": "Sorry, you are not allowed to access purchase cost",
         "tools": []
       },
@@ -212,7 +217,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "M218"
+          ]
+        },
         "text": "Sorry, you are not allowed to access purchase cost",
         "tools": []
       },
@@ -351,7 +361,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWC8517"
+          ]
+        },
         "text": "Sorry, you are not allowed to access purchase cost",
         "tools": []
       },
@@ -490,7 +505,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWC8517"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },

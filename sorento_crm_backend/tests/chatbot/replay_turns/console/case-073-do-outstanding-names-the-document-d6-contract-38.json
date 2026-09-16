@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
         "tools": []
       },

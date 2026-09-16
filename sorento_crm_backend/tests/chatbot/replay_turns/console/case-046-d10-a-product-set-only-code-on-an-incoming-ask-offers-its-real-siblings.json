@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWC8610-SH"
+          ]
+        },
         "text": "Couldn't find \"SRTWC8610-SH\" (product). Did you mean SRTWC8611, SRTWC8613, or SRTWC8614? Reply with a code to continue, or would you like me to escalate to purchasing team?",
         "tools": []
       },

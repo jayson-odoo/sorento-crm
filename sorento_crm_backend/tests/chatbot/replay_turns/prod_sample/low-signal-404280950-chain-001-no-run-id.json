@@ -1941,7 +1941,12 @@
           "d41ba239-e664-4a82-af30-ec5bc08d926c"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWB7098\n*Container:* TRHU5925954\n*ETA:* 2026-09-14\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*",
         "tools": [
           {

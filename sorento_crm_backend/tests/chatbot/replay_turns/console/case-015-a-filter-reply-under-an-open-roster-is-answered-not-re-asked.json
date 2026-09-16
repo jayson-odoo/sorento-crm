@@ -96,7 +96,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: hanlim\nProduct: srtwc286\nDates: all dates\n\nHere's what you want:\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {

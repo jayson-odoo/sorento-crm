@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. GOLDEN WIN HARDWARE SDN BHD - [A/C I] (MCH) - no DO\n2. ADWINMA SDN BHD (PROJECT) (SRT) - has DO\n3. MY GOLDEN HOME TRADING (MCH) - has DO\n4. WIN JOO SDN BHD - [A/C I] (MCH) - has DO\n5. WINDSOR HOMES SDN BHD (PROJECT-CASH) (SRT) - has DO\n6. WING SEONG FATT CONSTRUCTION SDN BHD (PROJECT-CASH) (SRT) - has DO\n7. WINHOME KITCHEN & BATH (MCH, SRT) - has DO\n8. WINST HARDWARE SDN BHD (SRT) - no DO",
         "tools": []
       },
@@ -400,7 +405,12 @@
           "32d49e9b-5b55-4d23-9764-279306de295d"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: GOLDEN WIN HARDWARE SDN BHD - [A/C I] (MCH)\nProduct: all products\nDates: all dates\n\nHere's what you want:\n\u2022 customer: GOLDEN WIN HARDWARE SDN BHD - [A/C I]\n\nBut no order matched these. Would you like me to escalate to *Mocha* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Ms Bay\n2. Nicky\n3. Kah Xin\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {

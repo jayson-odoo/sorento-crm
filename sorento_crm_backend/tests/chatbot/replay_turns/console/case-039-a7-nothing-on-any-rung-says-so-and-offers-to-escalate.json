@@ -81,7 +81,12 @@
           "c5e3699e-15a9-4462-9bdc-0a976a27b8b3"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWB103\n\nBut no inventory matched these.\nNo stock, no incoming and nothing on order for SRTWB103.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {

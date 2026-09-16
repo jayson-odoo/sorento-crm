@@ -78,7 +78,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "marketing product",
+            "marketing form",
+            "marketing promotion"
+          ]
+        },
         "text": "Which team should I pass this to - marketing product, marketing form or marketing promotion?",
         "tools": []
       },

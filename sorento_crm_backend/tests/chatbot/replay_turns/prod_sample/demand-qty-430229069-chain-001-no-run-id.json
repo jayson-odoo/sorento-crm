@@ -319,7 +319,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here is what I heard: \"\u53ef\u5514\u53ef\u4ee5\u5e6b\u6211\u96bbM80115BL\u6709\u5187\u585e?\"\n\nPlease specify your demand quantity",
         "tools": []
       },
@@ -566,7 +571,12 @@
           "cae8adcb-93db-48cb-98e2-1fbe37e356a2"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Quantity of 2 for product UNKNOWN_PRODUCT cannot be fulfilled. Total available quantity is 0.",
         "tools": [
           {
@@ -1503,7 +1513,12 @@
           "c445d6c4-9298-4a07-a37e-646d951997cd"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here is what I heard: \"MWC8154RL\u6709\u5187stock?\"\n\nStock details found for the requested products.\n\n1. *Company:* Mocha\n*Product Code:* MWC8154-RL-P\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n2. *Company:* Mocha\n*Product Code:* MWC8154-RL-P\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 20\n\n3. *Company:* Sorento\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-S/L\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\n4. *Company:* Mocha\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 364\n\n5. *Company:* Mocha\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* MERU\n*System Location:* HOLD\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 122\n\n_Data last updated: 11/09/2026 11:50:22_",
         "tools": [
           {
@@ -2239,7 +2254,12 @@
           "c445d6c4-9298-4a07-a37e-646d951997cd"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here is what I heard: \"Boleh tolong cek MWC8154RL ada stok tak?\"\n\nStock details found for the requested products.\n\n1. *Company:* Mocha\n*Product Code:* MWC8154-RL-P\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 0\n\n2. *Company:* Mocha\n*Product Code:* MWC8154-RL-P\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 20\n\n3. *Company:* Sorento\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-S/L\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\n4. *Company:* Mocha\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* HQ\n*System Location:* HQ\n*Quantity On Hand:* 364\n\n5. *Company:* Mocha\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* MERU\n*System Location:* HOLD\n*Quantity On Hand:* 0\n\n6. *Company:* Mocha\n*Product Code:* MWC8154-RL-S10\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 122\n\n_Data last updated: 11/09/2026 11:50:22_",
         "tools": [
           {

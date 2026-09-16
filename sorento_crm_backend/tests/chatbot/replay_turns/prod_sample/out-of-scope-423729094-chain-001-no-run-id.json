@@ -1844,7 +1844,12 @@
           "827eff80-5373-456b-873b-7443647d9dd2"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Here are the matching products.\n\n1. *Product Code:* SRTWCX8840-S-RL\n*Description:* SORENTO CLOSE COUPLED PEDESTAL ONLY RIMLESS  (S-TRAP 250MM) SRTWCX8840-S-RL\n*List Price:* MYR 1020.00\n*Dimensions:* Not defined\n*Specs:* Product class: Water Closet, Trap: s_trap, Type: close_coupled, Mounting: pedestal, Rimless: True, Trap outlet length: 250 mm, Brand: SORENTO\n\n_Data last updated: 10/09/2026 18:58:26_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a",
         "tools": [
           {

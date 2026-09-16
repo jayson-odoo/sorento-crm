@@ -601,7 +601,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. MBJ BINA JAYA MACHINERY & HARDWARE SDN BHD (MCH)\n4. PERNIAGAAN ALAY JAYA MACHINERY HARDWARE - [A/C I] (MCH)\n5. PERNIAGAAN MOZEK CHIN TAK SDN BHD (MCH)\n6. SK HARDWARE (KUCHING) SDN BHD - [A/C I] (MCH)\n7. GS HOME HARDWARE & MACHINERY SDN BHD - [IBORN] (MCH)\n8. KH HARDWARE & MACHINERY SDN BHD - [A/C I] (MCH)",
         "tools": []
       },
@@ -914,7 +919,12 @@
           "060f4eaf-88ca-486a-a203-b0b61eeb9cd8"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I]\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nDelivery orders: 2\nDO qty: 4\nDelivered: 0\nOutstanding: 4\nDO date range: 01/09/2026\n*_By location_*\nSPARPART: 2 (O/S: 2)\nMOCHA-WH: 1 (O/S: 1)\nREPAIR: 1 (O/S: 1)\n*_By product_*\nMA0105: 1 (O/S: 1)\nMA0158: 1 (O/S: 1)\nMWT6805SS-FRG: 1 (O/S: 1)\nRPACC: 1 (O/S: 1)\n\nReply 1 for the delivery order list.",
         "tools": [
           {

@@ -350,7 +350,12 @@
           "31f1cb07-cdbe-4eea-b408-2314b0aaa1c6"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "ddor CB7306"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* CKS7306\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 26\n*Outstanding:* 2\n\n2. *Product Code:* CKS7306\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 0\n*Outstanding:* 78\n\n3. *Product Code:* CKS7306\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 12\n*Outstanding:* 455\n\n4. *Product Code:* CKS7306\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n5. *Product Code:* CKS7306\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 20\n*Outstanding:* 0\n\n6. *Product Code:* CKS7306\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\n7. *Product Code:* CKS7306\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n_Data last updated: 10/09/2026 11:11:07_",
         "tools": [
           {
@@ -1084,7 +1089,12 @@
           "31f1cb07-cdbe-4eea-b408-2314b0aaa1c6"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here are the matching products.\n\n1. *Product Code:* CKS7306\n*Description:* CABANA KITCHEN SINK 600X440X230MM CKS7306\n*List Price:* MYR 467.00\n*Dimensions:* 600.00 x 440.00 x 230.00 mm\n\n*thickness:* not recorded for CKS7306\n\n_Data last updated: 04/09/2026 18:58:29_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a",
         "tools": [
           {

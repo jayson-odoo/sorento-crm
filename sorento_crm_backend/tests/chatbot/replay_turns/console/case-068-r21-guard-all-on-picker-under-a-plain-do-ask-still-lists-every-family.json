@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH, SRT)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
         "tools": []
       },
@@ -378,7 +383,12 @@
           "fa32b334-fc47-4bec-96db-f0f59a4bcb0f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\nProduct: SRTKT39SS\nDates: all dates\n\nHere's what you want:\n\u2022 product: SRTKT39SS\n\u2022 customer: CHIN CHUN HARDWARE AND TIMBER TRADING (+1 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {

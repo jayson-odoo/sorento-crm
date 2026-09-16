@@ -1589,7 +1589,12 @@
           "ea1fad8a-de24-4984-9feb-5c23f304e588"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRT347-HP"
+          ]
+        },
         "text": "Here are the matching products.\n\n1. *Product Code:* SRT376-6\n*Description:* SORENTO BRASS EXTENDABLE SHAVING MIRROR SRT376-6\n*List Price:* MYR 202.00\n*Dimensions:* Not defined\n\n*discontinued:* not recorded for SRT376-6\n\n_Data last updated: 04/09/2026 18:58:37_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a",
         "tools": [
           {
@@ -1904,7 +1909,12 @@
           "f9245d02-c1b9-4aba-91d1-78d848385e32"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRT347-HP"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRT375-6\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n_Data last updated: 09/09/2026 17:17:23_",
         "tools": [
           {
@@ -2210,7 +2220,12 @@
           "ca9adf2e-2292-4b67-b418-d8e95deb2727"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRT347-HP"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRT373-8\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 2\n*Outstanding:* 0\n\n_Data last updated: 09/09/2026 17:17:23_",
         "tools": [
           {

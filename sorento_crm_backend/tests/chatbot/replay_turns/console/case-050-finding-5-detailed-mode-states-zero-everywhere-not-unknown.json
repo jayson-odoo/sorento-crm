@@ -81,7 +81,12 @@
           "57b172da-42be-46fc-8b6f-f0cfdcb089eb"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRT6550-DIY\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRT6550-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 21\n\nNo incoming and stock is 0 at every location for SRT6550-DIY, but PO is placed:\n*Product Code:* SRT6550-DIY\n*Ordered:* 300\n*Outstanding:* 300\n*PO date:* 2026-07-27\n*Location:* BRW\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {

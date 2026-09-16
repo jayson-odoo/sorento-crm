@@ -91,7 +91,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWC286-SH\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 4\n*Outstanding:* 20\n\n2. *Product Code:* SRTWC286-SH\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-IB\n*Quantity On Hand:* 685\n*Outstanding:* 0\n\n3. *Product Code:* SRTWC286-SH\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 2\n*Outstanding:* 0\n\n4. *Product Code:* SRTWC286-SH\n*Warehouse:* MERU\n*System Location:* MWH-IB\n*Quantity On Hand:* 136\n*Outstanding:* 0\n\n5. *Product Code:* SRTWC286-SH-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 7\n*Outstanding:* 32\n\n6. *Product Code:* SRTWC286-SH-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\n7. *Product Code:* SRTWC286-SH-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n8. *Product Code:* SRTWC286-SH-200\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n9. *Product Code:* SRTWC286-SH-200\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 67\n*Outstanding:* 88\n\n11. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 33\n*Outstanding:* 347\n\n12. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 4\n*Outstanding:* 272\n\n13. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 84\n*Outstanding:* 0\n\n14. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-BB\n*Quantity On Hand:* 13\n*Outstanding:* 0\n\n15. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 512\n*Outstanding:* 0\n\n16. *Product Code:* SRTWC286-SH-NEW\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3\n*Quantity On Hand:* 81\n*Outstanding:* 0\n\n17. *Product Code:* SRTWC286-SH-NEW-150\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 82\n*Outstanding:* 0\n\n18. *Product Code:* SRTWC286-SH-NEW-150\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\n19. *Product Code:* SRTWC286-SH-NEW-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 68\n\n20. *Product Code:* SRTWC286-SH-NEW-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-HP\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n21. *Product Code:* SRTWC286-SH-NEW-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n22. *Product Code:* SRTWC286-SH-NEW-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n23. *Product Code:* SRTWC286-SH-NEW-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 43\n*Outstanding:* 32\n\n24. *Product Code:* SRTWC286-SH-NEW-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 22\n*Outstanding:* 75\n\n25. *Product Code:* SRTWC286-SH-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 1\n*Outstanding:* 10\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n26. *Product Code:* SRTWC286-SH-UF\n*Warehouse:* MERU\n*System Location:* MWH-IR\n*Quantity On Hand:* 48\n*Outstanding:* 0\n\n27. *Product Code:* SRTWC286-SH-UF\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IR\n*Quantity On Hand:* 3\n*Outstanding:* 0\n\n_Data last updated: 04/09/2026 17:30:59_\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* SRTWC286-SH-NEW-200\n*Container:* SGRU5031232\n*ETA:* 2026-08-18\n*ETA Delay:* 2026-08-20\n*CIDB Inspection:* 2026-09-03\n*Loading:* 2026-08-02\n*ETC:* 2026-08-05\n*ETD:* 2026-08-07\n*Liner:* CMA\n*China Forwarder:* Haiian\n*Malaysia Forwarder:* Haiian\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 50\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC286-SH-NEW-200\n*Container:* WHSU7382874\n*ETA:* 2026-09-08\n*ETA Delay:* 2026-09-08\n*Loading:* 2026-08-28\n*ETC:* 2026-08-29\n*ETD:* 2026-08-31\n*Liner:* WHL\n*China Forwarder:* J&H\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 150\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\nNo stock and no incoming for SRTWC286-SH-PP, but PO is placed:\n*Product Code:* SRTWC286-SH-PP\n*Ordered:* 36\n*Outstanding:* 36\n*PO date:* 2026-04-08\n*Location:* BRW-BB\n\n*Product Code:* SRTWC286-SH-PP\n*Ordered:* 36\n*Outstanding:* 36\n*PO date:* 2026-04-08\n*Location:* BRW-BB\n\nStock is 0 at every location, no incoming and nothing on order for SRTWC286-SH-200.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -354,7 +359,12 @@
           "b9092b1a-eaaf-4e3d-a5e7-8a7ecb975144"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here is the PO placed I found.\n\n1. *PO Number:* SPO-2026/08-0064\n*Product Code:* SRTWC8517-SH-UF-NEW\n*Ordered Qty:* 40\n*Outstanding Qty:* 40\n*PO Date:* 2026-08-12\n*Location:* BRW\n\n2. *PO Number:* SPO-2026/08-0064\n*Product Code:* SRTWC8517-SH-UF-NEW\n*Ordered Qty:* 20\n*Outstanding Qty:* 20\n*PO Date:* 2026-08-12\n*Location:* BRW\n\n3. *PO Number:* SPO-2026/08-0066\n*Product Code:* SRTWC8517-SH-UF-NEW\n*Ordered Qty:* 3\n*Outstanding Qty:* 3\n*PO Date:* 2026-08-13\n*Location:* BRW\n\n4. *PO Number:* SPO-2026/08-0066\n*Product Code:* SRTWC8517-SH-UF-P-NEW\n*Ordered Qty:* 15\n*Outstanding Qty:* 15\n*PO Date:* 2026-08-13\n*Location:* BRW\n\n5. *PO Number:* SPO-2026/08-0066\n*Product Code:* SRTWC8517-SH-UF-200-NEW\n*Ordered Qty:* 2\n*Outstanding Qty:* 2\n*PO Date:* 2026-08-13\n*Location:* BRW\n\n6. *PO Number:* SPO-2026/08-0066\n*Product Code:* SRTWC8517-SH-UF-150-NEW\n*Ordered Qty:* 9\n*Outstanding Qty:* 9\n*PO Date:* 2026-08-13\n*Location:* BRW",
         "tools": [
           {
@@ -862,7 +872,12 @@
           "b9092b1a-eaaf-4e3d-a5e7-8a7ecb975144"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here is the last SPO line per product.\n\n1. *SPO Number:* SPO-202606-0080\n*Product Code:* SRTWC8517-SH-UF\n*SPO Quantity:* 4\n*GR Quantity:* 4\n*SPO Date (recorded):* 2026-07-01\n*GR Date:* 2026-07-06\n*Warehouse:* BRW-HP\n\n2. *SPO Number:* SPO-202606-0080\n*Product Code:* SRTWC8517-SH-UF-150\n*SPO Quantity:* 19\n*GR Quantity:* 19\n*SPO Date (recorded):* 2026-07-01\n*GR Date:* 2026-07-06\n*Warehouse:* BRW\n\n3. *SPO Number:* SPO-202608-0066\n*Product Code:* SRTWC8517-SH-UF-150-NEW\n*SPO Quantity:* 9\n*SPO Date (recorded):* 2026-08-13\n*Warehouse:* BRW\n\n4. *SPO Number:* SPO-202607-0011\n*Product Code:* SRTWC8517-SH-UF-200\n*SPO Quantity:* 19\n*GR Quantity:* 19\n*SPO Date (recorded):* 2026-07-07\n*GR Date:* 2026-07-16\n*Warehouse:* BRW\n\n5. *SPO Number:* SPO-2026/09-0028\n*Product Code:* SRTWC8517-SH-UF-200-NEW\n*SPO Quantity:* 20\n*SPO Date (recorded):* 2026-09-04\n*Warehouse:* BRW\n\n6. *SPO Number:* SPO-2026/09-0028\n*Product Code:* SRTWC8517-SH-UF-NEW\n*SPO Quantity:* 61\n*SPO Date (recorded):* 2026-09-04\n*Warehouse:* BRW\n\n7. *SPO Number:* SPO-2026/06-0085\n*Product Code:* SRTWC8517-SH-UF-P\n*SPO Quantity:* 10\n*GR Quantity:* 10\n*SPO Date:* 2026-06-14\n*Warehouse:* BRW-SYNT\n\n8. *SPO Number:* SPO-202608-0066\n*Product Code:* SRTWC8517-SH-UF-P-NEW\n*SPO Quantity:* 15\n*SPO Date (recorded):* 2026-08-13\n*Warehouse:* BRW",
         "tools": [
           {

@@ -79,7 +79,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for srtwc286?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },

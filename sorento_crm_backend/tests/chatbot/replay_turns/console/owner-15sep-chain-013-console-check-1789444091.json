@@ -73,7 +73,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Couldn't find \"SRTWT2643\" (product). Did you mean SRTWT2632, SRTWT2633, or SRTWT2634? Reply with a code to continue, or would you like me to escalate to warehouse team?",
         "tools": []
       },
@@ -281,7 +286,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -409,7 +419,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "That would search every product we have - I need at least one filter to narrow it down. Give me a product code, and I can look it up.",
         "tools": []
       },
@@ -582,7 +597,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "That would search every product we have - I need at least one filter to narrow it down. Give me a product code, and I can look it up.",
         "tools": []
       },
@@ -711,7 +731,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for srtwc286?\n1. Office - no promotion\n2. Dealer - no promotion\n3. End user - no promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },
@@ -923,7 +950,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },

@@ -79,7 +79,12 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # (`document`/`status`/`anaphora`/`continuation` - the parser verdict fields the
 # turn re-architecture's APPLY stage reads). RED until that declaration lands;
 # written ahead of the coder's change (test-first) rather than after.
-CONSTANT_CHARS = 49301
+# +1423 chars (16 Sep 2026, S6 cluster 4 ruling, `chatbot-turn-rearch-acceptance-
+# criteria.md` "S6 rulings"): the fallback prompt documents `answers_open_question`
+# (`{resolved, picks, answer}`) - the parser now says whether THIS message answers a
+# still-open question rather than the engine inferring it. Measured against the coder's
+# landed change (`72eabc6a0`), not derived.
+CONSTANT_CHARS = 50724
 
 
 def _without_growth_r1_addendum(text: str) -> str:

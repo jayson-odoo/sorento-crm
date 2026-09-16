@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. BUIMACO SDN BHD (SRT)\n2. BUIMACO HOME CENTRE SDN BHD (SRT)",
         "tools": []
       },

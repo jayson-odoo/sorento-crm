@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH, SRT)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
         "tools": []
       },
@@ -403,7 +408,12 @@
           "788d7e3d-687d-47fc-a9bf-f8d74c1fac1d"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": null,
         "tools": [
           {
@@ -742,7 +752,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTKT39SS\nCustomer: CHIN CHUN HARDWARE AND TIMBER TRADING, CHIN CHUN HARDWARE AND TIMBER TRADING (BRAVAT), CHIN CHUN HARDWARE AND TIMBER TRADING (PROJECT)\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },

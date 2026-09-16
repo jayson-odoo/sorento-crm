@@ -74,7 +74,13 @@
       "expected": {
         "branch_kind": "business_query",
         "hand_built": true,
-        "note": "AC-1592/S6 console corpus: no recorded run in sorento_ai_automation_focus_full for 'stock and eta for SRTWT2634' (2026-09-16-rearch-prompt.yaml, live_only case) - verdict hand-built from the case's own expect.parser pin, everything else defaulted. Only branch_kind is asserted; action_kinds/tools/pending/canned/text are deliberately left unpinned (no real run exists to ground them) - a pending/action divergence here needs a captain read, not an automatic signature, per AC-1591's own pending-comparison rule (fires whenever the actual result carries an open question, expected or not)."
+        "note": "AC-1592/S6 console corpus: no recorded run in sorento_ai_automation_focus_full for 'stock and eta for SRTWT2634' (2026-09-16-rearch-prompt.yaml, live_only case) - verdict hand-built from the case's own expect.parser pin, everything else defaulted. Only branch_kind is asserted; action_kinds/tools/pending/canned/text are deliberately left unpinned (no real run exists to ground them) - a pending/action divergence here needs a captain read, not an automatic signature, per AC-1591's own pending-comparison rule (fires whenever the actual result carries an open question, expected or not).",
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWT2634"
+          ]
+        }
       },
       "resolutions": {
         "resolutions": [],

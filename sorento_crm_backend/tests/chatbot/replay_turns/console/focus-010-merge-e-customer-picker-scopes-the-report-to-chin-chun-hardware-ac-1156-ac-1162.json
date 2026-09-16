@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. MBJ BINA JAYA MACHINERY & HARDWARE SDN BHD (MCH)\n4. PERNIAGAAN ALAY JAYA MACHINERY HARDWARE - [A/C I] (MCH)\n5. PERNIAGAAN MOZEK CHIN TAK SDN BHD (MCH)\n6. SK HARDWARE (KUCHING) SDN BHD - [A/C I] (MCH)\n7. GS HOME HARDWARE & MACHINERY SDN BHD - [IBORN] (MCH)\n8. KH HARDWARE & MACHINERY SDN BHD - [A/C I] (MCH)",
         "tools": []
       },
@@ -396,7 +401,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN]\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },

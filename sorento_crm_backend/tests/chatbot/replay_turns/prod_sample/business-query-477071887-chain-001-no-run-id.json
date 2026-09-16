@@ -601,7 +601,12 @@
           "4c3a15c6-4bf0-43fc-aff4-9cfda2539d59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTMCB6083-BL\n*Container:* DFSU6642819\n*ETA:* 2026-08-20\n*Incoming Quantity:* 99\n*Warehouse Allocations:* BRW (83), BRW-HP (10), BRW-SMC (6)\n\n2. *Product Code:* SRTMCB6083-BL\n*Container:* FFAU6960188\n*ETA:* 2026-09-06\n*Incoming Quantity:* 1\n*Warehouse Allocations:* BRW (1)\n\n3. *Product Code:* SRTMCB6083-BL\n*Container:* TIIU6796688\n*ETA:* 2026-09-17\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\nNo incoming for SRTMCB6083-BL-DF.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTMCB6083-BL-DF\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 19\n*Outstanding:* 0\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {

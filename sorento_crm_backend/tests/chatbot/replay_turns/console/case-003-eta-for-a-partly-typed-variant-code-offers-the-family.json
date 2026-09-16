@@ -81,7 +81,12 @@
           "790a0dd9-c67b-4d28-9a8c-ff7a19dc4d99"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "No incoming stock (ETA) found for SRTWB1542.\nNo incoming for SRTWB1542-MW, SRTWB1542-MG, SRTWB1542-MK.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWB1542-MW\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 4\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-S/L\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542-MG\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 5\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542-MK\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 4\n*Outstanding:* 0\n\nNo incoming, stock is 0 at every location and nothing on order for SRTWB1542.\n\nRelated products:\n1. SRTWB1542 - no incoming\n2. SRTWB1542-MG - no incoming\n3. SRTWB1542-MK - no incoming\n4. SRTWB1542-MW - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
         "tools": [
           {

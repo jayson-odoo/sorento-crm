@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. T & O KITCHEN BATHROOM GALLERY (SRT) - no DO\n2. SP PEARL POINT HOME GALLERIES SDN BHD (MCH) - no DO\n3. TAMA HOME GALLERY (MCH) - no DO\n4. ALLSTAR KREATIVE SDN BHD - [A/C IV] (MCH) - no DO\n5. MOZZIN KITCHEN AND BATH GALLERY (MCH) - no DO\n6. SWEET HOME BATH GALLERY TRADING - [CERAMIC] (MCH) - no DO\n7. KIAN AIK HOME GALLERY SDN BHD - [CERAMIC] (MCH) - no DO\n8. TRIUMPHANT GALLERY SDN BHD (PROJECT-CASH) (SRT) - no DO\n\nNone of these have a recent DO.",
         "tools": []
       },

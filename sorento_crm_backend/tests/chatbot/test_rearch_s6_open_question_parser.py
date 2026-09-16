@@ -1,0 +1,120 @@
+"""S6 cluster 4 owner ruling (16 Sep 2026, UAC "S6 rulings" block):
+
+"An open question is answered only when the PARSER says so. `answers_open_question`
+`{resolved, picks, answer}` becomes a declared parser schema key (it was read by APPLY
+but never produced: the parser only emits `reference_positions`). APPLY: `resolved:
+true` = apply the picks; `resolved: false` with an attempt = re-print the same
+question; absent/null = the message is not an answer, run it for what it is and CARRY
+the pending unchanged (sticky, never repeated). Owner: 'follow the old bot, it is
+smarter, no hard coding, LLM aware'."
+
+Three reds:
+
+1. `head/parser.py::PARSE_OUTPUT_JSON_SCHEMA` does not declare `answers_open_question`
+   at all today (measured: absent from both `properties` and `required`) - the parser
+   is never actually asked to emit it, so `turn/apply.py`'s read of it
+   (`verdict.get("answers_open_question")`) can only ever see the harness's own
+   hand-built default.
+2. The fallback `SEMANTIC_PARSER_PROMPT` does not document the key either (measured:
+   the literal string is absent) - an LLM parsing against the live prompt has no
+   instruction to ever emit it.
+3. `turn/apply.py::_answer_pending` cannot currently tell an EXPLICIT "that did not
+   answer it" (`resolved: false`) from "this message was never an attempt at all"
+   (`answers_open_question` absent/null): both fall through to the same unconditional
+   re-print (`answer_pending_unresolved`, `tests/chatbot/test_rearch_s2_number_answers.py
+   ::test_a_position_out_of_range_leaves_state_unchanged_and_reprints` pins the FIRST of
+   these and is left untouched). The absent/null case must instead run the message for
+   what it is (no short-circuit) and carry the pending forward unresolved.
+"""
+from __future__ import annotations
+
+import pytest
+
+from tests.chatbot._turn_helpers import PENDING_KINDS, ROSTER_KINDS, build_policy, verdict
+
+
+def test_schema_declares_answers_open_question_as_a_required_object_key():
+    from app.services.chatbot.head.parser import DECLARED_KEYS, PARSE_OUTPUT_JSON_SCHEMA
+
+    assert "answers_open_question" in DECLARED_KEYS
+    prop = PARSE_OUTPUT_JSON_SCHEMA["properties"]["answers_open_question"]
+    assert prop["type"] == "object"
+    assert prop["additionalProperties"] is False
+
+    sub = prop["properties"]
+    # resolved: bool | null
+    assert set(sub["resolved"]["type"]) == {"boolean", "null"}
+    # picks: array of number | "all" | null - permissive union, matching this schema's
+    # own convention (`string_or_null` etc.) rather than a strict oneOf.
+    assert "array" in sub["picks"]["type"]
+    assert "string" in sub["picks"]["type"]  # the literal "all"
+    assert "null" in sub["picks"]["type"]
+    # answer: string | null
+    assert set(sub["answer"]["type"]) == {"string", "null"}
+
+    assert set(prop["required"]) == {"resolved", "picks", "answer"}
+
+
+def test_prompt_documents_the_answers_open_question_key():
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+    assert "answers_open_question" in SEMANTIC_PARSER_PROMPT, (
+        "the fallback prompt never asks the model to emit this key, so a live LLM parse "
+        "has no instruction to ever populate it"
+    )
+
+
+def _state_with_pending(kind: str):
+    from app.services.chatbot.turn.pending import ask
+    from app.services.chatbot.turn.state import Focus, Profile, State
+
+    options = [
+        {"position": 1, "label": "A", "uuid": "u1", "uuids": ["u1"], "entity_type": "product", "payload": {"domain": "incoming"}},
+        {"position": 2, "label": "B", "uuid": "u2", "uuids": ["u2"], "entity_type": "product", "payload": {"domain": "incoming"}},
+    ]
+    pending = ask(kind, options, team=None, asked_at_turn=1)
+    return State(focus=Focus(), pending=pending, profile=Profile())
+
+
+class TestAbsentAnswerCarriesThePendingWithoutReprinting:
+    """`answers_open_question` absent/null on a pending turn is NOT an attempt to
+    answer - `apply()` must not short-circuit into a re-print of the same question, and
+    the pending must survive untouched for the NEXT turn to still be able to answer it.
+    """
+
+    @pytest.mark.parametrize("kind", PENDING_KINDS)
+    def test_a_casual_message_with_no_entities_does_not_reprint(self, kind):
+        from app.services.chatbot.turn.apply import apply
+
+        state = _state_with_pending(kind)
+        v = verdict(message_type="casual", entities=[], answers_open_question=None)
+
+        state2, plan = apply(state, v, build_policy())
+
+        assert "answer_pending_unresolved" not in plan.trace.rules_fired, plan.trace.rules_fired
+        assert state2.pending is not None, "the pending must survive, not be cleared"
+        assert state2.pending.kind == kind
+
+    @pytest.mark.parametrize("kind", PENDING_KINDS)
+    def test_a_business_query_with_its_own_entities_runs_normally_not_a_reprint(self, kind):
+        """A message that names its own business (a domain, an entity) while a roster
+        sits open is not answering the roster either - it must be run for what it IS
+        (contract: the pending is carried, not re-asked verbatim)."""
+        from app.services.chatbot.turn.apply import apply
+
+        state = _state_with_pending(kind)
+        v = verdict(
+            message_type="business_query",
+            domain_hint="promotion",
+            entities=[],
+            answers_open_question=None,
+        )
+
+        state2, plan = apply(state, v, build_policy())
+
+        assert "answer_pending_unresolved" not in plan.trace.rules_fired, plan.trace.rules_fired
+        # The turn ran for what it is: `promotion` reaches the plan's domains, rather
+        # than the plan being nothing but a verbatim re-ask of the OLD pending question.
+        assert "promotion" in plan.domains, plan.domains
+        assert state2.pending is not None, "the pending must survive unresolved, sticky"
+        assert state2.pending.kind == kind

@@ -75,7 +75,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "wc286"
+          ]
+        },
         "text": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. SRTWC286-SH-200 - no incoming\n2. SRTWC286-SH-P - no incoming\n3. SRTWC286-SH-PP - no incoming\n4. SRTWC286-SH - no incoming\n5. SRTWC286-SH-UF - no incoming\n6. SRTWC286-SH-NEW-150 - no incoming\n7. SRTWC286-SH-150 - no incoming\n8. SRTWC286-SH-NEW-P - has incoming\n9. SRTWC286-SH-NEW-200 - has incoming\n10. SRTWC286-SH-NEW - has incoming",
         "tools": []
       },
