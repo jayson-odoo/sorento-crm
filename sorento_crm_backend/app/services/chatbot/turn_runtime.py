@@ -1124,8 +1124,22 @@ def with_carried_entities(
     if parse_output.get("entities"):
         return parse_output
     carried: list[dict[str, Any]] = []
-    for kind, attr in KIND_FIELD_MAP.items():
-        for row in getattr(focus, attr, []) or []:
+    # Every kind the focus holds, `extra` included. `KIND_FIELD_MAP` names four kinds
+    # and the rest of them live in the catch-all, so an `attachment_type` carried from
+    # "photos for srtwc286" was never handed to the resolver, never became an
+    # `attachment_type_ids` argument, and the answer to the product pick that followed
+    # listed Certification PDFs under a header that said "photo" (turns d77231ed /
+    # 2b9aaa96, 16 Sep 2026).
+    by_kind: list[tuple[str, list[Any]]] = [
+        (kind, getattr(focus, attr, []) or []) for kind, attr in KIND_FIELD_MAP.items()
+    ]
+    by_kind += [
+        (kind, rows or [])
+        for kind, rows in (getattr(focus, "extra", {}) or {}).items()
+        if isinstance(rows, list)
+    ]
+    for kind, rows in by_kind:
+        for row in rows:
             if not isinstance(row, dict):
                 continue
             if unsettled_only and row.get("uuid"):
