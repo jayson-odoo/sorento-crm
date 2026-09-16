@@ -22,6 +22,20 @@ def _candidates(focus: Focus, kind: str) -> list[dict[str, Any]]:
     return list(focus.extra.get(kind, []))
 
 
+def _distinct_codes(candidates: list[dict[str, Any]]) -> set[str]:
+    """How many different things the carry actually names.
+
+    A family (contract 103) is one code across several rows - `SRTWC286-SH-P` with two
+    ledgers is one choice, not two - so the count that decides whether there is still a
+    choice to make is the count of CODES, never of rows.
+    """
+    return {
+        str(c.get("canonical_code") or c.get("raw") or "").strip().casefold()
+        for c in candidates
+        if (c.get("canonical_code") or c.get("raw"))
+    }
+
+
 def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
     """One numbered row per candidate.
 
@@ -36,6 +50,15 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
     own code (contract 28's roster lists what the resolver found, not a sentence about
     it), what a pick resolves back onto (`apply._answer_pending`'s `raw`); the renderer
     is what prints `"{label} - {stamp}"` for the customer to read.
+
+    `code` rides beside `uuid` because they answer two different questions and a pick
+    needs both (browser pass 2, turns 4 / 8 / 6): the uuid is what a tool that filters
+    by id is given, the code is what a tool that filters by code is given and what the
+    answer's own header names. Carrying only the uuid is what printed
+    `*incoming stock* for 65514803-1609-4fe8-8b60-2e908c8f9bd4:` and asked the
+    outstanding report for `product_code = <uuid>`. For a customer the code and the
+    label differ (an account code nobody typed, against the name the roster printed),
+    so both are kept.
     """
     built = []
     for i, c in enumerate(candidates):
@@ -45,16 +68,20 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
         # `name` is the resolver's human label, present only where the code is not what
         # a person would recognise (customers, `turn_runtime.candidates_by_kind`); the
         # pick still resolves through `uuid`, so the label is free to be the name.
-        label = c.get("name") or c.get("raw") or code
+        name = c.get("name")
+        label = name or c.get("raw") or code
         stamp = c.get("stamp")
         option: dict[str, Any] = {
             "position": i + 1,
             "label": label,
+            "code": code,
             "uuid": identity,
             "uuids": list(family) if isinstance(family, list) and family else ([identity] if identity else []),
             "entity_type": kind,
             "payload": {},
         }
+        if name:
+            option["name"] = name
         if stamp:
             option["stamp"] = stamp
         built.append(option)
@@ -150,6 +177,14 @@ def decide(
         # roster is what feeds it back). `must_narrow_one` is handled above instead -
         # this branch is `narrow_to_code` only now.
         if candidates and not all(c.get("uuid") for c in candidates):
+            return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
+        if len(_distinct_codes(candidates)) > 1:
+            # "narrow to a CODE" means one code. A settled carry of TEN codes (the ten
+            # variants an inventory answer just listed) is still ten codes, and the
+            # domain switch that keeps them - "incoming", with no product named - has to
+            # offer the same roster the customer would have got for "incoming srtwc286"
+            # (browser pass 2 turn 2, owner ruling 16 Sep 2026). One code carried by
+            # several ledger rows is still ONE code and is never re-asked (contract 103).
             return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
         if candidates:
             # R6 (captain ruling, 16 Sep 2026): a SETTLED carry - every candidate holds
