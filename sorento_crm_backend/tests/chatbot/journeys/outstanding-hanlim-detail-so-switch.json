@@ -1,0 +1,49 @@
+{
+  "name": "outstanding-hanlim-detail-so-switch",
+  "source": "browser-pass-6 chain 3 (handpass3-owner-17sep-outstanding-hanlim-detail-sales-order-switch.json), browser-pass-7 rows 3/4, hand pass 3 rulings: 'the outstanding detail list carries the same filter header as the summary' + 'a document named in the message is a new scope while ANY outstanding question is open'",
+  "cases": [
+    {
+      "name": "hanlim-outstanding-detail-then-so-switch",
+      "cold": true,
+      "turns": [
+        {
+          "text": "Outstanding quantity to hanlim",
+          "expect": {
+            "header_names_once": "HANLIM",
+            "reply_contains": ["Reply 1 for the delivery order list."]
+          }
+        },
+        {
+          "text": "2",
+          "expect": {
+            "reply_contains": ["Product:", "Customer:", "Location:", "Order date:"]
+          }
+        },
+        {
+          "text": "Sales order",
+          "expect": {
+            "reply_contains": ["Sales order"]
+          }
+        },
+        {
+          "text": "Outstanding for hanlim sales order",
+          "expect": {
+            "reply_contains": ["Sales order figures are not enabled for your account"]
+          }
+        },
+        {
+          "text": "Outstandi delivry for hanlim",
+          "expect": {
+            "reply_contains": ["Reply 1 for the delivery order list."]
+          }
+        },
+        {
+          "text": "1",
+          "expect": {
+            "reply_contains": ["Product:", "Customer:", "Location:", "Order date:"]
+          }
+        }
+      ]
+    }
+  ]
+}

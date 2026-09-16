@@ -1,0 +1,42 @@
+{
+  "name": "x-only-refinement",
+  "source": "captain's test list: 'orders for chin chun then \"For srtwc286 only\": the customer must survive' / 'outstanding for hanlim, \"2\", then \"SRTKT1861SS only\": hanlim must survive'",
+  "cases": [
+    {
+      "name": "chinchun-x-only-customer-survives",
+      "cold": true,
+      "turns": [
+        {
+          "text": "orders for chin chun",
+          "expect": {}
+        },
+        {
+          "text": "For srtwc286 only",
+          "expect": {
+            "reply_contains": ["CHIN CHUN"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "hanlim-x-only-customer-survives",
+      "cold": true,
+      "turns": [
+        {
+          "text": "outstanding for hanlim",
+          "expect": {}
+        },
+        {
+          "text": "2",
+          "expect": {}
+        },
+        {
+          "text": "SRTKT1861SS only",
+          "expect": {
+            "reply_contains": ["HANLIM"]
+          }
+        }
+      ]
+    }
+  ]
+}
