@@ -478,9 +478,11 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
         # Contract 121: a pick never re-domains the turn. The question recorded the
         # domain it was asked for, so the answer goes back to it rather than leaving
         # a bare positional with nothing to be about.
-        asked_for = pending.payload.get("domain")
+        asked_for = pending.payload.get("domains") or (
+            [pending.payload["domain"]] if pending.payload.get("domain") else []
+        )
         if asked_for:
-            focus.domains = [asked_for]
+            focus.domains = [d for d in asked_for if isinstance(d, str) and d]
         if is_roster(pending.kind):
             return focus, with_answered_positions(pending, positions), None, True
         return focus, None, None, True
@@ -928,9 +930,18 @@ def _narrow_and_plan(
             team=team,
             asked_at_turn=state.turn_no,
             expects="pick",
-            # The domain this question is being asked FOR: what the answer goes back
-            # to next turn (contract 121), since the answer itself is a bare number.
-            payload={"domain": name},
+            payload={
+                # The domain this question is being asked FOR: what the answer goes back
+                # to next turn (contract 121), since the answer itself is a bare number.
+                "domain": name,
+                # And EVERY domain the ask was asked for (owner hand pass 2, item 11).
+                # "Last purchase cost and stock" is one question about two domains, and
+                # the narrowing that stops it is one roster; recording only the domain
+                # that happened to ask meant the pick answered that one and dropped the
+                # other (turns 78f34206, cac3f42e). Contract 121 locks the turn to this
+                # SET, not to one member of it.
+                "domains": list(domains),
+            },
         )
     else:
         for name, _ask_kind, _ask_options, entities, filters in outcomes:
