@@ -1131,20 +1131,18 @@ def _plain(value):
     return value
 
 
-def _row_change_count(row) -> int:
+def _row_change_count(row: dict) -> int:
     """1 if this row carries any product-data change, else 0.
 
-    Two shapes reach here: a raw resolver row (``resolve_request_line_data``'s
-    own ``data_changes`` key) and a ``TagDataChangeSet`` the routes build for
-    the wire (``changes``, a pydantic model, not a dict). Checking both is
-    what lets one function serve every caller the plan names (AC-D2) without
-    each one reshaping its rows first.
+    Code review 16 Sep: every real caller passes a raw resolver dict
+    (``resolve_request_line_data``'s own ``data_changes`` key) - the earlier
+    ``TagDataChangeSet``/attribute branch handled a shape no call site ever
+    produces (``_change_sets`` passes the raw rows, not the filtered pydantic
+    list). ``changes`` stays as a second key only because the unit tests in
+    ``test_price_tag_data_change_cache.py`` exercise this function directly
+    with that shorter, hand-written shape.
     """
-    if isinstance(row, dict):
-        changes = row.get("changes") or row.get("data_changes")
-    else:
-        changes = getattr(row, "changes", None) or getattr(row, "data_changes", None)
-    return 1 if changes else 0
+    return 1 if (row.get("changes") or row.get("data_changes")) else 0
 
 
 def store_data_change_count(

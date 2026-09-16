@@ -433,6 +433,92 @@ class TestTouchedRequestIds:
 
         assert request.id not in touched
 
+    def test_touched_when_a_parts_own_product_updated_after_the_check(self, db):
+        """Code review 16 Sep: `diff_pin_against_live` diffs a part's own
+        product too, not just the line's - the touched query has to follow."""
+        from app.models.price_tag import PriceTagRequestLinePart
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = _product(db)
+        part_product = _product(db, "ZZTPART")
+        request = _request_with_product_line(db, product)
+        _touch(db, "products", product.id, "updated_at", BASE_TIME)
+        request.data_checked_at = BASE_TIME
+        db.flush()
+        db.add(
+            PriceTagRequestLinePart(
+                id=_uid(),
+                line_id=request.lines[0].id,
+                product_id=part_product.id,
+                role="accessory",
+            )
+        )
+        db.flush()
+        _touch(db, "products", part_product.id, "updated_at", BASE_TIME + timedelta(hours=1))
+
+        touched = PriceTagRequestService.touched_request_ids(db, [request])
+
+        assert request.id in touched
+
+    def test_touched_when_a_freshly_derived_spec_row_has_no_updated_at(self, db):
+        """Code review 16 Sep: `write_spec_row` never sets
+        `product_specifications.updated_at` on insert - only `created_at` is
+        real here, so the touched query must read `GREATEST(updated_at,
+        created_at)` or a freshly-derived spec row reads as "never moved"."""
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = _product(db)
+        request = _request_with_product_line(db, product)
+        _touch(db, "products", product.id, "updated_at", BASE_TIME)
+        request.data_checked_at = BASE_TIME
+        db.flush()
+
+        _spec_row(db, product)  # created_at defaults to real now(); updated_at stays NULL
+
+        touched = PriceTagRequestService.touched_request_ids(db, [request])
+
+        assert request.id in touched
+
+    def test_touched_when_the_sets_own_name_updated_at_moves(self, db):
+        """Code review 16 Sep: a set rename changes the `name` a set line
+        diffs, not just its members."""
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        member_product = _product(db, "ZZTSETR")
+        product_set, member_ids = _product_set(db, [member_product])
+        request = _request_with_set_line(db, product_set)
+        _touch(db, "products", member_product.id, "updated_at", BASE_TIME)
+        _touch(db, "product_set_members", member_ids[0], "updated_at", BASE_TIME)
+        _touch(db, "product_sets", product_set.id, "updated_at", BASE_TIME)
+        request.data_checked_at = BASE_TIME
+        db.flush()
+        _touch(db, "product_sets", product_set.id, "updated_at", BASE_TIME + timedelta(hours=1))
+
+        touched = PriceTagRequestService.touched_request_ids(db, [request])
+
+        assert request.id in touched
+
+
+class TestListItemsZerosTerminalCount:
+    def test_terminal_request_lists_as_zero_even_with_a_stale_stored_count(self, db):
+        """Code review 16 Sep (BLOCKER): `touched_request_ids` never revisits
+        a terminal request, so nothing ever zeroes a count stored before it
+        closed - `list_items` has to zero it at read time instead."""
+        from app.services.price_tag_request_service import PriceTagRequestService
+
+        product = _product(db)
+        request = _request_with_product_line(db, product, status="designing")
+        request.data_changed_tag_count = 2
+        request.data_checked_at = BASE_TIME
+        db.flush()
+
+        request.status = "void"
+        db.flush()
+
+        items = PriceTagRequestService.list_items(db, [request])
+
+        assert items[0].data_changed_tag_count == 0
+
 
 # --------------------------------------------------------------------------- AC-D4/AC-D5
 

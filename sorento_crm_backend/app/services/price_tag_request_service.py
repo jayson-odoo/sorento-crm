@@ -1924,11 +1924,19 @@ Marketing's own work is not part of the form's payload, so it is captured
         list route has no reason to pay for its resolve. One grouped SQL over
         every non-terminal candidate, not one query per row: ``max(...)``
         across every table a printed tag's data comes from - the line's own
-        product, a set line's members, a product's spec row, the line's
-        promotion, and a product attachment - compared against the column.
+        product, a part's own product (``diff_pin_against_live`` diffs parts
+        too), a set line's members, a set's own name, a product's spec row,
+        the line's promotion, and a product attachment - compared against the
+        column.
 
         A deleted image link leaves no timestamp (named gap, plan section D):
         that change surfaces on the next open of the record, not in the list.
+
+        Code review 16 Sep: the spec and promotion arms compare
+        ``GREATEST(updated_at, created_at)``, not ``updated_at`` alone -
+        ``write_spec_row`` never sets ``product_specifications.updated_at`` on
+        insert (the plan named this gap), so a freshly-derived spec row reads
+        NULL there and a real change would compare as "never moved".
 
         Contract: ``ids`` MUST already be company-scoped by the caller (ORM
         rows); this raw SQL adds no company predicate.
@@ -1966,17 +1974,34 @@ Marketing's own work is not part of the form's payload, so it is captured
                     FROM line_products lp
                     JOIN products p ON p.id = lp.product_id
                     UNION ALL
-                    SELECT lp.request_id, ps.updated_at
+                    -- Code review 16 Sep: a part's OWN product, resolved or
+                    -- picked - `diff_pin_against_live` diffs parts too, and a
+                    -- part's product is not always the line's own.
+                    SELECT l.request_id, pp.updated_at
+                    FROM price_tag_request_lines l
+                    JOIN price_tag_request_line_parts part ON part.line_id = l.id
+                    JOIN products pp ON pp.id = part.product_id
+                    WHERE l.request_id IN :ids AND part.product_id IS NOT NULL
+                    UNION ALL
+                    SELECT lp.request_id, GREATEST(ps.updated_at, ps.created_at)
                     FROM line_products lp
                     JOIN product_specifications ps ON ps.product_id = lp.product_id
                     UNION ALL
-                    SELECT lp.request_id, pr.updated_at
+                    SELECT lp.request_id, GREATEST(pr.updated_at, pr.created_at)
                     FROM line_products lp
                     JOIN promotions pr ON pr.id = lp.promotion_id
                     UNION ALL
                     SELECT l.request_id, m.updated_at
                     FROM price_tag_request_lines l
                     JOIN product_set_members m ON m.product_set_id = l.product_set_id
+                    WHERE l.request_id IN :ids AND l.product_set_id IS NOT NULL
+                    UNION ALL
+                    -- Code review 16 Sep: the SET's own name/code (a rename)
+                    -- changes what `resolve_request_line_data` diffs for a
+                    -- set line, not just its members.
+                    SELECT l.request_id, ps2.updated_at
+                    FROM price_tag_request_lines l
+                    JOIN product_sets ps2 ON ps2.id = l.product_set_id
                     WHERE l.request_id IN :ids AND l.product_set_id IS NOT NULL
                     UNION ALL
                     SELECT lp.request_id, pa.created_at
@@ -2025,6 +2050,16 @@ Marketing's own work is not part of the form's payload, so it is captured
             for key, value in labels.get(request.id, {}).items():
                 setattr(item, key, value)
             item.has_revision_draft = str(request.id) in draft_ids
+            # Code review 16 Sep (BLOCKER): a terminal request is never
+            # "touched" (`touched_request_ids` excludes it on purpose), so
+            # nothing ever zeroes a stale stored count from before it closed
+            # - the pill would keep reading e.g. "changed - 2" on a request
+            # nothing can be updated on. Zeroed here, at read time, rather
+            # than written back: a closed request's own column stays
+            # whatever it was, which is what the transition itself did not
+            # bother to touch.
+            if PriceTagRequestService.is_terminal(request):
+                item.data_changed_tag_count = 0
             items.append(item)
         return items
 
