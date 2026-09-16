@@ -10,15 +10,26 @@ CKSW015 line 3 are not on the planning record yet, so this confirmation leaves t
 the sales order to add them." Measured on that copy: 51 open orders carry 354 open core lines
 with no planning-record mirror.
 
+The owner then tested SO384897 on the same copy (17 Sep) and the gap there is NOT a late
+ingest. Measured: its planning record was created 2026-09-14 02:24, all 194 of its core lines
+were created on or before 7 September, before the record existed at all, and 64 of them carry
+no mirror (20 still open).
+
 ## 1. Why (measured)
 
 - The board plans on the adopted copy (`projects.sales_orders` / `projects.sales_order_lines`,
   the "planning record"). A core line with no mirror line cannot be confirmed
   (`unpostableNotices.ts` reason `no_mirror`; `project_board.py` `project_line_id` null).
-- Only two places add missing mirrors today, both on demand:
-  `ProjectSOAdoptionService.adopt` (already-adopted branch) and
-  `ProjectSOReconciliationService` for an adopted order (the planning sheet's Re-sync button),
-  both via `ProjectSOAdoptionService.mirror_missing_lines(order)`
+- **Two causes, measured** (`sorento_ai_automation_0915_1900`, read-only): unmirrored OPEN
+  lines on adopted, unauthored records split by `line.created_at < planning_record.created_at`.
+  174 lines across 46 orders existed BEFORE their record's adoption - the 14 Sep sheet
+  migration (`adopt_for_migration`) mirrored only the lines the Order Inquiry sheet named, not
+  every line the order carried, and SO384897 (section 0) is this shape.
+- 220 lines across 16 orders arrived AFTER adoption, from the AutoCount ingest that landed on
+  prod before the backup was taken - the shape SO390808 (section 0) is. Only two places add
+  missing mirrors today, both on demand: `ProjectSOAdoptionService.adopt` (already-adopted
+  branch) and `ProjectSOReconciliationService` for an adopted order (the planning sheet's
+  Re-sync button), both via `ProjectSOAdoptionService.mirror_missing_lines(order)`
   (`project_so_adoption_service.py:180`, additive, stable line numbers).
 - The line ingest `scm/sales_order_service.py::_upsert_lines` (1599) inserts new core lines
   (1762) and PRUNES empty adoption mirrors for removed lines, but never adds a mirror for a new
@@ -42,7 +53,9 @@ Purchasing's reorder plan sees the new lines' demand as soon as the ingest lands
    `POST /fulfilment-planning/confirm-all`) stays a pure write and never mirrors on its own:
    one seam, not two.
    Owner ruling 17 Sep 2026 (B2): heal on the board read, so the first Confirm posts every
-   line; historical gaps heal when the board is opened.
+   line; historical gaps heal when the board is opened. It heals both causes: a line the
+   migration skipped and a line an ingest added later; the ingest seams stop the second from
+   recurring, the first cannot recur (the migration ran once, `adopt` mirrors every line).
 2. **Ingest re-mirrors.** Review round 1 found `_upsert_lines` has ONE caller, the manual FE edit
    (`PUT /sales-orders/{so_id}`); the ESB push and the book upload each write core lines their
    own way, bypassing it entirely. So the same call lands at all THREE writers, each gated on the
