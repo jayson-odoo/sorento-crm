@@ -84,7 +84,7 @@ Called from:
 | the 4 `OrderInquiryRow(` constructions (raise) | `raised` | for verb CHANGE SO NO: the source order facts; for ADVANCE / DELAY raised by the amendment: `previous_delivery_date` (already on the row) |
 | `_settle_row_in_place`, qty / date moved | `settled` | `{qty, delivery_date}` captured BEFORE overwrite (the same values it writes to `previous_*`) |
 | `_settle_row_in_place`, need drops to zero | `cancelled` | `{qty}` |
-| `_retire_uncovered_rows`, `_retire_settled_cancel_balance` | `cancelled` when the retired row has no replacement in the same write; otherwise nothing (the replacement rows print) | `{qty}` |
+| `_retire_uncovered_rows`, `_retire_settled_cancel_balance` | `cancelled`, always. A replacement raised in the same commit prints as its own line beside it; no pairing (R10 rule, AC-H19, revised 16 Sep after the coder found the "no replacement" cross-reference would need every raise in the commit indexed by line) | `{qty}` |
 
 `actor_user_id` is what the entry point received (`refresh_for_decision`, `derive_for_amendment`,
 `derive_for_book_change`); inner writers get it passed down or read it from an instance attribute
@@ -201,6 +201,7 @@ Idempotent by template code and `(trigger_type, name)`. Downgrade deletes both.
 | H15 | `test_dispatch_runs_after_commit_not_before` | no outbox row before commit, one after |
 | H17 | `test_context_shape_and_formats` | keys present, dd/mm/yyyy, qty without decimals, verbs order |
 | H18 | `test_actor_fallback_to_raised_by` | seam without actor uses header raised_by; none -> actor null |
+| H19 | `test_retired_row_prints_cancelled_line` | retired row prints qty 0, was.qty, CANCEL BALANCE N NOS; a replacement in the same commit prints beside it |
 | H16 | vitest `RecipientPicker.include_actor.test.tsx` | tick / untick round-trips the key |
 
 ## 6. Verify while building (coder reports, does not guess)
