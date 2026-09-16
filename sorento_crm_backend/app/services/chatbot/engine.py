@@ -1620,6 +1620,23 @@ def _run_stages(  # noqa: PLR0915
         if plan.ask is not None and completes_here and branch_kind in _ASK_BRANCH_KINDS:
             answer = turn_compose.compose_question(plan.ask)
 
+        # -- the REFUSAL: a denied stock check is an answer, not silence ------- #
+        # `stock_denied` is one of the three business branch kinds, so it is outside
+        # `canned_lanes.COMPLETED_BRANCH_KINDS` (that set is what the canned composer
+        # knows how to build) and outside the fetch gate above - deliberately, because a
+        # contact who is not allowed stock must not be shown the rows. Nothing else
+        # composed it, so before this the turn closed `done` with no reply and no action
+        # at all. The refusal is the whole reply and it takes the SAME tail every other
+        # composed answer takes, so the turn is remembered and the caller is handed a
+        # `send_message` to send (AC-105/AC-107: even a failed turn hands back a reply).
+        if answer is None and branch_kind == "stock_denied" and completes_here:
+            from app.services.chatbot import copy as copy_mod
+
+            stage[0] = "replied"
+            answer = turn_compose.Answer(
+                text=canned_lanes.stock_denied_text(copy_mod.resolve(db))
+            )
+
     if answer is not None and lane_error_text is None:
         return _run_answer(
             turn_id=turn_id,
