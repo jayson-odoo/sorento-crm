@@ -36,6 +36,7 @@ from app.services.chatbot.turn.decide import (
     broaden_kind,
     broaden_level,
     decide,
+    domain_in_message,
 )
 from app.services.chatbot.turn.narrow import decide as narrow_decide
 from app.services.chatbot.turn.pending import (
@@ -643,6 +644,13 @@ def _focus_rules(
             continue
         by_kind.setdefault(hint, []).append(e)
 
+    # What each axis held BEFORE this message wrote to it. A `broaden_to: "family"` widens
+    # the CURRENT CODE's family, and the current code is the carry - not the family word
+    # the message typed, which is three characters the resolver substring-matches against
+    # every product that contains them ("all variants of 286" offered BRBC22286W-1-ENG
+    # and CB2863-BL, 17 Sep 2026).
+    carried_rows = {kind: list(_kind_field(focus, kind)) for kind in KIND_FIELD_MAP}
+
     for kind, group in by_kind.items():
         _set_kind_field(focus, kind, group)
     if by_kind:
@@ -685,7 +693,7 @@ def _focus_rules(
             trace.rules_fired.append("domains_from_asks")
         # else: no domain word this turn - focus.domains carries over unchanged.
 
-    _broaden(focus, verdict, decision, by_kind, trace)
+    _broaden(focus, verdict, decision, by_kind, carried_rows, trace)
 
     document = verdict.get("document")
     status = verdict.get("status")
@@ -709,6 +717,7 @@ def _broaden(
     verdict: dict[str, Any],
     decision: Decision,
     by_kind: dict[str, list[dict[str, Any]]],
+    carried_rows: dict[str, list[Any]],
     trace: Trace,
 ) -> None:
     """The ONE reader of `broaden_axis` + `broaden_to` (owner ruling, 17 Sep 2026).
@@ -720,15 +729,19 @@ def _broaden(
       SRTWC286-SH (turns 6095ce66 / d8ab659e).
     * `all` with no axis named (`broaden_axis: "all"`) - every axis is dropped and the
       DOMAIN stays: the question is the same question, widened.
-    * `family` on a named axis - the variant is dropped and the family stands. The uuid is
-      what makes a focus row a VARIANT, so removing it (keeping the code) is the whole
-      change: an unsettled carry is exactly what the engine hands the resolver, whose
-      prefix probe answers with the family (`turn_runtime.with_carried_entities`,
-      `unsettled_only`), and the narrower settles it again this same turn.
+    * `family` on a named axis - the variant is dropped and the family stands. It widens
+      the CARRIED code, never the word this message typed: "all variants of 286" names
+      "286", and three characters substring-match every product that contains them. The
+      uuid is what makes a focus row a VARIANT, so removing it (keeping the code) is the
+      whole change - an unsettled carry is exactly what the engine hands the resolver,
+      whose prefix probe answers with the family
+      (`turn_runtime.with_carried_entities`, `unsettled_only`), and the narrower settles
+      it again this same turn.
 
     Never when this message ANSWERED the open roster: the options the pick folded in are
     already the widened set (`decide.broadens_the_roster`, contract 31 / hand pass 2 item
-    10). Never for an axis this message also named outright - naming it IS the scope.
+    10). `all` never touches an axis this message also named outright - naming it IS the
+    scope.
     """
     level = broaden_level(verdict)
     if level is None or decision.answers:
@@ -742,15 +755,20 @@ def _broaden(
     axes = [axis] if axis else list(KIND_FIELD_MAP)
     for kind in axes:
         attr = KIND_FIELD_MAP.get(kind)
-        rows = getattr(focus, attr, None) if attr else None
-        if not attr or not rows or kind in by_kind:
+        if not attr:
             continue
         if level == EVERYTHING:
-            setattr(focus, attr, [])
-            trace.rules_fired.append(f"broaden_all_clears_{kind}")
+            if getattr(focus, attr, None) and kind not in by_kind:
+                setattr(focus, attr, [])
+                trace.rules_fired.append(f"broaden_all_clears_{kind}")
         elif level == FAMILY:
-            widened = [{k: v for k, v in row.items() if k != "uuid"} for row in rows if isinstance(row, dict)]
-            if widened != rows:
+            rows = carried_rows.get(kind) or []
+            widened = [
+                {k: v for k, v in row.items() if k != "uuid"}
+                for row in rows
+                if isinstance(row, dict)
+            ]
+            if widened:
                 setattr(focus, attr, widened)
                 trace.rules_fired.append(f"broaden_family_{kind}")
 
@@ -1251,8 +1269,17 @@ def apply(
         for spec in plan.fetch:
             spec.filters["outstanding"] = dict(trace.outstanding)
 
+    if plan.fetch and not any(isinstance(s.filters.get("set_page"), dict) for s in plan.fetch):
+        # A turn that fetches anything but the next page of the set closes the cursor.
+        # The cursor survives only the continuation branch above, which returns its own
+        # Plan, so reaching here at all means the ladder re-ran from the code tier and
+        # whatever page the last counted answer left behind is stale (AC-1317). The
+        # engine writes a fresh one after the fetch when the SPEC tier answered; this is
+        # the pure half, so a caller driving `apply()` alone does not ship a stale page.
+        new_state.focus.set_page = None
+
     if (
-        decision.kind == NEW_ASK
+        (decision.kind == NEW_ASK or domain_in_message(verdict) is True)
         and plan.fetch
         and plan.ask is None
         and new_state.pending is not None
@@ -1276,7 +1303,9 @@ def apply(
         # a list of twenty forms handed the conversation to purchasing, because the offer
         # two asks earlier was still open. The sticky-offer rule (contract 43, AC-1167)
         # is about a CARRY - "thanks", "no" - and those turns fetch nothing, so they are
-        # untouched.
+        # untouched. A DOMAIN SWITCH counts here even though the table reads it as a carry
+        # of the subject: "any markeitng forms?" names no entity, so it is the table's row
+        # 2, and the "1" under its list still escalated until this clause was added.
         new_state.pending = None
         trace.rules_fired.append("new_ask_closes_stale_roster")
 
