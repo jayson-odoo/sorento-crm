@@ -865,6 +865,7 @@ def _narrow_and_plan(
                 attributes=attributes,
                 resolved_candidates=(candidates or {}).get(kind),
                 just_picked=kind in picked,
+                family_grouping=getattr(policy.kind(kind), "family_grouping", None),
             )
             trace.narrowing.append(f"{name}.{kind}:{outcome.note or policy_value}")
             if outcome.ask_kind:
