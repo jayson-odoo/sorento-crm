@@ -4764,8 +4764,8 @@ class FulfilmentBoardService:
             #: lines - and every covered or unplannable one, which was not planned here.
             "unit_qty": qty_text(row.qty if row.unit_qty is None else row.unit_qty),
             "unit_line_count": row.unit_line_count,
-            #: What the engine proposes to meet it with. The three add up to the outstanding
-            #: quantity, which is the balance invariant the per-order sheet also keeps.
+            #: What the engine proposes to meet it with. The three add up to the plan
+            #: quantity (`qty`), which is the balance invariant the per-order sheet also keeps.
             "qty_proposed_reserve": qty_text(row.proposed.get(RESERVE, _ZERO)),
             "qty_proposed_incoming": qty_text(row.proposed.get(TIMELY_SPO, _ZERO)),
             "qty_proposed_buy": qty_text(row.proposed.get(BUY, _ZERO)),

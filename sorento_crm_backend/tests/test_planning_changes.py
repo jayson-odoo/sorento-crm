@@ -1208,6 +1208,7 @@ def test_composition_from_proposal_derives_buy_when_the_server_states_no_figure(
     proposal = {
         "project_line_id": "line-2",
         "qty": "10",
+        "qty_outstanding": "5",
         "sources": [],
     }
     composed = planning_change_service.composition_from_proposal(proposal)

@@ -1,6 +1,6 @@
 # PLAN - Planning change confirm balances against the plan quantity (#971)
 
-Status: **DRAFT 17 Sep 2026, awaiting owner go.** Issue #971. UAC: `scm-planning-change-plan-qty-acceptance-criteria.md`.
+Status: **BUILT 17 Sep 2026, review READY, PR pending.** Issue #971. UAC: `scm-planning-change-plan-qty-acceptance-criteria.md`.
 Diagnosis (Opus, read-only, 17 Sep) posted on the issue.
 
 ## 0. What the browser walk hit
@@ -55,7 +55,7 @@ arm reads it here; folds into #969's mirror work if the owner wants it).
 | PQ4 | `test_row_open_qty_is_the_plan_quantity_on_a_delivered_line` | unit: proposal `qty=3200, qty_outstanding=2562` -> 3200; proposal without `qty` falls back to `to_json["qty"]` |
 | PQ5 | `test_board_confirm_of_a_planning_change_on_a_delivered_line_writes_revision_2` | `POST /sales-orders/{pso_id}/confirm` with `batch_id`: a new `so_supply_decisions` revision exists |
 | PQ6 | `test_fully_delivered_closed_line_confirms_its_change` | qty_ordered 1, qty_delivered 1 (owed 0, plan 1): confirm posts |
-| PQ7 | existing delta-seam confirm/amend tests parametrized over `qty_delivered in (0, 638)` | both arms green |
+| PQ7 | two delivered-variant sibling tests (700 -> 900 shape) next to the existing confirm/amend tests, since the 134/234 shapes cannot take a 638 partial delivery | both arms green |
 
 ## 5. After merge
 
