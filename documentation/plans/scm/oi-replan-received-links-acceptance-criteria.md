@@ -1,6 +1,6 @@
 # UAC - OI replan with received links (redirect the old row, raise a fresh Buy row)
 
-Plan: `PLAN-oi-replan-received-links.md`. Status: IN PROGRESS, 16 Sep 2026 (issues #957-#961).
+Plan: `PLAN-oi-replan-received-links.md`. Status: PR #973 OPEN, 17 Sep 2026.
 
 ## Journey
 

@@ -1,6 +1,6 @@
 # PLAN - OI replan with received links
 
-Status: IN PROGRESS, 17 Sep 2026 (lane worktree branch `worktree-agent-a094ed68b05447f09`, issues #957-#961 #967 #968; S1-S3 green 676d0e71c, S1b + S5 green 36f7975f4 pending fixture fixes; Lavish rounds 1-2 rulings 17 Sep: words not icons (received / reallocate / unlink / used / note), one line per row, details in lightbox, board shows the stage too, all candidates earliest first, cleared ref removes). UAC: `oi-replan-received-links-acceptance-criteria.md`.
+Status: PR #973 OPEN, 17 Sep 2026 (branch `feat/oi-replan-received-links`, issues #957-#961 #967 #968; reviewed twice, browser evidence committed, awaiting owner test on the :3000 lane stack and merge go). UAC: `oi-replan-received-links-acceptance-criteria.md`.
 Domain: SCM, order inquiries / fulfilment planning. Owner ruling 16 Sep 2026: "so far I am
 okay with your proposal and we shall proceed".
 
