@@ -267,6 +267,15 @@ def _drop_question_subject(focus: Focus, pending: Pending) -> None:
         focus.warehouse = []
     if filters.get("date_filter_start") or filters.get("date_filter_end"):
         focus.date_window = None
+    if filters.get("scope"):
+        # The SCOPE is the dead question's too. A detail offer only exists because a report
+        # ran, so its filter set carries the document that report was for - and leaving that
+        # on the focus meant the next outstanding ask, about a different customer entirely,
+        # inherited it and never asked which document it was about (AC-1160/R17, "a fresh
+        # outstanding ask arms the scope question"). A turn that names its own document
+        # writes it straight back in `_focus_rules`.
+        focus.document = []
+        focus.status = None
 
 
 def _settle_question_subject(focus: Focus, pending: Pending) -> None:
@@ -318,6 +327,57 @@ def _settle_question_subject(focus: Focus, pending: Pending) -> None:
         }
 
 
+def _keeps_subject(verdict: dict[str, Any], pending: Pending, entities: list[dict[str, Any]]) -> bool:
+    """R15 (owner ruling, 13 Sep 2026): does the PARSER's own verdict say this turn kept the
+    subject of the open question and merely narrowed it?
+
+    Two signals, both the parser's, neither a word list:
+
+    * `entity_op: "reuse"` - the parser read the turn as carrying no new value at all ("i
+      want to see this month only" is `reuse` plus a date window), so whatever it names is
+      a filter over the report already on screen.
+    * `entity_op: "replace_combine"` whose entities all sit on axes OTHER than the stored
+      subject's. There is only ever ONE subject, so an entity on the subject's own axis
+      REPLACES it, and that is a new ask.
+
+    R24 (owner round 9b) narrows it to the shape a refinement actually has: a turn the
+    parser classifies as a business question OF ITS OWN - `business_query` with a non-null
+    `domain_hint` - is a new ask whatever axes its entities sit on. The axis test alone
+    called "delivery status for hanlim" (a customer under a PRODUCT-subject offer, so a
+    different axis) a refinement of the old product's report: "I kind of can't escape this
+    loop."
+
+    The axis is `KIND_FIELD_MAP`'s - one slot per kind - deliberately NOT
+    `SHARED_AXIS_BY_DOMAIN`, which collapses product, customer and order number onto one
+    "which order" axis. That collapse is the right answer for the order LIST (hand pass 2
+    item 5, where the question is which orders are meant) and the wrong one here, where a
+    product report and a customer report are two different subjects a report can be about
+    and the whole test is which of them this turn is narrowing. Main's own
+    `_outstanding_subject_axes` makes the same carve-out for the same reason.
+    """
+    if verdict.get("entity_op") not in ("reuse", "replace_combine"):
+        return False
+    if verdict.get("message_type") == "business_query" and verdict.get("domain_hint"):
+        return False
+    filters = pending.payload.get("filters")
+    if not isinstance(filters, dict):
+        return False
+    subject_axes = set()
+    if filters.get("product_code"):
+        subject_axes.add(KIND_FIELD_MAP["product"])
+    if filters.get("customer_ids"):
+        subject_axes.add(KIND_FIELD_MAP["customer"])
+    if not subject_axes:
+        # Nothing stored to keep. An entity here would be NAMING the subject, not narrowing
+        # it, so the turn stays the new ask the arm below already calls it.
+        return False
+    for entity in entities:
+        axis = KIND_FIELD_MAP.get(entity.get("hint"))
+        if axis is None or axis in subject_axes:
+            return False
+    return True
+
+
 def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any], focus: Focus, trace: Trace):
     """Contracts 38 and 39: the outstanding report's scope question and detail offer,
     answered.
@@ -326,6 +386,9 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
     the parser's emission; here the answer moves the FOCUS instead, which is the only
     place the next fetch reads its subject from. Three outcomes and nothing else:
 
+    * a REFINEMENT (R15): the turn picked nothing, named a filter of its own, and the
+      parser's own verdict says it kept the subject (`_keeps_subject`). The same report
+      re-runs over the narrower window and the same question is re-armed over it.
     * a message that NAMES something of its own is a NEW ASK. The question is dropped
       rather than mis-resolved, so a customer can leave it by asking something else
       instead of only by answering it (D17 point 3: a stray position riding along with
@@ -343,6 +406,40 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
     """
     entities = [e for e in (verdict.get("entities") or []) if e]
     asked_for = pending.payload.get("domain")
+    positions = _picked_positions(pending, verdict)
+    names_own_dates = bool(verdict.get("date_filter_start") or verdict.get("date_filter_end"))
+    if not positions and (entities or names_own_dates) and _keeps_subject(verdict, pending, entities):
+        # R15. Tested BEFORE the new-ask arm below, because the turn that narrows an open
+        # report names a filter too, and the old "any entity of its own is a new ask" rule
+        # read a date window as nothing at all (so the offer was re-printed unchanged) and
+        # a location word as a brand new question: "you are anticipating me to reply for
+        # the detail list after offering me the detail list, but i just want to shrink the
+        # search by date" (owner, on his own stack, 13 Sep 2026).
+        #
+        # The subject SETTLES exactly as an answer's does - the question's own resolved
+        # product, customer ids and warehouses - and `_focus_rules` runs next and lays this
+        # turn's own window or location over the top. `detail: None` is what makes it a
+        # re-run of the REPORT rather than one of its lists: the customer narrowed the
+        # search, they did not ask for a list.
+        _settle_question_subject(focus, pending)
+        filters = pending.payload.get("filters")
+        scope = (filters or {}).get("scope") if isinstance(filters, dict) else None
+        if scope not in DOCUMENT_BY_SCOPE:
+            scope = None
+        focus.status = "outstanding"
+        # The scope question has NOT been answered, only narrowed (AC-1158), so the
+        # document axis stays empty and `lane_parse_output`'s `("", "outstanding")` bucket
+        # re-arms the same question over the new filters through the arm that armed it -
+        # one writer for the question's text, no second re-ask path. The detail offer's
+        # scope is already known (a report ran, or it could not have offered its lists), so
+        # its re-run carries it and never asks a question that has been answered.
+        focus.document = list(DOCUMENT_BY_SCOPE[scope]) if scope else []
+        if asked_for:
+            focus.domains = [asked_for]
+        trace.rules_fired.append("outstanding_refined")
+        trace.outstanding = {"kind": pending.kind, "scope": scope, "detail": None}
+        return focus, pending, None, True
+
     if entities:
         # A turn that NAMES something is a new ask, and D17 point 3's defensive guard is
         # this line: a stray position riding along with an entity ("2" + "delivery to
@@ -354,7 +451,6 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
         _drop_question_subject(focus, pending)
         return focus, None, None, False
 
-    positions = _picked_positions(pending, verdict)
     matched = (
         [o for o in pending.options if o.get("position") in positions] if positions else []
     )
@@ -614,6 +710,14 @@ def _focus_rules(
             # `test_rearch_s2_exclusive.py` pins that "only BRW" keeps the product and
             # the customer it is narrowing.
             shared = frozenset(KIND_FIELD_MAP)
+        elif not (shared & set(by_kind)):
+            # The turn named nothing ON the shared axis, so nothing on it is superseded.
+            # Without this test, "only BRW" typed under a report about a customer evicted
+            # that customer - a warehouse is not one of the things that say WHICH ORDER,
+            # and the report re-ran for every customer under a header naming one (owner
+            # round 5's location refinement, measured on
+            # `test_a_location_only_turn_under_the_detail_offer_narrows_by_location`).
+            shared = frozenset()
         for kind in shared - set(by_kind):
             attr = KIND_FIELD_MAP.get(kind)
             if attr and getattr(focus, attr, None):

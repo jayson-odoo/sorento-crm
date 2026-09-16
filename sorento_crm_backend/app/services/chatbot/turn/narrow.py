@@ -31,6 +31,16 @@ def _choices(candidates: list[dict[str, Any]], grouping: str | None) -> int:
     return len(keys)
 
 
+def _token_of(candidate: dict[str, Any]) -> str:
+    """The word the customer typed for this row."""
+    return str(candidate.get("raw") or candidate.get("canonical_code") or "").strip()
+
+
+def _code_of(candidate: dict[str, Any]) -> str:
+    """The code this row IS - the resolver's own, the token's only where it matched one."""
+    return str(candidate.get("canonical_code") or candidate.get("raw") or "").strip()
+
+
 def _distinct_codes(candidates: list[dict[str, Any]]) -> set[str]:
     """How many different things the carry actually names.
 
@@ -240,6 +250,50 @@ def decide(
     # from has to list things that exist: "wc286" is one focus entity and ten real
     # products, and offering the customer their own typo back is not a choice.
     if resolved_candidates:
+        # Owner hand pass 2, item 6, the other half (turn c45e2929, "Outstsnding DO for
+        # 7445"): a token THIS message named that the resolver read as SEVERAL things is a
+        # roster, whatever the domain does with it afterwards - "a product token on an order
+        # ask resolves (roster when ambiguous) and filters the report; never dropped
+        # silently". The measured verdict for that turn is `resolved: false, ambiguous:
+        # true` over nine SRTWT7445 variants, and a filter takes ONE value, so the
+        # `optional_filter` arm below quietly filtered the customer's report by whichever
+        # variant the resolver happened to list first. The roster policies already ask this
+        # exact question (same options, same builder); this says a FILTER has to know which
+        # one it is filtering by too.
+        #
+        # Only for what this MESSAGE named, and only while it is unsettled: the subject a
+        # conversation carries has already been answered for (contract 33 / 35, contract
+        # 36's settled roster), and re-asking it on every follow-up turn is the loop the
+        # sticky roster exists to avoid. `current_message` is honest for the first time here
+        # (`state.focus_from_wire` down-flags what it reads back), which is what coder 12
+        # measured as this rule's missing signal.
+        #
+        # A token that IS one of the codes it matched is not ambiguous at all (AC-1119,
+        # console run 3: the owner typed `SRTWT7445`, which exists, and the report ran for
+        # `SRTWT7445-LV-GM`). The typed code is the filter and the family siblings beside it
+        # are noise, which is the rule the lane already applies downstream - asked here in
+        # the same terms so the two cannot disagree about the same token.
+        typed_now = {
+            _token_of(c).casefold()
+            for c in candidates
+            if c.get("current_message") is True and not c.get("uuid")
+        } - {""}
+        typed_exactly = any(
+            _code_of(row).casefold() in typed_now for row in resolved_candidates
+        )
+        if (
+            policy_value == "optional_filter"
+            and typed_now
+            and not typed_exactly
+            and _choices(resolved_candidates, family_grouping) > 1
+        ):
+            return NarrowOutcome(
+                f"{kind}_pick",
+                _options(resolved_candidates, kind, family_grouping),
+                [],
+                None,
+                note="ambiguous_filter_asks",
+            )
         if policy_value in _ROSTER_POLICIES and kind != "tier":
             if _choices(resolved_candidates, family_grouping) <= 1:
                 # A code that resolves to exactly one thing IS narrowed to a code -

@@ -83,7 +83,18 @@ def focus_to_wire(focus: Focus) -> dict[str, Any]:
 def focus_from_wire(raw: Any) -> Focus:
     """The inverse. Tolerant by design: a slot written by an older build may hold a bare
     string where this one holds an entity dict, and a focus that cannot be read is a
-    forgotten conversation, not a failed turn."""
+    forgotten conversation, not a failed turn.
+
+    Every entity read back here is CARRIED: it was named by an earlier message, whatever
+    flag the row was persisted with (`_entity` down-flags `current_message`). This is the
+    one seam a stored focus becomes a turn's state through, and it is the only place that
+    can say so - the writer cannot, because at the moment it writes, the rows it is
+    storing WERE this message's. Without it `current_message` stayed true on an entity for
+    the rest of the conversation, and a rule that asks "did THIS message name this token"
+    (`narrow.decide`'s ambiguous-filter roster, hand pass 2 item 6) had no honest signal
+    to read; a RECORDED session carries the flag set the same way, so down-flagging on
+    the write path alone would have left every replayed turn lying.
+    """
     if not isinstance(raw, dict):
         return Focus()
     focus = Focus()
@@ -98,7 +109,7 @@ def focus_from_wire(raw: Any) -> Focus:
     # `customer` singular is what the first cut of the wire shape wrote; read forward so
     # a contact mid-conversation at deploy keeps the customer they already named.
     if not focus.customers and isinstance(raw.get("customer"), dict):
-        focus.customers = [raw["customer"]]
+        focus.customers = [_entity(raw["customer"])]
     # `order_status` is what the pre-rearch wire shape called this axis (contract 34;
     # `conversation_variables_service` maps the same name forward on its own read path).
     # Read forward here too, or a contact whose focus was persisted by an older build
@@ -124,5 +135,8 @@ def focus_from_wire(raw: Any) -> Focus:
 
 def _entity(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
-        return value
-    return {"raw": value, "canonical_code": value}
+        # Read back from the session, so named by an EARLIER message - see the docstring
+        # above. A copy, never the caller's dict: the wire payload is read by other
+        # readers too and this rule is about the STATE, not about the stored row.
+        return {**value, "current_message": False}
+    return {"raw": value, "canonical_code": value, "current_message": False}
