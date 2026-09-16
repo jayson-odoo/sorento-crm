@@ -74,6 +74,14 @@ class OrderInquiryLinkOut(BaseModel):
     #: print rather than a zero it would have to read as "on time" (AC-D17). Derived
     #: beside `late` from the same two dates, never stored.
     late_days: Optional[int] = None
+    #: The document this link names is FULLY received (`PLAN-oi-replan-received-links.md`
+    #: S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
+    #: 'closed'`, or an SPO allocation that fails `spo_supply.open_incoming_clauses()`.
+    #: Goods that have landed, not a promise still in transit.
+    received: bool = False
+    #: How much of THIS link's own line has been received, stated even when `received`
+    #: itself is false - a partly received document says the figure too.
+    received_qty: Optional[str] = None
     auto: bool = False
     linked_at: Optional[datetime] = None
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
@@ -327,6 +335,13 @@ class OrderInquiryWorklistRow(BaseModel):
     #: figures rather than a sentence the screen has to parse back.
     previous_qty: Optional[str] = None
     previous_delivery_date: Optional[date] = None
+    #: A replan met this row's only coverage already fully received and could not carry
+    #: it forward (`PLAN-oi-replan-received-links.md` S2, AC-RL-16): its `qty`/
+    #: `delivery_date`/`links` stand as history, and the fresh need is a separate row.
+    #: Excluded from the Buy / Purchased / Incoming cards and from `taken_from_po` /
+    #: `remaining_open` - declared here because `response_model` silently drops a field
+    #: it has not been told about.
+    redirected_to_pool: bool = False
 
 
 class OrderInquiryMonthTotal(BaseModel):

@@ -518,6 +518,9 @@ _COLUMNS = (
     # the same fact as a sentence for a person; nothing parses that sentence.
     OrderInquiryRow.previous_qty.label("previous_qty"),
     OrderInquiryRow.previous_delivery_date.label("previous_delivery_date"),
+    # AC-RL-16 (`PLAN-oi-replan-received-links.md` S3): reaches the wire so the Qty
+    # cell's `redirected` mark can read it.
+    OrderInquiryRow.redirected_to_pool.label("redirected_to_pool"),
     _ACK_USER.name.label("acknowledged_by_name"),
     _REJECT_USER.name.label("rejected_by_name"),
 )
@@ -1363,6 +1366,9 @@ class OrderInquiryWorklistService:
                 _qty_str(_dec(row.previous_qty)) if row.previous_qty is not None else None
             ),
             "previous_delivery_date": row.previous_delivery_date,
+            # AC-RL-16: a replan could not carry this row's coverage forward - it is
+            # history now, and the FE marks it and excludes it from the cards.
+            "redirected_to_pool": bool(row.redirected_to_pool),
             "raised_at": row.raised_at,
             "raised_by_name": row.raised_by_name,
             "verb": row.verb,
@@ -1788,10 +1794,18 @@ class OrderInquiryWorklistService:
         cannot claim less than pressing it reveals. Cancelled and actioned rows are
         dropped by the same rule the `kind` filter drops them (`_NOT_OWED_STATES`), so
         the cards and the rows agree.
+
+        A REDIRECTED row is dropped entirely too (AC-RL-16, `PLAN-oi-replan-received-
+        links.md` S3): a replan could not carry its coverage forward, so the document it
+        still shows as history is not owed here any more than a cancelled row's is - the
+        fresh row raised in its place is what actually counts toward Buy.
         """
         stages = self._stage_rows(
             filters,
-            extra_filters=(OrderInquiryRow.state.notin_(_NOT_OWED_STATES),),
+            extra_filters=(
+                OrderInquiryRow.state.notin_(_NOT_OWED_STATES),
+                OrderInquiryRow.redirected_to_pool.is_(False),
+            ),
         )
         incoming, purchased, buy = self.db.query(
             func.coalesce(func.sum(stages.c.incoming), 0),

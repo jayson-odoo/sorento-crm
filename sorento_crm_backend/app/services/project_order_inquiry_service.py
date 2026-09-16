@@ -942,6 +942,20 @@ class ProjectOrderInquiryService:
         row = live[0]
         if row.state in (INQUIRY_PLACED, INQUIRY_ACTIONED) and not self._links_of(row.id):
             return False
+
+        # AC-RL-10 to AC-RL-14 (`PLAN-oi-replan-received-links.md`, S2): a FULLY
+        # RECEIVED document is not carried through a replan - the goods it names have
+        # already shipped to somebody else's order, and settling this row onto them
+        # would silently understate what purchasing still has to buy. Checked before
+        # the over-cover step below, on the row's own links as they stand right now.
+        links = self._links_of(row.id)
+        if links:
+            redirected = self._redirect_row_if_received(
+                row, links, decision, actor_user_id=actor_user_id
+            )
+            if redirected:
+                return False
+
         previous_qty = _dec(row.qty)
         previous_date = row.delivery_date
         moved = (
@@ -1057,6 +1071,111 @@ class ProjectOrderInquiryService:
             # pre-trim count - the row may have given a link back entirely.
             self._dispatch_changed_with_links(inquiry, row, had_link=linked > _ZERO)
         return True
+
+    def _redirect_row_if_received(
+        self,
+        row: OrderInquiryRow,
+        links: Sequence[OrderInquiryLink],
+        decision: Any,
+        *,
+        actor_user_id: Optional[str] = None,
+    ) -> bool:
+        """AC-RL-10 to AC-RL-12 (`PLAN-oi-replan-received-links.md`, S2): the rule that
+        makes `_settle_row_in_place` decline a row whose coverage has already shipped.
+
+        A fully received document is not carried through a replan. When any of `links`
+        names one: the row is marked `redirected_to_pool` and left OTHERWISE untouched -
+        its `qty`, `delivery_date`, `state` and the received link itself stand exactly as
+        they were, so the documents that covered it stay visible as history. A link to a
+        STILL OPEN document is different: it is freed back to its target through
+        `_remove_links`, so the raise-time cascade below may draft it onto the fresh row
+        this decline sends the caller to raise instead.
+
+        Returns False, changing nothing, when no link on the row is received - the
+        ordinary case, which leaves `_settle_row_in_place` to run its usual settle.
+        """
+        received = self._received_documents_for(links)
+        received_links = [link for link in links if str(link.id) in received]
+        if not received_links:
+            return False
+        open_links = [link for link in links if str(link.id) not in received]
+        if open_links:
+            self._remove_links(row, open_links)
+        first = received_links[0]
+        document = first.document or "the document"
+        arrived = received[str(first.id)]
+        when = arrived.strftime("%d %b %Y") if arrived else "in full"
+        location = f", goods are {row.stock_location} stock" if row.stock_location else ""
+        fragment = (
+            f"{document} received {when}{location}, "
+            f"released at revision {decision.revision_no}"
+        )
+        row.note = f"{row.note}; {fragment}" if row.note else fragment
+        row.redirected_to_pool = True
+        self.db.flush()
+        return True
+
+    def _received_documents_for(
+        self, links: Sequence[OrderInquiryLink]
+    ) -> Dict[str, Optional[date]]:
+        """Which of `links` name a FULLY RECEIVED document (AC-RL-10): a PO line whose
+        `qty_received >= qty_ordered` or `line_status == 'closed'`, or an SPO allocation
+        that fails `spo_supply.open_incoming_clauses()`. Same rule `links_for_rows`
+        states on the wire (S1) - kept as a separate small query here rather than reused
+        wholesale, because this caller has at most a couple of links and no page of rows
+        to batch over.
+
+        Keyed by link id, mapping to the date the book states for the receipt (an SPO's
+        landed shipment date) or `None` when it states none - `_redirect_row_if_
+        received`'s own note reads it, and 'None' there means "in full", not "unknown".
+        """
+        out: Dict[str, Optional[date]] = {}
+        po_line_ids = {str(link.po_line_id) for link in links if link.po_line_id}
+        spo_ids = {str(link.spo_allocation_id) for link in links if link.spo_allocation_id}
+        po_lines: Dict[str, bool] = {}
+        if po_line_ids:
+            for line_id, qty_ordered, qty_received, line_status in self.db.query(
+                PurchaseOrderLine.id,
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+                PurchaseOrderLine.line_status,
+            ).filter(PurchaseOrderLine.id.in_(po_line_ids)):
+                po_lines[str(line_id)] = bool(
+                    line_status == "closed" or _dec(qty_received) >= _dec(qty_ordered)
+                )
+        spo_allocations: Dict[str, Optional[date]] = {}
+        if spo_ids:
+            rows = (
+                self.db.query(
+                    SPOAllocation.id,
+                    SPOAllocation.line_status,
+                    SPOAllocation.receipt_status,
+                    InboundShipment.actual_arrival_date,
+                )
+                .outerjoin(
+                    InboundShipment,
+                    InboundShipment.id == SPOAllocation.inbound_shipment_id,
+                )
+                .filter(SPOAllocation.id.in_(spo_ids))
+                .all()
+            )
+            for alloc_id, line_status, receipt_status, arrival_date in rows:
+                is_open = (
+                    (line_status is None or line_status == "open")
+                    and (
+                        receipt_status is None
+                        or receipt_status not in spo_supply.RECEIVED_RECEIPT_STATUSES
+                    )
+                    and arrival_date is None
+                )
+                if not is_open:
+                    spo_allocations[str(alloc_id)] = arrival_date
+        for link in links:
+            if link.po_line_id and po_lines.get(str(link.po_line_id)):
+                out[str(link.id)] = None
+            elif link.spo_allocation_id and str(link.spo_allocation_id) in spo_allocations:
+                out[str(link.id)] = spo_allocations[str(link.spo_allocation_id)]
+        return out
 
     def _dispatch_changed_with_links(
         self, inquiry: OrderInquiry, row: OrderInquiryRow, *, had_link: bool
@@ -2193,6 +2312,16 @@ class ProjectOrderInquiryService:
                 SPOAllocation.location_code,
                 SPOAllocation.from_po_number,
                 SpoPO.id,
+                # S1 (`PLAN-oi-replan-received-links.md`, AC-RL-17): the receipt figure
+                # every link states, and the fields the "fully received" test reads for
+                # whichever book this link names.
+                PurchaseOrderLine.qty_ordered,
+                PurchaseOrderLine.qty_received,
+                PurchaseOrderLine.line_status,
+                SPOAllocation.quantity_received,
+                SPOAllocation.receipt_status,
+                SPOAllocation.line_status,
+                InboundShipment.actual_arrival_date,
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
@@ -2210,6 +2339,10 @@ class ProjectOrderInquiryService:
                 == func.coalesce(
                     PurchaseOrderLine.warehouse_id, SPOAllocation.warehouse_id
                 ),
+            )
+            .outerjoin(
+                InboundShipment,
+                InboundShipment.id == SPOAllocation.inbound_shipment_id,
             )
             .filter(
                 OrderInquiryLink.row_id.in_(wanted),
@@ -2259,6 +2392,13 @@ class ProjectOrderInquiryService:
             spo_location_code,
             spo_from_po_number,
             spo_purchase_order_id,
+            po_qty_ordered,
+            po_qty_received,
+            po_line_status,
+            spo_quantity_received,
+            spo_receipt_status,
+            spo_line_status,
+            spo_actual_arrival_date,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
             if not is_spo and po_number and po_product_id:
@@ -2276,6 +2416,30 @@ class ProjectOrderInquiryService:
             # HOW late, in whole days (AC-D17). `None` rather than 0 when it is not late,
             # so the column has nothing to print instead of a zero that reads as on time.
             late_days = (arrives - row_needed_by).days if late else None
+            # S1 (AC-RL-17, `PLAN-oi-replan-received-links.md`): the document is FULLY
+            # received - a PO line whose `qty_received >= qty_ordered` or `line_status =
+            # 'closed'`, or an SPO allocation that fails `spo_supply.
+            # open_incoming_clauses()`. `bool(po_number)`/`bool(spo_number)` guard the
+            # rare row whose target line was itself deleted (SET NULL) - nothing joined,
+            # so there is no document to call received. `received_qty` states the
+            # figure regardless of `received` - a partly received document says so too.
+            if is_spo:
+                spo_open = (
+                    (spo_line_status is None or spo_line_status == "open")
+                    and (
+                        spo_receipt_status is None
+                        or spo_receipt_status not in spo_supply.RECEIVED_RECEIPT_STATUSES
+                    )
+                    and spo_actual_arrival_date is None
+                )
+                received = bool(spo_number) and not spo_open
+                received_qty = _qty_str(_dec(spo_quantity_received))
+            else:
+                received = bool(po_number) and (
+                    po_line_status == "closed"
+                    or _dec(po_qty_received) >= _dec(po_qty_ordered)
+                )
+                received_qty = _qty_str(_dec(po_qty_received))
             out.setdefault(link.row_id, []).append(
                 {
                     "id": link.id,
@@ -2293,6 +2457,11 @@ class ProjectOrderInquiryService:
                     "tier": tier,
                     "late": late,
                     "late_days": late_days,
+                    # S1, AC-RL-17: the receipt figure, stated on every link, and
+                    # whether it makes the document FULLY received - the replan rule
+                    # (S2) and the PO/SPO chip's `received` mark both read this.
+                    "received": received,
+                    "received_qty": received_qty,
                     "auto": bool(link.auto),
                     "linked_at": link.linked_at,
                     # WHO linked it, by name. Null on a cascade link, which nobody did.
