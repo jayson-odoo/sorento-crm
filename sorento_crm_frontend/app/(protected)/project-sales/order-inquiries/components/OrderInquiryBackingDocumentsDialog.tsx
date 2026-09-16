@@ -129,6 +129,15 @@ export function OrderInquiryBackingDocumentsDialog({
                     <div className="text-xs text-muted-foreground">
                       {link.location || 'no location'} · {formatInquiryQty(link.qty)}
                     </div>
+                    {/* AC-RL-02 (17 Sep rulings): a received document states the figure
+                        as its own line - an open one prints nothing extra here, the
+                        same "never say more than the fact" rule every other blank cell
+                        on this list follows. */}
+                    {link.received ? (
+                      <div className="text-xs text-muted-foreground">
+                        {`Received ${formatInquiryQty(link.received_qty ?? '0')} of ${formatInquiryQty(link.qty)}`}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="shrink-0 text-right text-xs text-muted-foreground">
                     <div>

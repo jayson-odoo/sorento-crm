@@ -1387,3 +1387,34 @@ def test_a_fully_bundled_form_leg_row_earns_no_row_at_all(scm_app):
         "SELECT 1 FROM scm.reorder_recommendation WHERE run_id = :r AND product_id = :p"
     ), {"r": run_id, "p": pid}).first()
     assert rec is None, "a fully bundled form row earns no row at all"
+
+
+def test_a_redirected_confirmed_leg_row_is_not_listed(scm_app):
+    """AC-RL-16d (S4, code review 17 Sep): `demand_breakdown_service`'s own copies of
+    the confirmed leg (~:514) and the form leg (~:591) sum project demand the SAME
+    way `demand.py`'s own confirmed/form legs do, and both must ALSO exclude a
+    redirected row - the drill-down popover must not list quantity that has
+    already shipped to another order and is history on a row a replan could not
+    carry forward (AC-RL-10)."""
+    from tests.scm.test_channel_read_model import _confirmed_leg
+
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-REDIR1")
+    pid = _mk_product(db, f"ZZTP-REDIR1-{uuid.uuid4().hex[:6]}")
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    leg = _confirmed_leg(db, product_id=pid, warehouse_id=wid, buy_qty=24)
+    leg["inquiry_row"].redirected_to_pool = True
+    db.flush()
+    # A retail line so the run writes a recommendation to hang the drill on - the
+    # same shape the sibling "awaiting CS" tests in this file use.
+    _so(db, pid, wid, 2, order_type="retail", number="ZZTSO-REDIR1-R")
+    _link(db, pid, _mk_supplier(db, "ZZT Redir1 Supplier"), moq=None, mult=None)
+    db.flush()
+
+    out = dbs.demand_for_recommendation(db, _rec(db, ["ZZTW-REDIR1"], pid))
+
+    assert [l["so_number"] for l in out["lines"]] == ["ZZTSO-REDIR1-R"], (
+        "the redirected confirmed-leg row must not appear in the drill-down at all"
+    )
+    assert out["project_total"] == 0.0

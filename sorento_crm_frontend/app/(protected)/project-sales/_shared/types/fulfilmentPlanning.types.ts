@@ -1391,6 +1391,25 @@ export interface BoardLineOrderInquiry {
    */
   rejected_reason?: string | null;
   rejected_by_name?: string | null;
+  /**
+   * AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the instruction - the
+   * winning row's own documents, the SAME reader (`links_for_rows`) the OI worklist
+   * chip uses. Empty on a row nobody has linked.
+   */
+  documents?: BoardLineOrderInquiryDocument[];
+  /**
+   * Whether the winning row was itself redirected off a document that had already
+   * landed (AC-RL-10) - the fulfilment list's inquiry cell reads this for the `used`
+   * word (AC-RL-06).
+   */
+  redirected?: boolean;
+}
+
+/** One document behind a board line's instruction (AC-RL-07). */
+export interface BoardLineOrderInquiryDocument {
+  document: string | null;
+  kind: 'po' | 'spo';
+  received: boolean;
 }
 
 /**
@@ -1768,7 +1787,10 @@ export interface BoardCommitPreview {
 }
 
 /**
- * `GET /project-sales/fulfilment-planning/board`. A pure read: opening it claims nothing.
+ * `GET /project-sales/fulfilment-planning/board`. Claims nothing - no stock is reserved and
+ * no decision is written by opening it - but it does mirror a core line that arrived after
+ * adoption onto the planning record for an adopted order, so the line carries a
+ * `project_line_id` and is confirmable in the same response (#969).
  *
  * The four `*_count` totals are SELECTION-scoped: counted over every contributing line before
  * any window is applied, so they are identical on day, week and month and do not move when the

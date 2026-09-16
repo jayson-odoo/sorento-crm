@@ -472,6 +472,50 @@ def test_ac_x6_the_matrix_stage_sums_apply_the_corrected_derived_cover_rule(api)
     assert cell["buy"] == "7", cell
 
 
+# ------------------------------------------------- AC-RL-16 addendum (16 Sep, 2nd round)
+
+
+def test_schedule_matrix_stage_cards_exclude_redirected_row(api):
+    """AC-RL-16 addendum (`PLAN-oi-replan-received-links.md` S3): the matrix reuses
+    `_stage_rows` too (`matrix()`'s own docstring: "the SAME per-row arithmetic the
+    cards read"), but the redirect exclusion the cards got (`_kinds`' own `extra_
+    filters`) was applied only at THAT call site - a redirected row's linked quantity
+    must not inflate the matrix's `po` cell either, and its own history row must not
+    inflate `rows` or `qty`."""
+    client, db, company_id, seeded = api
+    product = _product(db, f"ZZT-MATRIX-REDIRECT-{_uid()[:6]}", f"{MARKER} product redirect")
+    core = _core_order(
+        db, company_id, customer=seeded["customer_a"], agent=seeded["agent_a"],
+        order_date=date(2026, 7, 1),
+    )
+    pso = _adopted_pso(db, company_id, core)
+    line = _pso_line(db, company_id, pso, product)
+    inquiry = _inquiry_for(db, company_id, pso)
+
+    redirected = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, item_code=f"{MARKER}-REDIRECT", qty=Decimal("158"),
+        delivery_date=date(2026, 7, 15), verb=IV_ORDER, state="placed",
+        ack_state="acknowledged", redirected_to_pool=True,
+    )
+    db.add(redirected)
+    db.flush()
+    _po_link(db, company_id, redirected, product, "158")
+    _raised = _row(
+        db, company_id, inquiry, line, item_code=f"{MARKER}-REDIRECT-FRESH", qty="220",
+        delivery_date=date(2026, 7, 15), state=INQUIRY_RAISED,
+    )
+    db.commit()
+
+    body = client.get(MATRIX, params={"axis": "product", "by": "month"}).json()
+    cell = next(c for c in body["data"] if c["axis_key"] == str(product.id))
+
+    assert cell["rows"] == 1, cell  # the redirected row is not counted
+    assert cell["qty"] == "220", cell
+    assert cell["po"] == "0", cell
+    assert cell["buy"] == "220", cell
+
+
 # --------------------------------------------------------------------------- SF-3
 
 

@@ -135,7 +135,55 @@ export interface OrderInquiryLink {
    * link, so the PO column marks it "via SPO" (R-E). Absent or false otherwise.
    */
   derived_po?: boolean;
+  /**
+   * The document this link points at is FULLY received (`PLAN-oi-replan-received-links.md`
+   * S1, AC-RL-17): a PO line whose `qty_received >= qty_ordered` or `line_status =
+   * 'closed'`, or an SPO allocation that fails `open_incoming_clauses()`. Goods that have
+   * landed are location stock, not a promise still in transit - the PO/SPO chip and the
+   * backing-documents dialog mark it so purchasing reads it as history rather than as
+   * something still to chase. Absent or false on an open document.
+   */
+  received?: boolean;
+  /**
+   * How much of THIS link's document line has been received: `PurchaseOrderLine.
+   * qty_received` for a `po`-kind link, `SPOAllocation.quantity_received` for `spo`.
+   * Present on every link regardless of `received` - a partly received document states
+   * the figure too, even though `received` itself only flips true once the WHOLE line is
+   * done. Null or absent when the book states no receipt yet.
+   */
+  received_qty?: string | null;
+  /**
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): a concrete
+   * instruction on an open link that has drifted outside the product's lead-time
+   * window - never a reason, never "early" (owner ruling 16 Sep), never the word
+   * "repoint" on screen (ruling 17 Sep). `reallocate` names EVERY other linkable row
+   * of the same product with open need, earliest first - the first is the suggested
+   * target; `unlink` means there is no such row. Null on a received link or one still
+   * inside the window. Nothing is written from the chip's own lightbox - purchasing
+   * acts in AutoCount, and S5 (our link follows the book) reacts to that.
+   */
+  suggestion?: OrderInquiryLinkSuggestion | null;
 }
+
+/** One row a `reallocate` suggestion could move the link to (AC-RL-20). */
+export interface OrderInquiryLinkSuggestionCandidate {
+  inquiry_no: string | null;
+  item_code: string | null;
+  so_number: string | null;
+  delivery_date: string;
+  open_qty: string;
+}
+
+/**
+ * A `reallocate` suggestion names EVERY sooner row with open need, earliest first -
+ * the first is the suggested target (17 Sep rulings); `unlink` names none.
+ */
+export type OrderInquiryLinkSuggestion =
+  | {
+      kind: 'reallocate';
+      candidates: OrderInquiryLinkSuggestionCandidate[];
+    }
+  | { kind: 'unlink' };
 
 /**
  * The HANDSHAKE (`PLAN-scm-oi-handshake.md`), beside `state` and never merged with it:
@@ -333,6 +381,17 @@ export interface OrderInquiryWorklistRow extends OrderInquiryAckFields {
   cited_document?: string | null;
   /** Same as `OrderInquiryRow.has_link_candidate`, for this cross-project worklist. */
   has_link_candidate?: boolean;
+  /**
+   * The row's linked document turned out to be FULLY RECEIVED by the time a replan met it
+   * (`PLAN-oi-replan-received-links.md`, S3): goods already shipped to other orders are
+   * location stock, not this line's any more, so settle-in-place did not carry the row -
+   * it kept its old `qty`/`delivery_date`/`links` as history and a fresh ORDER row was
+   * raised for the full need instead. The Qty cell marks it and the Buy / Purchased /
+   * Incoming card totals ignore it (AC-RL-04, AC-RL-16) - it is not owed anywhere any
+   * more. Absent or false on every row today (0 rows on prod as of 16 Sep 2026; this
+   * plan is the first writer of the column).
+   */
+  redirected_to_pool?: boolean;
   /** Who sold it (`sales_orders.sales_agent_id` -> `sales_agents`), off the same core
    * sales order the S/O no column reaches. Null when the row reaches no core order, or
    * that order carries no agent. */

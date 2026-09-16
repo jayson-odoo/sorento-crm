@@ -182,3 +182,21 @@ def test_a_dropped_lines_cascade_linked_row_dispatches_when_retired(api, monkeyp
     assert _for_row(calls, dropped.id), (
         "a dropped line's cascade-linked row must still be reported"
     )
+
+
+def test_changed_with_links_automation_silent_on_redirect(api, monkeypatch):
+    """AC-RL-18 (`PLAN-oi-replan-received-links.md` S2): a replan that redirects a row
+    dispatches nothing for it - nothing on it changed, the settle declined it before
+    the automation's own dispatch call - and nothing for its replacement either, since
+    a fresh raise carries no links for `_dispatch_changed_with_links` to report on."""
+    from .test_order_inquiry_draft_links import _redirected_fixture
+
+    _client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _redirected_fixture(api)
+    world.db.commit()
+
+    assert _for_row(calls, fixture["redirected_row"].id) == []
+    assert _for_row(calls, fixture["new_row"].id) == []

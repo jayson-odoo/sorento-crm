@@ -42,7 +42,9 @@ badge and nothing to review - there's nothing a change could invalidate.
 
 Open the **Changed** badge (or find the order on Fulfilment Planning). Each changed line shows:
 
-* A **Was** / **Now** table: **Qty**, **Date**, **Decision**, one column each side.
+* A **Was** / **Now** table: **Qty**, **Date**, **Decision**, one column each side. **Date**
+  always carries the year on both sides, for example `1 Jun 2026 -> 1 Mar 2027`, so a delay
+  into next year can't be misread as an earlier date.
 * Underneath, the suggestion: one line per action, in plain words composed by the system, for
   example "Buy 234 (was 134)", "Reduce Buy 100 to 0", "Keep PO-A 100 of 134", "Reallocate PO-A 34
   to SO420103 ORDER 50".
@@ -80,6 +82,12 @@ Carrying out a suggestion writes to the **Order Inquiries** page:
   counts it as available stock.
 * **A Borrow** raises an **ORDER BACK** row on the donor order's own line, for the quantity it
   lent out.
+* **A line whose only linked document is already fully received keeps its old row as history.**
+  The row is greyed, its quantity and its documents are left exactly as they were, and its Qty
+  cell carries the word **used** - click it to read which document, when it was received, and
+  where the goods landed. A fresh row is raised for the full new quantity, with no documents; it
+  is what shows in the **Buy** card and what purchasing actually buys against. Stock debt for the
+  line is counted against the new row, not the old one.
 
 ## Removing a line, or setting its quantity to 0
 

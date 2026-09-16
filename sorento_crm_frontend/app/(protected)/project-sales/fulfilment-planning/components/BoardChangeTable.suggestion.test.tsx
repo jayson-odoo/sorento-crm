@@ -155,7 +155,9 @@ describe('the composed suggestion on the board', () => {
     // Was the `change-now-qty` table-cell check; the lightbox states it as a changed-field
     // line instead, alongside the date that moved with it (AC-C10).
     expect(within(dialog).getByText('Qty 134 → 100')).toBeInTheDocument();
-    expect(within(dialog).getByText('Date 4 Sep → 20 Nov')).toBeInTheDocument();
+    // AC-RL-01: `shortDay` now carries the year (`PLAN-oi-replan-received-links.md` S0), so
+    // a delay to next year cannot be misread as an advance to an earlier month this year.
+    expect(within(dialog).getByText('Date 4 Sep 2026 → 20 Nov 2026')).toBeInTheDocument();
     expect(
       within(dialog)
         .getAllByTestId('board-change-suggestion-line')
@@ -265,7 +267,8 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
     expect(within(dialog).getByText('What changed, SO419772 (Line 1)')).toBeInTheDocument();
     // Every field changed in this sample, so all three lines are present, one per line.
     expect(within(dialog).getByText('Qty 234 → 334')).toBeInTheDocument();
-    expect(within(dialog).getByText('Date 4 Sep → 20 Nov')).toBeInTheDocument();
+    // AC-RL-01: the year is present on both sides now.
+    expect(within(dialog).getByText('Date 4 Sep 2026 → 20 Nov 2026')).toBeInTheDocument();
     expect(within(dialog).getByText('Decision Buy 234 → Buy 334')).toBeInTheDocument();
     // Then the composed suggestion, verbatim - the server's own sentence, unchanged.
     expect(within(dialog).getByText('Buy 334 (was 234)')).toBeInTheDocument();
@@ -305,7 +308,8 @@ describe('the change indicator, lightbox and one shortfall line (owner feedback 
     fireEvent.click(screen.getByTestId('board-change-icon-pcr-demo-date-only'));
     const dialog = await screen.findByTestId('board-change-dialog');
 
-    expect(within(dialog).getByText('Date 4 Sep → 25 Sep')).toBeInTheDocument();
+    // AC-RL-01: the year is present on both sides now.
+    expect(within(dialog).getByText('Date 4 Sep 2026 → 25 Sep 2026')).toBeInTheDocument();
     expect(within(dialog).queryByText(/^Qty /)).not.toBeInTheDocument();
     expect(within(dialog).queryByText(/^Decision /)).not.toBeInTheDocument();
   });

@@ -51,7 +51,9 @@ from app.models.project_so import (
     ACK_CHANGED,
     ACK_REJECTED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
+    INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -1441,3 +1443,202 @@ def test_a_drafted_placed_row_no_longer_moves_the_to_confirm_count(api):
     assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before
 
     assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before
+
+
+# ---------------------------------------------------------------------------
+# AC-RL-10 to AC-RL-14: a replan does not carry a received document forward
+# (`PLAN-oi-replan-received-links.md`, S2). TEST-FIRST: no writer of
+# `redirected_to_pool` exists yet outside `planning_change_service`'s own
+# `_apply_placed_redirect`, and `_settle_row_in_place` keeps every link across a
+# replan today - the red state is a row that settles in place holding a link to a
+# document that has already shipped to somebody else's order, never an import error.
+# ---------------------------------------------------------------------------
+
+#: The confirmation this whole scenario replans to - SO314593's own worked example
+#: (`oi-replan-received-links-acceptance-criteria.md` journey): buy 220, needed 1 Mar 2027.
+REPLAN_QTY = "220"
+REPLAN_DATE = date(2027, 3, 1)
+
+
+def _received_spo(world, *, qty, warehouse=None) -> SPOAllocation:
+    """A CLOSED, fully-received SPO allocation - `spo_supply.open_incoming_clauses()`
+    fails on it twice over (closed line, received status), which is the AC-RL-10 fact
+    a replan has to recognise. Seeded directly, never through the cascade: a fully
+    received document has zero cascade capacity (`_candidates_for_row`), so the
+    cascade itself could never be the one to write this link - it stands in for a
+    placement purchasing made before the goods came in.
+    """
+    allocation = _spo_line(world, qty=qty, warehouse=warehouse or world.warehouse)
+    allocation.quantity_received = Decimal(str(qty))
+    allocation.receipt_status = "fully_received"
+    allocation.line_status = "closed"
+    world.db.flush()
+    world.db.commit()
+    return allocation
+
+
+def _link_row_to(
+    world, row, *, qty, document, allocation=None, po_line=None
+) -> OrderInquiryLink:
+    """Seed one link DIRECTLY on `row`, bypassing `_write_link` - the fixtures below
+    need a link to a document the cascade could never place (a received one), and a
+    plain open one seeded the same way for the mixed case (AC-RL-12)."""
+    link = OrderInquiryLink(
+        id=_uid(),
+        company_id=row.company_id,
+        row_id=row.id,
+        spo_allocation_id=allocation.id if allocation is not None else None,
+        po_line_id=po_line.id if po_line is not None else None,
+        document=document,
+        qty=Decimal(str(qty)),
+    )
+    world.db.add(link)
+    world.db.flush()
+    ProjectOrderInquiryService(world.db).refresh_link_state([row])
+    world.db.commit()
+    return link
+
+
+def _rows_for_line(world, line) -> list:
+    """Every LIVE row of this SO line, oldest first - a redirect leaves TWO on the
+    line where today there is one, so `_order_row`'s own `.one()` cannot answer here."""
+    return (
+        world.db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+        .all()
+    )
+
+
+def _redirected_fixture(
+    api,
+    *,
+    row_qty="182",
+    receive_qty="158",
+    open_qty=None,
+    buy_qty=REPLAN_QTY,
+    required_date=REPLAN_DATE,
+):
+    """AC-RL-10 to AC-RL-14/18's own scenario, shrunk to the fixture world: a row of
+    `row_qty`, `partly_linked`, one link to an SPO the client already received in full
+    - optionally a second OPEN link too (AC-RL-12's mixed case) - replanned to
+    `buy_qty` on `required_date` exactly as SO314593's confirmation did.
+    """
+    _client, world = api
+    fixture = _raise_one_row(api, qty=row_qty)
+    row = fixture["row"]
+    allocation = _received_spo(world, qty=receive_qty)
+    _link_row_to(world, row, qty=receive_qty, document=allocation.spo_number, allocation=allocation)
+    open_line = None
+    if open_qty is not None:
+        po, open_line = _open_po_line(world, qty=open_qty)
+        _link_row_to(world, row, qty=open_qty, document=po.po_number, po_line=open_line)
+    world.db.refresh(row)
+    assert row.state == INQUIRY_PARTLY_LINKED, (
+        "the fixture must build a still-owed row for `_settle_row_in_place` to see"
+    )
+    fixture["received_allocation"] = allocation
+    fixture["open_po_line"] = open_line
+    _settle(world, fixture, qty=buy_qty, required_date=required_date)
+    world.db.refresh(row)
+    fixture["redirected_row"] = row
+    fixture["new_row"] = next(
+        r for r in _rows_for_line(world, fixture["line"]) if str(r.id) != str(row.id)
+    )
+    return fixture
+
+
+def test_settle_redirects_row_when_every_link_is_received(api):
+    """AC-RL-10: settle does NOT carry the row forward - it is redirected, its own
+    figures and links left exactly as they were, and its note names the release."""
+    _client, world = api
+    fixture = _redirected_fixture(api)
+    row = fixture["redirected_row"]
+
+    assert row.redirected_to_pool is True
+    assert Decimal(str(row.qty)) == Decimal("182")
+    assert row.delivery_date == WAS
+    links = _links_of(world, row)
+    assert len(links) == 1
+    assert links[0].spo_allocation_id == fixture["received_allocation"].id
+    assert "released at revision" in (row.note or "")
+
+
+def test_settle_raises_fresh_order_row_for_full_need(api):
+    """AC-RL-11: a fresh ORDER row carries the full replanned need, linkless and with
+    no previous value - it is a new instruction, not an amendment of the old one."""
+    _client, world = api
+    fixture = _redirected_fixture(api)
+    new_row = fixture["new_row"]
+
+    assert new_row.verb == IV_ORDER
+    assert Decimal(str(new_row.qty)) == Decimal("220")
+    assert new_row.delivery_date == REPLAN_DATE
+    assert new_row.state == INQUIRY_RAISED
+    assert _links_of(world, new_row) == []
+    assert new_row.previous_qty is None
+    assert new_row.previous_delivery_date is None
+
+
+def test_settle_mixed_links_frees_open_link(api):
+    """AC-RL-12: the received link stays on the redirected row; the still-open one is
+    removed through `_remove_links`, so its capacity returns to the target."""
+    _client, world = api
+    fixture = _redirected_fixture(api, open_qty="20")
+    row = fixture["redirected_row"]
+    open_line = fixture["open_po_line"]
+
+    links = _links_of(world, row)
+    assert len(links) == 1
+    assert links[0].spo_allocation_id == fixture["received_allocation"].id
+
+    by_po, _by_spo = ProjectOrderInquiryService(world.db)._linked_by_target()
+    assert str(open_line.id) not in by_po, "the freed PO line must show no claimed quantity"
+
+
+def test_settle_keeps_row_with_only_open_links_in_place(api):
+    """AC-RL-13: unchanged behaviour when nothing on the row is received - settle in
+    place, links kept, the previous value carried, and no second row raised."""
+    _client, world = api
+    fixture = _raise_one_row(api, qty="182")
+    row = fixture["row"]
+    po, open_line = _open_po_line(world, qty="158")
+    _link_row_to(world, row, qty="158", document=po.po_number, po_line=open_line)
+    world.db.refresh(row)
+    assert row.state == INQUIRY_PARTLY_LINKED
+
+    _settle(world, fixture, qty=REPLAN_QTY, required_date=REPLAN_DATE)
+
+    world.db.refresh(row)
+    assert row.redirected_to_pool is False
+    assert Decimal(str(row.qty)) == Decimal("220")
+    assert row.delivery_date == REPLAN_DATE
+    assert Decimal(str(row.previous_qty)) == Decimal("182")
+    assert row.previous_delivery_date == WAS
+    links = _links_of(world, row)
+    assert len(links) == 1
+    assert links[0].po_line_id == open_line.id
+    assert [str(r.id) for r in _rows_for_line(world, fixture["line"])] == [str(row.id)]
+
+
+def test_cascade_writes_nothing_onto_redirected_row_or_received_document(api):
+    """AC-RL-14 (writer 1 of 2): the next bulk cascade pass must not touch the
+    redirected row, and the received document's own zero capacity means the fresh row
+    gets nothing from it either - there is nothing else to link it to here."""
+    _client, world = api
+    fixture = _redirected_fixture(api)
+    row = fixture["redirected_row"]
+    new_row = fixture["new_row"]
+
+    ProjectOrderInquiryService(world.db).auto_place_for_products(
+        [str(world.product.id)], actor_user_id=world.cs_user, trigger="test-ac-rl-14"
+    )
+    world.db.commit()
+
+    world.db.refresh(row)
+    world.db.refresh(new_row)
+    assert len(_links_of(world, row)) == 1
+    assert _links_of(world, new_row) == []

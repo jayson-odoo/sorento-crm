@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
+import { ackStateOf, movedNoteOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
 import { BoardChangeWasNowTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 
@@ -45,6 +45,16 @@ export function OrderInquiryQtyAnnotationDialog({
 }) {
   const rejected = ackStateOf(row) === 'rejected';
   const previous = previousValueOf(row);
+  // AC-RL-04 (17 Sep rulings): a replan could not carry this row forward because its
+  // only coverage had already landed elsewhere - the row's own note states where and
+  // when, verbatim, never re-parsed into figures.
+  const redirected = Boolean(row.redirected_to_pool);
+  const redirectedNote = redirected ? (row.note ?? '').trim() : '';
+  // AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): a row the book redirected off -
+  // a settle never touched it, so `previous` is null, but the note names where its
+  // documents went. Never checked on a `redirected_to_pool` row: that row's own note is
+  // handled above and reads differently.
+  const moved = !redirected ? movedNoteOf(row) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -58,12 +68,20 @@ export function OrderInquiryQtyAnnotationDialog({
               ? 'Rejected, and changed before that'
               : rejected
                 ? 'Rejected'
-                : 'Changed'}
+                : previous
+                  ? 'Changed'
+                  : redirected
+                    ? 'Already used elsewhere'
+                    : 'AutoCount moved this line'}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5">
           {rejected ? <RejectedSection row={row} /> : null}
           {previous ? <ChangedSection row={row} previous={previous} /> : null}
+          {redirected && redirectedNote ? (
+            <MovedSection heading="Used" note={redirectedNote} />
+          ) : null}
+          {moved ? <MovedSection heading="Moved by AutoCount" note={moved} /> : null}
         </DialogBody>
       </DialogContent>
     </Dialog>
@@ -122,6 +140,24 @@ function ChangedSection({
           projectLineId: null,
         }}
       />
+    </section>
+  );
+}
+
+/**
+ * The row's own note, verbatim, never parsed back into figures - the same convention
+ * every other note on this row already follows. Shared by two callers, each with its
+ * own heading (REV-S7, 17 Sep review round: the shared "Redirected" heading both used
+ * to print is a word the 17 Sep rulings retired from screen entirely) - AC-RL-04's
+ * `used` trigger (a replan redirected the row's coverage elsewhere, heading "Used") and
+ * AC-RL-46's `note` trigger (AutoCount's own book pairing moved or cleared the row's
+ * link, heading "Moved by AutoCount").
+ */
+function MovedSection({ heading, note }: { heading: string; note: string }) {
+  return (
+    <section className="space-y-1">
+      <h3 className="text-sm font-semibold">{heading}</h3>
+      <p className="text-sm text-muted-foreground">{note}</p>
     </section>
   );
 }

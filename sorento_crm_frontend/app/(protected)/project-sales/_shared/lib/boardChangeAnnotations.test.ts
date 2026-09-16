@@ -546,4 +546,54 @@ describe('uncoverChangedLines', () => {
   it('is the board itself without a batch', () => {
     expect(uncoverChangedLines(board, null)).toBe(board);
   });
+
+  /**
+   * AC-RL-06, measured live on SO314594 line 5 (CB2807-DIY, 17 September 2026): the board's
+   * own read returned `order_inquiry.documents = [{SPO-2026/04-0058, received}]`, and the
+   * page showed no `received` word beside the product. `proposal_json` is a SNAPSHOT of the
+   * contribution as it stood when the batch was raised (15 September 09:11, before documents
+   * were read at all), so spreading it over the live row replaced the LIVE instruction with
+   * a stale copy carrying no `documents` and no `redirected`.
+   *
+   * What a batch proposal is about is the COMPOSITION - the quantity, the sources, the date
+   * it was walked at. What purchasing was told, and what has landed against it, is read
+   * fresh off `order_inquiry_rows` on every board build, so the LIVE row's own
+   * `order_inquiry` is the current fact and the snapshot's copy of it never is.
+   */
+  it('keeps the LIVE instruction and its documents, not the snapshot copy', () => {
+    const live = contribution({
+      key: 'k1',
+      project_line_id: 'pl-1',
+      covered: true,
+      order_inquiry: {
+        inquiry_no: 'OI-000539',
+        state: 'placed',
+        ack_state: 'acknowledged',
+        documents: [{ document: 'SPO-2026/04-0058', kind: 'spo', received: true }],
+        redirected: false,
+      },
+    } as unknown as Partial<BoardContribution>);
+    const staleSnapshot = batchOf([
+      row({
+        proposal: {
+          ...contribution({ key: 'built-earlier', project_line_id: 'pl-1' }),
+          order_inquiry: {
+            inquiry_no: 'OI-000539',
+            state: 'placed',
+            ack_state: 'acknowledged',
+          },
+        } as unknown as BoardContribution,
+      }),
+    ]);
+    const out = uncoverChangedLines(
+      { cells: [cell({ contributions: [live] })], contributions: [live] },
+      staleSnapshot,
+    );
+    expect(out.contributions[0].order_inquiry?.documents).toEqual([
+      { document: 'SPO-2026/04-0058', kind: 'spo', received: true },
+    ]);
+    expect(out.cells[0].contributions[0].order_inquiry?.documents).toEqual([
+      { document: 'SPO-2026/04-0058', kind: 'spo', received: true },
+    ]);
+  });
 });

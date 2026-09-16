@@ -1657,6 +1657,10 @@ def _proposal_for(
     board = board_cache.get(cache_key)
     if board is None:
         try:
+            # `build` may itself flush a planning-record mirror row now (issue #969, the
+            # board-read heal) - a flush failure inside it leaves this session needing a
+            # rollback, so the caller must not go on using the same transaction past this
+            # swallow (unreachable today: no core order is held by two records at once).
             board = FulfilmentBoardService(db).build(
                 [so_number],
                 granularity="week",

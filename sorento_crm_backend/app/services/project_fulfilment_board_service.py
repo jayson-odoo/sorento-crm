@@ -649,6 +649,36 @@ class FulfilmentBoardService:
         # instead - and BEFORE the demand rows, because the third value decides which of
         # them an inquiry still counts as deciding.
         adopted_by_so, pending_by_so, pending_core_lines = self._order_plan_status(numbers)
+        # Self-heal (issue #969, B2 owner ruling 17 Sep 2026): the board read is the one
+        # place the FE derives `no_mirror` from (`fulfilmentBoard.ts`) and the read
+        # confirm-all's own multi-order build comes from, so this is the seam that heals a
+        # core line that arrived after adoption - confirm stays a pure write (AC-PR8). Run
+        # BEFORE `_demand_rows` below, which is what resolves each line's `project_line_id`
+        # off the mirror this creates (`_mirror_addressing`) - a heal after it would leave
+        # this same response's late line addressed to nothing. Gated on an adopted,
+        # unauthored mirror (`status = 'adopted'`, `project_id IS NULL`), the same gate
+        # every other seam uses. `adopted_by_so` above already answers whether ANY selected
+        # order has a `ProjectSalesOrder` row at all - empty means none of them can need
+        # healing, so an ordinary (never-adopted) board build costs no extra statement
+        # (`test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`).
+        if adopted_by_so:
+            from app.models.project_so import SO_STATUS_ADOPTED
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            heal_targets = (
+                self.db.query(ProjectSalesOrder)
+                .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+                .filter(
+                    SalesOrder.so_number.in_(numbers),
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .all()
+            )
+            if heal_targets:
+                adoption = ProjectSOAdoptionService(self.db)
+                for order in heal_targets:
+                    adoption.mirror_missing_lines(order)
         rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never
@@ -1721,6 +1751,12 @@ class FulfilmentBoardService:
                 # decision; the migrated sheet's rows (#875) carry none, and only those
                 # decide a line the board would otherwise propose for again.
                 OrderInquiryRow.supply_decision_id,
+                # AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the
+                # instruction, and whether it was itself redirected off a document that
+                # had already landed (AC-RL-10) - the row id addresses `links_for_rows`
+                # below, `redirected_to_pool` reaches the wire as-is.
+                OrderInquiryRow.id,
+                OrderInquiryRow.redirected_to_pool,
             )
             .select_from(OrderInquiryRow)
             .join(
@@ -1773,7 +1809,7 @@ class FulfilmentBoardService:
         live_entry: Dict[str, Dict[str, Any]] = {}
         for (
             core_id, inquiry_no, state, ack_state, rejected_at, _reason, _name,
-            supply_decision_id,
+            supply_decision_id, row_id, redirected_to_pool,
         ) in rows:
             core_key = str(core_id)
             if (
@@ -1788,6 +1824,8 @@ class FulfilmentBoardService:
                     "ack_state": ack_state,
                     "rejected_reason": None,
                     "rejected_by_name": None,
+                    "_row_id": str(row_id),
+                    "redirected": bool(redirected_to_pool),
                 }
             answered_refusal = ack_state == ACK_REJECTED and _refusal_answered(
                 core_key, rejected_at
@@ -1809,6 +1847,10 @@ class FulfilmentBoardService:
                 "ack_state": None if answered_refusal else ack_state,
                 "rejected_reason": None,
                 "rejected_by_name": None,
+                # AC-RL-07: this ROW's own id (to address `links_for_rows`) and whether
+                # IT was redirected - popped/resolved below, never sent as `_row_id`.
+                "_row_id": str(row_id),
+                "redirected": bool(redirected_to_pool),
             }
             answered_refusal_at[core_key] = rejected_at if answered_refusal else None
         # The REFUSAL is read off the line rather than off its current row, and that is
@@ -1825,7 +1867,7 @@ class FulfilmentBoardService:
         # answer would read as an open refusal on a line somebody had already dealt with.
         for (
             core_id, _inquiry_no, _state, ack_state, rejected_at, reason, name,
-            _decision_id,
+            _decision_id, _row_id, _redirected_to_pool,
         ) in rows:
             if ack_state != ACK_REJECTED:
                 continue
@@ -1846,6 +1888,27 @@ class FulfilmentBoardService:
             out[core_key] = {**live, "_decides_line": True}
         for core_key, entry in out.items():
             entry.setdefault("_decides_line", False)
+        # AC-RL-07 (`PLAN-oi-replan-received-links.md`): what is BEHIND the instruction,
+        # not only its number - the winning row's own documents and whether it was
+        # itself redirected off one that had already landed. Read through `links_for_
+        # rows`, the ONE reader every other surface (the worklist, the SCM sales-order
+        # detail) already uses - no second query shape for "where is this linked".
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        row_ids = [entry["_row_id"] for entry in out.values() if entry.get("_row_id")]
+        links_by_row = (
+            ProjectOrderInquiryService(self.db).links_for_rows(row_ids) if row_ids else {}
+        )
+        for entry in out.values():
+            row_id = entry.pop("_row_id", None)
+            entry["documents"] = [
+                {
+                    "document": link["document"],
+                    "kind": link["kind"],
+                    "received": bool(link.get("received")),
+                }
+                for link in links_by_row.get(row_id, [])
+            ]
         return out
 
     def _frozen_decisions(

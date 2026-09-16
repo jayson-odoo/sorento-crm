@@ -2017,16 +2017,23 @@ def test_a_reserve_source_carries_the_warehouse_by_id_and_the_pool_names_the_poo
         assert all(s["warehouse_id"] is None for s in buy_only)
 
 
-def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addressable():
-    """The one state where the two ids disagree, and the frontend has to handle it.
+def test_a_core_line_added_since_adoption_is_mirrored_on_the_board_read_and_addressable():
+    """Issue #969, owner ruling B2 (17 Sep 2026): the board READ self-heals the mirror.
 
     Adoption mirrors the order's open lines at the time it runs; next week's upload can add a
-    core line that has no mirror yet. Its order is still confirmable, so
-    `orders[].project_sales_order_id` is set - but that LINE cannot be named to the confirm
-    endpoint, so its `project_line_id` is null and it must be left out of the body. Re-sync on
-    the sheet is what fixes it; inventing an id here would post a line the service would refuse
-    with "That line is not on this sales order any more."
+    core line that has no mirror yet. This used to be the one state where the two ids
+    disagreed: `orders[].project_sales_order_id` was set but that LINE's `project_line_id`
+    came back null, the frontend derived `no_mirror` from it and left the line out of the
+    confirm body, and a manual Re-sync on the sheet was the only fix. Now `build` runs
+    `ProjectSOAdoptionService.mirror_missing_lines` for each adopted, unauthored record
+    (`status = 'adopted'`, `project_id IS NULL`) before it collects contributions, so the
+    late line comes back with a real mirror id and the first Confirm posts every line.
+
+    `_adopt` is the real `ProjectSOAdoptionService.adopt`, which leaves `project_id` NULL,
+    so the seeded order already sits inside the heal's gate.
     """
+    from app.models.project_so import ProjectSalesOrderLine
+
     with blank_session() as db:
         product_a = _product(db, f"ZZT-{_uid()[:6]}")
         product_b = _product(db, f"ZZT-{_uid()[:6]}")
@@ -2035,7 +2042,9 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
         _line(db, order, product_a, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse)
         pso_id = _adopt(db, str(order.id))
         # The upload lands, and it carries a line adoption never saw.
-        _line(db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse)
+        late = _line(
+            db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
@@ -2046,7 +2055,20 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
             for contribution in cell["contributions"]
         }
         assert named[product_a.product_code] is not None
-        assert named[product_b.product_code] is None
+        mirror_id = named[product_b.product_code]
+        assert mirror_id is not None, "the board read must mirror the late line (#969)"
+
+        mirrors = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == str(late.id),
+            )
+            .all()
+        )
+        assert [m.id for m in mirrors] == [mirror_id], (
+            "exactly one mirror row for the late core line, and it is the id the board named"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -7572,6 +7594,77 @@ def test_live_inquiry_row_reads_covered_without_decision():
         # Not in the pile's queue either: a decided line does not stand in the ranking that
         # decides who gets the last unit, and `null` is how the board says so.
         assert contribution["so_qty_ahead"] is None
+
+
+def test_the_order_inquiry_dict_carries_its_documents_and_whether_it_was_redirected():
+    """AC-RL-07 (`PLAN-oi-replan-received-links.md`): the board contribution's `order_
+    inquiry` dict names what is BEHIND the instruction, not only its number - the
+    line's live row's own documents (`{document, kind, received}`) and whether that
+    row was itself redirected off a document that had already landed (AC-RL-10),
+    the exact shape S2's replan writes."""
+    from app.models.procurement import SPOAllocation
+    from app.models.project_so import (
+        ACK_ACKNOWLEDGED,
+        INQUIRY_PARTLY_LINKED,
+        IV_ORDER,
+        OrderInquiry,
+        OrderInquiryLink,
+        OrderInquiryRow,
+    )
+
+    with blank_session() as db:
+        product = _product(db, f"ZZT-{_uid()[:6]}")
+        warehouse, pool = _pooled_warehouses(db)
+        _stock(db, product, warehouse, on_hand=0)
+        order = _order(db, so_number=f"ZZT-SO-{_uid()[:8]}", order_date=date(2026, 1, 1))
+        core_line = _line(
+            db, order, product, qty="182", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
+        _record, mirrors = _mirror(db, order, [core_line])
+
+        company_id = _sorento(db)
+        inquiry = OrderInquiry(
+            id=_uid(), company_id=company_id,
+            project_sales_order_id=mirrors[0].project_sales_order_id,
+            state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+        )
+        db.add(inquiry)
+        db.flush()
+        # A CLOSED, fully-received allocation - the AC-RL-10 shape a redirected row's
+        # own history link stands on.
+        allocation = SPOAllocation(
+            id=_uid(), company_id=company_id, spo_number=f"ZZT-SPO-{_uid()[:8]}",
+            spo_line_number=1, product_id=product.id, warehouse_id=warehouse.id,
+            allocated_quantity=158, quantity_received=158, receipt_status="fully_received",
+            line_status="closed",
+        )
+        db.add(allocation)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+            so_line_id=mirrors[0].id, item_code=f"{MARKER}-ITEM", qty=Decimal("182"),
+            verb=IV_ORDER, state=INQUIRY_PARTLY_LINKED, ack_state=ACK_ACKNOWLEDGED,
+            redirected_to_pool=True,
+        )
+        db.add(row)
+        db.flush()
+        db.add(OrderInquiryLink(
+            id=_uid(), company_id=company_id, row_id=row.id,
+            spo_allocation_id=allocation.id, document=allocation.spo_number,
+            qty=Decimal("158"),
+        ))
+        db.flush()
+        db.commit()
+
+        board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
+
+        contribution = _cell(board, product.product_code, "2026-08-31")["contributions"][0]
+        order_inquiry = contribution["order_inquiry"]
+        assert order_inquiry["inquiry_no"] == inquiry.inquiry_no
+        assert order_inquiry["documents"] == [
+            {"document": allocation.spo_number, "kind": "spo", "received": True},
+        ]
+        assert order_inquiry["redirected"] is True
 
 
 # --------------------------------------------------------------------------- AC-S2-8

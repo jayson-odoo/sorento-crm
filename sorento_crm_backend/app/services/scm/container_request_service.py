@@ -452,6 +452,12 @@ _PLACED_ON_LINE_SQL = """
         JOIN projects.order_inquiry_rows oir ON oir.id = l.row_id
         JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
         WHERE psl.core_sales_order_line_id = sol.id
+          -- AC-RL-16e (`PLAN-oi-replan-received-links.md` S5, code review 17 Sep): a
+          -- redirected row's own link is history - the goods it names already shipped
+          -- to another order (AC-RL-10) - so it must not net this line's own open need
+          -- down, the same exclusion `demand.py`'s `NOT_REDIRECTED_SQL` applies to
+          -- every other placement-netting leg.
+          AND oir.redirected_to_pool = FALSE
     ) lk ON TRUE
 """
 

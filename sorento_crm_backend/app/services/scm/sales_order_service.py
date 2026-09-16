@@ -1928,6 +1928,28 @@ class SalesOrderService:
                     self.db.delete(l)
 
         self.db.flush()
+        # Symmetric with the prune above (issue #969): a NEW core line this call just
+        # inserted is invisible to the board until something mirrors it, and today only
+        # `adopt`/Re-sync did. Self-heals in the same transaction whenever this order
+        # already carries an adoption mirror, so purchasing sees the new line's demand as
+        # soon as the ingest lands it, with no separate Re-sync click.
+        if added_lines:
+            mirror_order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(
+                    ProjectSalesOrder.so_id == so.id,
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .first()
+            )
+            if mirror_order is not None:
+                from app.services.project_so_adoption_service import (
+                    ProjectSOAdoptionService,
+                )
+
+                ProjectSOAdoptionService(self.db).mirror_missing_lines(mirror_order)
+
         return _LineUpsertResult(matched=line_changes, removed=removed_before, added=added_lines)
 
     def delete(self, so_id: str) -> None:

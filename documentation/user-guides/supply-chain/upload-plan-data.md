@@ -79,7 +79,9 @@ card only, the furthest it has reached:
 * **Incoming** - on a shipping order, either linked to the row directly or found through the
   purchase order the row is linked to.
 
-Click a card to filter the grid to that stage.
+Click a card to filter the grid to that stage. A row marked `used` (see "A row already covered
+by stock" below) never counts toward any of the three cards, or toward the Schedule matrix
+cards, so the card totals and what you see when you click into one always agree.
 
 ### Month tabs
 
@@ -117,6 +119,47 @@ order, yours is kept.
 * A row with neither link shows a hyphen in both columns.
 * Click the number to open **Backing documents**, listing every PO and SPO behind the row with its
   quantity, location and expected date.
+* A word next to the number tells you more about that document, in plain words rather than an
+  icon:
+  * **received** - the document is fully received. Click the word to open **Backing
+    documents**, which shows `Received <n> of <n>` for that document.
+  * **reallocate** - the document lands well before this row needs it, and another inquiry
+    for the same item needs it sooner. Click the word for the candidate list, earliest need
+    first, with the top candidate marked **Reallocate to**, and the instruction to re-key the
+    line to the chosen sales order in AutoCount - the link moves by itself at the next upload
+    (see "When a link moves on its own" below). Nothing is changed from the lightbox.
+  * **unlink** - the document is early and no other inquiry needs the item sooner. Click the
+    word; the lightbox reads "Unlink - no sooner inquiry needs this item".
+  * **note** - the link on this row moved or was cleared by an AutoCount upload. Click the
+    word to read what happened, on which document, and when.
+
+### A row already covered by stock
+
+When CS confirms a fulfilment plan on a line whose linked document has since been fully
+received, the row's goods already went into that document's location stock and were used by
+earlier orders. Purchasing sees this on Order Inquiries as two rows for the same item:
+
+* **The old row is kept as history.** It is greyed, its quantity and its documents are
+  unchanged, and its Qty cell carries the word **used**. Click **used** to read why - which
+  document, when it was received, and which location it landed in.
+* **A new row is raised for the full quantity, with no documents.** It shows in the **Buy**
+  card and is what purchasing actually buys against.
+
+Nothing needs deciding on either row - the old one is just kept for the record, and the new one
+reads as a plain buy. See [Sales order changes after planning](sales-order-changes.md) for how
+this comes about on the Fulfilment Planning board.
+
+### When a link moves on its own
+
+After AutoCount re-keys a PO line or an SPO line to a different sales order and the book is
+uploaded, the row's link moves with it - nobody has to relink anything on Order Inquiries:
+
+* The old row's quantity carries the word **note**, and the note records the move.
+* The document itself now appears on the new sales order's own inquiry row.
+* If AutoCount clears the reference instead of moving it, the link is removed the same way,
+  with the same **note** mark.
+* A received document never moves this way - once a document is fully received, its link is
+  left exactly where it is.
 
 ### Ticking rows and Actions
 
@@ -295,3 +338,5 @@ and load by hand.
   Inquiries as an ORDER row)
 * [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md) (the board an
   Order Inquiries row can be worked from)
+* [Sales order changes after planning](sales-order-changes.md) (how a row ends up marked `used`,
+  with a fresh row raised in its place)

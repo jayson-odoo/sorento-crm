@@ -1,7 +1,42 @@
 """Configuration settings for the FastAPI application."""
+import os
+from pathlib import Path as _Path
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import List, Union
+
+
+def _resolve_settings_env_file() -> str:
+    """Which dotenv Settings() reads.
+
+    SORENTO_ENV_FILE overrides the default ".env" so a test suite can point
+    Settings at a private dotenv instead of the backend's real .env, which a
+    running dev server also reads (mirrors app.main._load_env_file, which
+    does the equivalent for os.environ). This runs at CLASS-DEFINITION time
+    (module import), before `settings = Settings()` below, which is why the
+    override reaches pydantic-settings even though conftest imports
+    app.database -> app.config long before app.main is ever imported.
+
+    Resolved the same way app.main resolves its own ".env": relative to the
+    backend directory (this file's grandparent), not the process cwd.
+
+    Unlike app.main's loader, a SET-but-missing override raises here rather
+    than silently falling back to the real .env - a typo in the override
+    must never point a test run at the live stack's database.
+    """
+    override = os.environ.get("SORENTO_ENV_FILE")
+    if not override:
+        return ".env"
+    candidate = _Path(override)
+    if not candidate.is_absolute():
+        candidate = _Path(__file__).resolve().parent.parent / candidate
+    if not candidate.exists():
+        raise RuntimeError(
+            f"SORENTO_ENV_FILE={override!r} does not resolve to an existing "
+            f"file (looked for {candidate}); refusing to fall back to .env."
+        )
+    return str(candidate)
 
 
 class Settings(BaseSettings):
@@ -266,7 +301,7 @@ class Settings(BaseSettings):
     module_guard_strict: bool = False  # MODULE_GUARD_STRICT
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_resolve_settings_env_file(),
         case_sensitive=False,
         extra="ignore",  # Ignore extra environment variables (like AWS_* variables)
     )

@@ -827,7 +827,9 @@ export function contributionDecision(
 }
 
 /**
- * The ORDER INQUIRY that decides this line, when that is what decides it.
+ * The ORDER INQUIRY that decides this line, when that is what decides it - OR, since
+ * the 17 Sep review round, that merely has something to SAY about it even when it does
+ * not decide it.
  *
  * The 14 September 2026 ruling: a line carrying a live inquiry row from the migrated book is
  * decided on the buying side, so the board holds it read-only and proposes nothing for it. It
@@ -835,14 +837,46 @@ export function contributionDecision(
  * true while `decision` is null, and the composition slot would otherwise read "Not decided"
  * over a line somebody has already been told to buy.
  *
- * `null` on every other row, decided or not, so the two kinds of decided line are told apart
- * in ONE place rather than by each screen re-testing the same three fields.
+ * AC-RL-06 amended (17 Sep review round): `!contribution.covered` alone must not null the
+ * whole branch out any more - the `received`/`used` word is a fact about the BOOK's own
+ * documents, not about whether the board has decided anything, and the owner wants it
+ * readable on precisely the line CS is about to confirm a fresh Buy for (uncovered, a live
+ * proposal sitting beside it). An uncovered line only surfaces here when its own inquiry has
+ * something to say (`documents` or `redirected`) - a fresh, un-linked inquiry row stays
+ * silent rather than printing a bare number with nothing behind it. `contribution.decision`
+ * still nulls the branch: a DECIDED line's own composition already owns this slot.
  */
 export function contributionInquiryDecision(
   contribution: Pick<BoardContribution, 'covered' | 'decision' | 'order_inquiry'>,
 ): BoardLineOrderInquiry | null {
-  if (!contribution.covered || contribution.decision) return null;
-  return contribution.order_inquiry ?? null;
+  if (contribution.decision) return null;
+  const inquiry = contribution.order_inquiry;
+  if (!inquiry) return null;
+  if (contribution.covered) return inquiry;
+  const hasWordSignal = Boolean(inquiry.redirected) || (inquiry.documents ?? []).length > 0;
+  return hasWordSignal ? inquiry : null;
+}
+
+/**
+ * AC-RL-06 amended again (17 Sep review round, "beside the PRODUCT"): the SAME word the OI
+ * worklist chip carries - `used` once the winning row was itself redirected (AC-RL-10),
+ * `received` once every document behind it is fully received - read directly off the
+ * inquiry's own `documents`/`redirected`, with NO gate on `covered`, `decision` or a local
+ * draft. The Decided cell's own inquiry branch answers a different question (is there a
+ * composition to print, or does an inquiry already decide this line) and stays gated by
+ * `contributionInquiryDecision` above; this one is a plain fact about the book, true or not
+ * on every line regardless of verdict.
+ */
+export function boardOrderInquiryWord(
+  inquiry: BoardLineOrderInquiry | null | undefined,
+): 'received' | 'used' | null {
+  if (!inquiry) return null;
+  if (inquiry.redirected) return 'used';
+  const documents = inquiry.documents ?? [];
+  if (documents.length > 0 && documents.every((document) => document.received)) {
+    return 'received';
+  }
+  return null;
 }
 
 /**

@@ -112,7 +112,10 @@ export interface BoardChangeAnnotation {
 }
 
 /**
- * `4 Sep` - a date in a sentence a person reads, the same shape the engine's own labels use.
+ * `4 Sep 2026` - a date in a sentence a person reads, the same shape the engine's own labels
+ * use, WITH the year (PLAN-oi-replan-received-links.md AC-RL-01, owner ruling 16 Sep 2026): a
+ * bare `1 Jun -> 1 Mar` reads as an advance within the same year when the book actually moved
+ * a line from 2026 into 2027, which is exactly what SO314593 did.
  *
  * The months are named here rather than left to `Intl`, whose `en-GB` short form spells
  * September "Sept": the server composes "Buy 134 for 15 Mar" with this vocabulary, and a
@@ -128,7 +131,7 @@ export function shortDay(value: string | null | undefined): string {
   if (!value) return '';
   const date = new Date(`${value.slice(0, 10)}T00:00:00Z`);
   if (Number.isNaN(date.getTime())) return '';
-  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]}`;
+  return `${date.getUTCDate()} ${SHORT_MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`;
 }
 
 /**
@@ -517,6 +520,17 @@ export function uncoverChangedLines<
       so_number: contribution.so_number,
       line_no: contribution.line_no,
       item_code: contribution.item_code,
+      // AND THE LIVE INSTRUCTION, for the same reason identity is kept (AC-RL-06, measured
+      // on SO314594 line 5, 17 September 2026). `proposal` is a SNAPSHOT of the whole
+      // contribution as it stood when the batch was raised, so it carries that moment's
+      // `order_inquiry` too - and a batch raised before the documents behind an instruction
+      // were read at all (or before the SPO landed) then overwrote the live row's own
+      // `documents` / `redirected` with a stale copy, and the `received` word beside the
+      // product vanished on every line of an order with a pending change. The proposal is
+      // about the COMPOSITION - quantity, sources, the date it was walked at. What
+      // purchasing was told and what has landed against it is read fresh off
+      // `order_inquiry_rows` on every board build, so the live row is the current fact.
+      order_inquiry: contribution.order_inquiry,
       covered: false,
       decision: null,
     };
