@@ -844,12 +844,29 @@ def _focus_rules(
         if verdict.get("entity_op") == "replace":
             # The retired head's own rule: `replace` means this turn's entities ARE the
             # whole scope, on every axis. It is only ever stamped by a pick that has
-            # already folded in whatever it means to keep. `scope_exclusive` is NOT the
-            # same thing here and stays a trace marker (`_exclusive`): the narrower
-            # already restricts the axis a new entity named, and
-            # `test_rearch_s2_exclusive.py` pins that "only BRW" keeps the product and
-            # the customer it is narrowing.
+            # already folded in whatever it means to keep.
             shared = frozenset(KIND_FIELD_MAP)
+        elif verdict.get("scope_exclusive"):
+            # A REFINEMENT narrows the standing subject and evicts nothing (hand pass 3
+            # row 3, browser pass 6 item 3). `scope_exclusive` is the parser's own "only"
+            # marker, and it is what tells the two measured turns apart - both name a
+            # product under an order subject that carries a customer, and both emit
+            # `entity_op: replace_combine`, so the op alone cannot decide:
+            #
+            # * c45e2929 "Outstsnding DO for 7445" - `scope_intent: null`,
+            #   `scope_exclusive: false`. A NEW ASK that states its own scope, and the
+            #   customer named six turns earlier is last question's (hand pass 2 item 5,
+            #   `test_rearch_handpass2_owner_17sep::TestFinding5...`).
+            # * 67df5114 "For srtwc286 only" - `scope_intent: "specific"`,
+            #   `scope_exclusive: true`. A refinement of "orders for CHIN CHUN HARDWARE",
+            #   and evicting the customer re-asked a fresh roster and then answered
+            #   globally (browser pass 6 item 3).
+            #
+            # This is also the reading `test_rearch_s2_exclusive.py` already pins for the
+            # same flag ("only BRW" keeps the product and the customer it narrows); the
+            # shared axis contradicted it for any kind that happens to sit on that axis.
+            shared = frozenset()
+            trace.rules_fired.append("refinement_keeps_subject")
         elif not (shared & set(by_kind)):
             # The turn named nothing ON the shared axis, so nothing on it is superseded.
             # Without this test, "only BRW" typed under a report about a customer evicted
@@ -896,7 +913,9 @@ def _focus_rules(
 def _exclusive(verdict: dict[str, Any], trace: Trace) -> None:
     # `replace_same_axis` already narrows only the axis a new entity named (see
     # `_focus_rules` above) - `scope_exclusive` confirms the same reading rather than
-    # changing it, so this step is a trace marker, not a second mutation.
+    # changing it, so this step is a trace marker, not a second mutation. The flag's ONE
+    # behavioural reader is in `_focus_rules`: it holds the shared axis off, so a
+    # refinement narrows the subject instead of replacing it.
     if verdict.get("scope_exclusive"):
         trace.rules_fired.append("exclusive")
 
