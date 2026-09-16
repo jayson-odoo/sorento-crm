@@ -27,7 +27,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.services.chatbot import jsc
@@ -81,12 +81,22 @@ class TurnContext:
 
 
 def turn_number(db: Session, contact_respond_id: str) -> int:
-    """How many turns this contact has had, this one included (stamps `asked_at_turn`)."""
+    """How many turns this contact has had, this one included (stamps `asked_at_turn`).
+
+    Uses the ORM, not raw SQL, for the same reason `previous_reply_text` does: the table
+    is `chatbot.turns`, and only ORM constructs go through the test fixture's
+    `schema_translate_map`. A literal `chatbot.turns` inside a `text()` query reads the
+    REAL schema under pytest - which the blank-schema fixture never writes to - so this
+    counted 0 on every turn and every `asked_at_turn` stamp came out 1.
+    """
+    from app.models.chatbot_turn import ChatbotTurn
+
     try:
-        count = db.execute(
-            text("SELECT count(*) FROM chatbot.turns WHERE contact_respond_id = :cid"),
-            {"cid": contact_respond_id},
-        ).scalar()
+        count = (
+            db.query(func.count(ChatbotTurn.id))
+            .filter(ChatbotTurn.contact_respond_id == str(contact_respond_id))
+            .scalar()
+        )
     except Exception:  # noqa: BLE001 - a turn number nobody could read is 1, not a failure
         return 1
     return int(count or 0) or 1
