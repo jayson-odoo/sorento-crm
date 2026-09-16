@@ -43,15 +43,16 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
+  PLANNING_BOARD_KEY,
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useLineDraftMutation,
   usePlanningBoard,
 } from '../../_shared/hooks/useFulfilmentPlanning';
 import { usePlanningChangeBatchesByIds } from '../../_shared/hooks/usePlanningChanges';
-import { useMockUndoAction } from '../../_shared/hooks/useMockUndoAction';
 import { canQuickSave, suggestedDecisionFor } from '../../_shared/lib/boardAmend';
 import {
   annotationsByCell,
@@ -59,7 +60,6 @@ import {
   preMarkedKeys,
   uncoverChangedLines,
 } from '../../_shared/lib/boardChangeAnnotations';
-import { undoRefusalTitle, withMockUndo } from '../../_shared/lib/boardUndoMock';
 import {
   boardAxis,
   bucketLabelText,
@@ -118,6 +118,12 @@ type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string };
 export function boardViewFrom(value: string | null): BoardView {
   return value === 'grid' ? 'grid' : 'list';
 }
+
+/** The tooltip a disabled "Undo confirm" gear entry carries (AC-UC-03). */
+const UNDO_REFUSAL_TITLES: Record<string, string> = {
+  manual_link: 'Purchasing linked a PO line',
+  actioned: 'Purchasing marked a row actioned',
+};
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
@@ -805,19 +811,40 @@ export function FulfilmentBoardPanel({
   }, [singleBatch]);
 
   /**
-   * Undo last confirm (PLAN-board-undo-last-confirm.md, S0/#977).
+   * Undo last confirm (`PLAN-board-undo-last-confirm.md`, S2/#979).
    *
-   * `mockUndo` stands in for the real pending action until S2 (#979) registers it - see its
-   * own file for the contract. `undoableOrders` is the board's own orders with a mocked
-   * `undo` overlaid, so the gear (below) and the Confirm slot (further down) read one list.
+   * One `useDeferredAction` for the whole board: `undoTarget` names whichever order the
+   * planner just picked from the gear, and the effect below fires `start()` once the hook
+   * has re-rendered against that order's id - `start()` reads `entityId`/`payload` from
+   * THIS render's closure, so it must run after the state that produced them has landed,
+   * never in the same tick as the click that set it.
    */
-  const mockUndo = useMockUndoAction();
+  const [undoTarget, setUndoTarget] = React.useState<{
+    orderId: string;
+    soNumber: string;
+    decisionId: string;
+  } | null>(null);
+  const undoAction = useDeferredAction({
+    actionKey: 'fulfilment_planning.undo_confirm',
+    entityType: 'project_sales_order',
+    entityId: undoTarget?.orderId ?? null,
+    verb: 'Undoing',
+    subject: undoTarget?.soNumber ?? '',
+    surface: 'inline',
+    successMessage: `${undoTarget?.soNumber ?? 'Order'} confirm undone`,
+    payload: undoTarget ? { decision_id: undoTarget.decisionId } : undefined,
+    invalidateKeys: [[PLANNING_BOARD_KEY]],
+  });
+  React.useEffect(() => {
+    if (!undoTarget) return;
+    if (undoAction.pending || undoAction.isPending) return;
+    undoAction.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoTarget]);
+
   const undoableOrders = React.useMemo(
-    () =>
-      board.data
-        ? withMockUndo(board.data.orders, mockUndo.committedOrderIds).filter((order) => order.undo)
-        : [],
-    [board.data, mockUndo.committedOrderIds],
+    () => (board.data?.orders ?? []).filter((order) => order.undo),
+    [board.data],
   );
 
   const confirmMany = useConfirmManyMutation();
@@ -1424,7 +1451,7 @@ export function FulfilmentBoardPanel({
                   <DropdownMenuSeparator />
                   {undoableOrders.map((order) => {
                     const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})`;
-                    const title = undoRefusalTitle(order.undo?.refusal ?? undefined);
+                    const title = UNDO_REFUSAL_TITLES[order.undo?.refusal ?? ''];
                     const disabled = Boolean(order.undo?.refusal) || !order.project_sales_order_id;
                     return (
                       <DropdownMenuItem
@@ -1435,10 +1462,10 @@ export function FulfilmentBoardPanel({
                           disabled
                             ? undefined
                             : () =>
-                                mockUndo.start({
+                                setUndoTarget({
                                   orderId: order.project_sales_order_id as string,
                                   soNumber: order.so_number,
-                                  revisionNo: order.undo?.revision_no ?? 1,
+                                  decisionId: order.undo?.decision_id as string,
                                 })
                         }
                       >
@@ -1459,10 +1486,10 @@ export function FulfilmentBoardPanel({
           </DropdownMenu>
           {board.data && board.data.cells.length > 0 ? (
             <DeferredActionButton
-              pending={mockUndo.pending}
+              pending={undoAction.pending}
               verb="Undoing"
-              subject={mockUndo.target?.soNumber}
-              onCancel={mockUndo.cancel}
+              subject={undoTarget?.soNumber}
+              onCancel={undoAction.cancel}
               idle={
                 <Button
                   type="button"

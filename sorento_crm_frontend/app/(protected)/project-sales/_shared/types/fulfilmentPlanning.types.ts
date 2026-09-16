@@ -1753,6 +1753,9 @@ export interface BoardUndo {
   confirmed_at?: string | null;
   confirmed_by_name?: string | null;
   refusal: BoardUndoRefusal;
+  /** Addressing only, never rendered: the pending action's payload, so a Confirm
+   * written during the countdown is detected server-side (AC-UC-28). */
+  decision_id: string;
 }
 
 /** One selected order's standing, which is what makes the partial-decision reality visible. */
