@@ -12,6 +12,10 @@ class RecipientConfig(BaseModel):
     role_ids: list[str] = Field(default_factory=list)
     include_promotion_owner: bool = False
     include_assigned_cs_pic: bool = False
+    #: Cc the person who raised the triggering event (`context.actor.email`), when
+    #: the trigger provides one. Reusable across triggers - not just the order
+    #: inquiry handover email it was added for (AC-H11).
+    include_actor: bool = False
     extra_emails: list[str] = Field(default_factory=list)
 
 

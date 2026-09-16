@@ -386,6 +386,7 @@ class AutomationService:
                 "user_ids": [],
                 "role_ids": [],
                 "include_promotion_owner": False,
+                "include_actor": False,
                 "extra_emails": [],
             }
         if hasattr(config, "model_dump"):
@@ -399,6 +400,10 @@ class AutomationService:
             "role_ids": [str(x) for x in (data.get("role_ids") or [])],
             "include_promotion_owner": bool(data.get("include_promotion_owner", False)),
             "include_assigned_cs_pic": bool(data.get("include_assigned_cs_pic", False)),
+            # Cc the person who raised the triggering event (AC-H11, PLAN-scm-oi-
+            # handover-email.md section 3.5). Reusable: any trigger context that
+            # puts `actor` on the context earns this checkbox for free.
+            "include_actor": bool(data.get("include_actor", False)),
             "extra_emails": [str(x).strip() for x in (data.get("extra_emails") or []) if str(x).strip()],
         }
 
