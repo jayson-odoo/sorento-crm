@@ -1,7 +1,7 @@
 """Outstanding report: SO backlog + DO pending, one product at a time.
 
-`documentation/plans/chatbot/PLAN-chatbot-outstanding-report.md` ("Backend
-contract"); `documentation/plans/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
+`documentation/plans/_archive/chatbot/PLAN-chatbot-outstanding-report.md` ("Backend
+contract"); `documentation/plans/_archive/chatbot/chatbot-outstanding-report-acceptance-criteria.md`
 AC-1110 to AC-1119.
 
 One function, two base SQL queries (every open SO line for the product, every
