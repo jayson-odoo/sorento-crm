@@ -100,7 +100,7 @@ Journal at confirm:
   when it commits, then that revision has NO journal (only the two board confirm routes
   journal).
 - AC-UC-15 [BE] Given a decision row, when the board payload is built, then each order carries
-  `undo: {revision_no, confirmed_at, confirmed_by_name, refusal}` when its newest active
+  `undo: {decision_id, revision_no, confirmed_at, confirmed_by_name, refusal}` when its newest active
   decision has a journal, else `undo: null`.
 
 Undo service:
@@ -109,7 +109,7 @@ Undo service:
   revision 2's row is gone, revision 1 is `active` with `superseded_at` and
   `superseded_reason` NULL, and every allocation, OI row, link, claim, note, draft and stock
   transfer equals its pre-confirm value column for column (the tester snapshots the tables
-  before Confirm and diffs after undo; the only allowed differences are `updated_at`).
+  before Confirm and diffs after undo; the only allowed differences are `updated_at` and, on the reinstated decision, `undo_journal`, which R3 clears).
 - AC-UC-17 [BE] Given revision 1 (nothing before it), when undo commits, then the order has no
   active decision, no OI rows raised by it, the drafts the planner had are back, and the
   board reports the lines undecided.
@@ -137,7 +137,7 @@ Undo service:
   `linked_at` is not later than `confirmed_at`).
 - AC-UC-26 [BE] Given the newest revision has no journal (pre-lane revision, or minted by
   `uncover_lines`), when undo is requested, then 409 `refusal = "no_journal"`.
-- AC-UC-27 [BE] Given the pending-actions engine, when `fulfilment_planning.undo_confirm` is
+- AC-UC-27 [BE] Given the pending-actions engine, when `project_sales_order.undo_confirm` is
   created for `entity_type = project_sales_order`, then it uses the reversible window, requires
   `projects.projects.edit`, and commits the undo when the window lapses even with no client
   polling (scheduler sweep).

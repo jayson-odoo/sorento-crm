@@ -67,7 +67,7 @@ knows a table name.
 ### Undoable
 
 Board payload (`app/services/project_fulfilment_board_service.py`, order header) gains
-`undo: {revision_no, confirmed_at, confirmed_by_name, refusal} | null`:
+`undo: {decision_id, revision_no, confirmed_at, confirmed_by_name, refusal} | null` (`decision_id` is what the pending action pins):
 
 - null when the order has no active decision, or its active decision has `undo_journal` NULL.
 - `refusal` is null, `"manual_link"` or `"actioned"`, from one query over the order's OI rows
@@ -111,7 +111,7 @@ at Sorento; `linked_by` cannot tell them apart, `linked_at > confirmed_at` can.
 ### The pending action
 
 `app/services/record_actions.py`: register
-`FormAction(key="fulfilment_planning.undo_confirm", entity_types=("project_sales_order",),
+`FormAction(key="project_sales_order.undo_confirm", entity_types=("project_sales_order",),
 window=WINDOW_REVERSIBLE, permission="projects.projects.edit", execute=_undo_confirm)`.
 `payload = {decision_id}` captured at creation so a Confirm written during the countdown is
 detected (AC-UC-28). The shared routes `POST /pending-actions`, `/cancel`, `/current`
@@ -144,7 +144,7 @@ Same method as #962, copied not adapted:
 - `FulfilmentBoardPanel.tsx` gear menu (`:1371-1402`): after "Undo all", one
   `DropdownMenuItem` per order whose `undo` is non-null, label `Undo <SO> confirm (rev N)`,
   disabled with `title` when `refusal` is set. Selecting it calls
-  `useDeferredAction({actionKey: 'fulfilment_planning.undo_confirm', entityType:
+  `useDeferredAction({actionKey: 'project_sales_order.undo_confirm', entityType:
   'project_sales_order', entityId, verb: 'Undoing', subject: soNumber, payload: {decision_id},
   invalidateKeys: [board query key]})`.
 - The Confirm button slot (`:1403-1416`) becomes `DeferredActionButton` with the Confirm
