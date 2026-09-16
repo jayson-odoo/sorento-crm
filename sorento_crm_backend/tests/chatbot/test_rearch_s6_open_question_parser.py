@@ -95,6 +95,45 @@ class TestAbsentAnswerCarriesThePendingWithoutReprinting:
         assert state2.pending is not None, "the pending must survive, not be cleared"
         assert state2.pending.kind == kind
 
+    def test_a_casual_message_with_a_pending_open_fetches_nothing(self):
+        """AC-1593 finding, 16 Sep 2026 console browser pass 2 (handpass2, contact
+        Justin, turn f8fe14a4 "hello" with a `team_pick` offer open): the recorded turn
+        re-ran the PRIOR order fetch verbatim instead of answering as the casual
+        exchange it plainly is - "hello" carries no business of its own.
+
+        `test_a_casual_message_with_no_entities_does_not_reprint` above already proves
+        the pending survives and the question is not re-printed; this proves the other
+        half of the same claim, that `apply()`'s returned `Plan` carries no fetch at
+        all for a casual message - not just that the pending is untouched. Measured:
+        `plan.fetch` is a non-empty `[FetchSpec(domain='order', ...)]` today because a
+        casual message with an open pending still carries the OLD focus.domains into
+        the fetch step, the same way a real business message would."""
+        from app.services.chatbot.turn.apply import apply
+        from app.services.chatbot.turn.pending import ask
+        from app.services.chatbot.turn.state import Focus, Profile, State
+
+        options = [
+            {
+                "position": 1,
+                "label": "orders",
+                "entity_type": "team",
+                "payload": {"team": "customer_service"},
+            },
+        ]
+        pending = ask("team_pick", options, team="customer_service", asked_at_turn=1)
+        state = State(focus=Focus(domains=["order"]), pending=pending, profile=Profile())
+        v = verdict(message_type="casual", entities=[], answers_open_question=None)
+
+        state2, plan = apply(state, v, build_policy())
+
+        assert plan.fetch == [], (
+            "a casual message with no entities must yield NO fetch while a pending "
+            f"sits open - got {plan.fetch!r}"
+        )
+        assert state2.pending is not None and state2.pending.kind == "team_pick", (
+            "the pending must still be carried, unchanged"
+        )
+
     @pytest.mark.parametrize("kind", PENDING_KINDS)
     def test_a_business_query_with_its_own_entities_runs_normally_not_a_reprint(self, kind):
         """A message that names its own business (a domain, an entity) while a roster

@@ -110,6 +110,49 @@ def test_an_option_with_two_uuids_yields_two_entities():
     assert {p.get("uuid") for p in products} == {"u1", "u2"}
 
 
+def test_a_picked_entity_carries_the_option_code_not_the_uuid_as_its_canonical_code():
+    """AC-1593 finding, 16 Sep 2026 console browser pass 2 (handpass2, contact Justin,
+    turns c196ebd7/08c88e3f): picking position 1 off an incoming/customer roster and
+    then asking for that variant's incoming stock (or that customer's orders) replied
+    with the UUID in the header instead of the product/customer CODE - e.g. "*incoming
+    stock* for 65514803-...:" instead of "*incoming stock* for SRTWC286-SH-200:".
+
+    Root cause, measured directly in `apply.py::_answer_pending`: the built entity sets
+    BOTH `canonical_code` and `uuid` to the same value, the option's `uuid` - there is
+    no path left for the option's own `label` (its real code) to reach the entity at
+    all. `canonical_code` must be the option's code (its `label`); `uuid` stays the
+    option's `uuid` - the two are different fields precisely because a downstream
+    header/answer reads `canonical_code`, never `uuid`, for its human-readable name."""
+    from app.services.chatbot.turn.apply import apply
+    from app.services.chatbot.turn.pending import ask
+    from app.services.chatbot.turn.state import Focus, Profile, State
+
+    options = [
+        {
+            "position": 1,
+            "label": "SRTWC286-SH-200",
+            "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+            "uuids": ["65514803-1609-4fe8-8b60-2e908c8f9bd4"],
+            "entity_type": "product",
+            "payload": {},
+        },
+    ]
+    pending = ask("product_pick", options, team=None, asked_at_turn=1)
+    state = State(focus=Focus(), pending=pending, profile=Profile())
+    v = verdict(reference_positions=[1], answers_open_question={"resolved": True, "picks": [1], "answer": None})
+
+    state2, _plan = apply(state, v, build_policy())
+
+    products = getattr(state2.focus, "products", [])
+    assert len(products) == 1, products
+    picked = products[0]
+    assert picked["uuid"] == "65514803-1609-4fe8-8b60-2e908c8f9bd4"
+    assert picked["canonical_code"] == "SRTWC286-SH-200", (
+        "canonical_code must be the option's own code (its label), not a copy of the "
+        f"uuid - got {picked!r}"
+    )
+
+
 def test_a_pick_never_changes_domain_even_with_a_different_domain_hint():
     """Contract 121: a bare positional never re-domains the turn."""
     from app.services.chatbot.turn.apply import apply

@@ -68,17 +68,36 @@ vi.mock('./hooks/useChatbotSettings', () => ({
 
 // The Memory and Tier order cards' own hook module (browser pass 1, 16 Sep 2026,
 // finding: "Switches card has no Save button of its own - the Memory card's Save
-// sits right under it and silently no-ops the switches"). Mocked here (real data,
-// not left inert like the untouched `CrossDomainLadderCard`, whose OWN Save button
-// saves a DIFFERENT resource - `chatbot_domains`, not `system_settings` - and is not
-// part of this consolidation) so both cards render their REAL current Save buttons
-// and the "exactly one Save button" assertion below is a genuine red today.
+// sits right under it and silently no-ops the switches"). Mocked here with real
+// data so each card renders its REAL current Save button and the "exactly one Save
+// button" assertion below is a genuine red today. The `CrossDomainLadderCard` join
+// below is the SAME consolidation, added 16 Sep 2026 browser pass 2 - it was
+// EXPLICITLY left out of scope in an earlier pass ("saves a different resource,
+// chatbot_domains not system_settings") but that call is superseded: it still
+// renders its own separate Save button today, which is the bug this file now pins.
 vi.mock('./hooks/useChatbotMemoryAndTierOrder', () => ({
   useChatbotMemorySettings: () => mockMemoryQuery(),
   useSaveChatbotMemorySettings: () => mockMemoryMutation(),
   useChatbotTierOrder: () => mockTierOrderQuery(),
   useSaveChatbotTierOrder: () => mockTierOrderMutation(),
 }));
+
+// Urgent finding, 16 Sep 2026 (browser pass 2, supersedes the "not part of this
+// consolidation" note above): the ladder card's own separate Save button IS in
+// scope now too - the ONE page Save must also fire the ladder's PUT. Mocked at the
+// hooks module `CrossDomainLadderCard` itself imports, so the assertions below
+// drive the REAL rendered ladder DOM (OrderableList's own "Move X down" button),
+// not a poked prop.
+const mockDomainsQuery = vi.fn();
+const mockUpdateDomain = vi.fn();
+
+vi.mock(
+  '@/app/(protected)/system-management/chatbot-domains/hooks/useChatbotDomains',
+  () => ({
+    useChatbotDomainsQuery: () => mockDomainsQuery(),
+    useUpdateChatbotDomain: () => mockUpdateDomain(),
+  }),
+);
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), custom: vi.fn() },
@@ -116,6 +135,57 @@ const DEFAULT_MEMORY = {
 };
 const DEFAULT_TIER_ORDER = ['dealer', 'office', 'end_user'];
 
+const DEFAULT_LADDER_DOMAINS = [
+  {
+    id: 'dom-inventory',
+    name: 'inventory',
+    label: 'Inventory',
+    intents: [],
+    tools: [],
+    primary_tool: null,
+    escalation_team_code: null,
+    switch_words: [],
+    narrowing: {},
+    takes_date_filter: false,
+    reveal_key: null,
+    supported: true,
+    ladder: ['incoming', 'purchase_order'],
+    updated_at: '2026-09-16T00:00:00Z',
+  },
+  {
+    id: 'dom-incoming',
+    name: 'incoming',
+    label: 'Incoming',
+    intents: [],
+    tools: [],
+    primary_tool: null,
+    escalation_team_code: null,
+    switch_words: [],
+    narrowing: {},
+    takes_date_filter: false,
+    reveal_key: null,
+    supported: true,
+    ladder: [],
+    updated_at: '2026-09-16T00:00:00Z',
+  },
+  {
+    id: 'dom-purchase-order',
+    name: 'purchase_order',
+    label: 'Purchase order',
+    intents: [],
+    tools: [],
+    primary_tool: null,
+    escalation_team_code: null,
+    switch_words: [],
+    narrowing: {},
+    takes_date_filter: false,
+    reveal_key: null,
+    supported: true,
+    ladder: [],
+    updated_at: '2026-09-16T00:00:00Z',
+  },
+];
+
 beforeEach(() => {
   mockSettingsQuery.mockReset();
   mockMutation.mockReset();
@@ -123,16 +193,20 @@ beforeEach(() => {
   mockMemoryMutation.mockReset();
   mockTierOrderQuery.mockReset();
   mockTierOrderMutation.mockReset();
+  mockDomainsQuery.mockReset();
+  mockUpdateDomain.mockReset();
   mockSettingsQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
   mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
   // Left LOADING by default (not the real data above) so every pre-existing test in
-  // this file, which never asserted on Memory/Tier order, keeps seeing exactly the
-  // ONE "Save" button it always has (the Switches/page-bottom one) - only the
-  // consolidated-Save describe block below opts into real data for these two.
+  // this file, which never asserted on Memory/Tier order/ladder, keeps seeing
+  // exactly the ONE "Save" button it always has (the Switches/page-bottom one) -
+  // only the consolidated-Save describe block below opts into real data for these.
   mockMemoryQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false });
   mockMemoryMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
   mockTierOrderQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false });
   mockTierOrderMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+  mockDomainsQuery.mockReturnValue({ data: undefined, isLoading: true, isError: false });
+  mockUpdateDomain.mockReturnValue({ isPending: false, mutate: vi.fn() });
 });
 
 afterEach(() => cleanup());
@@ -226,6 +300,51 @@ describe('ChatbotSettingsPage - one consolidated Save (browser pass 1 finding, 1
 
     expect(tierOrderMutate).toHaveBeenCalledTimes(1);
     expect(tierOrderMutate.mock.calls[0][0]).toEqual(['dealer', 'end_user', 'office']);
+  });
+});
+
+describe('ChatbotSettingsPage - the one Save also fires the ladder PUT (browser pass 2 finding, 16 Sep 2026)', () => {
+  it('renders exactly one Save button once the ladder carries real data too', () => {
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+    mockDomainsQuery.mockReturnValue({
+      data: DEFAULT_LADDER_DOMAINS,
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    // Today: the ladder card renders its OWN Save button alongside the page's one -
+    // `getByRole` throws "multiple elements found" before this assertion even runs,
+    // which IS the red, same idiom as the Memory/Tier order consolidation above.
+    expect(saveButton()).toBeInTheDocument();
+  });
+
+  it('moving a rung down through the real "Move X down" button, then clicking the one Save, fires the ladder PUT with the reordered list', () => {
+    const updateMutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate: vi.fn() });
+    mockMemoryQuery.mockReturnValue({ data: DEFAULT_MEMORY, isLoading: false, isError: false });
+    mockTierOrderQuery.mockReturnValue({ data: DEFAULT_TIER_ORDER, isLoading: false, isError: false });
+    mockDomainsQuery.mockReturnValue({
+      data: DEFAULT_LADDER_DOMAINS,
+      isLoading: false,
+      isError: false,
+    });
+    mockUpdateDomain.mockReturnValue({ isPending: false, mutate: updateMutate });
+    renderPage();
+
+    // Drives the REAL rendered `OrderableList` DOM handler (`components/common/
+    // OrderableList.tsx`'s own "Move {label} down" button), not a poked prop - the
+    // ladder starts ['incoming', 'purchase_order'], so moving Incoming down yields
+    // ['purchase_order', 'incoming'].
+    fireEvent.click(screen.getByRole('button', { name: /move incoming down/i }));
+
+    fireEvent.click(saveButton());
+
+    expect(updateMutate).toHaveBeenCalledTimes(1);
+    const [call] = updateMutate.mock.calls[0];
+    expect(call.id).toBe('dom-inventory');
+    expect(call.input.ladder).toEqual(['purchase_order', 'incoming']);
   });
 });
 
