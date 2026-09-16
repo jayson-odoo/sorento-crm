@@ -17,6 +17,7 @@ import TagSheetRenderer, {
 } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import {
   hasMergeField,
+  hasSubjectAwareToken,
   mergeFieldCatalog,
   renderMergeFields,
   soleMergeField,
@@ -28,6 +29,7 @@ import type {
   ProductTagData,
   TagBindingData,
   TagLayer,
+  TagPartData,
   TagSheetDoc,
 } from './tag-template-types';
 import { defaultTextProps } from './tag-template-types';
@@ -156,11 +158,11 @@ describe('renderMergeFields - product paths', () => {
     );
   });
 
-  it('prices carry the same RM formatting the badge prints', () => {
+  it('AC-A3: prices render the bare figure - grouped, no RM prefix, matching the text-slot rule (AC-A1/A2)', () => {
     const data = product();
 
-    expect(renderMergeFields('{{product.list_price}}', data, 'print')).toBe('RM 1,599');
-    expect(renderMergeFields('{{product.sell_price}}', data, 'print')).toBe('RM 599');
+    expect(renderMergeFields('{{product.list_price}}', data, 'print')).toBe('1,599');
+    expect(renderMergeFields('{{product.sell_price}}', data, 'print')).toBe('599');
   });
 
   it('resolves several tokens inside one sentence, keeping the words around them', () => {
@@ -316,6 +318,59 @@ describe('renderMergeFields - line.parts / line.parts_names paths (S18)', () => 
 });
 
 // ---------------------------------------------------------------------------
+// {{product.currency}} (AC-A5 to AC-A9): the SUBJECT's own currency, never a
+// slot binding - `hasSubjectAwareToken` already treats every `product.*` path
+// as subject-aware, so D7's part-subject picker applies here with no change.
+// ---------------------------------------------------------------------------
+
+describe('renderMergeFields - product.currency (AC-A5 to AC-A9)', () => {
+  it('AC-A5: renders the bound product\'s own currency', () => {
+    expect(
+      renderMergeFields('{{product.currency}}', product({ currency: 'MYR' }), 'print'),
+    ).toBe('MYR');
+    expect(
+      renderMergeFields('{{product.currency}}', product({ currency: 'SGD' }), 'print'),
+    ).toBe('SGD');
+  });
+
+  it('AC-A6: on a line-bound tag renders the LINE\'s own currency', () => {
+    expect(
+      renderMergeFields('{{product.currency}}', line({ currency: 'SGD' }), 'print'),
+    ).toBe('SGD');
+  });
+
+  it('AC-A6: on a set renders the SET\'s own currency', () => {
+    expect(
+      renderMergeFields('{{product.currency}}', set({ currency: 'SGD' }), 'print'),
+    ).toBe('SGD');
+  });
+
+  it('AC-A6: a layer with a part subject (subjectPart: n) renders that PART\'s currency, not the parent\'s (D7)', () => {
+    const part: TagPartData = {
+      product_id: 'part-1',
+      code: 'PART-1',
+      name: 'Part One',
+      dimensions: '',
+      currency: 'SGD',
+    };
+    const data = line({ currency: 'MYR', parts: [part] });
+    const layer = { props: { kind: 'text' as const, subjectPart: 0 } };
+
+    expect(renderMergeFields('{{product.currency}}', data, 'print', layer)).toBe('SGD');
+  });
+
+  it('AC-A7: a payload with no currency field (an older pinned row) renders MYR, never empty or the raw token', () => {
+    const data = product({ currency: undefined });
+    expect(renderMergeFields('{{product.currency}}', data, 'print')).toBe('MYR');
+    expect(renderMergeFields('{{product.currency}}', data, 'editor')).toBe('MYR');
+  });
+
+  it('AC-A9: hasSubjectAwareToken is true for {{product.currency}}, so the subject picker shows', () => {
+    expect(hasSubjectAwareToken('{{product.currency}}')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Unknown tokens and the two modes
 // ---------------------------------------------------------------------------
 
@@ -425,6 +480,20 @@ describe('mergeFieldCatalog', () => {
     expect(codes).toMatchObject({ label: 'Parts (codes)', token: '{{line.parts}}' });
     expect(names).toMatchObject({ label: 'Parts (names)', token: '{{line.parts_names}}' });
   });
+
+  it('AC-A8: lists product.currency labelled Currency in the Product group, right after Sell price', () => {
+    const productFields = catalog.filter((field) => field.group === 'Product');
+    const sellIndex = productFields.findIndex((field) => field.path === 'product.sell_price');
+    const currencyIndex = productFields.findIndex((field) => field.path === 'product.currency');
+
+    expect(sellIndex).toBeGreaterThanOrEqual(0);
+    expect(currencyIndex).toBe(sellIndex + 1);
+    expect(productFields[currencyIndex]).toMatchObject({
+      label: 'Currency',
+      token: '{{product.currency}}',
+      group: 'Product',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -474,7 +543,8 @@ describe('the print page and the canvas resolve a token identically', () => {
       <TagSheetRenderer doc={printDoc([layer])} resolvedData={{ 'tag-1': resolved }} />,
     );
 
-    expect(onCanvas).toBe('CBF3612 in stainless steel at RM 599');
+    // AC-A3: the price token is bare since this feature - no RM prefix.
+    expect(onCanvas).toBe('CBF3612 in stainless steel at 599');
     expect(screen.getByText(onCanvas)).toBeTruthy();
   });
 

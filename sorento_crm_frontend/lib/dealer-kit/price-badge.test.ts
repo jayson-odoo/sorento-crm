@@ -36,6 +36,10 @@ describe('formatTagPrice', () => {
     expect(formatTagPrice(1599, false)).toBe('1,599');
     expect(formatTagPrice(1599.49, false)).toBe('1,599');
   });
+
+  it('AC-A4: the default (no second argument) still prints RM - the badge is unchanged by the new bare-text price rule', () => {
+    expect(formatTagPrice(760)).toBe('RM 760');
+  });
 });
 
 describe('priceBadgeInsets (S3b, AC-7/9)', () => {

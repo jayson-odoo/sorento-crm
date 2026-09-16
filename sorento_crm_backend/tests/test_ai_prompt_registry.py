@@ -226,6 +226,26 @@ def test_set_label_reports_production_and_staging(seeded: Session):
 
 
 # --------------------------------------------------------------------------- #
+# get_versions carries the code fallback (Slice E: a key with no saved         #
+# version opened an EMPTY editor - browser finding on every ai_extract_* key). #
+# --------------------------------------------------------------------------- #
+
+
+def test_get_versions_carries_the_fallback_text_for_a_key_with_no_saved_version(db: Session):
+    """`db` (unseeded) is the exact bug scenario: no `AIPromptVersion` row
+    exists for this key, so `versions` is genuinely empty and the FE has
+    nothing but `fallback_text` to seed the editor from."""
+    from app.services.ai_prompt_registry import PROMPT_KEYS
+
+    key = "ai_extract_portal_price_tag_request"
+    result = AIPromptService(db).get_versions(key)
+
+    assert result["versions"] == []
+    assert result["fallback_text"] == PROMPT_KEYS[key].fallback()
+    assert "REQUIRED" in result["fallback_text"]
+
+
+# --------------------------------------------------------------------------- #
 # List keys shape (UAC D1)                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -444,6 +464,20 @@ def test_route_unknown_key_404(api):
     allow.add("system.ai_assistant_settings.view")
     res = client.get("/api/v1/system/ai-assistant/prompts/not_a_key/versions")
     assert res.status_code == 404
+
+
+def test_route_get_versions_carries_fallback_text_on_the_wire(api):
+    """`response_model` silently drops an undeclared field - asserted on the
+    wire, per LESSONS-LEARNT. `router`'s v1 comes from the `seeded` fixture
+    behind `api`, so this also proves `fallback_text` rides along even when a
+    saved version already exists."""
+    client, allow = api
+    allow.add("system.ai_assistant_settings.view")
+    res = client.get("/api/v1/system/ai-assistant/prompts/router/versions")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert "fallback_text" in body
+    assert body["fallback_text"]
 
 
 def test_route_dry_run_dormant_key_400(api):

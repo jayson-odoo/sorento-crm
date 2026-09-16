@@ -542,6 +542,10 @@ export interface ProductTagData {
   /** `products.barcode` (D14/S7). Null renders a placeholder in the editor
    * and nothing on print. */
   barcode: string | null;
+  /** `products.currency` (AC-A5). Optional so an older pinned/cached row
+   *  (frozen before this field existed) still renders - `resolvePath` falls
+   *  back to `MYR` when absent (AC-A7). */
+  currency?: string;
 }
 
 export interface ProductSetMemberTagData {
@@ -560,6 +564,8 @@ export interface ProductSetTagData {
   list_price: number | null;
   offer_price: number | null;
   promotion_id: string | null;
+  /** The first member's currency (AC-A11). Optional, see `ProductTagData.currency`. */
+  currency?: string;
 }
 
 /**
@@ -611,6 +617,9 @@ export interface TagPartData {
   /** Offer under the LINE's promotion (D3: parts share the line's promotion),
    *  else null. */
   sell_price?: number | null;
+  /** This part's OWN product's currency (AC-A11), not the host's. Optional,
+   *  see `ProductTagData.currency`. */
+  currency?: string;
 }
 
 /**
@@ -656,6 +665,8 @@ export interface LineTagData {
   quantity: number;
   /** Null for a set line - a set has no barcode of its own (S7). */
   barcode: string | null;
+  /** The line's own currency (AC-A11). Optional, see `ProductTagData.currency`. */
+  currency?: string;
 }
 
 /** A binding's resolved data, whichever kind of thing it points at. */
