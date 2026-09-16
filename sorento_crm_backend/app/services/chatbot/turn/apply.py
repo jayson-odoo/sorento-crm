@@ -493,6 +493,15 @@ def _answer_pending(state: State, verdict: dict[str, Any], trace: Trace):
 
     if is_affirmative is True or escalation.get("is_escalation_confirmation") is True:
         trace.rules_fired.append("answer_pending_accept")
+        if pending.payload.get("escalate_offered") is True:
+            # Item 8's other half: the open question is the ROSTER, and the escalate
+            # offer under it is a sentence, not a second question - so a plain "yes" over
+            # this state is answering the OFFER and has to reach the escalation lane with
+            # the team the offer named. Without this the roster simply cleared and the
+            # customer who said yes got nothing.
+            trace.lane = "escalation"
+            trace.team = pending.team
+            return focus, None, Plan(domains=[], fetch=[], ask=None, denied=[], trace=trace), False
         return focus, None, None, False
 
     if escalation.get("escalation_declined") is True or (is_affirmative is False and not verdict_entities):
