@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -1403,3 +1404,80 @@ def test_template_renders_strike_and_text_was():
             assert header in html
         assert context["handover"]["link"] in html
         assert "21/07/2026 (was 03/08/2026)" in rendered["body_text"]
+
+
+def test_template_prints_blank_not_none_and_inline_borders():
+    """AC-H14 extension (production-copy render finding, 16 Sep).
+
+    A real render on the prod copy printed `PROJECT: None` in both bodies: Jinja's
+    default autoescape prints Python's `None` as the literal string "None" for any of
+    these fields that legitimately come back empty - no project registration, no core
+    SO customer, a claim-only row with no SO date, a row that carries no `was`. Every
+    one of those has to print BLANK, never the word "None".
+
+    Email clients carry no stylesheet, so a `<table>` with no inline cell styling reads
+    as a squashed grid of joined text with no borders - which the outbox preview also
+    showed. On HEAD the only inline styles anywhere in the body are `border-collapse` on
+    the two `<table>` elements and the red headline; every `<td>`/`<th>` carries none.
+    """
+    from app.models.email_template import EmailTemplate
+    from app.services.email_template_service import EmailTemplateService
+
+    module = _load_seed_migration()
+    with blank_session() as db:
+        _run_upgrade(module, db)
+        template = (
+            db.query(EmailTemplate)
+            .filter(EmailTemplate.code == "order_inquiry_handover_default")
+            .one()
+        )
+
+        context = {
+            "handover": {
+                "subject_scope": "SO397450",
+                "verbs": ["ORDER"],
+                "headline": "ORDER",
+                "orders": [{"so_number": "SO397450", "customer": None, "project": None}],
+                "lines": [
+                    {
+                        "so_date": None,
+                        "so_number": "SO397450",
+                        "customer": None,
+                        "project": None,
+                        "item_code": "CB6633",
+                        "qty": "540",
+                        "delivery_date": None,
+                        "remark": "ORDER",
+                        "was": None,
+                    }
+                ],
+                "line_count": 1,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO397450",
+            },
+            "actor": {"name": "Maryam Ariffin", "email": "project.sadmin03@sorento.com.my"},
+            "today": "2026-09-16",
+        }
+
+        rendered = EmailTemplateService(db).render(template, context)
+        html = rendered["body_html"]
+        text = rendered["body_text"]
+
+        assert "None" not in html, "a blank field must print blank, not the word None"
+        assert "None" not in text, "a blank field must print blank, not the word None"
+
+        cell_tags = re.findall(r"<(?:td|th)\b[^>]*>", html)
+        assert cell_tags, "the render produced no table cells at all"
+        for tag in cell_tags:
+            style_match = re.search(r'style="([^"]*)"', tag)
+            assert style_match, f"cell carries no inline style at all: {tag}"
+            style = style_match.group(1).replace(" ", "")
+            assert "border:1pxsolid" in style, f"cell has no inline border: {tag}"
+            assert "padding:" in style, f"cell has no inline padding: {tag}"
+
+        header_tags = re.findall(r"<th\b[^>]*>", html)
+        assert header_tags, "no header cells rendered"
+        for tag in header_tags:
+            style = re.search(r'style="([^"]*)"', tag).group(1).replace(" ", "")
+            assert "background" in style, f"header cell carries no background colour: {tag}"
+
+        assert " - None" not in text, "the SO summary line must not print a dash then None"
