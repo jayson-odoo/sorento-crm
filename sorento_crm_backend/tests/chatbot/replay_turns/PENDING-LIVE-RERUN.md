@@ -95,6 +95,55 @@ time-boxed per the coordinator's priority order - T4/T3/contract-lines still ahe
 the queue). Re-run `pytest tests/chatbot/test_turn_replay.py -q --tb=short` and re-parse
 after any harness or engine change; the exact list above will shift.
 
+## Clusters E (10, hand pass 2) and F (6, hand pass 3) - browser pass 6 is NOT a
+## drop-in re-record source (tester 17, 17 Sep 2026, queue item 2)
+
+The coordinator's item 2 asked for the PASS rows in `<coder wt>/documentation/plans/
+chatbot/evidence/turn-rearch/browser-pass-6-18sep.md` (30 fresh turn ids, clone DB
+`sorento_ai_automation_rearch`, lane head 4427bb6bb) to replace the stale expected
+steps in cluster F's 6 files via `chatbot_record_turn.py`, with cluster E's 10 files
+re-run the same way. Investigated, not done - two blockers, both measured, neither a
+tester's to route around:
+
+1. **Browser pass 6 ran under a DIFFERENT contact than the original recordings.**
+   Pass 6's own header: "Contact used throughout: Justin (`+60122465213`)". The hand
+   pass 2/3 recordings (tester 14/15) were all captured against contact `437264483`
+   (tester 15's own handoff: "Source DB clone... contact 437264483"). Pass 6's own
+   chain 4 (item 6, PO roster stamps) hit this directly: `Purchase cost for wc286` ->
+   `Sorry, you are not allowed to access purchase cost (Justin lacks this grant,
+   unlike the owner who recorded this chain)` - forcing a "supplementary check"
+   workaround with a DIFFERENT typed message for that one item. A splice that mixes
+   Justin's turns into a 437264483 chain crosses `respond_contacts` rows entirely -
+   different session thread, different access grants, no shared `session_patch`
+   history - not a like-for-like field swap.
+2. **The replay harness seeds each chain's SOURCE contact's REAL prior session
+   state before step 1** (`received_session_vars`, `test_turn_replay.py`'s own T4
+   mechanism) - a fresh browser `Reset` click, which every pass-6 chain started
+   from, never reproduces that. Measured directly: re-running `pytest tests/chatbot/
+   test_turn_replay.py -k handpass3-owner-17sep-hanlim-chinchun` at lane head
+   4427bb6bb (unchanged from pass 6's own head) shows the file's actual dominant
+   divergence is `pending: expected options None, got ['SRTWC286-SH-200', ...]` on
+   EVERY step from 1 onward - a PRODUCT roster armed before this chain's own step 1
+   even runs, carried from the source contact's real prior conversation. This is the
+   pre-existing sticky-product-roster class (cluster E/F's own documented dominant
+   signature, tester 15's handoff) - orthogonal to pass 6's item 2 finding (customer-
+   family header dedup, which pass 6 could only observe because its OWN fresh Reset
+   never carried a stuck product roster into the chain). Splicing pass 6's fresh-
+   session turns into this file would not represent, let alone fix, what the file is
+   actually failing on.
+
+Both blockers point the same direction tester 15's own handoff already named for
+cluster E: "a human/tester diff turn by turn against the hand-pass rulings, then a
+re-record on the fixed engine - NOT a blind re-record and NOT a blind fix." Pass 6's
+findings are real and valuable (items 2, 6-supplementary, 7, 8, and item 5's first
+half PASS; items 1, 3, 4, 5-second-half, 9 FAIL, all with turn ids) but they answer
+"does this specific behaviour work from a clean session", not "does this specific
+recorded chain, with its own carried history, now replay clean" - two different
+questions. Left as cluster E/F's 16 files, unsigned, un-re-recorded, for a live
+turn-by-turn diff (ideally itself starting each chain from a genuine `Reset`, not a
+source contact with unknown prior state) once the engine fixes pass 6 found (items 1,
+3, 4, 5-second-half) land.
+
 ## Needs a v26 re-record (tester 16, 17 Sep 2026, coder 14's addendum)
 
 - **`console/handpass3-owner-17sep-hanlim-chinchun-all-refinement-this-month.json`
