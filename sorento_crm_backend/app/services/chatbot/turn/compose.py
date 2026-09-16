@@ -163,6 +163,12 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         lane_words = env.get("lane_text")
         if rows_text:
             block = header + "\n" + "\n\n".join(rows_text)
+        elif env.get("denied") and isinstance(lane_words, str) and lane_words.strip():
+            # Contract 7. A refusal is the WHOLE section and carries no header: naming
+            # the domain above "Sorry, you are not allowed to access purchase cost"
+            # would print the very thing the sentence is refusing to discuss. Checked
+            # before the generic `lane_text` branch below for that reason.
+            block = lane_words.strip()
         elif isinstance(lane_words, str) and lane_words.strip():
             # The header still names the domain: one section per domain is the grammar
             # (contract 122), and a fan-out whose second leg found nothing must still say

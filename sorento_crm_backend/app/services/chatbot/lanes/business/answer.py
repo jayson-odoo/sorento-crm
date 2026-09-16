@@ -1076,6 +1076,14 @@ _CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.pl
 #: (that drop still runs too, belt and braces: AC-18). A domain with no row here is
 #: ungated, same convention as `_CROSSDOMAIN_RUNG_GRANT` above.
 DOMAIN_GRANT_REQUIRED: dict[str, str] = {"purchase_cost": "purchase_orders.cost"}
+#: What the refusal CALLS the domain it just refused, for the one registered
+#: `access_denied` template (`canned.field_grant_denied_text`). A plain-language FEATURE
+#: name, not the domain's own label ("last purchase cost") and not the parser's agent
+#: guess: the customer asked for a thing, and the sentence names that thing. Beside
+#: `DOMAIN_GRANT_REQUIRED` because it is the same per-domain fact wearing its other half,
+#: and it is the wording `complete_answer` used to hand out before the turn package
+#: became the one that answers.
+DOMAIN_GRANT_SUBJECT: dict[str, str] = {"purchase_cost": "purchase cost"}
 #: The shipped ladder (migration 491, D7): stock -> incoming -> PO from either side. The
 #: DATABASE row is where the default lives; `engine._crossdomain_ladder` hands this out
 #: only for a settings row that carries no usable ladder (a `create_all` schema), never

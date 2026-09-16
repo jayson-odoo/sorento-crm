@@ -574,7 +574,16 @@ def make_tool_runner(
             trace=turn_trace,
             db=db,
         )
-        return envelope_of(fragment, spec, entities)
+        return envelope_of(
+            fragment,
+            spec,
+            entities,
+            denial_text=(
+                domain_denial_text(db, domain)
+                if fragment.get("outcome") == "access_denied"
+                else None
+            ),
+        )
 
     return runner
 
@@ -695,11 +704,44 @@ def _entities_for(spec: FetchSpec, compatible: list[dict[str, Any]]) -> list[dic
     ]
 
 
+def domain_denial_text(db: Session, domain: str) -> str | None:
+    """Contract 7's refusal, for a domain the contact is not granted.
+
+    The ONE registered `access_denied` template, rendered through the same
+    `canned.field_grant_denied_text` the retired `complete_answer` called - no new
+    prose, and no second wording to keep in step. `None` for a domain with no subject
+    registered, which leaves the composer's generic denied line as the fallback.
+    """
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.lanes import canned as canned_lanes
+    from app.services.chatbot.lanes.business.answer import DOMAIN_GRANT_SUBJECT
+
+    subject = DOMAIN_GRANT_SUBJECT.get(str(domain or ""))
+    if not subject:
+        return None
+    try:
+        return canned_lanes.field_grant_denied_text(copy_mod.resolve(db), subject)
+    except Exception:  # noqa: BLE001 - a missing copy row must not fail the turn
+        logger.warning("chatbot: the domain refusal copy did not render", exc_info=True)
+        return None
+
+
 def envelope_of(
-    fragment: dict[str, Any], spec: FetchSpec, entities: list[dict[str, Any]]
+    fragment: dict[str, Any],
+    spec: FetchSpec,
+    entities: list[dict[str, Any]],
+    *,
+    denial_text: str | None = None,
 ) -> dict[str, Any]:
     """The kept lane's fetch fragment as the composer's envelope (AC-1530, AC-1531)."""
     fetched = fragment.get("fetch") if isinstance(fragment.get("fetch"), dict) else {}
+    # The whole-domain grant gate refused before any tool was picked
+    # (`lanes/business.run_fetch`'s `outcome="access_denied"`). That is a DENIED
+    # envelope, not an empty one: without this the composer rendered a bare
+    # `*last purchase cost* for M218:` header and contract 7's refusal sentence was
+    # never said - the tool was still never called, so nothing leaked, but the customer
+    # was told nothing either.
+    refused = fragment.get("outcome") == "access_denied"
     codes = [
         jsc.js_string(e.get("canonical_code") or e.get("raw"))
         for e in entities
@@ -710,7 +752,8 @@ def envelope_of(
     files = fetched.get("attachments")
     has_result = bool(fetched.get("has_result")) and bool(figures)
     return {
-        "denied": False,
+        "domain": spec.domain,
+        "denied": refused,
         "entities": codes,
         "figures": figures,
         "files": [f for f in files if isinstance(f, dict)] if isinstance(files, list) else [],
@@ -725,8 +768,9 @@ def envelope_of(
         "error": fragment.get("error") if isinstance(fragment.get("error"), str) else None,
         # The lane's OWN rendered sentence. The composer renders the rows itself
         # (#930's grammar, contract 102); this is what a tool with no rows to render -
-        # a report, a refusal, a miss suggestion - has to say instead.
-        "lane_text": fetched.get("response"),
+        # a report, a refusal, a miss suggestion - has to say instead. A refused domain
+        # says contract 7's registered sentence.
+        "lane_text": denial_text if refused else fetched.get("response"),
         # A counted-set answer's own header ("10 taps have certificates. Showing
         # 5.", AC-1316/AC-1317) - unlike `lane_text` this travels ALONGSIDE rows, not
         # instead of them: the composer still renders `figures` through its own
