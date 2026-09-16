@@ -1,0 +1,471 @@
+"""S3 - the Schedule matrix, its own read (R-I second half, AC-X1 to AC-X4).
+
+`GET /order-inquiries/matrix?axis=product|sales_order|customer|agent&by=day|week|month|year`
+does not exist yet - every test here 404s until the coder builds it. The route is
+declared nowhere in `app/api/v1/projects/order_inquiries.py` today (grepped before writing
+this file), so a 404 IS the honest red state, not a fixture bug.
+
+Postgres only, via `tests/_pg_fixture.py::blank_session`.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import text
+
+from app.models.order import Customer, SalesOrder
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.project_so import (
+    INQUIRY_RAISED,
+    IV_ORDER,
+    OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+)
+from app.models.sales_agent import SalesAgent
+from app.models.user import User
+
+from ._pg_fixture import blank_session
+
+MARKER = "zzt-oi-matrix"
+BASE = "/api/v1/project-sales"
+MATRIX = f"{BASE}/order-inquiries/matrix"
+
+READ_ONLY = ["projects.projects.view"]
+NO_GRANTS: list[str] = []
+
+
+def _uid() -> str:
+    return str(uuid.uuid4())
+
+
+def _sorento(db) -> str:
+    return db.execute(text("select id from companies where code = 'SRT'")).scalar()
+
+
+def _user(db, name: str) -> str:
+    user_id = _uid()
+    db.add(User(id=user_id, email=f"{user_id}@zzt.test", name=name))
+    db.flush()
+    return user_id
+
+
+def _product(db, code: str, name: str) -> Product:
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:6]}", uom_name="Unit")
+    category = ProductCategory(
+        id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
+    )
+    db.add_all([uom, category])
+    db.flush()
+    row = Product(
+        id=_uid(), product_code=code, product_name=name, category_id=category.id,
+        base_uom_id=uom.id, list_price=Decimal("100.00"),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _customer(db, company_id: str, name: str) -> Customer:
+    row = Customer(id=_uid(), company_id=company_id, customer_code=f"ZZT-{_uid()[:8]}",
+                    customer_name=name)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _agent(db, company_id: str, code: str, label: str) -> SalesAgent:
+    row = SalesAgent(id=_uid(), company_id=company_id, sales_agent=code, person_label=label)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _core_order(db, company_id: str, *, customer: Customer, agent: SalesAgent,
+                 order_date: date) -> SalesOrder:
+    row = SalesOrder(
+        id=_uid(), company_id=company_id, so_number=f"ZZTSO{_uid()[:8]}",
+        customer_id=customer.id, sales_agent_id=agent.id, order_date=order_date,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _adopted_pso(db, company_id: str, core: SalesOrder) -> ProjectSalesOrder:
+    row = ProjectSalesOrder(
+        id=_uid(), company_id=company_id, project_id=None, so_id=core.id,
+        provisional_ref=core.so_number, autocount_doc_no=core.so_number, status="adopted",
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _pso_line(db, company_id: str, pso: ProjectSalesOrder, product: Product) -> ProjectSalesOrderLine:
+    row = ProjectSalesOrderLine(
+        id=_uid(), company_id=company_id, project_sales_order_id=pso.id, line_no=1,
+        product_id=product.id, description=f"{MARKER} line", qty=Decimal("999"),
+        uom="UNIT", unit_price=Decimal("10.00"), amount=Decimal("0"),
+        delivery_date=date(2026, 1, 1),
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _inquiry_for(db, company_id: str, pso: ProjectSalesOrder) -> OrderInquiry:
+    row = OrderInquiry(id=_uid(), company_id=company_id, project_sales_order_id=pso.id,
+                        state=INQUIRY_RAISED)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _row(db, company_id: str, inquiry: OrderInquiry, so_line: ProjectSalesOrderLine, *,
+          item_code: str, qty: str, delivery_date: date, stock_location=None) -> OrderInquiryRow:
+    row = OrderInquiryRow(
+        id=_uid(), company_id=company_id, order_inquiry_id=inquiry.id,
+        so_line_id=so_line.id, item_code=item_code, qty=Decimal(str(qty)),
+        delivery_date=delivery_date, verb=IV_ORDER, state=INQUIRY_RAISED,
+        ack_state="acknowledged", stock_location=stock_location,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _po_link(db, company_id: str, row: OrderInquiryRow, product: Product, qty: str):
+    supplier = Supplier(id=_uid(), company_id=company_id, supplier_code=f"ZZT-{_uid()[:8]}",
+                         supplier_name=f"{MARKER} supplier")
+    db.add(supplier)
+    db.flush()
+    po = PurchaseOrder(id=_uid(), company_id=company_id, po_number=f"ZZT-PO-{_uid()[:8]}",
+                        supplier_id=supplier.id)
+    db.add(po)
+    db.flush()
+    line = PurchaseOrderLine(id=_uid(), company_id=company_id, purchase_order_id=po.id,
+                              product_id=product.id, qty_ordered=Decimal("999"))
+    db.add(line)
+    db.flush()
+    db.add(OrderInquiryLink(id=_uid(), company_id=company_id, row_id=row.id,
+                             po_line_id=line.id, document=po.po_number, qty=Decimal(str(qty))))
+    db.flush()
+
+
+def _client(db, user_id: str, permissions):
+    from fastapi.testclient import TestClient
+
+    from app.database import get_db
+    from app.dependencies import get_current_user, get_current_user_or_api_key
+    from app.main import app
+    from app.services.company_scope_resolver import apply_company_scope
+    from app.services.user_service import UserPermissionService
+
+    actor = {"id": user_id, "email": f"{user_id}@zzt.test", "role": "user"}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: dict(actor)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(actor)
+    app.dependency_overrides[apply_company_scope] = lambda: None
+
+    originals = (
+        UserPermissionService.check_user_has_permission,
+        UserPermissionService.get_user_permission_slugs,
+    )
+    granted = list(permissions)
+    UserPermissionService.check_user_has_permission = (
+        lambda self, uid, slug: slug in granted
+    )
+    UserPermissionService.get_user_permission_slugs = lambda self, uid: list(granted)
+    return TestClient(app), originals
+
+
+def _restore(originals) -> None:
+    from app.main import app
+    from app.services.user_service import UserPermissionService
+
+    UserPermissionService.check_user_has_permission = originals[0]
+    UserPermissionService.get_user_permission_slugs = originals[1]
+    app.dependency_overrides.clear()
+
+
+def _seed(db, company_id: str) -> dict:
+    """A small, richly distinguishable world (week/year bucketing, two axes' worth of
+    grouping, a location split, a PO-linked row) plus a separate isolated pair for the
+    year bucket, so no test's arithmetic depends on another test's rows."""
+    customer_a = _customer(db, company_id, f"{MARKER} Alpha Sdn Bhd")
+    customer_b = _customer(db, company_id, f"{MARKER} Beta Sdn Bhd")
+    agent_a = _agent(db, company_id, f"ZZT{_uid()[:6].upper()}", f"{MARKER} Agent A")
+    agent_b = _agent(db, company_id, f"ZZT{_uid()[:6].upper()}", f"{MARKER} Agent B")
+    product_p = _product(db, f"ZZT-MATRIX-P-{_uid()[:6]}", f"{MARKER} product P")
+    product_q = _product(db, f"ZZT-MATRIX-Q-{_uid()[:6]}", f"{MARKER} product Q")
+
+    core_a = _core_order(db, company_id, customer=customer_a, agent=agent_a,
+                          order_date=date(2026, 4, 1))
+    core_b = _core_order(db, company_id, customer=customer_b, agent=agent_b,
+                          order_date=date(2026, 4, 1))
+    pso_a = _adopted_pso(db, company_id, core_a)
+    pso_b = _adopted_pso(db, company_id, core_b)
+    line_a = _pso_line(db, company_id, pso_a, product_p)
+    line_b = _pso_line(db, company_id, pso_b, product_q)
+    inquiry_a = _inquiry_for(db, company_id, pso_a)
+    inquiry_b = _inquiry_for(db, company_id, pso_b)
+
+    # 2026-04-15 is a Wednesday; 2026-04-13 is the Monday of the same ISO week.
+    row_wed = _row(db, company_id, inquiry_a, line_a, item_code=f"{MARKER}-WED", qty="10",
+                    delivery_date=date(2026, 4, 15), stock_location="ZZTLOCX")
+    row_mon = _row(db, company_id, inquiry_a, line_a, item_code=f"{MARKER}-MON", qty="8",
+                    delivery_date=date(2026, 4, 13), stock_location="ZZTLOCX")
+    _po_link(db, company_id, row_mon, product_p, "8")
+    row_other = _row(db, company_id, inquiry_b, line_b, item_code=f"{MARKER}-OTHER", qty="7",
+                      delivery_date=date(2026, 4, 15), stock_location="ZZTLOCY")
+
+    # Isolated year-bucket pair, far enough from everything else that no other
+    # filter/test can accidentally sum it in.
+    product_year = _product(db, f"ZZT-MATRIX-YEAR-{_uid()[:6]}", f"{MARKER} product year")
+    core_year = _core_order(db, company_id, customer=customer_a, agent=agent_a,
+                             order_date=date(2029, 1, 1))
+    pso_year = _adopted_pso(db, company_id, core_year)
+    line_year = _pso_line(db, company_id, pso_year, product_year)
+    inquiry_year = _inquiry_for(db, company_id, pso_year)
+    row_year_early = _row(db, company_id, inquiry_year, line_year, item_code=f"{MARKER}-YEARLY1",
+                           qty="6", delivery_date=date(2029, 3, 10))
+    row_year_late = _row(db, company_id, inquiry_year, line_year, item_code=f"{MARKER}-YEARLY2",
+                          qty="9", delivery_date=date(2029, 11, 20))
+
+    db.commit()
+    return {
+        "product_p": product_p,
+        "product_q": product_q,
+        "customer_a": customer_a,
+        "customer_b": customer_b,
+        "agent_a": agent_a,
+        "agent_b": agent_b,
+        "core_a": core_a,
+        "row_wed": row_wed,
+        "row_mon": row_mon,
+        "row_other": row_other,
+        "product_year": product_year,
+        "row_year_early": row_year_early,
+        "row_year_late": row_year_late,
+    }
+
+
+def _api(permissions):
+    from app.models.base import company_scope
+
+    with blank_session() as db:
+        company_id = _sorento(db)
+        user_id = _user(db, f"{MARKER} tester")
+        seeded = _seed(db, company_id)
+        client, originals = _client(db, user_id, permissions)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                yield client, db, company_id, seeded
+        finally:
+            _restore(originals)
+
+
+@pytest.fixture()
+def api():
+    yield from _api(READ_ONLY)
+
+
+@pytest.fixture()
+def stranger_api():
+    yield from _api(NO_GRANTS)
+
+
+# --------------------------------------------------------------------------- AC-X1
+
+
+def test_matrix_by_product_and_month_sums_the_lists_own_qty_per_cell(api):
+    client, _db, _company_id, seeded = api
+
+    response = client.get(MATRIX, params={"axis": "product", "by": "week"})
+
+    assert response.status_code == 200, response.text
+    cells = response.json()["data"]
+    cell = next(
+        c for c in cells
+        if c["axis_key"] == str(seeded["product_p"].id) and c["period"] == "2026-04-13"
+    )
+    assert cell["qty"] == "18"
+    assert cell["rows"] == 2
+
+
+# --------------------------------------------------------------------------- AC-X3
+
+
+def test_week_buckets_start_on_monday(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(MATRIX, params={"axis": "product", "by": "week"}).json()
+
+    periods = {
+        c["period"] for c in body["data"] if c["axis_key"] == str(seeded["product_p"].id)
+    }
+    # 2026-04-15 (Wednesday) has to land in the Monday-dated cell, never its own date.
+    assert "2026-04-15" not in periods
+    assert "2026-04-13" in periods
+
+
+def test_month_and_year_buckets_start_on_the_first(api):
+    client, _db, _company_id, seeded = api
+
+    monthly = client.get(MATRIX, params={"axis": "product", "by": "month"}).json()["data"]
+    yearly = client.get(MATRIX, params={"axis": "product", "by": "year"}).json()["data"]
+
+    month_cell = next(
+        c for c in monthly if c["axis_key"] == str(seeded["product_p"].id)
+    )
+    assert month_cell["period"] == "2026-04-01"
+
+    year_cell = next(
+        c for c in yearly if c["axis_key"] == str(seeded["product_year"].id)
+    )
+    assert year_cell["period"] == "2029-01-01"
+    assert year_cell["qty"] == "15"
+    assert year_cell["rows"] == 2
+
+
+# --------------------------------------------------------------------------- AC-X4
+
+
+def test_each_cell_carries_buy_po_and_spo_stage_sums(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(MATRIX, params={"axis": "product", "by": "week"}).json()
+
+    cell = next(
+        c for c in body["data"]
+        if c["axis_key"] == str(seeded["product_p"].id) and c["period"] == "2026-04-13"
+    )
+    # row_mon (qty 8) is fully on a purchase order line: po=8, buy=0.
+    # row_wed (qty 10) is unlinked: buy=10, po=0.
+    assert cell["po"] == "8"
+    assert cell["buy"] == "10"
+    assert cell["spo"] == "0"
+
+
+# ---------------------------------------------------------- axis grouping, parametrized
+
+
+@pytest.mark.parametrize(
+    "axis,key_of",
+    [
+        ("sales_order", lambda seeded: seeded["core_a"].id),
+        ("customer", lambda seeded: seeded["customer_a"].id),
+        ("agent", lambda seeded: seeded["agent_a"].id),
+    ],
+)
+def test_every_axis_groups_by_its_own_column(api, axis, key_of):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(MATRIX, params={"axis": axis, "by": "week"}).json()
+
+    wanted = str(key_of(seeded))
+    matching = [c for c in body["data"] if c["axis_key"] == wanted]
+    assert matching, f"no cell grouped by {axis}={wanted}: {body['data']}"
+    assert sum(int(c["rows"]) for c in matching) == 2  # row_wed + row_mon
+
+
+def test_an_unknown_axis_is_refused(api):
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(MATRIX, params={"axis": "whatever", "by": "week"})
+
+    assert response.status_code == 422
+
+
+# --------------------------------------------------------------- honours list filters
+
+
+def test_the_matrix_honours_the_location_filter(api):
+    client, _db, _company_id, seeded = api
+
+    body = client.get(
+        MATRIX, params={"axis": "product", "by": "week", "location": "ZZTLOCX"}
+    ).json()
+
+    axis_keys = {c["axis_key"] for c in body["data"]}
+    assert str(seeded["product_p"].id) in axis_keys
+    assert str(seeded["product_q"].id) not in axis_keys
+
+
+# ------------------------------------------------------------------- AC-X2, no row cap
+
+
+def test_no_row_cap_across_two_years_of_delivery_months(api):
+    """1,200 rows spread across 24 delivery months. The old Schedule view fetched the
+    list ONCE with `limit=1000` and grouped client-side - a delivery-filtered worklist
+    already exceeds that on prod (PLAN section 0), so the matrix must have no cap at
+    all."""
+    client, db, company_id, _seeded = api
+    product_bulk = _product(db, f"ZZT-MATRIX-BULK-{_uid()[:6]}", f"{MARKER} bulk product")
+    core_bulk = _core_order(
+        db, company_id, customer=_seeded_customer(db, company_id),
+        agent=_seeded_agent(db, company_id), order_date=date(2026, 1, 1),
+    )
+    pso_bulk = _adopted_pso(db, company_id, core_bulk)
+    line_bulk = _pso_line(db, company_id, pso_bulk, product_bulk)
+    inquiry_bulk = _inquiry_for(db, company_id, pso_bulk)
+
+    months = [
+        (year, month)
+        for year in (2026, 2027)
+        for month in range(1, 13)
+    ]
+    rows = []
+    for index in range(1200):
+        year, month = months[index % 24]
+        rows.append(
+            {
+                "id": _uid(),
+                "company_id": company_id,
+                "order_inquiry_id": inquiry_bulk.id,
+                "so_line_id": line_bulk.id,
+                "item_code": f"{MARKER}-BULK-{index}",
+                "qty": Decimal("1"),
+                "delivery_date": date(year, month, 10),
+                "verb": IV_ORDER,
+                "state": INQUIRY_RAISED,
+                "ack_state": "acknowledged",
+                "redirected_to_pool": False,
+                "bundled_qty": Decimal("0"),
+            }
+        )
+    db.execute(OrderInquiryRow.__table__.insert(), rows)
+    db.commit()
+
+    body = client.get(MATRIX, params={"axis": "product", "by": "month"}).json()
+
+    cells = [c for c in body["data"] if c["axis_key"] == str(product_bulk.id)]
+    periods = {c["period"] for c in cells}
+    assert len(periods) == 24, sorted(periods)
+    assert sum(int(c["rows"]) for c in cells) == 1200
+
+
+def _seeded_customer(db, company_id):
+    return _customer(db, company_id, f"{MARKER} bulk customer")
+
+
+def _seeded_agent(db, company_id):
+    return _agent(db, company_id, f"ZZT{_uid()[:6].upper()}", f"{MARKER} bulk agent")
+
+
+# -------------------------------------------------------------------------- permission
+
+
+def test_a_user_without_the_view_permission_is_refused(stranger_api):
+    client, _db, _company_id, _seeded = stranger_api
+
+    response = client.get(MATRIX, params={"axis": "product", "by": "week"})
+
+    assert response.status_code == 403

@@ -106,7 +106,12 @@ type BoardView = 'grid' | 'list';
  */
 type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string };
 
-function boardViewFrom(value: string | null): BoardView {
+/**
+ * S6 (R-J): List is the default view; only an explicit `?view=grid` opens Grid. Exported
+ * so `OrderInquiriesClient.planner.test.tsx` can pin AC-P1 as a pure function rather than
+ * mounting the whole board for a one-line contract.
+ */
+export function boardViewFrom(value: string | null): BoardView {
   return value === 'grid' ? 'grid' : 'list';
 }
 
