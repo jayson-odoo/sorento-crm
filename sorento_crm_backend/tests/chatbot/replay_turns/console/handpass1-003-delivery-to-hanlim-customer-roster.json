@@ -56,7 +56,7 @@
         "action_kinds": [
           "send_message"
         ],
-        "branch_kind": "clarify_menu",
+        "branch_kind": "business_query",
         "canned": [],
         "entity_ids": [],
         "focus_after": null,

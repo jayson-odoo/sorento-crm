@@ -54,7 +54,7 @@
       },
       "expected": {
         "action_kinds": [],
-        "branch_kind": "clarify_menu",
+        "branch_kind": "business_query",
         "canned": [],
         "corrected_per_ruling": "hand-pass-1-16sep.md finding 4: recorded turn called crm_master_product_attachments_list with NO product filter (chatbot_domains.product_attachment.narrowing only names attachment_type: narrow_by_type), so the unresolved 'srtwc286' token was silently dropped and the tool returned an empty/wrong-scoped result ('No matching results found', escalate offer). Ruling: product_attachment narrowing gains product: must_narrow_one - an unresolved product token matching several variants (SRTWC286-SH-200, -SH-P, -SH-PP, ... the same ten-item family case 2's own roster shows) must route to clarify_menu with the product roster BEFORE any tool call, not call the tool on the attachment_type alone. branch_kind corrects to clarify_menu, tools corrects to [] (no tool call pre-narrow). text/pending left UNASSERTED: the exact roster wording for this specific narrow prompt is not independently confirmed against a real post-fix run.",
         "entity_ids": [],
@@ -66,8 +66,69 @@
       "resolutions": {
         "resolutions": [
           {
-            "matches": [],
-            "resolved": false,
+            "matches": [
+              {
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-200",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-P",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-PP",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-UF",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW-150",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-150",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW-P",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW-200",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW",
+                "match_tier": "family"
+              }
+            ],
+            "resolved": true,
             "token": "srtwc286"
           },
           {
@@ -131,45 +192,7 @@
         ],
         "switches_source": "source_db_at_record_time"
       },
-      "tool_results": [
-        {
-          "args": {
-            "_diagnostics": {
-              "entities_in": 1,
-              "scalar_truncated": [],
-              "skipped": [
-                {
-                  "code": null,
-                  "reason": "missing_or_bad_uuid"
-                }
-              ],
-              "total_uuids_passed": 0,
-              "unmapped_types": []
-            },
-            "access_levels": [],
-            "contact_id": "437264483",
-            "date_mode": null,
-            "is_active": null,
-            "space_id": "364817",
-            "view": "render"
-          },
-          "envelope": {
-            "action_links": [],
-            "attachments": [],
-            "has_result": false,
-            "intro": "No matching results found.",
-            "items": [],
-            "last_updated_at": null,
-            "result_type": "product_attachments"
-          },
-          "tool": "crm_master_product_attachments_list"
-        },
-        {
-          "args": null,
-          "envelope": null,
-          "tool": null
-        }
-      ],
+      "tool_results": [],
       "verdict": {
         "access_levels": [],
         "anaphora": {

@@ -56,7 +56,7 @@
         "action_kinds": [
           "send_message"
         ],
-        "branch_kind": "clarify_menu",
+        "branch_kind": "business_query",
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
@@ -67,17 +67,76 @@
       "resolutions": {
         "resolutions": [
           {
-            "matches": [],
-            "resolved": false,
-            "token": "srtwc286"
+            "token": "srtwc286",
+            "resolved": true,
+            "matches": [
+              {
+                "uuid": "65514803-1609-4fe8-8b60-2e908c8f9bd4",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-200",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "d73a33f3-956b-401f-90c7-0ad6ff792ea1",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-P",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "7a8f2543-ef3b-4e5f-9dad-e29f6f688485",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-PP",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "0d0ed752-fd6f-4759-ad8f-0b40e0cbc601",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "d55d8829-5e3d-4386-ab77-6c93e26d73e7",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-UF",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "13ffa633-91db-4db6-9050-5de7a0deb9b8",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW-150",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "78c96bfa-edea-4695-a215-4a02cc0c53a0",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-150",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "677b6eb7-f21f-4a65-8195-b969a0a465dd",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW-P",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "dcaeb074-6b9f-46bd-9e86-97a16e976b59",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW-200",
+                "match_tier": "family"
+              },
+              {
+                "uuid": "77a5e4da-877a-462d-a0f8-cc558fdc5a51",
+                "entity_type": "product",
+                "canonical_code": "SRTWC286-SH-NEW",
+                "match_tier": "family"
+              }
+            ]
           }
         ],
         "tokens": [
           "srtwc286"
         ],
-        "unresolved_tokens": [
-          "srtwc286"
-        ]
+        "unresolved_tokens": []
       },
       "source": {
         "db": "sorento_ai_automation_rearch",
@@ -236,7 +295,7 @@
         "action_kinds": [],
         "branch_kind": "business_query",
         "canned": [],
-        "corrected_per_ruling": "hand-pass-1-16sep.md finding 2(b): recorded turn was access_denied because check_access(agent_code=None) ran on the RAW verdict routing (parser saw the bare digit '1' as message_type casual with routing.suggested_agent null). Ruling: the routing default (general_enquiries) is applied ONCE before access, and this contact IS granted general_enquiries in the recorded `access` payload's own attributes list, so post-fix this turn is ALLOWED, not denied - branch_kind corrects away from access_denied. Corrected to business_query as the most likely resolved-pick outcome (the '1' answers step 1's ten-item product roster, resolving to SRTWC286-SH-200, then answering its incoming stock) - NOT independently verified against a real post-fix run (finding 2(a), the session_patch loss, is a SEPARATE console-layer bug this chain's own harness replay does not reproduce anyway: test_turn_replay.py carries session_patch step to step itself, bypassing the console's own _next_state entirely - see that file's own docstring). tools/action_kinds/text left UNASSERTED: the live turn never reached the number-answer resolver or crm_incoming_stock_list (it was denied first), so there is no real recorded tool result for the corrected continuation.",
+        "corrected_per_ruling": "hand-pass-1-16sep.md finding 2(b): recorded turn was access_denied because check_access(agent_code=None) ran on the RAW verdict routing (parser saw the bare digit '1' as message_type casual with routing.suggested_agent null). Ruling: the routing default (general_enquiries) is applied ONCE before access (turn_runtime.py::with_routing_agent_default, landed 16 Sep 2026), and this contact IS granted general_enquiries in the recorded `access` payload's own attributes list, so post-fix this turn is ALLOWED, not denied - branch_kind corrects to business_query as the most likely resolved-pick outcome. UPDATE 16 Sep 2026 (tester, this session): with_routing_agent_default is confirmed landed and the routing default IS applied (measured: branch_kind moves from the original raw-denial to a NEW access_denied with text 'Sorry, you are not allowed to access general_enquiries' - domain routing resolved, agent resolved, refusal moved from 'unknown agent' to 'this contact is not granted this agent'). This case's own resolutions were also corrected this session (step 1 now carries the real 10-variant SRTWC286 family match list, borrowed from handpass2-justin-incoming-picker.json's own real recording of the identical token against the same clone DB) and step 2's verdict now carries answers_open_question (also borrowed from that file's real turn c196ebd7), which correctly reclassifies step 2 as a pick continuation rather than a stray casual message - both fixes measured to work as intended. The remaining access_denied is NOT re-derived from guessing the engine: `_seed_contact` (this harness's own fixture) grants this test contact no agent access at all, so ANY default-routed agent this fixture has not separately stubbed is refused - a harness/fixture gap (or, upstream, a blank-schema seed gap for the general_enquiries agent grant), not something this case's own recorded data can correct further. Flagged for a coder/captain look rather than invented workaround data; branch_kind stays UNSIGNED and red pending that.",
         "entity_ids": [],
         "focus_after": null,
         "pending": null,
@@ -327,7 +386,7 @@
         "reference_positions": [
           1
         ],
-        "reference_target": null,
+        "reference_target": "result",
         "requested_attributes": [],
         "routing": {
           "suggested_agent": null,
@@ -337,7 +396,14 @@
         "scope_intent": null,
         "status": null,
         "top_n": null,
-        "user_goal": "trying to answer the previously asked numbered question by selecting option 1"
+        "user_goal": "trying to answer the previously asked numbered question by selecting option 1",
+        "answers_open_question": {
+          "answer": "1",
+          "picks": [
+            1
+          ],
+          "resolved": true
+        }
       }
     }
   ]
