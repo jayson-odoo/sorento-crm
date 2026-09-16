@@ -1374,6 +1374,25 @@ class DocumentIngestService(MasterRefResolver):
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        # Self-heal (issue #969): the ESB push is the true writer behind almost every
+        # unmirrored line measured live (394 of them, all `source_system = autocount`) -
+        # `_upsert_lines`'s self-heal never sees this write, it is the manual FE edit's
+        # own path. Same gate as the confirm-side heal: an adopted, unauthored mirror only.
+        if spec.entity_type == "sales_orders" and counts.get("created"):
+            from app.models.project_so import SO_STATUS_ADOPTED, ProjectSalesOrder
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            order = (
+                self.db.query(ProjectSalesOrder)
+                .filter(
+                    ProjectSalesOrder.so_id == str(header.id),
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .first()
+            )
+            if order is not None:
+                ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
         return counts
 
     def _adopt_lines(

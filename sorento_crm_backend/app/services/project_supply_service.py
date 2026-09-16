@@ -102,6 +102,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ORDER_BACK,
     LIVE_SO_STATUSES,
+    SO_STATUS_ADOPTED,
     AllocationClaim,
     OrderInquiryLink,
     OrderInquiryRow,
@@ -4121,10 +4122,14 @@ class ProjectSupplyService:
         # once nothing is missing), so every confirm arm that reaches here - the single
         # route, confirm-all's non-batch entries, and the planning-change apply path, all
         # three funnel through this one method - self-heals before the line index is built,
-        # with no route-level duplication.
-        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+        # with no route-level duplication. Gated on `SO_STATUS_ADOPTED` (review S1), the
+        # same gate `project_so_reconciliation_service.py` uses: an AUTHORED record
+        # (published/amended, `project_id` set) is somebody's own record of what was
+        # committed, never a mirror this heal appends to on its own.
+        if order.status == SO_STATUS_ADOPTED:
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
 
-        ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
+            ProjectSOAdoptionService(self.db).mirror_missing_lines(order)
 
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}

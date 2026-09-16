@@ -1939,6 +1939,7 @@ class SalesOrderService:
                 .filter(
                     ProjectSalesOrder.so_id == so.id,
                     ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
                 )
                 .first()
             )
