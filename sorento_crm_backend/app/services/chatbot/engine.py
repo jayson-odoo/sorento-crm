@@ -1229,6 +1229,7 @@ def _run_stages(  # noqa: PLR0915
         pending_kind=state_in.pending.kind if state_in.pending is not None else None,
         pending_options=pending_options,
         profile_block=profile_words,
+        focus=state_in.focus,
     )
     # G6: a dry run may supply the emission instead of paying for it.
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
@@ -1302,6 +1303,7 @@ def _run_stages(  # noqa: PLR0915
                 pending_options=pending_options,
                 profile_block=profile_words,
                 episodes_block=memory_mod.episodes_block(recalled),
+                focus=state_in.focus,
             )
             try:
                 parser_raw = parser.parse(parser_config, user_block)

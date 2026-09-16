@@ -328,6 +328,63 @@ def resolve_config(
     )
 
 
+def _subject_names(rows: Any) -> list[str]:
+    """The human names on one focus axis, in order, deduped.
+
+    A focus row is either an entity dict (products, customers) or a bare code (document,
+    tier). The NAME is what a customer would recognise, the raw token is what they typed,
+    and the canonical code is the last resort: a subject line saying "300-H030" tells the
+    model less about the conversation than "hanlim" does.
+    """
+    names: list[str] = []
+    for row in rows or []:
+        value = (
+            (row.get("name") or row.get("raw") or row.get("canonical_code"))
+            if isinstance(row, dict)
+            else row
+        )
+        text = str(value).strip() if value is not None else ""
+        if text and text not in names:
+            names.append(text)
+    return names
+
+
+def current_subject_line(focus: Any) -> str | None:
+    """"Current subject: ..." - what the conversation is about, on one line, or None.
+
+    Owner ruling, hand pass 3 (17 Sep 2026): the parser judged a refinement ("For
+    srtwc286 only") and a domain switch ("promo") against the previous REPLY alone, which
+    says what was answered and not what it was answered about, so a message naming an
+    entity of a kind the open roster was not about re-asked the roster. The focus is the
+    one place that fact lives, so it is stated.
+
+    Absent for an empty focus, which keeps every other turn's block byte-identical.
+    """
+    if focus is None:
+        return None
+    parts: list[str] = []
+    for label, rows in (
+        ("domain", getattr(focus, "domains", None)),
+        ("customer", getattr(focus, "customers", None)),
+        ("product", getattr(focus, "products", None)),
+        ("document", getattr(focus, "document", None)),
+    ):
+        names = _subject_names(rows)
+        if names:
+            parts.append(f"{label} {', '.join(names)}")
+    status = getattr(focus, "status", None)
+    if isinstance(status, str) and status.strip():
+        parts.append(f"status {status.strip()}")
+    window = getattr(focus, "date_window", None)
+    if isinstance(window, dict):
+        bounds = [str(window.get(key)).strip() for key in ("start", "end") if window.get(key)]
+        if bounds:
+            parts.append("dates " + " to ".join(bounds))
+    if not parts:
+        return None
+    return "Current subject: " + "; ".join(parts) + "."
+
+
 def build_user_block(
     *,
     previous_response: Any,
@@ -336,6 +393,7 @@ def build_user_block(
     pending_options: list[str] | None = None,
     profile_block: str | None = None,
     episodes_block: str | None = None,
+    focus: Any = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -348,6 +406,10 @@ def build_user_block(
     `pending_options` is the second (D17, 13 Sep 2026): the numbered options of an open
     question whose answer is a POSITION, so the parser can resolve a worded answer
     against what was actually offered. Omitted, and the block is unchanged.
+
+    `focus` is the third (hand pass 3, 17 Sep 2026): the "Current subject" line, so a
+    refinement and a domain switch are read against what the conversation is about rather
+    than against the previous reply alone.
     """
     import re
 
@@ -358,6 +420,12 @@ def build_user_block(
         f"Previous response: {previous}",
         f"Current user message: {latest_user_message}",
     ]
+    subject = current_subject_line(focus)
+    if subject:
+        # Hand pass 3, ruling 2: the subject the conversation already has, so a refinement
+        # and a domain switch are judged against something. One line, omitted whole when
+        # the focus is empty.
+        lines.append(subject)
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
     if pending_options:
