@@ -1403,6 +1403,10 @@ def _apply_crossdomain_rung(
         )
 
 
+# NOT ON THE TURN PATH since the re-architecture: its only caller was `complete_answer`,
+# which `run_turn` no longer reaches. Contract 3 and 125's rung walk is
+# `turn/fetch.py::_climb` now, through the same fan-out fetch every domain uses. Kept
+# only because the KEPT-node replay corpus still drives it directly.
 def run_crossdomain(
     validator_result: dict[str, Any] | None,
     *,

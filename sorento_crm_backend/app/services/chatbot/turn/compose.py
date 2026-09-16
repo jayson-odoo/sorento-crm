@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.services.chatbot.turn.fetch import envelope_missed
 from app.services.chatbot.turn.pending import ask as pending_ask
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import State
@@ -128,23 +129,12 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             n += 1
             rows_text.append(_render_row(n, fig))
 
-        # A domain MISSED when it rendered nothing and was not refused: either every
-        # code it was asked about is in `miss`, or - when the fetch carried no named
-        # code at all (an order ask narrowed by customer only, a report scoped by
-        # date) - the fetch itself said it had no result. The old test needed named
-        # entities, so an empty answer with no code armed no offer and the customer's
-        # "no thanks" a turn later had nothing to decline (hand-pass 1, measured on 10
-        # of the 19 recorded `escalation_declined` turns).
-        if not figures and not env.get("denied") and not env.get("error"):
-            if entities:
-                missed = bool(miss) and set(entities) <= set(miss)
-            else:
-                # The tool's OWN answer, not `has_result` (which is ANDed with the
-                # figures): an outstanding report rendered as `lane_text` found rows
-                # and is not a miss; "no outstanding order matched" is.
-                missed = env.get("tool_has_result") is not True
-            if missed:
-                missed_domains.append(domain)
+        # ONE miss rule, shared with the ladder that climbs on it
+        # (`turn/fetch.py::envelope_missed`): two copies of "did this domain answer
+        # nothing" would let the rung walk and the escalate offer disagree about the
+        # same envelope.
+        if envelope_missed(env):
+            missed_domains.append(domain)
 
         label = row.label if row else domain
         codes = ", ".join(str(e) for e in entities)
@@ -178,6 +168,16 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
             block = f"*{label}*: this is not enabled for your account."
         else:
             block = header
+        # AC-922, "nothing on any rung": the primary domain missed AND every domain on
+        # its ladder missed too. Named once, here, rather than as one empty header per
+        # rung - the customer asked about a product, not about three domains.
+        rungs_tried = [r for r in (env.get("rungs_tried") or []) if isinstance(r, str)]
+        if rungs_tried:
+            names = [
+                (policy.domain(r).label if (policy and policy.domain(r)) else r)
+                for r in rungs_tried
+            ]
+            block = block + "\n" + f"Nothing on {_join_words(names)} either."
         text_parts.append(block)
 
         for f in env_files:
@@ -230,6 +230,16 @@ _ASK_HEADERS: dict[str, str] = {
     "kind_pick": "Which one do you mean?",
     "attachment_type_ask": "Which kind of file do you need?",
 }
+
+
+def _join_words(names: list[str]) -> str:
+    """`a`, `a or b`, `a, b or c` - the list grammar the rung line reads with."""
+    clean = [n for n in names if n]
+    if not clean:
+        return ""
+    if len(clean) == 1:
+        return clean[0]
+    return ", ".join(clean[:-1]) + " or " + clean[-1]
 
 
 def compose_question(pending: Any) -> Answer:
