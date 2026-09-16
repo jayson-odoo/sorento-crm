@@ -36,10 +36,32 @@ from app.services.chatbot.turn.compose import Answer  # noqa: F401
 
 from tests.chatbot._turn_helpers import entity, verdict
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, seeded, stub_access, stub_parser
+from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
+from tests.chatbot.test_rearch_s3_roster_from_resolver import (
+    PRODUCT_CODES,
+    _seed_products,
+    _stub_incoming_probe,
+)
 
 
 def _seed(session_factory) -> None:
     _set_session_vars(session_factory, {})
+
+
+def _seed_wc286_family(session_factory, monkeypatch) -> None:
+    """A real SRTWC286-SH family (17 Sep 2026, coder 20's landed change,
+    `3c19a8533`): the private test DB holds no WC286 product by default, so step 1's
+    bare "wc286" ask found nothing and fell through to an unfiltered fetch attempt
+    (the ONE-OPTION typed-token roster this round retires) instead of arming a
+    `product_pick` roster of the real resolver's candidates. Reuses the exact seed
+    `test_rearch_s3_roster_from_resolver.py` measures its own green result against
+    (ten `SRTWC286-SH*` codes) rather than inventing a second one. The roster the
+    narrower arms also probes `crm_incoming_stock_list` to stamp each option "has
+    incoming"/"no incoming" (contract 28), so that tool needs the same stub.
+    """
+    _link_contact_company(session_factory, company_id=SORENTO)
+    _seed_products(session_factory, PRODUCT_CODES)
+    _stub_incoming_probe(monkeypatch, codes_with_incoming=set())
 
 
 def _set_session_vars(session_factory, state: dict) -> None:
@@ -85,12 +107,25 @@ def _turn(session_factory, stub_parser, v: dict, *, message_id: str):
 
 class TestJourneyChain:
     def test_step_1_incoming_wc286_roster_one_question_open(
-        self, session_factory, stub_parser, stub_access
+        self, session_factory, stub_parser, stub_access, monkeypatch
     ) -> None:
         _seed(session_factory)
+        _seed_wc286_family(session_factory, monkeypatch)
         stub_access()
 
-        v = verdict(domain_hint="incoming", entities=[entity("wc286", hint="product", confident=True)])
+        # `confident=False` (a bare family word, not a full code - the parser's own
+        # "I saw a token, not sure it names a real thing" signal, `turn/apply.py::
+        # _did_you_mean`'s own docstring): with the family seeded, `_did_you_mean`
+        # defers to the narrower once the resolver has real candidates for the kind,
+        # so the roster it arms lists the resolver's ten matches, not the typed word
+        # back at the customer. Measured: `confident=True` here still falls through to
+        # an unresolved-token escalate offer (`team_pick`) on this head - a settled
+        # code is not what "wc286" is.
+        v = verdict(
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+            entities=[entity("wc286", hint="product", confident=False)],
+        )
         result = _turn(session_factory, stub_parser, v, message_id="ZZT-journey-1")
 
         # T1 (coder 7 cluster report, AC-1591): amended to the corpus name -
@@ -98,6 +133,7 @@ class TestJourneyChain:
         assert result.branch_kind == "business_query", result.branch_kind
         sv = _session_vars(session_factory)
         assert sv.get("open_question") is not None, sv
+        assert sv["open_question"].get("kind") == "product_pick", sv["open_question"]
 
     def test_step_2_pick_8_roster_stays_alive_incoming_renders(
         self, session_factory, stub_parser, stub_access

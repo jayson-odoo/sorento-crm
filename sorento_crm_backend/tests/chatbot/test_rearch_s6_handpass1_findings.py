@@ -41,6 +41,12 @@ from tests.chatbot.test_engine import (
     stub_access,
     stub_parser,
 )
+from tests.chatbot.test_rearch_s3_attribute_first import SORENTO, _link_contact_company
+from tests.chatbot.test_rearch_s3_roster_from_resolver import (
+    PRODUCT_CODES,
+    _seed_products,
+    _stub_incoming_probe,
+)
 
 
 @pytest.fixture()
@@ -153,17 +159,31 @@ class TestFinding2aOpenPendingHandsBackSessionPatch:
     `console_service._next_state` to chain the next turn from.
     """
 
-    def _roster_verdict(self) -> dict[str, Any]:
+    def _roster_verdict(self, *, confident: bool = True) -> dict[str, Any]:
         return verdict(
             domain_hint="incoming",
-            entities=[entity("wc286", hint="product", confident=True)],
+            intent_hint="check_incoming",
+            entities=[entity("wc286", hint="product", confident=confident)],
         )
 
     def test_a_dry_run_roster_turn_returns_a_non_null_session_patch(
-        self, session_factory, stub_parser, stub_access
+        self, session_factory, stub_parser, stub_access, monkeypatch
     ):
+        # 17 Sep 2026, coder 20's landed change (`3c19a8533`): the private test DB
+        # holds no WC286 product, so this bare "wc286" ask found nothing and fell
+        # through to an unfiltered fetch attempt (the ONE-OPTION typed-token roster
+        # this round retires) rather than arming the real `product_pick` roster this
+        # test's docstring names. Seeds the exact family
+        # `test_rearch_s3_roster_from_resolver.py` measures its own green result
+        # against, and reads it with `confident=False` (a bare family word, not a
+        # settled code - `turn/apply.py::_did_you_mean`'s own docstring): with the
+        # family seeded, `_did_you_mean` defers to the narrower, which arms the real
+        # ten-option roster instead of asking the typed word back.
         _seed_top_level_session_vars(session_factory, {})
-        stub_parser(self._roster_verdict())
+        _link_contact_company(session_factory, company_id=SORENTO)
+        _seed_products(session_factory, PRODUCT_CODES)
+        _stub_incoming_probe(monkeypatch, codes_with_incoming=set())
+        stub_parser(self._roster_verdict(confident=False))
         stub_access()
         envelope = _envelope(test_run_id="ZZT-run-2a")
         assert envelope.dry_run is True
@@ -175,6 +195,9 @@ class TestFinding2aOpenPendingHandsBackSessionPatch:
         assert result.branch_kind == "business_query", result.branch_kind
         assert result.session_patch is not None
         assert result.session_patch.get("open_question") is not None, result.session_patch
+        assert result.session_patch["open_question"].get("kind") == "product_pick", (
+            result.session_patch["open_question"]
+        )
 
     def test_the_dry_run_writes_nothing_to_respond_contacts_session_vars(
         self, session_factory, stub_parser, stub_access
