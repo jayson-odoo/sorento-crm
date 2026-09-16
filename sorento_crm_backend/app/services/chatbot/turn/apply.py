@@ -358,7 +358,22 @@ def _picked_positions(pending: Pending, verdict: dict[str, Any]) -> list[int] | 
     return None
 
 
-def _drop_question_subject(focus: Focus, pending: Pending) -> None:
+def _refines_standing_subject(verdict: dict[str, Any]) -> bool:
+    """Does this turn NARROW the subject the conversation already has, rather than name a
+    new one?
+
+    `scope_exclusive` is the parser's own "only" marker and the single discriminator, and
+    this is the ONE reader of it, so every arm that could evict a standing subject asks
+    the same question in the same words: the shared-axis eviction in `_focus_rules`, and
+    the dead question's filters in `_drop_question_subject`. Before this, the two arms
+    disagreed - a refinement kept the carried customer when no outstanding question was
+    open and lost it when one was, which is the same message getting two answers
+    depending on what happened to be on screen.
+    """
+    return bool(verdict.get("scope_exclusive"))
+
+
+def _drop_question_subject(focus: Focus, pending: Pending, verdict: dict[str, Any]) -> None:
     """R17: the offer dies, and its filters die with it.
 
     The scope question and the detail offer are asked about a SUBJECT the lane resolved
@@ -367,7 +382,18 @@ def _drop_question_subject(focus: Focus, pending: Pending) -> None:
     question about another product kept the old customer and the old location and
     answered about the wrong thing (reviewer N2). Only the axes THAT QUESTION named are
     cleared; `_focus_rules` runs next and re-fills whatever this message named itself.
+
+    Unless the turn is EXCLUSIVE, which is the same rule `_focus_rules` reads the same
+    flag for: "X only" narrows the standing subject and evicts nothing. Measured on the
+    owner's own turns, 16 Sep 2026: "i want to see fullshun only" typed under the DO
+    detail offer for SRTWC286-SH-200 ran the report for Fullshun and `Product: all`
+    (turn 78c7c428), and "ok i want to look at SRTKT1861SS only" typed under the DO
+    detail offer for six HANLIM ledgers ran it for the product with `customer_ids: []`
+    (turn b06e9ca8). Both are refinements the parser marked `scope_exclusive: true`, and
+    both lost exactly the half of the subject the dead question happened to be carrying.
     """
+    if _refines_standing_subject(verdict):
+        return
     filters = pending.payload.get("filters")
     if not isinstance(filters, dict):
         return
@@ -560,7 +586,7 @@ def _answer_outstanding(state: State, pending: Pending, verdict: dict[str, Any],
         # here - the owner's S6 cluster 4 ruling keeps the question open across an
         # aside, and it is the entity that makes this one a different subject.
         trace.rules_fired.append("outstanding_pending_dropped")
-        _drop_question_subject(focus, pending)
+        _drop_question_subject(focus, pending, verdict)
         return focus, None, None, False
 
     # A document named in the message is a NEW SCOPE, and it is read FIRST - before the
@@ -845,7 +871,7 @@ def _focus_rules(
             # whole scope, on every axis. It is only ever stamped by a pick that has
             # already folded in whatever it means to keep.
             shared = frozenset(KIND_FIELD_MAP)
-        elif verdict.get("scope_exclusive"):
+        elif _refines_standing_subject(verdict):
             # A REFINEMENT narrows the standing subject and evicts nothing (hand pass 3
             # row 3, browser pass 6 item 3). `scope_exclusive` is the parser's own "only"
             # marker, and it is what tells the two measured turns apart - both name a
