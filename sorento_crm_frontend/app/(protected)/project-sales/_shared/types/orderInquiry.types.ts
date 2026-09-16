@@ -66,7 +66,7 @@ export interface OrderInquiryBundledWith {
   /** The anchor row's OWN coverage ("1 of 1"), resolved server-side (review round 1
    * item 8) - never resolved client-side by scanning a page's own loaded rows, which
    * is only ever right when the anchor happens to be on the SAME page as this row.
-   * Null when the anchor has no links of its own yet ("Not found (new order)"). */
+   * Null when the anchor has no links of its own yet ("Nothing linked yet", S5). */
   anchor_headline: string | null;
 }
 
@@ -123,6 +123,18 @@ export interface OrderInquiryLink {
    * where it goes. Null on a `po`-kind link and on an SPO the book named no source for.
    */
   source_po_number?: string | null;
+  /**
+   * WRITTEN NOWHERE (PLAN-scm-oi-worklist-excel-parity.md, R-E): an SPO entry the SPO
+   * column shows because the row's linked PO line has an open SPO allocation for the
+   * same product, marked "via PO" - not a link a person or the cascade made. Absent or
+   * false on every link written today.
+   */
+  derived?: boolean;
+  /**
+   * The mirror: this `po`-kind entry's `source_po_number` is itself read off an SPO
+   * link, so the PO column marks it "via SPO" (R-E). Absent or false otherwise.
+   */
+  derived_po?: boolean;
 }
 
 /**
@@ -386,10 +398,39 @@ export interface OrderInquiryWorklistParams {
    * because both mean the same thing to purchasing - nobody has said yes to this yet.
    */
   ack?: OrderInquiryAckState | 'to_confirm';
+  /** The row's Location column, equality (S1, R-K). Warehouse code, never a UUID. */
+  location?: string;
+  /** The row's Agent column, equality (S1, R-K). The sales agent's id. */
+  agent?: string;
+  /** `YYYY-MM` on the SO date (S1, R-K) - the "SO month" filter. */
+  so_month?: string;
+  /**
+   * Prefix, case-insensitive (S1, R-K): a row's PO link document, or an SPO link's
+   * `source_po_number`.
+   */
+  po_number?: string;
+  /** Prefix, case-insensitive (S1, R-K): a row's SPO link (own or derived, S5). */
+  spo_number?: string;
+  /**
+   * The bounds of one schedule-matrix cell's own period (S3): a click's drilldown asks
+   * the list for exactly this cell's axis + period rather than reading rows back out of
+   * the matrix response. `YYYY-MM-DD`, inclusive both ends.
+   */
+  delivery_from?: string;
+  delivery_to?: string;
   page?: number;
   limit?: number;
   sort?: string;
   dir?: 'asc' | 'desc';
+}
+
+/**
+ * The matrix's own request (S3): the same list filters, plus which axis and which date
+ * cut. `GET {BASE}/order-inquiries/matrix?axis=&by=&<list filters>`.
+ */
+export interface OrderInquiryMatrixParams extends OrderInquiryWorklistParams {
+  axis: OrderInquiryMatrixAxis;
+  by: OrderInquiryMatrixGranularity;
 }
 
 export interface OrderInquiryWorklistEnvelope {
@@ -452,6 +493,13 @@ export interface OrderInquiryWorklistSummary {
   projects: OrderInquiryFacet[];
   /** The people who raised the rows in view, id + name. The "Raised by" filter's list. */
   raised_by: OrderInquiryFacet[];
+  /**
+   * The Location and Agent filters' own lists (S1, R-K), each computed with its own
+   * filter dropped like every other axis here. Optional while the backend still answers
+   * without them (Phase 1 mock) - the select then renders empty rather than erroring.
+   */
+  locations?: OrderInquiryFacet[];
+  agents?: OrderInquiryFacet[];
   /**
    * The three cards above both views: quantity linked to SPO allocations, quantity
    * linked to purchase order lines, and the unlinked remainder that still has to be
@@ -526,13 +574,16 @@ export interface AcknowledgeResult {
 
 /* --------------------------------------------------------- the schedule matrix
  *
- * A 2D read of the SAME worklist rows the list shows (D1, reworked): the captain wanted
+ * A 2D read of the same worklist rows the list shows (D1, reworked): the captain wanted
  * "vertically I can see by product, by sales order, by customer, by agent, then
  * horizontally is the dates ... by date, by month, by year" - a matrix like the
- * fulfilment planning board's, not a day-grid calendar. Built entirely CLIENT-SIDE off
- * one unpaged fetch of the already-filtered worklist: there is nothing here the server
- * needs to compute that grouping the rows in the browser cannot answer just as well, and
- * a second endpoint would be a second idea of what a row is.
+ * fulfilment planning board's, not a day-grid calendar.
+ *
+ * S3 (16 Sep 2026): computed SERVER-SIDE now, not client-side off an unpaged list fetch -
+ * the old approach capped at `MATRIX_FETCH_LIMIT` (1,000) rows and a delivery-filtered
+ * worklist has already exceeded that on prod. `GET {BASE}/order-inquiries/matrix?axis=
+ * &by=&<list filters>` groups the SAME filtered set server-side, one row GROUP BY, and
+ * answers every bucket rather than the first 1,000 rows' worth of them.
  */
 
 /** The vertical axis the captain named, in the order they named it. */
@@ -541,33 +592,43 @@ export type OrderInquiryMatrixAxis = 'product' | 'sales_order' | 'customer' | 'a
 /** How the date axis is cut. Week is the default, matching the planning board's own. */
 export type OrderInquiryMatrixGranularity = 'day' | 'week' | 'month' | 'year';
 
-export type OrderInquiryMatrixBucketKind = 'dated' | 'no_date';
-
-/** One column. Only buckets a row actually owes exist - never a full calendar grid. */
-export interface OrderInquiryMatrixBucket {
-  key: string;
-  kind: OrderInquiryMatrixBucketKind;
-  label: string;
-  /** ISO date of the bucket's start, dated buckets only. The ordering key. */
-  start?: string | null;
+/**
+ * One cell of the matrix, exactly as the server answers it (contract section 6): this
+ * axis value, by this date bucket, across every matching row that lands there.
+ *
+ * `axis_key`/`period` are never rendered (no UUIDs in the UI); `axis_label` is. `period`
+ * is the ISO date the bucket STARTS on - week buckets start Monday, month/year bucket on
+ * the first of the month/year - and is also the bucket's own ordering and grouping key,
+ * so the FE never invents a second one. `buy`/`po`/`spo` are the stage sums of R-F, and
+ * `rows` is the ROW COUNT summed into the cell, not the rows themselves: a click drills
+ * down by asking the list for this cell's own axis + period, never by reading rows back
+ * out of the matrix response (S3, "the drilldown keeps calling the list").
+ */
+export interface OrderInquiryMatrixCell {
+  axis_key: string;
+  axis_label: string;
+  period: string;
+  qty: string;
+  buy: string;
+  po: string;
+  spo: string;
+  rows: number;
 }
 
-/** One row, whichever axis produced it. `key` is never rendered; `label` is. */
+/** One row of the table, built off the distinct `axis_key`/`axis_label` pairs the
+ * server's cells carry. `key` is never rendered; `label` is. */
 export interface OrderInquiryMatrixRow {
   key: string;
   label: string;
-  /** Secondary text - a product's name under its code, an agent's name under their code. */
-  description?: string | null;
 }
 
-/** One cell: this row, by this bucket, across every worklist row that lands there. */
-export interface OrderInquiryMatrixCell {
-  row_key: string;
-  bucket_key: string;
-  /** Summed across every contributing row. Decimal STRING, same reason the rows are. */
-  qty: string;
-  /** The contributing rows themselves - what a click on the cell drills down to. */
-  rows: OrderInquiryWorklistRow[];
+/** One column of the table, built off the distinct `period` values the server's cells
+ * carry, labelled client-side for the chosen granularity. */
+export interface OrderInquiryMatrixBucket {
+  key: string;
+  label: string;
+  /** ISO date of the bucket's start - the ordering key, same value as `period`. */
+  start: string;
 }
 
 /* --------------------------------------------------------- Place on PO (section G, G2)

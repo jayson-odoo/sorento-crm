@@ -11,11 +11,7 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
-import {
-  ackStateOf,
-  isBulkRejectable,
-  previousValueOf,
-} from '../../_shared/lib/orderInquiryAck';
+import { ackStateOf, previousValueOf } from '../../_shared/lib/orderInquiryAck';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   bundledHeadline,
@@ -76,22 +72,40 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
  * partly shipped row carries both a `po` link and an `spo` link naming the same purchase
  * order, and the list must not read that as two.
  */
-function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): string[] {
-  const numbers: string[] = [];
+/**
+ * One document number for this cell's book, and whether it is DERIVED (S5, R-E) - the
+ * PO column's number read off an SPO link's `source_po_number` (`via: 'spo'`), or the
+ * SPO column's number that is really the linked PO's own open shipment (`via: 'po'`).
+ * Written nowhere: no link is created for either, so `via` never appears outside these
+ * two columns.
+ */
+interface DocumentEntry {
+  document: string;
+  via: 'po' | 'spo' | null;
+}
+
+function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
+  const entries: DocumentEntry[] = [];
+  const seen = new Set<string>();
   for (const link of row.links ?? []) {
-    const named =
-      kind === 'po'
-        ? link.kind === 'po'
-          ? link.document
-          : link.source_po_number
-        : link.kind === 'spo'
-          ? link.document
-          : null;
+    let named: string | null = null;
+    let via: 'po' | 'spo' | null = null;
+    if (kind === 'po') {
+      if (link.kind === 'po') named = link.document;
+      else if (link.kind === 'spo' && link.source_po_number) {
+        named = link.source_po_number;
+        via = link.derived_po ? 'spo' : null;
+      }
+    } else if (link.kind === 'spo') {
+      named = link.document;
+      via = link.derived ? 'po' : null;
+    }
     const document = (named ?? '').trim();
-    if (!document || numbers.includes(document)) continue;
-    numbers.push(document);
+    if (!document || seen.has(document)) continue;
+    seen.add(document);
+    entries.push({ document, via });
   }
-  return numbers;
+  return entries;
 }
 
 /**
@@ -133,13 +147,27 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       <button
         type="button"
         data-testid={triggerId}
-        title={first}
+        title={first.document}
         aria-label={`Show documents backing ${what}`}
         className="block min-w-0 truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={open_}
       >
-        {first}
+        {first.document}
       </button>
+      {/* S5, R-E: never a real link - the SAME allocation read the other book's own
+          number off (an SPO's `source_po_number`, or the PO's own open shipment). */}
+      {first.via ? (
+        <span
+          data-testid={
+            kind === 'spo'
+              ? `backing-documents-via-spo-${row.id}`
+              : `backing-documents-via-${row.id}`
+          }
+          className="shrink-0 text-2xs text-muted-foreground"
+        >
+          {first.via === 'po' ? 'via PO' : 'via SPO'}
+        </span>
+      ) : null}
       {rest.length ? (
         <Badge asChild size="sm" variant="secondary" appearance="light">
           <button
@@ -297,18 +325,16 @@ export function useOrderInquiryWorklistColumns({
       ...(selectable
         ? [
             buildSelectColumn<OrderInquiryWorklistRow>({
-              // Only a row Reject may still take is tickable now (S1): every row is born
-              // acknowledged, so there is no Confirm press left for the tick to feed, and
-              // Reject is the last remaining bulk action gated on the row's own state.
-              enableRow: (row) => isBulkRejectable(row.original),
+              // Informational only - TanStack reads `getCanSelect` off the TABLE's own
+              // `enableRowSelection`, never a column's (`OrderInquiriesClient`'s own
+              // note over the same trap), which is where R-A's rule actually lives now
+              // (S4, PLAN-scm-oi-worklist-excel-parity.md): every row except `cancelled`
+              // ticks, fully linked rows included. Kept here only so this column's own
+              // `disabledReason` still applies to the one row the table itself blocks.
               disabledReason: (row) =>
-                ackStateOf(row.original) === 'rejected'
-                  ? 'Rejected rows go back to CS, not to purchasing'
-                  : row.original.state === 'cancelled'
-                    ? 'This instruction was called off'
-                    : row.original.state === 'actioned'
-                      ? 'This row has already been answered'
-                      : 'Nothing left to act on',
+                row.original.state === 'cancelled'
+                  ? 'This instruction was called off'
+                  : undefined,
               rowLabel: (row) =>
                 `Select ${row.original.item_code ?? 'row'} on ${row.original.so_number ?? 'this order'}`,
             }),
@@ -514,7 +540,7 @@ export function useOrderInquiryWorklistColumns({
         // The column id stays `po_number`: it is what a saved column layout is keyed by,
         // and renaming it would silently exile the column to the right of everyone's grid.
         id: 'po_number',
-        accessorFn: (row) => documentsOf(row, 'po')[0] ?? '',
+        accessorFn: (row) => documentsOf(row, 'po')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
         size: 150,
         meta: { headerTitle: 'PO', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -550,14 +576,13 @@ export function useOrderInquiryWorklistColumns({
             }
           }
           if ((row.original.links ?? []).length === 0) {
-            // Nothing in either book can cover this row, so it is a NEW order rather
-            // than an oversight (AC-A7). "Not linked" read as a step somebody had
-            // forgotten to take; the links are drafted the moment a row is raised now,
-            // so an empty cell means the cascade looked and found nothing. Nothing is
+            // Nothing in either book can cover this row (S5, AC-D4): a plain dash, the
+            // same "no explanation in the UI" rule every other blank cell here follows -
+            // "Not found (new order)" read as a caption nobody asked for. Nothing is
             // clickable: there is nothing behind it to open.
             return (
               <div className="min-w-0">
-                <Muted>Not found (new order)</Muted>
+                <Muted>-</Muted>
               </div>
             );
           }
@@ -571,7 +596,7 @@ export function useOrderInquiryWorklistColumns({
         // and a new column rather than a second line in the PO cell, because "I want all
         // rows to have 1 line only".
         id: 'spo_number',
-        accessorFn: (row) => documentsOf(row, 'spo')[0] ?? '',
+        accessorFn: (row) => documentsOf(row, 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
         size: 160,
         meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -582,11 +607,16 @@ export function useOrderInquiryWorklistColumns({
           const bundledQty = Number(row.original.bundled_qty ?? '0');
           const bundled =
             row.original.bundled_with && Number.isFinite(bundledQty) && bundledQty > 0;
-          return bundled ? (
-            <Muted>-</Muted>
-          ) : (
-            <DocumentsCell row={row.original} kind="spo" />
-          );
+          if (bundled) return <Muted>-</Muted>;
+          // S5, AC-D4: bought but not yet on a shipment - distinct from a plain dash,
+          // which means nobody has put this row anywhere at all.
+          if (
+            documentsOf(row.original, 'spo').length === 0 &&
+            documentsOf(row.original, 'po').length > 0
+          ) {
+            return <Muted>awaiting shipment</Muted>;
+          }
+          return <DocumentsCell row={row.original} kind="spo" />;
         },
       },
       {

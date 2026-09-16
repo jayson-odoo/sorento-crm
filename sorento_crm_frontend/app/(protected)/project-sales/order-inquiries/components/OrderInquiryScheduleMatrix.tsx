@@ -2,16 +2,14 @@
 
 import * as React from 'react';
 import { cn } from '@/lib/utils';
-import { VERB_PALETTE_KEY } from '../../_shared/components/OrderInquiryVerbPill';
 import { SupplyBar } from '../../_shared/components/SupplyBar';
 import {
   KIND_COLOURS,
   KIND_LABELS,
-  fullyLinked,
+  fullyLinkedTotals,
   kindText,
-  segmentsOfRows,
+  segmentsOfTotals,
 } from '../../_shared/lib/orderInquiryKinds';
-import { dominantVerbOf } from '../../_shared/lib/orderInquiryMatrix';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryMatrixBucket,
@@ -57,7 +55,7 @@ export function OrderInquiryScheduleMatrix({
 }) {
   const byKey = React.useMemo(() => {
     const map = new Map<string, OrderInquiryMatrixCell>();
-    for (const cell of cells) map.set(`${cell.row_key}|${cell.bucket_key}`, cell);
+    for (const cell of cells) map.set(`${cell.axis_key}|${cell.period}`, cell);
     return map;
   }, [cells]);
 
@@ -109,13 +107,13 @@ export function OrderInquiryScheduleMatrix({
                   'sticky left-0 border-b border-e border-border bg-background px-2 py-1.5 text-start font-medium',
                 )}
               >
-                <span className="block truncate" title={row.description || row.label}>
+                <span className="block truncate" title={row.label}>
                   {row.label}
                 </span>
               </th>
 
               {buckets.map((bucket) => {
-                const cell = byKey.get(`${row.key}|${bucket.key}`);
+                const cell = byKey.get(`${row.key}|${bucket.key}`) ?? undefined;
                 return (
                   <td
                     key={bucket.key}
@@ -134,14 +132,6 @@ export function OrderInquiryScheduleMatrix({
   );
 }
 
-/** A cheap dot, coloured by whichever verb most of the cell's rows carry. */
-const VERB_DOT_CLASS: Record<string, string> = {
-  pending: 'bg-amber-500',
-  processed_by_cs: 'bg-emerald-500',
-  submitted: 'bg-sky-500',
-  rejected: 'bg-red-500',
-};
-
 function MatrixCellButton({
   cell,
   onOpen,
@@ -149,17 +139,13 @@ function MatrixCellButton({
   cell: OrderInquiryMatrixCell;
   onOpen: () => void;
 }) {
-  const rowCount = cell.rows.length;
-  const dominantVerb = dominantVerbOf(cell.rows);
-  const paletteKey = dominantVerb ? (VERB_PALETTE_KEY[dominantVerb] ?? 'draft') : 'draft';
+  const rowCount = cell.rows;
   // What this cell's quantity still needs, the way the board reads a cell (AC-I12): a
-  // segment per kind under the figure, and the same words beside it. Solid when every
-  // row is wholly on a document, faded while any of it is still only an instruction.
-  const segments = segmentsOfRows(cell.rows);
+  // segment per stage under the figure, and the same words beside it - read off the
+  // SERVER's own buy/po/spo sums (S3), never recomputed from rows the matrix no longer
+  // holds. Solid when every unit has reached a document, faded while any of it is Buy.
+  const segments = segmentsOfTotals(cell);
   const supply = kindText(segments);
-  // The figure is what is STILL OWED here (`buildOrderInquiryMatrix` leaves a cancelled
-  // row out of it), so it and the words under it always add up. The row count is the
-  // whole cell all the same, cancelled rows included: it says what a click opens.
   const label = `${formatInquiryQty(cell.qty)} owed, ${rowCount} row${
     rowCount === 1 ? '' : 's'
   }${supply ? `, ${supply}` : ''}`;
@@ -169,17 +155,13 @@ function MatrixCellButton({
       type="button"
       onClick={onOpen}
       aria-label={label}
-      className="flex w-full items-start gap-1.5 px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+      className="flex w-full items-start px-2 py-1.5 text-start hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
     >
-      <span
-        aria-hidden
-        className={cn('mt-1 size-1.5 shrink-0 rounded-full', VERB_DOT_CLASS[paletteKey] ?? 'bg-muted-foreground')}
-      />
       <span className="flex min-w-0 grow flex-col gap-0.5">
         <span className="font-medium tabular-nums">{formatInquiryQty(cell.qty)}</span>
         <SupplyBar
           segments={segments}
-          decided={fullyLinked(cell.rows)}
+          decided={fullyLinkedTotals(cell)}
           labels={KIND_LABELS}
           colours={KIND_COLOURS}
         />

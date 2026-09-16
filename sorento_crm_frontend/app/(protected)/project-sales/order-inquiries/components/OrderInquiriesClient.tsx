@@ -66,6 +66,7 @@ import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllO
 import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 import {
   useOrderInquiryHandshake,
+  useOrderInquiryMatrix,
   useOrderInquiryWorklist,
   useOrderInquiryWorklistSummary,
   useUnplaceAllPreview,
@@ -74,6 +75,7 @@ import {
 import {
   ACK_ANY,
   ACK_FILTER_OPTIONS,
+  ackStateOf,
   isBulkRejectable,
 } from '../../_shared/lib/orderInquiryAck';
 import {
@@ -91,22 +93,43 @@ import { buildOrderInquiryMatrix } from '../../_shared/lib/orderInquiryMatrix';
 import { deliveryMonthLabel } from '../../_shared/lib/orderInquiryWorklist';
 import { saveBlobAs } from '../../_shared/services/fileDownload';
 import {
+  autoPlaceOrderInquiryRows,
   downloadOrderInquiryWorklistXlsx,
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
 import type {
+  OrderInquiryAckFields,
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
+  OrderInquiryMatrixParams,
   OrderInquiryWorklistParams,
 } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldown';
+import { OrderInquiryMonthStrip } from './OrderInquiryMonthStrip';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+
+/** "Link selected (2 of 3)", or "Link selected (3)" when every ticked row is eligible
+ * (S4, AC-T2): the count is never "of n" when a === n, which would say the obvious. */
+function countLabel(base: string, eligible: number, ticked: number): string {
+  return eligible === ticked ? `${base} (${ticked})` : `${base} (${eligible} of ${ticked})`;
+}
+
+/** A row this screen still owes a document to (S4, R-A/R-B): raised, partly linked or
+ * placed, some quantity still unlinked, and not a row CS has already refused. */
+function isLinkable(
+  row: OrderInquiryAckFields & { state: string; qty: string; linked_qty?: string },
+): boolean {
+  if (!['raised', 'partly_linked', 'placed'].includes(row.state)) return false;
+  const unlinked = Number(row.qty ?? '0') - Number(row.linked_qty ?? '0');
+  if (!(unlinked > 0)) return false;
+  return ackStateOf(row) !== 'rejected';
+}
 
 /**
  * WHETHER anything in either book covers the row, and out of which one (AC-D15). The
@@ -171,12 +194,21 @@ function matrixGranularityFrom(
 }
 
 /**
- * The unpaged fetch the Schedule view groups client-side, the same limit-1000 idiom the
- * old day drilldown used. A delivery-filtered worklist has never approached that many rows
- * in practice; if one ever does, the fix is a real server-side aggregate, not a bigger
- * number here.
+ * The SO month filter's own options (S1, R-K): a 24-month window, this month centred,
+ * since the backend answers no facet for it yet (unlike delivery month, which is read
+ * off the rows that actually exist). `deliveryMonthLabel` reads the same `YYYY-MM` shape
+ * the sheet tabs do, so this filter and the month strip spell a month identically.
  */
-const MATRIX_FETCH_LIMIT = 1000;
+function soMonthOptions(): { value: string; label: string }[] {
+  const now = new Date();
+  const options: { value: string; label: string }[] = [];
+  for (let offset = -12; offset < 12; offset += 1) {
+    const date = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    options.push({ value, label: deliveryMonthLabel(value) ?? value });
+  }
+  return options;
+}
 
 /** Same slug the backend gates `unplace-all(-preview)` and `mark`/`auto-place` on. */
 const ORDER_INQUIRY_ACTION_PERMISSION = 'projects.order_inquiry.action';
@@ -238,6 +270,7 @@ export function OrderInquiriesClient() {
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
   const { linkNow } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
+  const [linkingSelected, setLinkingSelected] = React.useState(false);
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
@@ -253,12 +286,33 @@ export function OrderInquiriesClient() {
     debouncedValue: debounced,
     isSettling: debouncedSettling,
   } = useDebouncedSearch(searchParams.get('query') ?? '');
-  const [month, setMonth] = React.useState('');
+  // S2, AC-M2: the month tab strip's own selection, URL-synced like `view`/`query` -
+  // reading `?delivery_month=` on mount so a reload or a shared link keeps the tab.
+  const [month, setMonth] = React.useState(
+    () => searchParams.get('delivery_month') ?? '',
+  );
   const [supplierFilter, setSupplierFilter] = React.useState('');
   const [projectFilter, setProjectFilter] = React.useState('');
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
+  // S1, R-K: Location, Agent, SO month, PO number, SPO number. The last two are text -
+  // a buyer types the number they already hold, never picks it from a list - so they
+  // get the same debounce the search box does rather than filtering on every keystroke.
+  const [locationFilter, setLocationFilter] = React.useState('');
+  const [agentFilter, setAgentFilter] = React.useState('');
+  const [soMonthFilter, setSoMonthFilter] = React.useState('');
+  const {
+    value: poNumberInput,
+    setValue: setPoNumberInput,
+    debouncedValue: poNumberFilter,
+  } = useDebouncedSearch('');
+  const {
+    value: spoNumberInput,
+    setValue: setSpoNumberInput,
+    debouncedValue: spoNumberFilter,
+  } = useDebouncedSearch('');
+  const soMonthChoices = React.useMemo(() => soMonthOptions(), []);
   // Sourced from `?ack=` on mount and kept URL-synced, like `view` and `query`: the plan
   // page's "N to confirm" chip links straight into this list narrowed to them, and a chip
   // that landed on an unfiltered list would leave the buyer to find them. With NO `?ack=`
@@ -372,6 +426,10 @@ export function OrderInquiriesClient() {
     else next.set('granularity', matrixGranularity);
     if (debounced) next.set('query', debounced);
     else next.delete('query');
+    // S2, AC-M2: "All" (the default) carries no param; any other tab does, so a reload
+    // or a shared link opens on the same tab the buyer pressed.
+    if (month) next.set('delivery_month', month);
+    else next.delete('delivery_month');
     // A CLEARED Confirmed filter says so out loud, because an absent `ack` is what the
     // DEFAULT is read from (AC-D12): dropping the parameter would put To confirm back on
     // the next reload and read as the clear having failed.
@@ -393,6 +451,7 @@ export function OrderInquiriesClient() {
     matrixAxis,
     matrixGranularity,
     debounced,
+    month,
     ackFilter,
     linkUpTo,
     horizonCleared,
@@ -420,6 +479,11 @@ export function OrderInquiriesClient() {
     linkedFilter,
     ackFilter,
     kindFilter,
+    locationFilter,
+    agentFilter,
+    soMonthFilter,
+    poNumberFilter,
+    spoNumberFilter,
   ]);
 
   const filters = React.useMemo(
@@ -432,6 +496,14 @@ export function OrderInquiriesClient() {
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
       ack: (ackFilter || undefined) as OrderInquiryWorklistParams['ack'],
+      // S1, R-K. The backend does not read these yet (Phase 1 mock contract) - forwarded
+      // all the same so the page keeps working once it does, and unknown params are
+      // ignored server-side in the meantime.
+      location: locationFilter || undefined,
+      agent: agentFilter || undefined,
+      so_month: soMonthFilter || undefined,
+      po_number: poNumberFilter || undefined,
+      spo_number: spoNumberFilter || undefined,
     }),
     [
       debounced,
@@ -442,6 +514,11 @@ export function OrderInquiriesClient() {
       raisedByFilter,
       linkedFilter,
       ackFilter,
+      locationFilter,
+      agentFilter,
+      soMonthFilter,
+      poNumberFilter,
+      spoNumberFilter,
     ],
   );
 
@@ -513,28 +590,23 @@ export function OrderInquiriesClient() {
     storeLinkHorizon(linkUpTo || (horizonCleared ? NO_LINK_HORIZON : null));
   }, [horizonCleared, linkUpTo]);
 
-  // The Schedule view's own request: the same filters, unpaged, so the matrix groups
-  // exactly what the list would otherwise page through.
-  const matrixParams = React.useMemo(
+  // The Schedule view's own request (S3): the same filters, plus the axis and the date
+  // cut - a server-side GROUP BY now, not an unpaged list fetch grouped in the browser,
+  // so there is no more row cap.
+  const matrixParams = React.useMemo<OrderInquiryMatrixParams>(
     () => ({
       ...listFilters,
-      limit: MATRIX_FETCH_LIMIT,
-      sort: 'delivery_date',
-      dir: 'asc' as const,
+      axis: matrixAxis,
+      by: matrixGranularity,
     }),
-    [listFilters],
+    [listFilters, matrixAxis, matrixGranularity],
   );
-  const matrixList = useOrderInquiryWorklist(matrixParams, {
+  const matrixQuery = useOrderInquiryMatrix(matrixParams, {
     enabled: view === 'schedule',
   });
   const matrix = React.useMemo(
-    () =>
-      buildOrderInquiryMatrix(
-        matrixList.data?.data ?? [],
-        matrixAxis,
-        matrixGranularity,
-      ),
-    [matrixList.data, matrixAxis, matrixGranularity],
+    () => buildOrderInquiryMatrix(matrixQuery.data?.data ?? [], matrixGranularity),
+    [matrixQuery.data, matrixGranularity],
   );
 
   const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
@@ -549,7 +621,12 @@ export function OrderInquiriesClient() {
     raisedByFilter ||
     linkedFilter ||
     ackFilter ||
-    kindFilter,
+    kindFilter ||
+    locationFilter ||
+    agentFilter ||
+    soMonthFilter ||
+    poNumberFilter ||
+    spoNumberFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -622,18 +699,14 @@ export function OrderInquiriesClient() {
     state: { pagination, sorting, rowSelection },
     // The PREDICATE lives on the table, which is where TanStack reads `getCanSelect` from -
     // a column-level `enableRowSelection` is silently ignored, and every row would tick
-    // (`FulfilmentPlanningClient` carries the same note over the same trap). As a plain
-    // boolean this let a cancelled or already-acknowledged row be ticked, and the press
-    // then failed on the whole batch.
-    // The tick feeds TWO presses now (S1 retires Confirm): Reject, gated on
-    // `isBulkRejectable` since Reject applies to any still-owed row whatever its
-    // handshake reads; Link selected / Unlink selected, gated on the action grant and a
-    // supply state that still has something to link or unlink.
-    enableRowSelection: (row) =>
-      (canAcknowledge && isBulkRejectable(row.original)) ||
-      (canBulkLink &&
-        row.original.state !== 'cancelled' &&
-        row.original.state !== 'actioned'),
+    // (`FulfilmentPlanningClient` carries the same note over the same trap).
+    //
+    // R-A (S4, PLAN-scm-oi-worklist-excel-parity.md): every row except `cancelled` ticks,
+    // fully linked rows included - there is no per-row disabled checkbox any more. Each
+    // Action counts its OWN eligible subset off the ticked rows instead (`selectedLinkable`
+    // / `selectedLinked` / `selectedRejectable` below) and says so in its own label, so a
+    // row ineligible for Link can still be ticked to Reject in the same batch.
+    enableRowSelection: (row) => row.original.state !== 'cancelled',
     onRowSelectionChange: setRowSelection,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
@@ -651,14 +724,18 @@ export function OrderInquiriesClient() {
   const selectedLinked = selectedRows.filter(
     (row) => row.state === 'placed' || row.state === 'partly_linked',
   );
+  // Still owed a document (S4, R-A/R-B): what "Link selected" acts on. `isLinkable`
+  // holds the same three tests the column header comment above states.
+  const selectedLinkable = selectedRows.filter((row) => isLinkable(row));
   // Every OWED row, linked or not (plan section 1): with drafts written at raise most
   // rows in front of purchasing are already `placed`, so a Reject that only took
   // unlinked ones would refuse almost nothing.
   const selectedRejectable = selectedRows.filter((row) =>
     isBulkRejectable(row),
   );
-  // The manual Link dialog is a ONE-row override (R8), so it is offered at exactly one
-  // tick: two ticked rows would leave the page choosing which of them it meant.
+  // The manual Link dialog is a ONE-row override (R8/S4 "Choose document"), so it is
+  // offered at exactly one tick: two ticked rows would leave the page choosing which of
+  // them it meant.
   const linkTarget =
     selectedRows.length === 1 ? (selectedRows[0] ?? null) : null;
   const linkingRow = linkingRowId
@@ -681,6 +758,39 @@ export function OrderInquiriesClient() {
       toast.error(error instanceof Error ? error.message : 'Failed to unlink');
     } finally {
       setUnlinkingSelected(false);
+    }
+  }
+
+  /**
+   * "Link selected" (S4, R-B): the cascade for exactly the ticked, still-linkable rows -
+   * `POST /order-inquiries/auto-place` with `row_ids`, distinct from "Auto link all…"
+   * which runs over every eligible row in the company. `skipped` is not on the wire
+   * (`AutoPlaceResult` carries `placed_rows` and `after_horizon` only) so it is read as
+   * the remainder of what was asked for - the cascade is idempotent, so nothing here is
+   * lost by not naming it, only summarised.
+   */
+  async function linkSelected() {
+    if (selectedLinkable.length === 0) return;
+    setLinkingSelected(true);
+    try {
+      const rowIds = selectedLinkable.map((row) => row.id);
+      const result = await autoPlaceOrderInquiryRows({ row_ids: rowIds });
+      const placed = result.placed_rows ?? 0;
+      const afterHorizon = result.after_horizon ?? 0;
+      const skipped = Math.max(rowIds.length - placed - afterHorizon, 0);
+      const parts = [`${placed} linked`];
+      if (skipped > 0) parts.push(`${skipped} skipped`);
+      if (afterHorizon > 0) parts.push(`${afterHorizon} after the link horizon`);
+      toast.success(parts.join(', '));
+      setRowSelection({});
+      void list.refetch();
+      void summary.refetch();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Failed to link those rows',
+      );
+    } finally {
+      setLinkingSelected(false);
     }
   }
 
@@ -722,66 +832,377 @@ export function OrderInquiriesClient() {
     (raisedByFilter ? 1 : 0) +
     (linkedFilter ? 1 : 0) +
     (ackFilter ? 1 : 0) +
-    (kindFilter ? 1 : 0);
+    (kindFilter ? 1 : 0) +
+    (locationFilter ? 1 : 0) +
+    (agentFilter ? 1 : 0) +
+    (soMonthFilter ? 1 : 0) +
+    (poNumberFilter ? 1 : 0) +
+    (spoNumberFilter ? 1 : 0);
 
-  const openCellRow = openCell
-    ? matrix.rows.find((row) => row.key === openCell.row_key)
-    : undefined;
+  // S3: the cell already carries its own axis label; only the bucket's granularity-aware
+  // reading (`buildOrderInquiryMatrix`'s own label) still has to be looked up.
   const openCellBucket = openCell
-    ? matrix.buckets.find((bucket) => bucket.key === openCell.bucket_key)
+    ? matrix.buckets.find((bucket) => bucket.key === openCell.period)
     : undefined;
+
+  // S2, R-H: the List | Schedule toggle, moved into the PageHeader's own right slot -
+  // same line as the title rather than a separate row above the cards.
+  const viewToggle = (
+    <div
+      className="inline-flex rounded-md border border-input"
+      role="group"
+      aria-label="Order inquiry view"
+    >
+      <Button
+        type="button"
+        size="sm"
+        variant={view === 'list' ? 'primary' : 'ghost'}
+        className="rounded-e-none"
+        aria-pressed={view === 'list'}
+        onClick={() => setView('list')}
+      >
+        <List className="size-4" aria-hidden />
+        List
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant={view === 'schedule' ? 'primary' : 'ghost'}
+        className="rounded-s-none border-s border-input"
+        aria-pressed={view === 'schedule'}
+        onClick={() => setView('schedule')}
+      >
+        <LayoutGrid className="size-4" aria-hidden />
+        Schedule
+      </Button>
+    </div>
+  );
+
+  // S1, R-K: the Filters popover's own content, shared between the List toolbar and the
+  // Schedule toolbar (both mount the SAME `toolbarElement` below, never two copies of
+  // this JSX) - one filter UI, whichever view happens to be on screen.
+  const filtersContent = (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Location</Label>
+        <SearchableSelect
+          value={locationFilter}
+          onChange={setLocationFilter}
+          clearable
+          options={(summary.data?.locations ?? []).map((entry) => ({
+            value: entry.id,
+            label: `${entry.label} (${entry.rows})`,
+          }))}
+          placeholder="Every location"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Agent</Label>
+        <SearchableSelect
+          value={agentFilter}
+          onChange={setAgentFilter}
+          clearable
+          options={(summary.data?.agents ?? []).map((entry) => ({
+            value: entry.id,
+            label: `${entry.label} (${entry.rows})`,
+          }))}
+          placeholder="Every agent"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">SO month</Label>
+        <SearchableSelect
+          value={soMonthFilter}
+          onChange={setSoMonthFilter}
+          clearable
+          options={soMonthChoices}
+          placeholder="Every month"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground" htmlFor="po-number-filter">
+          PO number
+        </Label>
+        <Input
+          id="po-number-filter"
+          value={poNumberInput}
+          onChange={(event) => setPoNumberInput(event.target.value)}
+          placeholder="202605"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground" htmlFor="spo-number-filter">
+          SPO number
+        </Label>
+        <Input
+          id="spo-number-filter"
+          value={spoNumberInput}
+          onChange={(event) => setSpoNumberInput(event.target.value)}
+          placeholder="SPO-2026/07"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Linked</Label>
+        <SearchableSelect
+          value={linkedFilter}
+          onChange={setLinkedFilter}
+          clearable
+          options={LINKED_OPTIONS}
+          placeholder="Anywhere"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Confirmed</Label>
+        <SearchableSelect
+          value={ackFilter}
+          onChange={setAckFilter}
+          clearable
+          options={ACK_FILTER_OPTIONS.map((option) => {
+            const count =
+              summary.data?.ack?.[
+                option.value as keyof NonNullable<typeof summary.data.ack>
+              ];
+            return {
+              value: option.value,
+              label: count === undefined ? option.label : `${option.label} (${count})`,
+            };
+          })}
+          placeholder="Any"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Supplier</Label>
+        <SearchableSelect
+          value={supplierFilter}
+          onChange={setSupplierFilter}
+          clearable
+          options={(summary.data?.suppliers ?? []).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+          }))}
+          placeholder="Every supplier"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Project</Label>
+        <SearchableSelect
+          value={projectFilter}
+          onChange={setProjectFilter}
+          clearable
+          options={(summary.data?.projects ?? []).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+          }))}
+          placeholder="Every project"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground">Raised by</Label>
+        <SearchableSelect
+          value={raisedByFilter}
+          onChange={setRaisedByFilter}
+          clearable
+          options={(summary.data?.raised_by ?? []).map((entry) => ({
+            value: entry.id,
+            label: entry.label,
+          }))}
+          placeholder="Everyone"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label className="text-xs text-muted-foreground" htmlFor="raised-on">
+          Raised on
+        </Label>
+        <Input
+          id="raised-on"
+          type="date"
+          value={raisedDate}
+          onChange={(event) => setRaisedDate(event.target.value)}
+        />
+      </div>
+      {filtersActiveCount > 0 && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full"
+          onClick={() => {
+            setMonth('');
+            setSupplierFilter('');
+            setProjectFilter('');
+            setRaisedDate('');
+            setRaisedByFilter('');
+            setLinkedFilter('');
+            setAckFilter('');
+            setLocationFilter('');
+            setAgentFilter('');
+            setSoMonthFilter('');
+            setPoNumberInput('');
+            setSpoNumberInput('');
+            // Counted above, so it is cleared here: "Clear filters" that
+            // left a card pressed would leave the screen still narrowed.
+            setKindFilter(null);
+          }}
+        >
+          Clear filters
+        </Button>
+      )}
+    </div>
+  );
+
+  // S2: the ONE toolbar (search, Filters, Columns, refresh, Actions, Upload), mounted in
+  // BOTH views rather than duplicated - `DataGridListToolbar` takes its `table` as a
+  // prop, not from a `DataGrid` context provider, so it stands on its own outside the
+  // List-only `<DataGrid>` wrapper below.
+  const toolbarElement = (
+    <DataGridListToolbar
+      table={table}
+      searchSlot={
+        <ListSearchInput
+          value={search}
+          onChange={setSearch}
+          isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
+          placeholder="Search S/O, item, PO, SPO, customer, agent"
+          aria-label="Search order inquiry rows"
+          className="w-full max-w-xs"
+        />
+      }
+      filters={{
+        kind: 'custom',
+        active: filtersActiveCount > 0,
+        activeCount: filtersActiveCount,
+        // The page opens narrowed to what purchasing has not confirmed, and a
+        // list that is short for a reason nobody stated reads as missing data.
+        activeSummary: ackChipLabel
+          ? { label: ackChipLabel, onClear: () => setAckFilter('') }
+          : undefined,
+        content: filtersContent,
+      }}
+      // Their own workbook, with their own headings and a sheet per delivery
+      // month, is the file anyone outside the system reads - so the generic
+      // selection-scoped export is replaced rather than offered beside it.
+      exportConfig={false}
+      // The bulk strip keeps its COUNT and its Clear and nothing else
+      // (item 12, AC-D13). Every press moved into the Actions menu, where
+      // each one states how many ticked rows it applies to - a strip of
+      // buttons on the left and a menu of the same names on the right was two
+      // places to look for one action.
+      bulkActions={[]}
+      secondaryActions={[
+        {
+          key: 'auto-place',
+          label: 'Auto link all…',
+          icon: Wand2,
+          onClick: () => setAutoPlacing(true),
+        },
+        ...(canBulkLink
+          ? [
+              {
+                key: 'choose-document',
+                label: 'Choose document (1)',
+                icon: Link2,
+                disabled: !linkTarget,
+                disabledReason: linkTarget
+                  ? undefined
+                  : 'Tick exactly one row to choose its document by hand.',
+                onClick: () => setLinkingRowId(linkTarget?.id ?? null),
+              },
+              {
+                key: 'link-selected',
+                label: countLabel('Link selected', selectedLinkable.length, selectedRows.length),
+                icon: Wand2,
+                disabled: selectedLinkable.length === 0 || linkingSelected,
+                disabledReason:
+                  selectedLinkable.length === 0
+                    ? 'Tick rows still needing a document to link.'
+                    : undefined,
+                onClick: () => void linkSelected(),
+              },
+              {
+                key: 'unlink-selected',
+                label: countLabel('Unlink selected', selectedLinked.length, selectedRows.length),
+                icon: Unlink,
+                disabled:
+                  selectedLinked.length === 0 || unlinkingSelected,
+                disabledReason:
+                  selectedLinked.length === 0
+                    ? 'Tick linked rows to unlink.'
+                    : undefined,
+                onClick: () => setUnlinkingSelectedOpen(true),
+              },
+            ]
+          : []),
+        ...(canAcknowledge
+          ? [
+              {
+                key: 'reject-selected',
+                label: countLabel('Reject selected', selectedRejectable.length, selectedRows.length),
+                icon: Ban,
+                destructive: true,
+                disabled: selectedRejectable.length === 0,
+                disabledReason:
+                  selectedRejectable.length === 0
+                    ? 'Tick rows purchasing still owes an answer on.'
+                    : undefined,
+                onClick: () => setRejectingSelected(true),
+              },
+            ]
+          : []),
+        {
+          key: 'unplace-all',
+          label: 'Unlink all…',
+          icon: Undo2,
+          onClick: () => setUnplacingAll(true),
+          // N1: a lacking action grant, or the preview call failing for any
+          // other reason, must never read the same as "genuinely nothing to
+          // unplace" - each says its own thing.
+          disabled:
+            !canActOnOrderInquiry ||
+            unplacePreview.isError ||
+            unplaceCount === 0,
+          disabledReason: !canActOnOrderInquiry
+            ? "You don't have permission to unlink rows"
+            : unplacePreview.isError
+              ? 'Could not check linked rows - try again'
+              : unplaceCount === 0
+                ? 'No linked rows to unlink'
+                : undefined,
+        },
+        {
+          key: 'export',
+          label: exporting ? 'Preparing…' : 'Export Excel',
+          icon: Download,
+          disabled: exporting,
+          onClick: () => void handleExport(),
+        },
+      ]}
+      // START: feeding the book is the one thing purchasing presses here now
+      // (S1, AC-1.5) - a row is born acknowledged, so there is no second press
+      // to say yes to it any more, and a one-item dropdown read as a step that
+      // was not there.
+      primaryAction={
+        canAcknowledge ? (
+          <Button type="button" size="sm" onClick={() => setUploadingBook(true)}>
+            <Upload className="size-4" aria-hidden />
+            Upload purchase orders
+          </Button>
+        ) : null
+      }
+      onRefresh={() => {
+        if (view === 'list') void list.refetch();
+        else void matrixQuery.refetch();
+        void summary.refetch();
+      }}
+      isRefreshing={
+        view === 'list'
+          ? list.isFetching && !list.isLoading
+          : matrixQuery.isFetching && !matrixQuery.isLoading
+      }
+    />
+  );
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Order inquiries">
-        {/* The date every link on this page reaches up to by default: the latest
-            completed reorder plan's own Plan until (`plan_link_horizon`). Stated here
-            because it was only ever readable inside the Auto link dialog (the captain,
-            28 Aug 2026: "show the plan until ... for visibility"). */}
-        <p
-          data-testid="oi-plan-until"
-          className="text-sm text-muted-foreground"
-        >
-          {summary.isPending
-            ? 'Plan until ...'
-            : planHorizon
-              ? `Plan until ${formatDateInMalaysia(planHorizon)}`
-              : 'No Plan until in force'}
-        </p>
-      </PageHeader>
-
-      {/* List | Schedule: the list reads the spreadsheet's own columns one page at a time;
-          the schedule reads the same rows as a 2D matrix - by product, sales order,
-          customer or agent down the side, by day, week, month or year across the top. A
-          toggle, not two pages, because it is the same worklist either way. */}
-      <div
-        className="inline-flex rounded-md border border-input"
-        role="group"
-        aria-label="Order inquiry view"
-      >
-        <Button
-          type="button"
-          size="sm"
-          variant={view === 'list' ? 'primary' : 'ghost'}
-          className="rounded-e-none"
-          aria-pressed={view === 'list'}
-          onClick={() => setView('list')}
-        >
-          <List className="size-4" aria-hidden />
-          List
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant={view === 'schedule' ? 'primary' : 'ghost'}
-          className="rounded-s-none border-s border-input"
-          aria-pressed={view === 'schedule'}
-          onClick={() => setView('schedule')}
-        >
-          <LayoutGrid className="size-4" aria-hidden />
-          Schedule
-        </Button>
-      </div>
+      <PageHeader title="Order inquiries" actions={viewToggle} />
 
       {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the
           rows in view still need, in the same colours the cells and the "Linked to"
@@ -852,8 +1273,19 @@ export function OrderInquiriesClient() {
         </Alert>
       ) : null}
 
+      {/* S2, R-G: the month tab strip, between the cards and the toolbar in BOTH
+          views - "All" first, then one tab per delivery month that has rows. */}
+      <OrderInquiryMonthStrip months={months} active={month} onSelect={setMonth} />
+
       {view === 'schedule' ? (
         <div className="space-y-4">
+          {/* S2, AC-M5: the same toolbar the List view carries - search, Filters,
+              Columns, refresh, Actions, Upload - so there is one filter UI whichever
+              view is on screen. */}
+          <Card>
+            <CardHeader className="block">{toolbarElement}</CardHeader>
+          </Card>
+
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <Label
@@ -893,7 +1325,7 @@ export function OrderInquiriesClient() {
             </div>
           </div>
 
-          {matrixList.isError ? (
+          {matrixQuery.isError ? (
             <Alert variant="destructive" appearance="light">
               <AlertIcon>
                 <AlertTriangle />
@@ -901,13 +1333,13 @@ export function OrderInquiriesClient() {
               <AlertContent>
                 <AlertTitle>The schedule could not be loaded</AlertTitle>
                 <AlertDescription>
-                  {matrixList.error instanceof Error
-                    ? matrixList.error.message
+                  {matrixQuery.error instanceof Error
+                    ? matrixQuery.error.message
                     : 'Try again in a moment.'}
                 </AlertDescription>
               </AlertContent>
             </Alert>
-          ) : matrixList.isLoading ? (
+          ) : matrixQuery.isLoading ? (
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-72 w-full" />
@@ -946,7 +1378,9 @@ export function OrderInquiriesClient() {
           {openCell && (
             <OrderInquiryMatrixCellDrilldown
               cell={openCell}
-              rowLabel={openCellRow?.label ?? ''}
+              granularity={matrixGranularity}
+              filters={listFilters}
+              rowLabel={openCell.axis_label}
               bucketLabel={openCellBucket?.label ?? ''}
               onClose={() => setOpenCell(null)}
             />
@@ -985,285 +1419,7 @@ export function OrderInquiriesClient() {
           }
         >
           <Card>
-            <CardHeader className="block">
-              <DataGridListToolbar
-                table={table}
-                searchSlot={
-                  <ListSearchInput
-                    value={search}
-                    onChange={setSearch}
-                    isSettling={isSearchInFlight(debouncedSettling, list.isFetching, debounced)}
-                    placeholder="Search S/O, item, product, customer or CS name…"
-                    aria-label="Search order inquiry rows"
-                    className="w-full max-w-xs"
-                  />
-                }
-                filters={{
-                  kind: 'custom',
-                  active: filtersActiveCount > 0,
-                  activeCount: filtersActiveCount,
-                  // The page opens narrowed to what purchasing has not confirmed, and a
-                  // list that is short for a reason nobody stated reads as missing data.
-                  activeSummary: ackChipLabel
-                    ? { label: ackChipLabel, onClear: () => setAckFilter('') }
-                    : undefined,
-                  content: (
-                    <div className="space-y-3">
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Delivery month
-                        </Label>
-                        <SearchableSelect
-                          value={month}
-                          onChange={setMonth}
-                          clearable
-                          options={months.map((entry) => ({
-                            value: entry.month,
-                            label: `${entry.label ?? deliveryMonthLabel(entry.month) ?? entry.month} (${entry.rows})`,
-                          }))}
-                          placeholder="Every month"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Linked
-                        </Label>
-                        <SearchableSelect
-                          value={linkedFilter}
-                          onChange={setLinkedFilter}
-                          clearable
-                          options={LINKED_OPTIONS}
-                          placeholder="Anywhere"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Confirmed
-                        </Label>
-                        <SearchableSelect
-                          value={ackFilter}
-                          onChange={setAckFilter}
-                          clearable
-                          options={ACK_FILTER_OPTIONS.map((option) => {
-                            const count =
-                              summary.data?.ack?.[
-                                option.value as keyof NonNullable<
-                                  typeof summary.data.ack
-                                >
-                              ];
-                            return {
-                              value: option.value,
-                              label:
-                                count === undefined
-                                  ? option.label
-                                  : `${option.label} (${count})`,
-                            };
-                          })}
-                          placeholder="Any"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Supplier
-                        </Label>
-                        <SearchableSelect
-                          value={supplierFilter}
-                          onChange={setSupplierFilter}
-                          clearable
-                          options={(summary.data?.suppliers ?? []).map(
-                            (entry) => ({
-                              value: entry.id,
-                              label: entry.label,
-                            }),
-                          )}
-                          placeholder="Every supplier"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Project
-                        </Label>
-                        <SearchableSelect
-                          value={projectFilter}
-                          onChange={setProjectFilter}
-                          clearable
-                          options={(summary.data?.projects ?? []).map(
-                            (entry) => ({
-                              value: entry.id,
-                              label: entry.label,
-                            }),
-                          )}
-                          placeholder="Every project"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs text-muted-foreground">
-                          Raised by
-                        </Label>
-                        <SearchableSelect
-                          value={raisedByFilter}
-                          onChange={setRaisedByFilter}
-                          clearable
-                          options={(summary.data?.raised_by ?? []).map(
-                            (entry) => ({
-                              value: entry.id,
-                              label: entry.label,
-                            }),
-                          )}
-                          placeholder="Everyone"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label
-                          className="text-xs text-muted-foreground"
-                          htmlFor="raised-on"
-                        >
-                          Raised on
-                        </Label>
-                        <Input
-                          id="raised-on"
-                          type="date"
-                          value={raisedDate}
-                          onChange={(event) =>
-                            setRaisedDate(event.target.value)
-                          }
-                        />
-                      </div>
-                      {filtersActiveCount > 0 && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="w-full"
-                          onClick={() => {
-                            setMonth('');
-                            setSupplierFilter('');
-                            setProjectFilter('');
-                            setRaisedDate('');
-                            setRaisedByFilter('');
-                            setLinkedFilter('');
-                            setAckFilter('');
-                            // Counted above, so it is cleared here: "Clear filters" that
-                            // left a card pressed would leave the screen still narrowed.
-                            setKindFilter(null);
-                          }}
-                        >
-                          Clear filters
-                        </Button>
-                      )}
-                    </div>
-                  ),
-                }}
-                // Their own workbook, with their own headings and a sheet per delivery
-                // month, is the file anyone outside the system reads - so the generic
-                // selection-scoped export is replaced rather than offered beside it.
-                exportConfig={false}
-                // The bulk strip keeps its COUNT and its Clear and nothing else
-                // (item 12, AC-D13). Every press moved into the Actions menu, where
-                // each one states how many ticked rows it applies to - a strip of
-                // buttons on the left and a menu of the same names on the right was two
-                // places to look for one action.
-                bulkActions={[]}
-                secondaryActions={[
-                  {
-                    key: 'auto-place',
-                    label: 'Auto link all\u2026',
-                    icon: Wand2,
-                    onClick: () => setAutoPlacing(true),
-                  },
-                  ...(canBulkLink
-                    ? [
-                        {
-                          key: 'link-selected',
-                          label: `Link selected (${linkTarget ? 1 : 0})`,
-                          icon: Link2,
-                          disabled: !linkTarget,
-                          disabledReason: linkTarget
-                            ? undefined
-                            : 'Tick exactly one row to choose its document by hand.',
-                          onClick: () =>
-                            setLinkingRowId(linkTarget?.id ?? null),
-                        },
-                        {
-                          key: 'unlink-selected',
-                          label: `Unlink selected (${selectedLinked.length})`,
-                          icon: Unlink,
-                          disabled:
-                            selectedLinked.length === 0 || unlinkingSelected,
-                          disabledReason:
-                            selectedLinked.length === 0
-                              ? 'Tick linked rows to unlink.'
-                              : undefined,
-                          onClick: () => setUnlinkingSelectedOpen(true),
-                        },
-                      ]
-                    : []),
-                  ...(canAcknowledge
-                    ? [
-                        {
-                          key: 'reject-selected',
-                          label: `Reject selected (${selectedRejectable.length})`,
-                          icon: Ban,
-                          destructive: true,
-                          disabled: selectedRejectable.length === 0,
-                          disabledReason:
-                            selectedRejectable.length === 0
-                              ? 'Tick rows purchasing still owes an answer on.'
-                              : undefined,
-                          onClick: () => setRejectingSelected(true),
-                        },
-                      ]
-                    : []),
-                  {
-                    key: 'unplace-all',
-                    label: 'Unlink all\u2026',
-                    icon: Undo2,
-                    onClick: () => setUnplacingAll(true),
-                    // N1: a lacking action grant, or the preview call failing for any
-                    // other reason, must never read the same as "genuinely nothing to
-                    // unplace" - each says its own thing.
-                    disabled:
-                      !canActOnOrderInquiry ||
-                      unplacePreview.isError ||
-                      unplaceCount === 0,
-                    disabledReason: !canActOnOrderInquiry
-                      ? "You don't have permission to unlink rows"
-                      : unplacePreview.isError
-                        ? 'Could not check linked rows - try again'
-                        : unplaceCount === 0
-                          ? 'No linked rows to unlink'
-                          : undefined,
-                  },
-                  {
-                    key: 'export',
-                    label: exporting ? 'Preparing\u2026' : 'Export Excel',
-                    icon: Download,
-                    disabled: exporting,
-                    onClick: () => void handleExport(),
-                  },
-                ]}
-                // START: feeding the book is the one thing purchasing presses here now
-                // (S1, AC-1.5) - a row is born acknowledged, so there is no second press
-                // to say yes to it any more, and a one-item dropdown read as a step that
-                // was not there.
-                primaryAction={
-                  canAcknowledge ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => setUploadingBook(true)}
-                    >
-                      <Upload className="size-4" aria-hidden />
-                      Upload purchase orders
-                    </Button>
-                  ) : null
-                }
-                onRefresh={() => {
-                  void list.refetch();
-                  void summary.refetch();
-                }}
-                isRefreshing={list.isFetching && !list.isLoading}
-              />
-            </CardHeader>
+            <CardHeader className="block">{toolbarElement}</CardHeader>
             <CardTable>
               {list.isError ? (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-6 py-10 text-center">
