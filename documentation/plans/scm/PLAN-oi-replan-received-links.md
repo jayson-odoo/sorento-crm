@@ -1,6 +1,6 @@
 # PLAN - OI replan with received links
 
-Status: IN PROGRESS, 17 Sep 2026 (lane worktree branch `worktree-agent-a094ed68b05447f09`, issues #957-#961; Phase 1 FE eeea4ff4c, S1-S3 green 676d0e71c, S1b + S5 + matrix addendum implemented this round - 7 of the round's BE reds stay red, blocked on two test-fixture gaps in `_mirror_row`/`_seed_so_line`/`_purchase_order`/`_early_link` reported to the captain rather than fixed by the coder; matrix addendum and all FE (Vitest) green). UAC: `oi-replan-received-links-acceptance-criteria.md`.
+Status: IN PROGRESS, 17 Sep 2026 (lane worktree branch `worktree-agent-a094ed68b05447f09`, issues #957-#961 #967 #968; S1-S3 green 676d0e71c, S1b + S5 green 36f7975f4 pending fixture fixes; Lavish rounds 1-2 rulings 17 Sep: words not icons (received / reallocate / unlink / used / note), one line per row, details in lightbox, board shows the stage too, all candidates earliest first, cleared ref removes). UAC: `oi-replan-received-links-acceptance-criteria.md`.
 Domain: SCM, order inquiries / fulfilment planning. Owner ruling 16 Sep 2026: "so far I am
 okay with your proposal and we shall proceed".
 
@@ -112,7 +112,11 @@ Covers AC-RL-01.
   `SPOAllocation.receipt_status`, `SPOAllocation.line_status`, `InboundShipment.actual_arrival_date`
   (the join it already has for `expected_date` extends), emits `received_qty` and `received`.
 - `OrderInquiryLinkOut` gains both fields. Frontend type `OrderInquiryLink` gains both.
-- `DocumentsCell` prints the `received` mark and title; the dialog prints `received N`.
+- `DocumentsCell` prints ONE one-word `received` mark after a received document (no icon,
+  ruling 17 Sep); the backing-documents dialog prints `Received N of M`.
+- Board (S1c, ruling 17 Sep): the contribution's `order_inquiry` dict gains `documents`
+  `[{document, kind, received}]` and `redirected`; the fulfilment planning list's inquiry
+  cell shows the same `received` / `used` word. Covers AC-RL-06, AC-RL-07.
 - Covers AC-RL-02, AC-RL-03, AC-RL-17.
 
 ### S2 - the rule at settle (BE)
@@ -133,7 +137,8 @@ Covers AC-RL-01.
   the FE row (add to `_serialize` and to the FE row type).
 - The Order Inquiries schedule matrix (#951) also reads `_stage_rows`; its Purchased / Incoming
   cards exclude the redirected row the same way.
-- FE: `redirected` mark on the Qty cell; card totals ignore the row.
+- FE: the row is greyed with ONE one-word `used` mark on the Qty cell (never `redirected`, no
+  icon; ruling 17 Sep) opening the Qty annotation lightbox; card totals ignore the row.
 - Covers AC-RL-04, AC-RL-15, AC-RL-16, AC-RL-16b.
 
 ### S1b - repoint suggestion on an open link (BE + FE)
@@ -146,13 +151,14 @@ Owner ruling 16 Sep: a concrete instruction, never a reason. "Early" is not show
 - Candidate rows: same product, cascade predicate above, on a different SO line, with
   `_unlinked_need > 0`, `delivery_date < row.delivery_date`. Pick earliest `delivery_date`,
   tie by larger open need. One grouped query per page keyed by product.
-- Link dict gains `suggestion`: `{"kind": "repoint", "inquiry_no", "item_code",
-  "so_number", "delivery_date", "open_qty"}` or `{"kind": "unlink"}` or null.
-  `OrderInquiryLinkOut` declares it.
-- FE: chip carries a muted `repoint` / `unlink` word; hover or tap opens a popover with the
-  instruction, e.g. `Repoint to OI-000539 · CB2805A-DIY · needed 01/12/2026 · open 90` or
-  `Unlink · no sooner inquiry needs this item`. Nothing is written from the popover:
-  purchasing acts in AutoCount, S5 follows.
+- Link dict gains `suggestion`: `{"kind": "reallocate", "candidates": [{"inquiry_no",
+  "item_code", "so_number", "delivery_date", "open_qty"}, ...]}` (every sooner row, earliest
+  first, first = the target) or `{"kind": "unlink"}` or null. `OrderInquiryLinkOut` declares it.
+- FE (rulings 17 Sep): ONE one-word amber mark on the chip, `reallocate` or `unlink`, no
+  icon, row stays one line; the word opens a lightbox (reuse the backing-documents dialog)
+  with the candidate list earliest first, the first marked `Reallocate to`, or `Unlink · no
+  sooner inquiry needs this item`. The word "repoint" never appears on screen.
+  Nothing is written from the lightbox: purchasing acts in AutoCount, S5 follows.
 - Covers AC-RL-20 to AC-RL-24.
 
 ### S5 - our link follows the book pairing (BE + FE)

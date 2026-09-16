@@ -1170,10 +1170,12 @@ class OrderInquiryWorklistService:
         instruction on an open link that has drifted outside its product's lead-time
         window - never a reason, never "early" (owner ruling 16 Sep).
 
-        Mutates each link dict IN PLACE with `suggestion`: `{"kind": "repoint", ...}`
-        naming the soonest OTHER linkable row of the same product with open need (never
-        a row on the SAME SO line), `{"kind": "unlink"}` when there is no such row, or
-        `None` on a received link or one still inside the window.
+        Mutates each link dict IN PLACE with `suggestion`: `{"kind": "reallocate",
+        "candidates": [...]}` naming EVERY OTHER linkable row of the same product with
+        open need (never a row on the SAME SO line), delivery date ascending then open
+        need descending - the first candidate is the suggested target (ruling 17 Sep:
+        list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
+        on a received link or one still inside the window.
 
         ONE grouped query for the whole page's candidates (AC-RL-23), never one per
         link: every triggered link's product is collected first, and `_repoint_
@@ -1221,14 +1223,18 @@ class OrderInquiryWorklistService:
             ]
             eligible.sort(key=lambda c: (c["delivery_date"], -c["open_qty"]))
             if eligible:
-                best = eligible[0]
                 link["suggestion"] = {
-                    "kind": "repoint",
-                    "inquiry_no": best["inquiry_no"],
-                    "item_code": best["item_code"],
-                    "so_number": best["so_number"],
-                    "delivery_date": best["delivery_date"].isoformat(),
-                    "open_qty": _qty_str(best["open_qty"]),
+                    "kind": "reallocate",
+                    "candidates": [
+                        {
+                            "inquiry_no": candidate["inquiry_no"],
+                            "item_code": candidate["item_code"],
+                            "so_number": candidate["so_number"],
+                            "delivery_date": candidate["delivery_date"].isoformat(),
+                            "open_qty": _qty_str(candidate["open_qty"]),
+                        }
+                        for candidate in eligible
+                    ],
                 }
             else:
                 link["suggestion"] = {"kind": "unlink"}

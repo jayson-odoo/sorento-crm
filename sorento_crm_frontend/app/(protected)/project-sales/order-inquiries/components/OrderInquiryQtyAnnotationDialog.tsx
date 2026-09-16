@@ -45,10 +45,16 @@ export function OrderInquiryQtyAnnotationDialog({
 }) {
   const rejected = ackStateOf(row) === 'rejected';
   const previous = previousValueOf(row);
+  // AC-RL-04 (17 Sep rulings): a replan could not carry this row forward because its
+  // only coverage had already landed elsewhere - the row's own note states where and
+  // when, verbatim, never re-parsed into figures.
+  const redirected = Boolean(row.redirected_to_pool);
+  const redirectedNote = redirected ? (row.note ?? '').trim() : '';
   // AC-RL-46 (`PLAN-oi-replan-received-links.md` S5): a row the book redirected off -
   // a settle never touched it, so `previous` is null, but the note names where its
-  // documents went.
-  const moved = movedNoteOf(row);
+  // documents went. Never checked on a `redirected_to_pool` row: that row's own note is
+  // handled above and reads differently.
+  const moved = !redirected ? movedNoteOf(row) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -70,6 +76,7 @@ export function OrderInquiryQtyAnnotationDialog({
         <DialogBody className="space-y-5">
           {rejected ? <RejectedSection row={row} /> : null}
           {previous ? <ChangedSection row={row} previous={previous} /> : null}
+          {redirected && redirectedNote ? <MovedSection note={redirectedNote} /> : null}
           {moved ? <MovedSection note={moved} /> : null}
         </DialogBody>
       </DialogContent>
@@ -134,10 +141,11 @@ function ChangedSection({
 }
 
 /**
- * S5 (`PLAN-oi-replan-received-links.md`, AC-RL-46): the `follow_book_repairing` note
- * verbatim - the only record of where this row's documents went once AutoCount's own
- * pairing moved them off it. Never parsed back into figures; it is a sentence for a
- * person, the same convention every other note on this row already follows.
+ * The row's own note, verbatim, never parsed back into figures - the same convention
+ * every other note on this row already follows. Shared by two callers: AC-RL-04's
+ * `used` trigger (a replan redirected the row's coverage elsewhere) and AC-RL-46's
+ * `note` trigger (AutoCount's own book pairing moved or cleared the row's link, the
+ * `follow_book_repairing` note).
  */
 function MovedSection({ note }: { note: string }) {
   return (

@@ -164,15 +164,23 @@ export interface OrderInquiryLink {
   suggestion?: OrderInquiryLinkSuggestion | null;
 }
 
-/** A `repoint` suggestion names the row to move to; `unlink` names none. */
+/** One row a `reallocate` suggestion could move the link to (AC-RL-20). */
+export interface OrderInquiryLinkSuggestionCandidate {
+  inquiry_no: string | null;
+  item_code: string | null;
+  so_number: string | null;
+  delivery_date: string;
+  open_qty: string;
+}
+
+/**
+ * A `reallocate` suggestion names EVERY sooner row with open need, earliest first -
+ * the first is the suggested target (17 Sep rulings); `unlink` names none.
+ */
 export type OrderInquiryLinkSuggestion =
   | {
-      kind: 'repoint';
-      inquiry_no: string | null;
-      item_code: string | null;
-      so_number: string | null;
-      delivery_date: string;
-      open_qty: string;
+      kind: 'reallocate';
+      candidates: OrderInquiryLinkSuggestionCandidate[];
     }
   | { kind: 'unlink' };
 

@@ -26,9 +26,9 @@ time" and proposes Buy 220.
    this line's), its documents stay on it as history, and a fresh ORDER row of 220 dated
    01/03/2027 is raised with no links. No decision asked of anyone.
 3. Purchasing opens Order Inquiries, searches SO314593. Two rows for B2154-NL: the old one,
-   182, greyed chip `SPO-2026/01-0143 · received 19 Jan 2026`, marked redirected; the new one,
-   220, 01/03/2027, no documents, in the Buy card. Purchasing decides nothing new: the row
-   reads as a plain buy.
+   182, greyed, `received` on the SPO chip and `used` on the quantity, every detail behind
+   the word's lightbox; the new one, 220, 01/03/2027, no documents, in the Buy card.
+   Purchasing decides nothing new: the row reads as a plain buy.
 4. Next AutoCount upload (SO book, PO book, OI sheet). Nothing re-links the received SPO to
    either row. The pairing stays in AutoCount and is harmless.
 
@@ -46,17 +46,30 @@ born acknowledged as every raise is). No new notification.
   it renders the Date field, Then both dates carry the year (`1 Jun 2026 -> 1 Mar 2027`),
   and the month spelling stays the hand-rolled short form (`Sep`, not `Sept`).
 - **AC-RL-02 [FE]** Given an OI worklist row whose link dict carries `received: true`, When
-  the PO or SPO chip renders, Then the chip shows the document number followed by a muted
-  `received` mark (small text, same style as the existing `via PO` mark), and the chip's
-  `title` reads `<document> - received <received_qty> of <qty>`.
+  the PO or SPO chip renders, Then the chip shows the document number followed by ONE
+  one-word mark `received` (same muted pill style as `via PO`, no icon), the row stays a
+  single line, and clicking the word opens the backing-documents lightbox showing
+  `Received <received_qty> of <qty>` for that link. (Rulings 17 Sep: one line per row,
+  words not icons, details behind the word.)
 - **AC-RL-03 [FE]** Given the backing-documents dialog on that row, When a link row renders,
   Then it prints `received <received_qty>` beside the location and quantity, and an open
   document prints nothing extra.
 - **AC-RL-04 [FE]** Given an OI worklist row with `redirected_to_pool: true`, When it
-  renders, Then the row's Qty cell carries a muted `redirected` mark and the row is excluded
-  from the Buy / Purchased / Incoming card totals (mock asserts the card sum ignores it).
-- **AC-RL-05 [UX]** No new motion. The `received` and `redirected` marks are static text.
-  Chips stay truncated with `title`; the row is usable at 375px and 1280px.
+  renders, Then the row is greyed, its Qty cell carries ONE one-word mark `used` (no icon)
+  that opens the Qty annotation lightbox reading `<document> received <date> into
+  <location>, used by earlier orders. Bought again at revision <n>: see the new row`, and
+  the row is excluded from the Buy / Purchased / Incoming card totals. The word on screen
+  is `used`, never `redirected` (ruling 17 Sep).
+- **AC-RL-05 [UX]** No new motion. The `received`, `reallocate`, `unlink`, `used` and `note`
+  marks are static one-word pills; chips stay truncated with `title`; the row is usable at
+  375px and 1280px.
+- **AC-RL-06 [FE]** Given the fulfilment planning list view, When a line's linked inquiry
+  is shown (the existing order-inquiry cell), Then the same `received` word appears when the
+  row's documents are fully received and `used` when the row is redirected, so CS sees the
+  stage before confirming. (Ruling 17 Sep, board too.)
+- **AC-RL-07 [BE]** The board contribution's `order_inquiry` dict carries `documents`:
+  `[{document, kind, received}]` and `redirected` (bool) for the line's live row(s), read
+  through `links_for_rows` (no second query shape).
 
 ## Phase 2 - backend, test-first
 
@@ -108,21 +121,28 @@ Repoint suggestion (S1b):
 
 - **AC-RL-20 [BE]** Given an open link whose `expected_date` is on or before the row's
   `delivery_date` minus the product's lead time days (fallback `DEFAULT_LEAD_TIME_DAYS`), and
-  another linkable row (raised or partly linked, linkable verb and ack) for the same product
-  on a different SO line with open need and an earlier `delivery_date`, When the worklist page
-  serializes, Then the link dict carries `suggestion.kind = "repoint"` naming that row's
-  inquiry number, item code, SO number, delivery date and open quantity; the earliest
-  delivery date wins, ties by larger open need.
+  one or more linkable rows (raised or partly linked, linkable verb and ack) for the same
+  product on a different SO line with open need and an earlier `delivery_date`, When the
+  worklist page serializes, Then the link dict carries `suggestion.kind = "reallocate"` and
+  `suggestion.candidates`, EVERY such row ordered by delivery date ascending then open need
+  descending, each with inquiry number, item code, SO number, delivery date and open
+  quantity; the first candidate is the suggested target (ruling 17 Sep: list all, earliest
+  first).
 - **AC-RL-21 [BE]** Given the same early link and no such row, Then `suggestion.kind =
   "unlink"`.
 - **AC-RL-22 [BE]** Given a link inside the lead time window, or a received link, Then
   `suggestion` is null.
 - **AC-RL-23 [BE]** `OrderInquiryLinkOut` declares `suggestion`; the page computes it with
   one grouped query per page (assert query count does not grow with rows).
-- **AC-RL-24 [FE]** Given a link with a suggestion, When the chip renders, Then it carries a
-  muted `repoint` or `unlink` word and a popover (hover and tap) with the instruction text
-  `Repoint to <inquiry> · <item> · needed <dd/mm/yyyy> · open <n>` or `Unlink · no sooner
-  inquiry needs this item`. No reason text, no "early". Nothing is written from the popover.
+- **AC-RL-24 [FE]** Given a link with a suggestion, When the chip renders, Then it carries
+  ONE one-word amber mark, `reallocate` or `unlink` (no icon), the row stays a single line,
+  and clicking the word opens a lightbox headed by the document, item and quantity, stating
+  expected date and this row's delivery date, then the candidate list earliest first with the
+  first row marked `Reallocate to`, each as `<inquiry> · <SO> · needed <dd/mm/yyyy> · open
+  <n>`, and the footer `Re-key the line to the chosen sales order in AutoCount; the link
+  moves at the next upload`. With no candidates the lightbox reads `Unlink · no sooner
+  inquiry needs this item`. No reason text, no "early", no "repoint" on screen. Nothing is
+  written from the lightbox.
 
 Our link follows the book pairing (S5):
 
@@ -143,10 +163,11 @@ Our link follows the book pairing (S5):
   the book the same way.
 - **AC-RL-45 [BE]** Given a re-push with `from_so_line_ref: null`, Then the link on row A is
   removed with the note `AutoCount removed <document> from <SO A> on <date>` and nothing is
-  placed. A re-push with the same ref changes nothing.
+  placed (ruling 17 Sep: auto remove and note). A re-push with the same ref changes nothing.
 - **AC-RL-46 [FE]** Given row A after a move (no links left, note carries `AutoCount moved`),
-  When its Qty-cell annotation dialog opens (the existing affordance settled and rejected rows
-  use), Then the move note is shown. No new trigger on an empty documents cell.
+  When its Qty cell renders, Then it carries ONE one-word mark `note` that opens the existing
+  Qty annotation lightbox showing the move note. No new trigger on an empty documents cell;
+  the row stays one line.
 
 ## Phase 3 - end to end
 

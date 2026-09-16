@@ -405,9 +405,25 @@ export function FulfilmentBoardListView({
             const inquiry = contributionInquiryDecision(contribution);
             if (inquiry) {
               const text = inquiry.inquiry_no ?? 'Unnumbered inquiry';
+              // AC-RL-06 (`PLAN-oi-replan-received-links.md`, 17 Sep ruling): the SAME
+              // word the OI worklist chip carries, so CS sees the stage before
+              // confirming - `used` once the row was itself redirected (AC-RL-10),
+              // `received` once every document behind the line is fully received.
+              // Informational only here, never both at once.
+              const documents = inquiry.documents ?? [];
+              const word = inquiry.redirected
+                ? 'used'
+                : documents.length > 0 && documents.every((document) => document.received)
+                  ? 'received'
+                  : null;
               return (
-                <span className="block min-w-0 truncate tabular-nums" title={text}>
-                  {text}
+                <span className="flex min-w-0 items-center gap-1 tabular-nums">
+                  <span className="block min-w-0 truncate" title={text}>
+                    {text}
+                  </span>
+                  {word ? (
+                    <span className="shrink-0 text-2xs text-muted-foreground">{word}</span>
+                  ) : null}
                 </span>
               );
             }

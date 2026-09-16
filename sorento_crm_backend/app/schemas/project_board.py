@@ -447,6 +447,16 @@ class BoardLineDecision(BaseModel):
     suspected_system_issue: bool = False
 
 
+class BoardLineOrderInquiryDocument(BaseModel):
+    """One document behind the line's own instruction (AC-RL-07), read through the
+    SAME `links_for_rows` reader the OI worklist chip and the SCM sales-order detail
+    already use - one voice for "where is this linked"."""
+
+    document: Optional[str] = None
+    kind: str
+    received: bool = False
+
+
 class BoardLineOrderInquiry(BaseModel):
     """The order inquiry covering one board line, in the two words a person reads it by.
 
@@ -468,6 +478,12 @@ class BoardLineOrderInquiry(BaseModel):
     #: back with no reason is the thing this exists to stop.
     rejected_reason: Optional[str] = None
     rejected_by_name: Optional[str] = None
+    #: AC-RL-07 (`PLAN-oi-replan-received-links.md`): what backs the instruction - the
+    #: winning row's own documents, empty on a row nobody has linked.
+    documents: List[BoardLineOrderInquiryDocument] = []
+    #: Whether the winning row was itself redirected off a document that had already
+    #: landed (AC-RL-10) - the fulfilment list's `used` word reads this.
+    redirected: bool = False
 
 
 class BoardLineLending(BaseModel):

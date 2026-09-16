@@ -102,12 +102,14 @@ class OrderInquiryLinkOut(BaseModel):
     #: link (never a link this system made independently), so the PO column marks it
     #: "via SPO".
     derived_po: bool = False
-    #: S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-23): a concrete
-    #: instruction, never a reason - `{"kind": "repoint", "inquiry_no", "item_code",
-    #: "so_number", "delivery_date", "open_qty"}` naming the soonest other linkable row
-    #: of the same product with open need, or `{"kind": "unlink"}` when there is none.
-    #: Null on a received link or one still inside the product's lead-time window.
-    #: Nothing is written from it - purchasing acts in AutoCount, S5 follows.
+    #: S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24, 17 Sep rulings): a
+    #: concrete instruction, never a reason - `{"kind": "reallocate", "candidates":
+    #: [{"inquiry_no", "item_code", "so_number", "delivery_date", "open_qty"}, ...]}`
+    #: naming EVERY other linkable row of the same product with open need, delivery
+    #: date ascending then open need descending (the first is the suggested target),
+    #: or `{"kind": "unlink"}` when there is none. Null on a received link or one still
+    #: inside the product's lead-time window. Nothing is written from it - purchasing
+    #: acts in AutoCount, S5 follows.
     suggestion: Optional[Dict[str, Any]] = None
 
 
