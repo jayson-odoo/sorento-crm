@@ -360,7 +360,19 @@ class DocumentIngestService(MasterRefResolver):
         # inside `_sync_lines`'s matched-row branch, which is the only place both
         # the OLD value (still on `row`) and the NEW one (about to overwrite it)
         # are in hand at once.
+        #
+        # AC-RL-49 (security review, 17 Sep): `ref_moves` is published ONLY from
+        # `_record_hook_state`, the last statement of `_apply` - reached only once
+        # everything else in the record has already succeeded. `_pending_ref_moves`
+        # is where `_sync_lines` actually appends: a plain Python list is not part
+        # of the record's own SAVEPOINT, so a move captured for line 1 mid-`_sync_
+        # lines` would otherwise survive the rollback a later line's own failure in
+        # the SAME record triggers, and the post-commit hook would then apply a
+        # move whose ref change was never actually persisted. Reset at the top of
+        # `_apply` for every record, so a failed record's own leftover never leaks
+        # into the next one's publish.
         self.ref_moves: list[dict[str, Optional[str]]] = []
+        self._pending_ref_moves: list[dict[str, Optional[str]]] = []
         # sales_orders only: the BEFORE half of the route's plan-exception hook
         # (AC-V5-1), keyed by product id. Captured ONCE for the whole batch,
         # before the record loop runs (`ingest()` calls
@@ -545,6 +557,11 @@ class DocumentIngestService(MasterRefResolver):
         # header inserted before the line that fails would only be taken back by
         # the savepoint - which is a guarantee about this transaction, not about
         # the order the work happens in.
+        #
+        # AC-RL-49: fresh per record - THIS record's own ref moves, staged until
+        # `_record_hook_state` below publishes them, never a previous (possibly
+        # failed) record's leftover.
+        self._pending_ref_moves = []
         #
         # Shared across the header and every line: a back-create triggered by
         # line 3 belongs on the SAME record verdict as one triggered by the
@@ -733,6 +750,12 @@ class DocumentIngestService(MasterRefResolver):
     ) -> None:
         """What the route's post-write hooks (D7) need, gathered per record."""
         self.written_header_ids.add(str(header.id))
+        # AC-RL-49: THIS record has now fully succeeded (everything above this call
+        # in `_apply` already ran without raising) - its own staged ref moves are
+        # promoted to the batch-level list the route's hook reads, and never before.
+        if self._pending_ref_moves:
+            self.ref_moves.extend(self._pending_ref_moves)
+            self._pending_ref_moves = []
         for values in line_values:
             product_id = values.get("product_id")
             if product_id:
@@ -1353,7 +1376,9 @@ class DocumentIngestService(MasterRefResolver):
                     old_ref = row.from_so_line_ref
                     new_ref = values["from_so_line_ref"]
                     if old_ref != new_ref:
-                        self.ref_moves.append(
+                        # AC-RL-49: staged, not published - see `_pending_ref_moves`'s
+                        # own docstring in `__init__`.
+                        self._pending_ref_moves.append(
                             {
                                 "target_kind": "po",
                                 "target_id": str(row.id),

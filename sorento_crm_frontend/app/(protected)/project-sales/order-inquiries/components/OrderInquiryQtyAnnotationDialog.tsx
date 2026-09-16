@@ -70,14 +70,18 @@ export function OrderInquiryQtyAnnotationDialog({
                 ? 'Rejected'
                 : previous
                   ? 'Changed'
-                  : 'Redirected'}
+                  : redirected
+                    ? 'Already used elsewhere'
+                    : 'AutoCount moved this line'}
           </DialogDescription>
         </DialogHeader>
         <DialogBody className="space-y-5">
           {rejected ? <RejectedSection row={row} /> : null}
           {previous ? <ChangedSection row={row} previous={previous} /> : null}
-          {redirected && redirectedNote ? <MovedSection note={redirectedNote} /> : null}
-          {moved ? <MovedSection note={moved} /> : null}
+          {redirected && redirectedNote ? (
+            <MovedSection heading="Used" note={redirectedNote} />
+          ) : null}
+          {moved ? <MovedSection heading="Moved by AutoCount" note={moved} /> : null}
         </DialogBody>
       </DialogContent>
     </Dialog>
@@ -142,15 +146,17 @@ function ChangedSection({
 
 /**
  * The row's own note, verbatim, never parsed back into figures - the same convention
- * every other note on this row already follows. Shared by two callers: AC-RL-04's
- * `used` trigger (a replan redirected the row's coverage elsewhere) and AC-RL-46's
- * `note` trigger (AutoCount's own book pairing moved or cleared the row's link, the
- * `follow_book_repairing` note).
+ * every other note on this row already follows. Shared by two callers, each with its
+ * own heading (REV-S7, 17 Sep review round: the shared "Redirected" heading both used
+ * to print is a word the 17 Sep rulings retired from screen entirely) - AC-RL-04's
+ * `used` trigger (a replan redirected the row's coverage elsewhere, heading "Used") and
+ * AC-RL-46's `note` trigger (AutoCount's own book pairing moved or cleared the row's
+ * link, heading "Moved by AutoCount").
  */
-function MovedSection({ note }: { note: string }) {
+function MovedSection({ heading, note }: { heading: string; note: string }) {
   return (
     <section className="space-y-1">
-      <h3 className="text-sm font-semibold">Redirected</h3>
+      <h3 className="text-sm font-semibold">{heading}</h3>
       <p className="text-sm text-muted-foreground">{note}</p>
     </section>
   );

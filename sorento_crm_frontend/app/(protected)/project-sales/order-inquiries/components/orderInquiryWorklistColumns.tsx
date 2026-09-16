@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { ColumnDef } from '@tanstack/react-table';
+import { CellContext, ColumnDef } from '@tanstack/react-table';
 import { CircleCheck, CircleDashed, Info } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,70 @@ import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDial
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
+}
+
+/**
+ * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
+ * `received`, `reallocate`/`unlink`, `used`, `note` - shared ONE pill from here on,
+ * rather than four hand-rolled spellings of `text-2xs text-muted-foreground` (one of
+ * them a literal `text-[var(--color-warning-accent,...)]` colour). The same `Badge`
+ * idiom the `+N` pill beside them already used (`size="sm" appearance="light" asChild`);
+ * `warning` is the design system's own token for the amber marks, never a literal one.
+ */
+function WorklistPill({
+  as = 'span',
+  warning = false,
+  testId,
+  onClick,
+  ariaLabel,
+  children,
+}: {
+  as?: 'span' | 'button';
+  warning?: boolean;
+  testId: string;
+  onClick?: (event: React.MouseEvent) => void;
+  ariaLabel?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Badge asChild size="sm" variant={warning ? 'warning' : 'secondary'} appearance="light">
+      {as === 'button' ? (
+        <button
+          type="button"
+          data-testid={testId}
+          aria-label={ariaLabel}
+          className="shrink-0"
+          onClick={onClick}
+        >
+          {children}
+        </button>
+      ) : (
+        <span data-testid={testId} className="shrink-0">
+          {children}
+        </span>
+      )}
+    </Badge>
+  );
+}
+
+/**
+ * REV-S6 (17 Sep review round): a `redirected_to_pool` row reads muted, the same
+ * `opacity-60` treatment `data-grid-table.tsx`'s own `holdingRows` gives a row that is
+ * no longer active - applied to every column's own cell here rather than touched into
+ * each one's own JSX. `display: contents` keeps the wrapper out of layout entirely, so
+ * it changes nothing about a column's own flex/grid behaviour - only its opacity.
+ * Unwrapped (a bare fragment) on an ordinary row, so nothing about an ordinary row's
+ * own DOM shape changes.
+ */
+function MutedRowCell({
+  redirected,
+  children,
+}: {
+  redirected: boolean;
+  children: React.ReactNode;
+}) {
+  if (!redirected) return <>{children}</>;
+  return <span className="contents opacity-60">{children}</span>;
 }
 
 /**
@@ -163,14 +227,9 @@ function LinkSuggestionMark({
 }) {
   const word = suggestion.kind === 'reallocate' ? 'reallocate' : 'unlink';
   return (
-    <button
-      type="button"
-      data-testid={testId}
-      className="shrink-0 text-2xs text-[var(--color-warning-accent,var(--color-yellow-700))] underline-offset-2 hover:underline focus-visible:outline-none"
-      onClick={onOpen}
-    >
+    <WorklistPill as="button" warning testId={testId} onClick={onOpen}>
       {word}
-    </button>
+    </WorklistPill>
   );
 }
 
@@ -307,34 +366,32 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
       {/* S5, R-E: never a real link - the SAME allocation read the other book's own
           number off (an SPO's `source_po_number`, or the PO's own open shipment). */}
       {first.via ? (
-        <span
-          data-testid={
+        <WorklistPill
+          testId={
             kind === 'spo'
               ? `backing-documents-via-spo-${row.id}`
               : `backing-documents-via-${row.id}`
           }
-          className="shrink-0 text-2xs text-muted-foreground"
         >
           {first.via === 'po' ? 'via PO' : 'via SPO'}
-        </span>
+        </WorklistPill>
       ) : null}
       {/* S1, AC-RL-02 (17 Sep rulings): the document is fully received - location
           stock now, not a promise still in transit. ONE muted pill, same style as
           the "via" mark beside it, and CLICKABLE like every other mark on this row -
           opens the SAME lightbox, whose own body states the receipt in full. */}
       {first.received ? (
-        <button
-          type="button"
-          data-testid={
+        <WorklistPill
+          as="button"
+          testId={
             kind === 'spo'
               ? `backing-documents-received-spo-${row.id}`
               : `backing-documents-received-${row.id}`
           }
-          className="shrink-0 text-2xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none"
           onClick={open_}
         >
           received
-        </button>
+        </WorklistPill>
       ) : null}
       {/* S1b, AC-RL-24: a reallocate/unlink instruction, mutually exclusive with the
           `received` mark above (a received link never carries a suggestion). */}
@@ -491,15 +548,14 @@ function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
       : `Show what AutoCount changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
     return (
       <>
-        <button
-          type="button"
-          data-testid={`qty-annotation-trigger-${row.id}`}
-          aria-label={label}
-          className="shrink-0 text-2xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none"
+        <WorklistPill
+          as="button"
+          testId={`qty-annotation-trigger-${row.id}`}
+          ariaLabel={label}
           onClick={openDialog}
         >
           {word}
-        </button>
+        </WorklistPill>
         {open ? (
           <OrderInquiryQtyAnnotationDialog row={row} open onOpenChange={setOpen} />
         ) : null}
@@ -552,8 +608,8 @@ export function useOrderInquiryWorklistColumns({
    */
   selectable?: boolean;
 } = {}): ColumnDef<OrderInquiryWorklistRow>[] {
-  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(
-    () => [
+  return React.useMemo<ColumnDef<OrderInquiryWorklistRow>[]>(() => {
+    const columns: ColumnDef<OrderInquiryWorklistRow>[] = [
       ...(selectable
         ? [
             buildSelectColumn<OrderInquiryWorklistRow>({
@@ -989,7 +1045,22 @@ export function useOrderInquiryWorklistColumns({
       // No Confirmed column (S1, AC-1.5): there is no manual confirm left to report on,
       // and the two facts that column existed to carry - a rejection and a settle-in-place
       // Was/Now - render in the qty cell above instead.
-    ],
-    [selectable],
-  );
+    ];
+    // REV-S6: every column's own cell reads muted on a redirected row - wrapped here,
+    // once, rather than in each column's own JSX. The select column is left alone: a
+    // redirected row still has to be tickable like any other (AC-A1..: only `cancelled`
+    // is ever excluded from selection).
+    return columns.map((column) =>
+      column.id === 'select'
+        ? column
+        : {
+            ...column,
+            cell: (ctx: CellContext<OrderInquiryWorklistRow, unknown>) => (
+              <MutedRowCell redirected={Boolean(ctx.row.original.redirected_to_pool)}>
+                {typeof column.cell === 'function' ? column.cell(ctx) : null}
+              </MutedRowCell>
+            ),
+          },
+    );
+  }, [selectable]);
 }

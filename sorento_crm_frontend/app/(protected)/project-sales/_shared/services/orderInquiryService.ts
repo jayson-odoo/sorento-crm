@@ -481,38 +481,47 @@ export async function unplaceAllOrderInquiryRows(
  *                        `open_incoming_clauses()`). Absent/false on an open document.
  *       received_qty  : string | null - how much of THIS link's line has been received,
  *                        stated even on a link that is only PARTLY received.
- *     The PO/SPO chip (`DocumentsCell`) reads the first entry's `received` for a muted
- *     `received` mark beside the number, and its `title` becomes `<document> - received
- *     <received_qty> of <qty>`; the backing-documents dialog prints `received
- *     <received_qty>` beside every received link's own location/quantity line.
+ *     The PO/SPO chip (`DocumentsCell`) reads the first entry's `received` for a muted,
+ *     CLICKABLE `received` pill beside the number (17 Sep rulings: words, never icons,
+ *     never a hover-only tooltip) - clicking it opens the SAME backing-documents dialog
+ *     the number itself opens, which prints `received <received_qty>` beside every
+ *     received link's own location/quantity line.
  *
  *   - Every row in `OrderInquiryWorklistRow` gains:
  *       redirected_to_pool : boolean - true once a replan met a row whose only coverage
  *                        was a fully received document and could not carry it forward
  *                        (S2, backend). The row keeps its old `qty`/`delivery_date`/
  *                        `links` as history; a fresh, unlinked ORDER row carries the new
- *                        need instead. The Qty cell marks a redirected row with a muted
- *                        `redirected` mark, and the Buy / Purchased / Incoming card
- *                        totals (`summary.kinds`) ignore it entirely - it is not owed
- *                        anywhere any more, whatever its `state` or `links` still say.
+ *                        need instead. The row itself reads muted (`opacity-60` on every
+ *                        cell); its Qty cell carries a muted, clickable `used` pill (17
+ *                        Sep rulings: never the word "redirected" on screen) that opens
+ *                        the Qty annotation dialog reading the row's own note, and the
+ *                        Buy / Purchased / Incoming card totals (`summary.kinds`) ignore
+ *                        the row entirely - it is not owed anywhere any more, whatever
+ *                        its `state` or `links` still say.
  *     Absent or false on every row today - 0 rows carry it on the 15 Sep prod copy; S2 is
  *     its first writer.
  *
- * `PLAN-oi-replan-received-links.md`, S1b/S5 (second round, backend live):
+ * `PLAN-oi-replan-received-links.md`, S1b/S5 (second round, backend live; reallocate
+ * shape and wording finalised in the 17 Sep review round):
  *
- *   - Every link in `links[]` gains `suggestion` (null on most links): `{"kind":
- *     "repoint", "inquiry_no", "item_code", "so_number", "delivery_date", "open_qty"}`
- *     naming the soonest OTHER linkable row of the same product with open need, or
- *     `{"kind": "unlink"}` when there is none - only when the link's `expected_date` has
- *     drifted past the product's lead-time window and it is not `received`. The chip
- *     (`DocumentsCell`) carries a muted `repoint`/`unlink` word with a popover stating
- *     the instruction; nothing is written from it.
+ *   - Every link in `links[]` gains `suggestion` (null on most links):
+ *     `{"kind": "reallocate", "candidates": [{"inquiry_no", "item_code", "so_number",
+ *     "delivery_date", "open_qty"}, ...]}` naming EVERY other linkable row of the same
+ *     product with open need, earliest delivery date first (the first candidate is the
+ *     suggested target) - or `{"kind": "unlink"}` when there is none - only when the
+ *     link's `expected_date` has drifted past the product's lead-time window and it is
+ *     not `received`. The chip (`DocumentsCell`) carries a muted AMBER `reallocate`/
+ *     `unlink` word (never "repoint" on screen); clicking it opens a lightbox listing
+ *     every candidate, the first marked "Reallocate to", with a footer instruction to
+ *     re-key the line in AutoCount - nothing is written from it.
  *   - S5: our own link on a row follows `from_so_line_ref` wherever AutoCount's book
  *     moves it. The row the book moved it OFF carries no links any more and its `note`
  *     reads `AutoCount moved <document> to <SO new> on <date>` (or `AutoCount removed
  *     <document> from <SO old> on <date>` when the ref was cleared) - surfaced through
  *     the EXISTING Qty-cell annotation dialog (`OrderInquiryQtyAnnotationDialog`), the
- *     same affordance a rejected or settled row already uses, never a new trigger.
+ *     same affordance a rejected or settled row already uses, never a new trigger; the
+ *     cell's own trigger is the muted `note` pill.
  *
  * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
  * no project at all. Permission is `projects.projects.view`, the same read the module

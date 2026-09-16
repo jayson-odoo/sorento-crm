@@ -371,6 +371,7 @@ def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str
             with db.begin_nested():
                 ProjectOrderInquiryService(db).follow_book_repairing(
                     service.ref_moves, trigger="autocount_ingest",
+                    company_id=service.company_id, actor_user_id=actor,
                 )
             db.commit()
         except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
@@ -421,6 +422,7 @@ def _run_shipping_order_book_repair_hook(
         with db.begin_nested():
             ProjectOrderInquiryService(db).follow_book_repairing(
                 service.ref_moves, trigger="autocount_ingest",
+                company_id=service.company_id, actor_user_id=actor,
             )
         db.commit()
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded

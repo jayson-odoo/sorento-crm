@@ -425,6 +425,11 @@ LINK_HORIZON_NONE = "none"
 class ProjectOrderInquiryService:
     """Derives, serves, exports and closes off what purchasing is told to do."""
 
+    #: AC-RL-50 (security review, 17 Sep): `follow_book_repairing` processes at most
+    #: this many `moves` in one call - each one fans out into several queries, and
+    #: nothing else bounds how many an ESB push can name in a single request.
+    FOLLOW_BOOK_REPAIRING_MAX_MOVES = 200
+
     def __init__(self, db: Session):
         self.db = db
         # Which warehouses are somebody's pool, read once per service instance: the link
@@ -940,7 +945,10 @@ class ProjectOrderInquiryService:
         if len(live) != 1:
             return False
         row = live[0]
-        if row.state in (INQUIRY_PLACED, INQUIRY_ACTIONED) and not self._links_of(row.id):
+        # REV nit (17 Sep): one query, read once - `links` below used to be a
+        # second, identical `_links_of(row.id)` call.
+        links = self._links_of(row.id)
+        if row.state in (INQUIRY_PLACED, INQUIRY_ACTIONED) and not links:
             return False
 
         # AC-RL-10 to AC-RL-14 (`PLAN-oi-replan-received-links.md`, S2): a FULLY
@@ -948,11 +956,8 @@ class ProjectOrderInquiryService:
         # already shipped to somebody else's order, and settling this row onto them
         # would silently understate what purchasing still has to buy. Checked before
         # the over-cover step below, on the row's own links as they stand right now.
-        links = self._links_of(row.id)
         if links:
-            redirected = self._redirect_row_if_received(
-                row, links, decision, actor_user_id=actor_user_id
-            )
+            redirected = self._redirect_row_if_received(row, links, decision)
             if redirected:
                 return False
 
@@ -1077,8 +1082,6 @@ class ProjectOrderInquiryService:
         row: OrderInquiryRow,
         links: Sequence[OrderInquiryLink],
         decision: Any,
-        *,
-        actor_user_id: Optional[str] = None,
     ) -> bool:
         """AC-RL-10 to AC-RL-12 (`PLAN-oi-replan-received-links.md`, S2): the rule that
         makes `_settle_row_in_place` decline a row whose coverage has already shipped.
@@ -1140,8 +1143,13 @@ class ProjectOrderInquiryService:
                 PurchaseOrderLine.qty_received,
                 PurchaseOrderLine.line_status,
             ).filter(PurchaseOrderLine.id.in_(po_line_ids)):
+                # REV nit (17 Sep): `qty_ordered` null or zero must never read as
+                # received just because `_dec(None)` and `_dec(0)` are both zero -
+                # `0 >= 0` would otherwise flag a line nobody has ordered anything
+                # against yet.
                 po_lines[str(line_id)] = bool(
-                    line_status == "closed" or _dec(qty_received) >= _dec(qty_ordered)
+                    line_status == "closed"
+                    or (_dec(qty_ordered) > _ZERO and _dec(qty_received) >= _dec(qty_ordered))
                 )
         spo_allocations: Dict[str, Optional[date]] = {}
         if spo_ids:
@@ -1180,7 +1188,12 @@ class ProjectOrderInquiryService:
     # -------------------------------------------------------- S5: link follows the book
 
     def follow_book_repairing(
-        self, moves: Sequence[Dict[str, Any]], *, trigger: str = "autocount_ingest"
+        self,
+        moves: Sequence[Dict[str, Any]],
+        *,
+        trigger: str = "autocount_ingest",
+        company_id: Optional[str] = None,
+        actor_user_id: Optional[str] = None,
     ) -> None:
         """AC-RL-40 to AC-RL-45 (`PLAN-oi-replan-received-links.md` S5): `from_so_
         line_ref` is the source of truth, and whenever the ESB book moves it, our own
@@ -1189,14 +1202,46 @@ class ProjectOrderInquiryService:
         `moves` is `DocumentIngestService.ref_moves` / `ShippingOrderIngestService.
         ref_moves` - `{"target_kind": "po"|"spo", "target_id", "old_ref", "new_ref"}`,
         one entry per PO line or SPO allocation whose ref genuinely changed on this
-        push (the capture sites already drop a same-ref repush, AC-RL-45 second half).
-        Called by `ingest.py`'s post-write hooks, after the ingest's own transaction
-        has written the moved ref.
-        """
-        for move in moves:
-            self._follow_one_move(move, trigger=trigger)
+        push (the capture sites already drop a same-ref repush, AC-RL-45 second half;
+        AC-RL-49 review fix: each service's own capture site now stages a move per
+        record and only publishes it into `ref_moves` once that record's own
+        savepoint has actually committed, so a move captured for a record that later
+        fails is never read here at all). Called by `ingest.py`'s post-write hooks,
+        after the ingest's own transaction has written the moved ref.
 
-    def _follow_one_move(self, move: Dict[str, Any], *, trigger: str) -> None:
+        `company_id` is the pushing principal's own anchor (AC-RL-48 security review
+        fix): threaded down to `_resolve_ref_line` so a ref that happens to resolve
+        to ANOTHER company's sales-order line is never read as confidently as one of
+        ours. `actor_user_id` (SEC-N2) is threaded to `place_on_po_allocations`
+        rather than the `None` it used to hard-code.
+
+        AC-RL-50 security review fix: a single push can name arbitrarily many moves
+        (a malformed or malicious ESB batch), and each one fans out into several
+        queries (`_resolve_ref_line`, `_linkable_row_for_core_line`,
+        `place_on_po_allocations`) - `FOLLOW_BOOK_REPAIRING_MAX_MOVES` caps how many
+        of THIS call's `moves` are processed; the rest are skipped and logged.
+        """
+        cap = self.FOLLOW_BOOK_REPAIRING_MAX_MOVES
+        applied_moves = moves
+        if cap is not None and len(moves) > cap:
+            applied_moves = moves[:cap]
+            logger.warning(
+                "follow_book_repairing: capped at %s moves, skipped %s of %s",
+                cap, len(moves) - cap, len(moves),
+            )
+        for move in applied_moves:
+            self._follow_one_move(
+                move, trigger=trigger, company_id=company_id, actor_user_id=actor_user_id,
+            )
+
+    def _follow_one_move(
+        self,
+        move: Dict[str, Any],
+        *,
+        trigger: str,
+        company_id: Optional[str] = None,
+        actor_user_id: Optional[str] = None,
+    ) -> None:
         target_kind = move.get("target_kind")
         target_id = move.get("target_id")
         if not target_kind or not target_id:
@@ -1218,8 +1263,32 @@ class ProjectOrderInquiryService:
         if not links:
             return
 
-        old_line_id, _old_so_number = self._resolve_ref_line(move.get("old_ref"))
-        new_line_id, new_so_number = self._resolve_ref_line(move.get("new_ref"))
+        old_ref = move.get("old_ref")
+        new_ref = move.get("new_ref")
+        old_line_id, _old_so_number = self._resolve_ref_line(old_ref, company_id=company_id)
+        new_line_id, new_so_number = self._resolve_ref_line(new_ref, company_id=company_id)
+        # AC-RL-47/48/51/52 (security review, 17 Sep): `_resolve_ref_line` answers
+        # `(None, None)` for FOUR different facts - no ref at all, a ref naming
+        # nothing this company has ever pushed, a ref naming another company's line,
+        # and an ambiguous ref matching more than one line - and only the FIRST is
+        # "nothing to match against"; the other three are "something was said that
+        # this push cannot actually stand behind" and must leave the move alone
+        # entirely, never read the same way a genuine absence is (AC-RL-45's own
+        # `null` clear, or the supersede path's genuine "never carried a ref").
+        if new_ref is not None and new_line_id is None:
+            logger.warning(
+                "follow_book_repairing: new_ref=%r did not resolve for target_kind=%s "
+                "target_id=%s; no-op",
+                new_ref, target_kind, target_id,
+            )
+            return
+        if old_ref is not None and old_line_id is None:
+            logger.warning(
+                "follow_book_repairing: old_ref=%r did not resolve for target_kind=%s "
+                "target_id=%s; no-op",
+                old_ref, target_kind, target_id,
+            )
+            return
 
         row_ids = {str(link.row_id) for link in links}
         rows_by_id = {
@@ -1300,7 +1369,7 @@ class ProjectOrderInquiryService:
                         self.place_on_po_allocations(
                             str(candidate_row.id),
                             [allocation],
-                            actor_user_id=None,
+                            actor_user_id=actor_user_id,
                             auto_trigger=trigger,
                         )
                     except AppException:
@@ -1333,8 +1402,11 @@ class ProjectOrderInquiryService:
             if line is None:
                 return False
             qty_ordered, qty_received, line_status = line
+            # REV nit (17 Sep): same guard as `_received_documents_for` - a null or
+            # zero `qty_ordered` line is not "received".
             return bool(
-                line_status == "closed" or _dec(qty_received) >= _dec(qty_ordered)
+                line_status == "closed"
+                or (_dec(qty_ordered) > _ZERO and _dec(qty_received) >= _dec(qty_ordered))
             )
         allocation = (
             self.db.query(
@@ -1362,23 +1434,39 @@ class ProjectOrderInquiryService:
         return not is_open
 
     def _resolve_ref_line(
-        self, ref: Optional[str]
+        self, ref: Optional[str], *, company_id: Optional[str] = None
     ) -> Tuple[Optional[str], Optional[str]]:
         """`(core_sales_order_line_id, so_number)` for an ESB `from_so_line_ref`, or
-        `(None, None)` when it is absent or names nothing this system holds - the
-        same exact `source_ref` match `order_link_service.write_line_ref_claims`
+        `(None, None)` when it is absent, names nothing this system holds, names a
+        line OUTSIDE `company_id` (AC-RL-48: scoped to the pushing company, never an
+        unscoped lookup that resolves a foreign line as confidently as one of ours),
+        or names MORE THAN ONE line (AC-RL-51: `source_ref` carries no unique
+        constraint, and an ambiguous ref is refused, never guessed at via `.first()`).
+        The caller (`_follow_one_move`) is the one that decides what a `(None, None)`
+        answer MEANS for a given ref - this only ever resolves or refuses.
+
+        Same exact `source_ref` match `order_link_service.write_line_ref_claims`
         uses to resolve the same field."""
         if not ref:
             return None, None
-        found = (
+        query = (
             self.db.query(SalesOrderLine.id, SalesOrder.so_number)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .filter(SalesOrderLine.source_ref == ref)
-            .first()
         )
-        if found is None:
+        if company_id is not None:
+            query = query.filter(SalesOrderLine.company_id == company_id)
+        found = query.limit(2).all()
+        if not found:
             return None, None
-        return str(found[0]), found[1]
+        if len(found) > 1:
+            logger.warning(
+                "follow_book_repairing: ambiguous source_ref=%r resolves to more than "
+                "one sales_order_line; refused",
+                ref,
+            )
+            return None, None
+        return str(found[0][0]), found[0][1]
 
     def _row_core_so_number(self, row: OrderInquiryRow) -> Optional[str]:
         """The CORE `sales_orders.so_number` a row's own line already traces to -
@@ -2697,9 +2785,15 @@ class ProjectOrderInquiryService:
                 received = bool(spo_number) and not spo_open
                 received_qty = _qty_str(_dec(spo_quantity_received))
             else:
+                # REV nit (17 Sep): same guard as `_received_documents_for` / `_is_
+                # target_received` - a null or zero `qty_ordered` line is not
+                # "received".
                 received = bool(po_number) and (
                     po_line_status == "closed"
-                    or _dec(po_qty_received) >= _dec(po_qty_ordered)
+                    or (
+                        _dec(po_qty_ordered) > _ZERO
+                        and _dec(po_qty_received) >= _dec(po_qty_ordered)
+                    )
                 )
                 received_qty = _qty_str(_dec(po_qty_received))
             out.setdefault(link.row_id, []).append(

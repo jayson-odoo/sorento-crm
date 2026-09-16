@@ -900,7 +900,14 @@ class OrderInquiryWorklistService:
             elif kind == "po":
                 base = base.filter(self._purchased_qty() > 0)
             else:
-                base = base.filter(_UNLINKED_QTY > 0)
+                # AC-RL-16c (17 Sep review round): a SEPARATE query from `_kinds`' own
+                # summary, so a redirected row's own unlinked remainder needs its own
+                # exclusion here too - the goods it names already shipped elsewhere
+                # (AC-RL-10), and listing the row under `kind=buy` would show purchasing
+                # a row the card's own number has already excluded.
+                base = base.filter(
+                    _UNLINKED_QTY > 0, OrderInquiryRow.redirected_to_pool.is_(False)
+                )
         if ack:
             # WHERE THE HANDSHAKE STANDS (`PLAN-scm-oi-handshake.md` section 4), which is
             # a third question beside `state` and `linked`: purchasing's own worklist is
@@ -1272,6 +1279,15 @@ class OrderInquiryWorklistService:
                 ProjectSalesOrderLine,
                 ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
             )
+            # NOT dead (17 Sep review finding pushed back on, see PLAN "Review
+            # findings" table note): `_UNLINKED_QTY` (this query's own `open_qty`)
+            # is built off `_LINE_OUTSTANDING`, which reads the bare `SalesOrderLine`
+            # table directly (`_LINE_OUTSTANDING`'s own docstring: "every reader of
+            # it must have `SalesOrderLine` joined") - removing this outerjoin left
+            # `SalesOrderLine` unjoined in the FROM clause, which SQLAlchemy then
+            # cross-joined against `OrderInquiry` (a real cartesian product,
+            # SAWarning, and `test_link_suggests_reallocate_to_every_sooner_open_
+            # row` red) rather than actually dropping an unused join.
             .outerjoin(
                 SalesOrderLine,
                 SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,

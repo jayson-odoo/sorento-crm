@@ -153,13 +153,14 @@ export interface OrderInquiryLink {
    */
   received_qty?: string | null;
   /**
-   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-23): a concrete
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): a concrete
    * instruction on an open link that has drifted outside the product's lead-time
-   * window - never a reason, never "early" (owner ruling 16 Sep). `repoint` names the
-   * soonest other linkable row of the same product with open need; `unlink` means
-   * there is no such row. Null on a received link or one still inside the window.
-   * Nothing is written from the chip's own popover - purchasing acts in AutoCount,
-   * and S5 (our link follows the book) reacts to that.
+   * window - never a reason, never "early" (owner ruling 16 Sep), never the word
+   * "repoint" on screen (ruling 17 Sep). `reallocate` names EVERY other linkable row
+   * of the same product with open need, earliest first - the first is the suggested
+   * target; `unlink` means there is no such row. Null on a received link or one still
+   * inside the window. Nothing is written from the chip's own lightbox - purchasing
+   * acts in AutoCount, and S5 (our link follows the book) reacts to that.
    */
   suggestion?: OrderInquiryLinkSuggestion | null;
 }
