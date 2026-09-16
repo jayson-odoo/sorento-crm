@@ -73,7 +73,7 @@ from typing import Any
 import pytest
 
 from tests.chatbot import _corpus, divergences
-from tests.chatbot.conftest import set_chatbot_switches, validating_resolve_entity
+from tests.chatbot.conftest import validating_resolve_entity
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name (S6a precedent)
     _envelope,
     seeded,
@@ -722,224 +722,31 @@ class TestIf6Dispatch:
 
 
 # --------------------------------------------------------------------------- #
-# Coordinator note: the CRM completes `business_query` / `check_promotion` /
-# `stock_denied` end to end ONLY when that branch kind is in
-# `system_settings.chatbot_completed_lanes` (a JSON list column, default `[]` - new,
-# beside `chatbot_stock_denial_enabled` from S3). With the default (empty list) the
-# business lane still runs up to S6a's delegate seam
-# (`system_settings.chatbot_business_lane_enabled`) and delegates with `delegate_payload`
-# attached, exactly as `test_s6a_gate_dry_run_and_seams.py` already covers - this is
-# the SAME decision, gated by a second, independent flag rather than replacing the
-# first. `engine._enabled_lanes(db, row)` reads the column off the row the turn already
-# read (LESSONS: a new system_settings column needs the two manual dict builders too,
-# but that is the FE-facing settings read, not this turn-time gate) and
-# `delegate.delegate_for` is the pure predicate over it. The engine-level tests below
-# pin the NEW seam `lanes.business.complete_answer` engine.py calls when the branch is
-# completed - the coder is free to refine that function's internals, but `run_turn`
-# must call it and use its `{reply, actions}` return.
+# RETIRED (AC-1592, this session): `TestChatbotCompletedLanesEngineWiring` (2 methods)
+# and `TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn` (2 methods) pinned the S6a-era
+# "shadow lane" wiring this comment block itself describes - `engine.decide` (a
+# ctx-in/branch-kind-out dispatcher, deleted, AttributeError, grep-confirmed),
+# `result.delegate_payload["_exit_kind"]`, and `lanes.business.run_until_exit` /
+# `complete_answer` (the old lane-exit seams, replaced by `turn/fetch.py::run_fetch` +
+# `turn_runtime.make_tool_runner`, calling the SAME kept `lanes/business.run_fetch`
+# directly - tester 11's finding, `test_engine_failure_paths.py`). `chatbot_completed_
+# lanes` no longer gates completion at all (contract 73 superseded) - `business_query`
+# is in `CRM_COMPLETED_BRANCH_KINDS` unconditionally today.
+#
+# Replacement coverage, already landed:
+# - The completion/delegate property (`TestChatbotCompletedLanesEngineWiring`):
+#   `test_s3_switch_and_complete_by_body.py::TestTheCompletedLaneSwitch`.
+# - AC-604's own property (`TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn` - a RETURNED
+#   error fragment is answered as a miss, never left empty or failed):
+#   `test_engine_failure_paths.py::TestTheBusinessLaneOnFetchFailure.
+#   test_a_returned_error_fragment_is_answered_as_a_miss_not_a_failure` (tester 11) -
+#   measured the CURRENT engine's identical guarantee: a returned error-shaped fragment
+#   (any `outcome`, including `not_found`) never raises, so the turn completes `done`
+#   with an ordinary miss reply - only a RAISED exception fails a turn today, a real
+#   architecture change from the old `_fetch_arm == "error" and outcome is None` split.
+# `TestErrorArmRendersTheMissLane` below (a different class, still green) is unaffected -
+# it drives `lanes.business.complete_answer` directly as a unit, not through `run_turn`.
 # --------------------------------------------------------------------------- #
-
-
-# The gate's own unit tests live in `test_completed_lanes_switch.py`, against the ONE
-# implementation the engine uses (`delegate.delegate_for` over
-# `engine._enabled_lanes`). What is pinned HERE is the wiring below: that `run_turn`
-# calls `lanes.business.complete_answer` when the branch is enabled and uses its return.
-
-
-class TestChatbotCompletedLanesEngineWiring:
-    """`engine.run_turn`, on Postgres, exactly like `test_s6a_gate_dry_run_and_seams.py`
-    (same fixtures: `session_factory`, `seeded`, `stub_parser`, `stub_access`, plus
-    `system_settings_row` from `conftest.py`)."""
-
-    @staticmethod
-    def _stub_bundle(calls: list[str]):
-        from app.services.chatbot.lanes.business.services import ResolveGateServices
-
-        def _access_types(*, contact_id, space_id):
-            calls.append("access_types")
-            return [{"name": "Sorento Dealer"}]
-
-        def _resolve_entity(body):
-            calls.append("resolve_entity")
-            return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
-
-        def _probe(**kwargs):
-            calls.append("probe")
-            return None
-
-        return ResolveGateServices(
-            access_types=_access_types, resolve_entity=validating_resolve_entity(_resolve_entity), probe=_probe
-        )
-
-    def test_default_completed_lanes_still_delegates_with_payload(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        """One case proving the default (`chatbot_completed_lanes` unset, i.e. `[]`)
-        still delegates - the S6c completion gate is ADDITIVE to S6a's existing
-        `chatbot_business_lane_enabled` seam, never a silent behaviour change for an
-        install that has not opted a lane in yet."""
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        set_chatbot_switches(session_factory, business_lane=True)
-        calls: list[str] = []
-        bundle = self._stub_bundle(calls)
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(
-            engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
-        )
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate == "business_query"
-        assert result.delegate_payload is not None
-        assert result.delegate_payload["_exit_kind"] in ("continue", "access_ask", "not_found", "offer")
-
-    def test_seeded_completed_lane_finishes_the_turn_without_delegating(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        from app.models.user import SystemSetting
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_completed_lanes = ["business_query"]
-        db.commit()
-
-        set_chatbot_switches(session_factory, business_lane=True)
-        bundle = self._stub_bundle([])
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(
-            engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
-        )
-        canned_reply = {"text": "Here is what I found.", "quick_replies": []}
-        canned_actions = [{"kind": "send_message", "text": "Here is what I found."}]
-        monkeypatch.setattr(
-            engine_mod.business,
-            "complete_answer",
-            lambda *args, **kwargs: {"reply": canned_reply, "actions": canned_actions},
-            raising=False,
-        )
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert result.branch_kind == "business_query"
-        assert result.delegate is None, (
-            "chatbot_completed_lanes named business_query - the turn must finish itself, "
-            f"not hand back to n8n (got delegate={result.delegate!r})"
-        )
-        assert result.reply == canned_reply
-        assert result.actions == canned_actions
-
-
-class TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn:
-    """H11 / AC-604: "no tool matched" and "the read did not come back" are answers.
-
-    `fetch-result`'s `error` arm used to leave `business_completes` False, so a turn on a
-    lane the owner had switched ON still closed `delegated` at `looked_up` and returned
-    `delegate = "business_query"` - and once n8n's Switch output is deleted (AC-610) that
-    is the empty turn H11 names. Both switch positions are graded.
-    """
-
-    @staticmethod
-    def _error_fragment() -> dict:
-        return {
-            "kind": "error",
-            "_fetch_arm": "error",
-            "error": "no MCP tool matched this question",
-            "outcome": "not_found",
-            "fetch": {"_fetch_arm": "error", "error": "no MCP tool matched this question"},
-        }
-
-    def _wire(self, session_factory, engine_mod, monkeypatch, calls: list) -> None:
-        set_chatbot_switches(session_factory, business_lane=True)
-        bundle = TestChatbotCompletedLanesEngineWiring._stub_bundle([])
-        monkeypatch.setattr(
-            engine_mod.business_services,
-            "production_services",
-            lambda db, *, space_id=None: bundle,
-        )
-        monkeypatch.setattr(
-            engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
-        )
-        monkeypatch.setattr(
-            engine_mod.business,
-            "run_until_exit",
-            lambda *args, **kwargs: {
-                "delegate": "business_query",
-                "payload": {"_exit_kind": "continue", "resolved": {}, "gate": {}},
-            },
-        )
-        monkeypatch.setattr(
-            engine_mod.business, "run_fetch", lambda *args, **kwargs: self._error_fragment()
-        )
-        monkeypatch.setattr(
-            engine_mod.business,
-            "complete_answer",
-            lambda payload, **kwargs: calls.append(payload)
-            or {"reply": {"text": "Couldn't find that.", "quick_replies": []}, "actions": []},
-            raising=False,
-        )
-
-    def test_with_the_lane_on_the_crm_answers_the_not_found_itself(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        from app.models.user import SystemSetting
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_completed_lanes = ["business_query"]
-        db.commit()
-
-        answered: list[dict] = []
-        self._wire(session_factory, engine_mod, monkeypatch, answered)
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert answered, "the answer half never ran - the error arm is still an empty turn"
-        assert answered[0]["fetch"]["_fetch_arm"] == "error", (
-            "the miss lane is reached through the fetch item's own arm"
-        )
-        assert result.delegate is None
-        assert result.reply == {"text": "Couldn't find that.", "quick_replies": []}
-
-    def test_with_the_lane_off_it_still_delegates_and_records_the_reason(
-        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        from app.services.chatbot import engine as engine_mod
-        from tests.chatbot.test_engine import _envelope
-
-        assert (system_settings_row.chatbot_completed_lanes or []) == []
-        answered: list[dict] = []
-        self._wire(session_factory, engine_mod, monkeypatch, answered)
-        stub_parser()
-        stub_access()
-
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-
-        assert not answered, "the lane is switched off - n8n answers this turn"
-        assert result.delegate == "business_query"
-        assert result.stage == "looked_up", (
-            "a delegated fetch error stops at looked_up so the operator's query finds it"
-        )
 
 
 class TestErrorArmRendersTheMissLane:
