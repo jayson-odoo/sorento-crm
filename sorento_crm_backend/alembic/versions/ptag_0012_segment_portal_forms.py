@@ -23,7 +23,7 @@ Downgrade drops the segment column only - it never touched the access-type
 column, so there is nothing to restore there.
 
 Revision ID: ptag_0012_seg_forms
-Revises: ptag_0011_line_promo
+Revises: ptag_0012_data_change_cache
 Create Date: 2026-09-16
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from sqlalchemy import inspect
 from sqlalchemy.dialects import postgresql
 
 revision = "ptag_0012_seg_forms"
-down_revision = "ptag_0011_line_promo"
+down_revision = "ptag_0012_data_change_cache"
 branch_labels = None
 depends_on = None
 
