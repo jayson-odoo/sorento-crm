@@ -161,3 +161,46 @@ source contact with unknown prior state) once the engine fixes pass 6 found (ite
   `broaden_axis: "all"` (that derives the expectation from the engine under test,
   which is the one thing this corpus must never do) - re-record this case live against
   v26 instead. Not touched this session.
+
+## Harness gap: product set resolver (cluster B, 17 files, tester 17, 17 Sep 2026, queue item 5)
+
+Every file below fails on `entity_ids` alone (recording expected the whole product
+family/set, the current engine's stubs resolve exactly one). Investigated whether the
+fix is a one-function stub (`resolve_product_set` returning the recorded set) per the
+coordinator's instruction - it is NOT: `resolve_product_set`
+(`app/services/product_predicate_service.py:517`) takes a structured `require`/`specs`/
+`free_terms`/`scope_terms` argument shape and queries the DB directly (this file's own
+module docstring already names this as a "Known gap, not solved here, flagged to the
+captain" - a prior tester's own finding, re-confirmed unchanged this session). A stub
+here is not one function returning one recorded value the way `resolve_entity`'s stub
+is - it needs a per-case dispatch keyed on the call's `require`/`specs` shape, the same
+scale of work as the 4 existing stubs combined, and real seeded catalogue rows besides
+(this lane's private schema holds no product catalogue by design - CI's database has no
+data). Out of mechanical-fix scope; needs either real seeded rows per family (a
+significant corpus-seeding project) or a genuine `resolve_product_set` stub keyed the
+same way `_install_stubs` keys the other four seams - a coder/captain scope call.
+
+`console/case-001-three-codes-the-third-has-neither-stock-nor-incoming`,
+`case-007-a-document-ask-with-nothing-to-narrow-by-is-refused-not-listed`,
+`case-018-a-code-with-no-stock-is-named-before-the-incoming-block`,
+`case-019-a1-spec-ask-shows-the-compact-specs-line`,
+`case-020-a1-one-key-spec-ask-answers-that-key-only`,
+`case-021-item-8-list-price-of-a-product-reaches-the-base-list-price-field`,
+`case-023-item-8-seat-cover-material-reaches-the-key-that-contains-it`,
+`case-024-e2-catalog-sorento-is-a-resource-attachment-ask-not-promotion`,
+`case-037-a6-the-same-question-in-chinese`,
+`case-045-owner-8-sep-a-delivery-word-plus-a-name-over-an-escalate-offer-is-an-order-ask`
+(step 2 only - the file's growth_r1 branch_kind/tools divergence is separately
+confirmed fixed, see DIVERGENCES.md's cluster D section),
+`case-051-finding-1-a-product-with-many-specs-lists-all-of-them-no-more`,
+`case-053-ac-32a-default-contact-asking-for-m218-s-last-purchase-cost-is-denied`,
+`case-054-ac-32b-granted-contact-gets-the-last-purchase-cost-answer`,
+`case-055-ac-32c-family-ask-returns-one-row-per-member-per-location`,
+`case-056-ac-30-last-in-for-a-family-names-every-member`,
+`contract/line-001-stock-by-location`,
+`prod_sample/business-query-477071889-chain-001-no-run-id`.
+
+Re-measured this session (unchanged from tester 15's original clustering): 16 files
+still fail on entity_ids alone; `case-045` additionally confirmed clean on
+branch_kind/tools (its growth_r1 regression is fixed, only this entity_ids divergence
+remains).
