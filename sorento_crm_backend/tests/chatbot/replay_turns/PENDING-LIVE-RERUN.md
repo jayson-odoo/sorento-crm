@@ -94,3 +94,21 @@ Not exhaustively broken down per file this session (117 remaining failing files 
 time-boxed per the coordinator's priority order - T4/T3/contract-lines still ahead in
 the queue). Re-run `pytest tests/chatbot/test_turn_replay.py -q --tb=short` and re-parse
 after any harness or engine change; the exact list above will shift.
+
+## Needs a v26 re-record (tester 16, 17 Sep 2026, coder 14's addendum)
+
+- **`console/handpass3-owner-17sep-hanlim-chinchun-all-refinement-this-month.json`
+  step 3** - the recorded verdict for "All" over the four-family customer roster
+  carries `picks: "all"` with NO `broaden_axis` and NO `reference_positions` (recorded
+  under the SEMANTIC_PARSER_PROMPT that still declared `answers_open_question`, v25 or
+  earlier). Under the retirement's pick rule the recorded verdict therefore names no
+  option at all, so the current engine correctly reads it as "not an answer" and runs
+  it as itself (`low_signal`) rather than the recorded 15-ledger order list
+  (`business_query`). v26 (`9f4a20b6-ce25-4c1d-a5a8-3c0d5cf26156`, coder 14's addendum,
+  `parser.resolve_config` resolves to it as `production`) adds the "all with no all
+  option is every number" line specifically so a live parse of "All" against the
+  CURRENT prompt emits `broaden_axis: "all"`, which is what the fix is for - not
+  visible on a replay of the OLD verdict. Do NOT hand-edit the recorded verdict to add
+  `broaden_axis: "all"` (that derives the expectation from the engine under test,
+  which is the one thing this corpus must never do) - re-record this case live against
+  v26 instead. Not touched this session.
