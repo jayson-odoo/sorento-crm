@@ -43,6 +43,7 @@ from alembic.operations import Operations
 
 from app.models.base import company_scope
 from app.models.project_so import (
+    ACK_REJECTED,
     INQUIRY_CANCELLED,
     IV_ALREADY_INBOUND,
     IV_CHANGE_SO,
@@ -54,7 +55,10 @@ from app.models.project_so import (
 )
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.automation_triggers import build_order_inquiry_link
-from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.project_order_inquiry_service import (
+    _HANDOVER_PENDING_KEY,
+    ProjectOrderInquiryService,
+)
 from app.services.project_supply_service import ProjectSupplyService
 
 from ._pg_fixture import blank_session
@@ -731,6 +735,206 @@ def test_unchanged_carried_row_is_not_printed(api, monkeypatch):
         f"a carry that actually changed qty must print exactly once with was.qty, got {lines2}"
     )
     assert changed_carry[0]["qty"] == "6"
+
+
+# --------------------------------------------------------------------------- #
+# AC-H21: a confirm inside a savepoint (planning-change apply, book upload)    #
+# dispatches exactly once and leaves nothing pending                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_confirm_inside_savepoint_dispatches_once(api, monkeypatch):
+    """AC-H21 (review round 1, B1).
+
+    `planning_change_service.apply` wraps each order's write in its own
+    `db.begin_nested()` / `savepoint.commit()` (see that module around line 4715), and
+    the outstanding-book upload does the same. `_record_handover` already tags the entry
+    it queues with `_transaction_chain(self.db)` - `get_nested_transaction() or
+    get_transaction()` - so it correctly names the SAVEPOINT, not the root. The drain
+    side does not match: `_mark_handover_transaction_committed` (the `after_commit`
+    listener that records which transaction just concluded via commit, so
+    `_fire_pending_handover`'s `after_transaction_end` can tell a commit from a
+    rollback) calls bare `session.get_transaction()`, which returns the ROOT
+    transaction ALWAYS, per SQLAlchemy's own contract - never the savepoint that is
+    actually committing. So the savepoint's own commit is never recorded as "committed",
+    `_fire_pending_handover` reads that as a rollback when the savepoint later closes,
+    and the entry is left stranded on `session.info` forever - reviewer's probe on HEAD
+    reports exactly that: 0 dispatches, 1 stranded pending item.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+    supply = ProjectSupplyService(db)
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(
+        db, core_so, world.product, world.warehouse, qty_ordered="10", required_date=WAS
+    )
+    order = _project_so(
+        db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+    )
+    line = _project_line(db, order, line_no=1, product=world.product, core_line=core_line)
+    db.commit()
+
+    savepoint = db.begin_nested()
+    supply.confirm(
+        order,
+        ConfirmSupplyBody(lines=[ConfirmLine(project_line_id=str(line.id), buy_qty="10")]),
+        actor_user_id=world.cs_user,
+    )
+    savepoint.commit()
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert len(matches) == 1, f"expected exactly one dispatch, got {len(matches)}"
+    assert not db.info.get(_HANDOVER_PENDING_KEY), (
+        "nothing may remain pending on the session once the root transaction commits"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-H22: the AC-H20 carry rule still applies when the row's live handshake    #
+# is missing (rejected, or never acknowledged)                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_unchanged_carry_silent_when_handshake_missing(api, monkeypatch):
+    """AC-H22 (review round 1, S4).
+
+    The carry gate reads `if carried and prior_ack is not None: ...compare against
+    prior_ack... else: self._record_handover(raised_row, kind="raised", ...)`. When the
+    row IS carried but `_live_handshake` finds nothing live to compare against (a
+    rejected row is deliberately excluded there), the gate falls through to the ELSE
+    branch and prints a bare fresh ORDER regardless of whether the qty/date actually
+    moved - exactly backwards from AC-H20 for this one case. Rejecting by hand-setting
+    the column (not through the full reject service call, which also un-decides the
+    line and would stop it being carried at all) is the same technique
+    `test_order_inquiry_handshake.py` itself never needs but the coordinator's brief
+    names explicitly for this seam.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    # -- unchanged carry, but the row's live handshake is missing (rejected). --
+    fixture = _raise_two_rows(api, first_qty="10", second_qty="6")
+    world.db.commit()
+    fixture["second"]["row"].ack_state = ACK_REJECTED
+    world.db.flush()
+    world.db.commit()
+    calls.clear()
+
+    supply = ProjectSupplyService(world.db)
+    supply.uncover_lines(
+        fixture["order"],
+        [str(fixture["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "the retire must still dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    unchanged_carry = [l for l in lines if l["qty"] == "6"]
+    assert unchanged_carry == [], (
+        f"an unchanged carry must print nothing even without a live handshake, found {lines}"
+    )
+
+    # -- same missing-handshake condition, but the carry's qty DID change: exactly one
+    # settled line, never a second bare ORDER. --
+    fixture2 = _raise_two_rows(api, first_qty="10", second_qty="6")
+    world.db.commit()
+    fixture2["second"]["row"].ack_state = ACK_REJECTED
+    fixture2["second"]["row"].qty = Decimal("9")
+    world.db.flush()
+    world.db.commit()
+    calls.clear()
+
+    ProjectSupplyService(world.db).uncover_lines(
+        fixture2["order"],
+        [str(fixture2["first"]["line"].id)],
+        actor_user_id=world.cs_user,
+        reason="CS took the line back.",
+    )
+    world.db.commit()
+
+    matches2 = _handover_calls(calls)
+    assert matches2, "the retire must dispatch the handover"
+    lines2 = matches2[-1]["context"]["handover"]["lines"]
+    changed_carry = [l for l in lines2 if l["was"] == {"qty": "9"}]
+    assert len(changed_carry) == 1, (
+        f"a changed carry without a live handshake must still print once with was.qty, "
+        f"got {lines2}"
+    )
+    assert changed_carry[0]["qty"] == "6"
+
+
+# --------------------------------------------------------------------------- #
+# AC-H23: a named (non-carried) line re-confirmed at a new qty prints BOTH the #
+# cancelled old row and the raised replacement                                #
+# --------------------------------------------------------------------------- #
+
+
+def test_named_line_reconfirmed_new_qty_prints_cancel_and_order(api, monkeypatch):
+    """AC-H23 (review round 1, S5).
+
+    `test_order_inquiry_handshake.py::test_a_supersede_of_an_acknowledged_row_raises_
+    its_replacement_acknowledged` already drives this exact seam: a line that is NAMED
+    again (not carried) at a qty the row cannot absorb in place. `_settle_row_in_place`
+    only ever runs when the line was ASKED to settle in place or already carries a
+    cascade DRAFT (`INQUIRY_PLACED`/`INQUIRY_PARTLY_LINKED` with only cascade links) -
+    neither is true here (no purchase order or SPO was ever opened for this row, so the
+    raise-time cascade found nothing to link, and this test never asks for a
+    settle-in-place). So the per-entry loop takes its OTHER branch: the still-raised old
+    row is silently flipped to `INQUIRY_CANCELLED` / "Superseded by revision N" with no
+    `_record_handover` call anywhere in that branch, while the freshly raised
+    replacement (a NAMED line, not `carried`) hits the plain
+    `self._record_handover(raised_row, kind="raised", ...)` else-branch below it -
+    so today only the new row ever reaches purchasing's inbox, and the fact that this
+    line's OLD instruction is gone is never said.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _raise_one_row(api, qty="10")
+    world.db.commit()
+    calls.clear()
+
+    # The confirm endpoint refuses a composition that does not add up to the LINE'S
+    # OWN open qty ("the line is open for 10") - a genuinely different need has to come
+    # from the book moving, exactly like `_settle`'s own mutation, but WITHOUT asking
+    # for settle-in-place: that is what keeps this on the supersede branch rather than
+    # `_settle_row_in_place`.
+    fixture["core_line"].qty_ordered = Decimal("8")
+    fixture["line"].qty = Decimal("8")
+    world.db.flush()
+    world.db.commit()
+
+    response = _confirm(
+        client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="8")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.refresh(fixture["row"])
+    assert fixture["row"].state == INQUIRY_CANCELLED, (
+        "the old row has to have been silently superseded for this test to mean anything"
+    )
+
+    matches = _handover_calls(calls)
+    assert matches, "the reconfirm must dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+
+    cancelled = [l for l in lines if l["remark"] == "CANCEL BALANCE 10 NOS"]
+    assert cancelled, f"the superseded old row must still print as cancelled, found {lines}"
+    assert cancelled[0]["qty"] == "0"
+    assert cancelled[0]["was"] == {"qty": "10"}
+
+    fresh = [l for l in lines if l["remark"] == "ORDER" and l["qty"] == "8"]
+    assert fresh, f"the replacement must print as its own ORDER line, found {lines}"
 
 
 # --------------------------------------------------------------------------- #
