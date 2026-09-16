@@ -2,7 +2,7 @@
  * Chatbot growth r1, Slice D2 (AC-972, AC-973). Phase 2 test-first.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 
 import { TurnDetailDrawer } from './TurnDetailDrawer';
 import type { ChatbotTurnDetail, TurnDetail } from '../types/chatbotTurn.types';
@@ -39,6 +39,14 @@ function fullDetail(): TurnDetail {
         ms: 5,
         status: 'ok',
         summary: 'Understood as a business query.',
+        error: null,
+      },
+      {
+        name: 'sent',
+        started_at: '2026-09-07T00:00:02Z',
+        ms: 1,
+        status: 'ok',
+        summary: 'Handed the reply to the caller to send.',
         error: null,
       },
     ],
@@ -169,6 +177,26 @@ describe('TurnDetailDrawer', () => {
     expect(screen.getByText('crm_incoming_stock_list')).toBeInTheDocument();
     expect(screen.getAllByText('inventory.sellable').length).toBeGreaterThan(0);
     expect(screen.getByText('new_key')).toBeInTheDocument();
+  });
+
+  it('browser pass finding (16 Sep 2026): a trace with a sent stage renders a dedicated Sent panel with its summary, not just a row buried in Stages', () => {
+    turnState = { data: detailTurn(fullDetail()), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-sent-trigger'));
+
+    const sentPanel = screen.getByTestId('section-sent');
+    expect(within(sentPanel).getByText('Handed the reply to the caller to send.')).toBeInTheDocument();
+  });
+
+  it('a turn recorded with no sent stage shows the Sent panel empty, not absent', () => {
+    turnState = { data: detailTurn(emptyDetail()), isLoading: false, isError: false };
+    render(<TurnDetailDrawer turnId="ZZT-turn-detail-1" onOpenChange={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId('section-sent-trigger'));
+
+    const sentPanel = screen.getByTestId('section-sent');
+    expect(within(sentPanel).getByText(/no sent stage/i)).toBeInTheDocument();
   });
 
   it('renders an empty section for every kind absent from the trace', () => {
