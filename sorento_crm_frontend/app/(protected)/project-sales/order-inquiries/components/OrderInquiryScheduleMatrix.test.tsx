@@ -58,10 +58,12 @@ describe('OrderInquiryScheduleMatrix cell, server contract (AC-X1, AC-X4)', () =
     expect(segments[0].getAttribute('data-kind')).toBe('buy');
   });
 
-  it('draws rose 3 / sky 5 and reads "Buy 3 · PO 5" off the server stage sums, in stage order', () => {
+  it('draws rose 3 / sky 5 and reads "Buy 3 · Purchased 5" off the server stage sums, in stage order', () => {
     renderBuilt([cell({ qty: '8', buy: '3', po: '5', spo: '0', rows: 1 })]);
 
-    const button = screen.getByRole('button', { name: '8 owed, 1 row, Buy 3 · PO 5' });
+    const button = screen.getByRole('button', {
+      name: '8 owed, 1 row, Buy 3 · Purchased 5',
+    });
     const bar = within(button).getByTestId('supply-bar');
     expect(bar).toHaveAttribute('data-decided', 'false');
     const kinds = [...bar.querySelectorAll('span[data-kind]')].map((el) =>
@@ -73,7 +75,7 @@ describe('OrderInquiryScheduleMatrix cell, server contract (AC-X1, AC-X4)', () =
   it('draws a solid violet segment for a cell wholly on SPO allocations (incoming)', () => {
     renderBuilt([cell({ qty: '10', buy: '0', po: '0', spo: '10', rows: 1 })]);
 
-    const button = screen.getByRole('button', { name: '10 owed, 1 row, SPO 10' });
+    const button = screen.getByRole('button', { name: '10 owed, 1 row, Incoming 10' });
     const bar = within(button).getByTestId('supply-bar');
     // Solid: wholly covered by a document, per the server's `buy` sum of zero.
     expect(bar).toHaveAttribute('data-decided', 'true');
