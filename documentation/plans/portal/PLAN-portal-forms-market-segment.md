@@ -1,6 +1,6 @@
 # PLAN - Portal forms: grant by market segment, every kind gated, per-contact override for all five
 
-Status: draft r2, 16 Sep 2026 (owner lavish ruling: base default = four legacy kinds for every contact)
+Status: r4, 16 Sep 2026: PR #963 draft, review fix round in progress (r2 owner lavish ruling: base default = four legacy kinds; r3 D7; r4 expand-contract D4)
 UAC: `documentation/plans/portal/portal-forms-market-segment-acceptance-criteria.md`
 Branch: `feat/portal-forms-market-segment`, worktree `.claude/worktrees/portal-forms-market-segment`
 Lane stack: FE :3080, BE :8080, DB `sorento_pfms` (clone of the dev DB, see Lane setup)
@@ -68,12 +68,15 @@ contact access types, and the owner ruled the group source should be market segm
   No "no segment" special case, no seed, nobody loses a form at deploy. The base list is the
   existing `SUPPORTED_TYPES` constant; it becomes a System Settings field only when the owner
   asks to change the default itself (named trigger, Out of scope).
-- **D4 Migration is schema only.** Add `market_segments.portal_form_types` (default `[]`),
-  drop `contact_access_types.portal_form_types`. No seed rows, no override backfill: D3 makes
-  them unnecessary. The one existing override row (owner's contact, price tag Always show) is
-  untouched. Segment grants are additive, so the segment admin field offers only the kinds
-  beyond the base (today: Price Tag Request) under the label "Additional portal forms";
-  offering the base four there would be a no-op control.
+- **D4 Migration is expand only (r4, security review).** Add `market_segments.portal_form_types`
+  (default `[]`). Do NOT drop `contact_access_types.portal_form_types` in this release: the
+  blue/green deploy runs `alembic upgrade head` in the new container while the old image still
+  serves traffic and still selects that column (old resolver + every ORM load of
+  `ContactAccessType`), so dropping it 500s the portal and the Respond.io ingest path for the
+  whole swap window. The model stops mapping the column now; the drop lands as its own
+  migration in a later release (issue filed). No seed rows, no override backfill. Segment
+  grants are additive, so the segment admin field offers only the kinds beyond the base
+  (today: Price Tag Request) under the label "Additional portal forms".
 - D5 One gate helper. `_require_price_tag_request_visible` becomes
   `_require_form_visible(db, contact_id, kind)` and is called from the three `_check_*_kind`
   helpers (which gain `db` and `token` parameters) and from the two row-derived attachment
@@ -84,9 +87,10 @@ contact access types, and the owner ruled the group source should be market segm
   shared `[type]` route shape guards. `GATED_FORM_TYPES` on the BE admin route becomes
   `GRANTABLE_PORTAL_FORM_TYPES`.
 - D7 No new fetch for a grant guard. A detail/edit page renders the server 403 inline (AC-L4).
-  A `/new` page makes no request on load, so it reads `visible_form_types` from the `me`
-  payload the portal shell already holds and renders the same inline message when the kind is
-  absent (r3, coder finding 16 Sep). The server remains the enforcement; the page check only
+  A `/new` page makes no submission request on load, so it reads `visible_form_types` from
+  one `/me` read (`SubmissionForm` reuses the fetch it already made; `PriceTagRequestForm` adds
+  the one `/me` call it never had) and renders the same inline message when the kind is absent
+  (r3, coder finding 16 Sep; wording r4). The server remains the enforcement; the page check only
   avoids an empty form.
 - D8 Tests: a shared helper `tests/_portal_grant.py` with `grant_portal_forms(db, contact_id,
   kinds)` writing override rows, and `seed_segment(db, kinds)` + `link_contact_segment` for
@@ -126,18 +130,19 @@ contact access types, and the owner ruled the group source should be market segm
 
 1. `market_segments.portal_form_types` JSONB NOT NULL server_default `'[]'` (idempotent via
    `_columns`).
-2. `DROP COLUMN contact_access_types.portal_form_types` (idempotent).
-Downgrade: drop the segment column, re-add the access type column with the same default.
-No data statements (D3/D4).
+Downgrade: drop that column. No data statements (D3), no access-type drop (D4 r4).
+Follow-up migration next release: `DROP COLUMN contact_access_types.portal_form_types`.
 
 ## Test list (captain's, one line per AC the tester writes)
 
-- AC-D1 `test_migration_adds_segment_column_and_drops_access_type_column` - after upgrade the
-  segment column exists with default `[]`, the access type column is gone; second run no error.
+- AC-D1 `test_migration_adds_segment_column_and_keeps_access_type_column` - the test first
+  rewinds the create_all schema (drops the segment column) so upgrade has work to do; after
+  upgrade the segment column exists with default `[]`, the access type column still exists;
+  second run no error.
 - AC-D2 `test_migration_writes_no_data_rows` - segment lists stay `[]`, override row count
   unchanged, existing override row unchanged.
 - AC-D3 `test_contact_with_no_segment_and_no_override_sees_exactly_the_four_legacy_kinds`.
-- AC-D4 `test_migration_downgrade_restores_access_type_column`.
+- AC-D4 `test_migration_downgrade_drops_segment_column_only`.
 - AC-R1 `test_resolver_is_base_four_plus_segment_union_and_ignores_access_types`.
 - AC-R2 `test_resolver_override_false_hides_a_base_kind_and_true_shows_price_tag`.
 - AC-R3 `test_segment_routes_carry_and_validate_portal_form_types` (create, update, omit, list,
@@ -172,6 +177,8 @@ No data statements (D3/D4).
 
 - A per-segment default for the Respond.io or chatbot surfaces: only when a second consumer of
   `portal_form_types` appears.
+- `DROP COLUMN contact_access_types.portal_form_types`: own migration in the release after
+  this one ships (expand-contract, D4 r4).
 - Editable base default (today the constant `SUPPORTED_TYPES`): a System Settings field only
   when the owner asks to change what every contact gets by default.
 - Removing a base kind for a whole segment (tri-state segment grants): only when the owner

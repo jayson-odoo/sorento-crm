@@ -1,7 +1,7 @@
 # UAC - Portal forms: grant by market segment, every kind gated, per-contact override for all five
 
 Plan: `documentation/plans/portal/PLAN-portal-forms-market-segment.md`
-Status: draft r2, 16 Sep 2026 (owner rulings in-session + lavish: base default = four legacy kinds)
+Status: r4, 16 Sep 2026: PR #963 draft, review fix round (r2 base default = four legacy kinds; r4 expand-only migration)
 
 ## Journey
 
@@ -67,9 +67,10 @@ price tag exactly).
 - **AC-L2 [FE]** Given a visible set that excludes `stock_inquiry`, when the landing opens with
   no tab in the URL or a tab not in the set, then the active tab is the first visible kind.
 - **AC-L3 [FE]** Given an empty visible set (every kind hidden by override), when the landing renders, then no picker, toolbar
-  or list renders; one empty state card reads "No forms are available for your account" with a
-  "Chat with us on WhatsApp" button using the existing `whatsapp_number`, and the search box is
-  hidden.
+  or list renders; one empty state card, same shape as the per-kind empty card (icon, `py-8`),
+  reads "No forms are available for your account" with a "Chat with us on WhatsApp" button
+  using the existing `whatsapp_number`, or the Log out button when no number is set; the search
+  box is hidden.
 - **AC-L4 [FE]** Given a deep link (`/portal/c/<slug>/<kind>/new` or `/<id>`) to a kind the
   contact cannot see, when the page loads and the API answers 403 `FORM_TYPE_NOT_VISIBLE`, then
   the page shows the server message inline and a link back to the landing; no crash, no empty
@@ -81,9 +82,10 @@ price tag exactly).
 
 ### Data
 
-- **AC-D1 [BE]** Given the migration, when it runs, then `market_segments.portal_form_types`
-  exists as JSONB NOT NULL default `'[]'`, and `contact_access_types.portal_form_types` no
-  longer exists. Running it twice converges (idempotent column checks).
+- **AC-D1 [BE]** Given a schema without `market_segments.portal_form_types` (the test rewinds
+  it first), when the migration runs, then that column exists as JSONB NOT NULL default `'[]'`
+  and `contact_access_types.portal_form_types` STILL exists (expand only, D4 r4). Running it
+  twice converges.
 - **AC-D2 [BE]** Given the migration, when it runs, then it writes no data: every segment's
   `portal_form_types` stays `[]`, the `contact_portal_form_overrides` row count is unchanged and
   an existing row is byte-identical.
@@ -91,7 +93,7 @@ price tag exactly).
   `resolve_visible_form_types` runs, then it returns exactly the four legacy kinds
   (`SUPPORTED_TYPES`), not `price_tag_request`.
 - **AC-D4 [BE]** Given the migration, when downgraded, then the segment column is dropped and
-  the access-type column is restored as JSONB NOT NULL default `'[]'` (data not restored).
+  nothing else changes.
 
 ### Resolver and admin
 
@@ -103,8 +105,15 @@ price tag exactly).
   `complaint` is absent although it is a base kind; given no segment grant plus an
   `is_enabled=true` override for `price_tag_request`, then it is present.
 - **AC-R3 [BE]** Given the market segment create and update routes, when `portal_form_types`
-  carries an unknown kind, then 422; when valid, then the response echoes the list; an update
-  that omits the field leaves it alone; the list endpoint carries the field.
+  carries an unknown kind, then 422; when valid, then the response echoes the list with blanks
+  and duplicates stripped; an update that omits the field leaves it alone; the list endpoint
+  carries the field; a user without `user_management.reference_data.manage` gets 403 on both
+  (r4).
+- **AC-R6 [BE]** Given a segment with `is_active=false` granting `price_tag_request`, when the
+  resolver runs for a contact in it, then the kind is absent (r4).
+- **AC-R7 [BE]** Given `POST /public/portal/ai-extract` and its `/schema` with a `portal.*`
+  form key whose kind the contact cannot see, then 403 `FORM_TYPE_NOT_VISIBLE` (r4;
+  `master.*` keys are issue #964).
 - **AC-R4 [BE]** Given the contact access type create/update schemas, when a payload carries
   `portal_form_types`, then it is ignored (no 422, not persisted) and the response carries no
   such key.
@@ -120,7 +129,9 @@ price tag exactly).
   (`?kind=complaint`), upload attachment (`kind=complaint`), then each returns 403 with
   `code=FORM_TYPE_NOT_VISIBLE`. Parametrised over the four legacy kinds.
 - **AC-G2 [BE]** Given the same contact, when it downloads or deletes an attachment whose link
-  resolves to a submission of a hidden kind, then 403 `FORM_TYPE_NOT_VISIBLE`.
+  resolves to a submission of a hidden kind, then 403 `FORM_TYPE_NOT_VISIBLE`; covered for the
+  live-link arm, the revision-history arm, and a `sponsorship_form` row living in the
+  `purchase_requests` table (r4).
 - **AC-G3 [BE]** Given a contact whose visible set includes the kind, when it calls the same
   routes, then behaviour is unchanged (existing suites stay green after fixtures grant
   visibility).
