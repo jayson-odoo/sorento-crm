@@ -29,8 +29,14 @@ branch_labels = None
 depends_on = None
 
 
-def upgrade() -> None:
-    bind = op.get_bind()
+def apply_narrowing(bind) -> None:
+    """Set `order.narrowing.product` and `purchase_cost.narrowing.product`.
+
+    Shared by `upgrade()` and `scripts.bootstrap_env.seed_chatbot_policy` - a
+    `create_all`-built database gets S0's original seed values (both `narrow_to_code`)
+    from the model default and never runs this migration's UPDATE body. Idempotent: a
+    jsonb `||` merge with the same value is a no-op.
+    """
     bind.execute(
         sa.text(
             "UPDATE chatbot_domains "
@@ -45,6 +51,10 @@ def upgrade() -> None:
             "WHERE name = 'purchase_cost'"
         )
     )
+
+
+def upgrade() -> None:
+    apply_narrowing(op.get_bind())
 
 
 def downgrade() -> None:

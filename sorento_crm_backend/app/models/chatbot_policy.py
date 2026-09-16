@@ -60,7 +60,8 @@ class ChatbotEntityKind(Base):
     __tablename__ = "chatbot_entity_kinds"
     __audit_track__ = True
 
-    kind = Column(Text, primary_key=True)
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    kind = Column(Text, nullable=False, unique=True)
     label = Column(Text, nullable=False)
     resolver_source = Column(Text, nullable=False)
     did_you_mean = Column(Boolean, nullable=False, server_default="true")

@@ -621,6 +621,70 @@ def seed_products_list_query_fields() -> None:
              "added" if inserted else "already present")
 
 
+def seed_chatbot_policy() -> None:
+    """Replay the chatbot turn re-architecture's migration-body seeds (AC-1501,
+    AC-1502, AC-1550, AC-1594).
+
+    `chatbot_rearch_s0` seeds `chatbot_domains` / `chatbot_entity_kinds`,
+    `chatbot_rearch_s4` publishes the first `chatbot_semantic_parser` version with the
+    policy blocks rendered from those two tables, and `chatbot_rearch_s6d` /
+    `chatbot_rearch_s6e` update three domains' narrowing. All four are migration-BODY
+    work: `create_all` gives a bootstrapped database the TABLES and COLUMNS (every one
+    is a plain model default) but none of the rows these migrations INSERT/UPDATE, so a
+    fresh CI database has empty policy tables and no published parser version at all.
+
+    Each migration's own function is imported and called directly, in the same order
+    the real migration chain applies them (s0 -> s4 -> s6d -> s6e - s4's publish reads
+    whatever `chatbot_domains` holds at the moment it runs, same as a real
+    `alembic upgrade head` replay would), so the two paths can never drift and bootstrap
+    produces the identical row set a genuinely migrated database has. Every step is
+    idempotent (see each migration's own docstring); safe to call twice.
+    """
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    from app.database import engine
+
+    alembic_dir = Path(__file__).resolve().parent.parent / "alembic"
+    versions = alembic_dir / "versions"
+    # `chatbot_rearch_s0.seed_domains_and_kinds` does `from _chatbot_policy_seed import
+    # ...` by bare module name - `_chatbot_policy_seed.py` lives in `alembic/`, not
+    # `alembic/versions/`. Real `alembic upgrade` resolves it because `ScriptDirectory`
+    # puts its own `script_location` (`alembic/`) on `sys.path` (measured:
+    # `ScriptDirectory.from_config(cfg).get_revision(...)` leaves
+    # `.../alembic` at `sys.path[0]`); loading the migration module directly (below)
+    # does not, so it is added here too.
+    if str(alembic_dir) not in sys.path:
+        sys.path.insert(0, str(alembic_dir))
+
+    def _load(name: str, filename: str):
+        spec = importlib.util.spec_from_file_location(name, versions / filename)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    s0 = _load("_chatbot_rearch_s0", "chatbot_rearch_s0.py")
+    s4 = _load("_chatbot_rearch_s4", "chatbot_rearch_s4.py")
+    s6d = _load("_chatbot_rearch_s6d", "chatbot_rearch_s6d.py")
+    s6e = _load("_chatbot_rearch_s6e", "chatbot_rearch_s6e.py")
+
+    with engine.begin() as conn:
+        domains_inserted, kinds_inserted = s0.seed_domains_and_kinds(conn)
+    with engine.begin() as conn:
+        s4.publish_policy_blocks(conn)
+    with engine.begin() as conn:
+        s6d.apply_narrowing(conn)
+    with engine.begin() as conn:
+        s6e.apply_narrowing(conn)
+    log.info(
+        "chatbot policy seeded -> domains=%d kinds=%d (narrowing + first prompt "
+        "version applied)",
+        domains_inserted,
+        kinds_inserted,
+    )
+
+
 def _seed_default_company() -> None:
     """Idempotently insert the fixed Sorento company row (mirrors migration 302).
 
@@ -767,6 +831,7 @@ def main() -> int:
         seed_fulfilment_planning_flags()
         seed_customer_import_aliases()
         seed_products_list_query_fields()
+        seed_chatbot_policy()
     stamp_head()
     log.info("bootstrap complete")
     return 0

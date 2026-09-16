@@ -64,8 +64,15 @@ def _body(session: Session) -> tuple[str, str]:
     return template, prompt_blocks_hash(session)
 
 
-def upgrade() -> None:
-    bind = op.get_bind()
+def publish_policy_blocks(bind) -> None:
+    """Publish the unlabelled version, if the current rendered blocks are not already
+    published verbatim.
+
+    Shared by `upgrade()` and `scripts.bootstrap_env.seed_chatbot_policy` - a
+    `create_all`-built database has the `ai_prompt_versions` TABLE but never ran this
+    migration BODY, so it has no `chatbot_semantic_parser` rows at all until this runs.
+    Idempotent (see the full-template equality check below); bootstrap may run twice.
+    """
     # v1 plus the production label, if this install has never seeded the key.
     seed_prompt_registry(bind)
 
@@ -123,6 +130,10 @@ def upgrade() -> None:
         raise
     finally:
         session.close()
+
+
+def upgrade() -> None:
+    publish_policy_blocks(op.get_bind())
 
 
 def downgrade() -> None:
