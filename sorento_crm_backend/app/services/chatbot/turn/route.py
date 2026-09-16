@@ -29,12 +29,45 @@ _LANE_BRANCH: dict[str, str] = {
 }
 
 
+def _domain_branch(domains: list[str]) -> str:
+    """Which arm a turn with a resolved domain belongs to.
+
+    `ideate` and `promotion` have arms of their own (`contracts.BRANCH_KINDS`); every
+    other domain answers on the generic business arm. `check_promotion` is the promotion
+    domain's own name for it - `trace.py` labels it "Business query: promotion" and
+    `contracts.BUSINESS_BRANCH_KINDS` already carries it beside `business_query`, so a
+    promotion turn that came back as `business_query` was landing on an arm that is not
+    its own (measured: 261 real `check_promotion` turns in the 0915 copy, none of which
+    this router could produce).
+    """
+    if "ideate" in domains:
+        return "ideate"
+    if "promotion" in domains:
+        return "check_promotion"
+    return "business_query"
+
+
 def route(plan: Plan) -> str:
     # A question outranks everything: a turn that cannot say WHAT it is about has nothing
     # to fetch and nobody to escalate to yet (contract 111 - did-you-mean before the team
     # question).
     if plan.ask is not None:
-        return _ASK_BRANCH.get(plan.ask.kind, "clarify_menu")
+        arm = _ASK_BRANCH.get(plan.ask.kind)
+        if arm is not None:
+            return arm
+        # A NARROWING question belongs to the arm that asked it, not to `clarify_menu`.
+        # `clarify_menu` is contract 50's DOMAIN menu - "I see you are trying to X, are
+        # you asking about any of these? - Product - Stock ..." - a turn with no domain
+        # at all. A product roster, a customer picker, a did-you-mean or a scope question
+        # is the business lane mid-question, and it is a business turn: measured on the
+        # 0915 copy, 413 "Please choose", 178 "Did you mean" and 195 "Which ... do you
+        # mean" turns are all recorded `business_query`, while every one of the 36 real
+        # `clarify_menu` turns is the domain menu. It also matters downstream:
+        # `contracts.TAG_ONLY_BRANCH_KINDS` carries `clarify_menu`, so an arm that emits
+        # the branch kind and nothing else would strip the very roster it is asking.
+        if not plan.domains:
+            return "clarify_menu"
+        return _domain_branch(plan.domains)
 
     if plan.denied and not plan.fetch:
         return "access_denied"
@@ -47,6 +80,6 @@ def route(plan: Plan) -> str:
         return "ideate"
 
     if plan.fetch:
-        return "business_query"
+        return _domain_branch(plan.domains)
 
     return "low_signal"

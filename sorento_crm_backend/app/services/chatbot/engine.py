@@ -88,8 +88,15 @@ _CRM_FINISHED_HERE: frozenset[str] = SELF_CLOSING_BRANCH_KINDS - BUSINESS_BRANCH
 
 # The arms whose whole answer IS the question the plan is asking, so the composer renders
 # the roster and the tail stores it - rather than the canned registry answering with a
-# sentence that names none of the options the customer is looking at.
-_ASK_BRANCH_KINDS: frozenset[str] = frozenset({"clarify_menu", "check_promotion"})
+# sentence that names none of the options the customer is looking at. `business_query`
+# belongs here for the same reason the other two do: a narrowing question raised inside a
+# business domain now routes to that domain's own arm (`turn/route.py`), so the arm that
+# has to render the roster is the business one. The escalation kinds are deliberately
+# absent - a `team_pick` / `member_offer` / `company_pick` question is composed by the
+# escalation lane, which knows the teams.
+_ASK_BRANCH_KINDS: frozenset[str] = frozenset(
+    {"clarify_menu", "check_promotion", "business_query"}
+)
 
 # "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
 # when the settings singleton does not exist yet.
@@ -1485,7 +1492,7 @@ def _run_stages(  # noqa: PLR0915
         # -- E FETCH + F COMPOSE, for the turn that has something to look up --- #
         answer: Any = None
         lane_error_text: str | None = None
-        if branch_kind == "business_query" and completes_here:
+        if branch_kind in ("business_query", "check_promotion") and completes_here:
             stage[0] = "looked_up"
             turn_ctx = turn_runtime.TurnContext(
                 db=db,
