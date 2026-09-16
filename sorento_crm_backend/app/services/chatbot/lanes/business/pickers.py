@@ -173,6 +173,44 @@ def _customer_of_row(a: Any) -> Any:
     return jsc.get(a, "customer_name") or jsc.get(a, "customer") or None
 
 
+def _bases_with_do(rows: list[Any]) -> set[str]:
+    """The customer family bases the probe found a real DELIVERY ORDER for.
+
+    ONLY rows that carry a delivery-order date count. `crm_order_management_orders_list`
+    returns every matching ORDER, delivered or not, so the old membership test ("this
+    customer appears in the probe") stamped "has delivery" on a customer whose orders had
+    not shipped.
+    """
+    with_do: set[str] = set()
+    for row in rows:
+        if not _row_has_do(row):
+            continue
+        base = _customer_base(_customer_of_row(row))
+        if base:
+            with_do.add(base)
+    return with_do
+
+
+def customer_bases_with_do(probe: Any) -> set[str] | None:
+    """The same answer `annotate_customer` stamps its lines from, for a caller that
+    builds its OWN roster (the re-architected narrower, owner hand pass 2 item 2).
+
+    `None` means NOT MEASURED - the probe failed, or its page saturated - which is the
+    annotator's own unprobed arm and must read as "no stamp", never as "no DO". One
+    rule, two callers, so the line a customer reads and the roster the session stores
+    cannot disagree about which families have a delivery order.
+    """
+    rows = _probe_rows(probe)
+    if rows is None or len(rows) >= PAGE_SATURATION:
+        return None
+    return _bases_with_do(rows)
+
+
+def customer_base(value: Any) -> str:
+    """The family base of one customer name - `_customer_base` for callers outside."""
+    return _customer_base(value)
+
+
 def annotate_customer(
     gate: dict[str, Any] | None, *, probe: Any, parser: dict[str, Any] | None
 ) -> dict[str, Any]:
@@ -221,13 +259,7 @@ def annotate_customer(
     # returns every matching ORDER, delivered or not, so the old membership test ("this
     # customer appears in the probe") stamped "has delivery" on a customer whose orders
     # had not shipped.
-    with_do: set[str] = set()
-    for row in rows:
-        if not _row_has_do(row):
-            continue
-        base = _customer_base(_customer_of_row(row))
-        if base:
-            with_do.add(base)
+    with_do = _bases_with_do(rows)
 
     # NO reordering, no renumbering - the numbers are the pick affordance. Suffixes only,
     # and a plain hyphen, never an em-dash. The wording is the owner's: "has DO" / "no DO",

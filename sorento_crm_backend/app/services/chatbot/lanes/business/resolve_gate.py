@@ -1139,6 +1139,34 @@ def probe_incoming(
     )
 
 
+def probe_customer(
+    services: ResolveGateServices,
+    *,
+    ctx: dict[str, Any],
+    entities: Any,
+    aggregate: dict[str, Any] | None,
+    default_start: str | None,
+    space_id: str | None,
+) -> Any:
+    """The customer picker's own probe, for a caller outside the miss arm.
+
+    The `if_customer_picker` arm above runs it only when the gate could not pin a single
+    customer. The re-architected narrower builds the same roster from the other side (a
+    settled carry, a family widened by the resolver), so it never reached this probe and
+    printed a roster with no has/no-DO stamps at all - the owner's hand pass 2, item 2.
+    Same shape, and the same reason, as `probe_incoming` below.
+    """
+    return _run_probe(
+        services,
+        ctx=ctx,
+        tool=CUSTOMER_PROBE_TOOL,
+        entities=entities,
+        aggregate=aggregate,
+        default_start=default_start,
+        space_id=space_id,
+    )
+
+
 def _run_probe(
     services: ResolveGateServices,
     *,

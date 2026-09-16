@@ -22,6 +22,15 @@ def _candidates(focus: Focus, kind: str) -> list[dict[str, Any]]:
     return list(focus.extra.get(kind, []))
 
 
+def _choices(candidates: list[dict[str, Any]], grouping: str | None) -> int:
+    """How many CHOICES these rows really are: one per family where the kind has a
+    family rule, one per row otherwise."""
+    if grouping != "ledger_family":
+        return len(candidates)
+    keys = {_family_of(c, grouping) or str(c.get("uuid") or id(c)) for c in candidates}
+    return len(keys)
+
+
 def _distinct_codes(candidates: list[dict[str, Any]]) -> set[str]:
     """How many different things the carry actually names.
 
@@ -36,7 +45,71 @@ def _distinct_codes(candidates: list[dict[str, Any]]) -> set[str]:
     }
 
 
-def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
+#: Words that name a company's LEGAL FORM, not the business (`gate._LEGAL_FORM` on main,
+#: spelled as words because this package may not use regular expressions).
+_LEGAL_FORM_WORDS = frozenset({"SDN", "BHD"})
+
+
+def _without_brackets(text: str) -> str:
+    """`text` with every bracketed or parenthesised run removed.
+
+    The ledger marker a customer row carries is always bracketed - `CHIN CHUN HARDWARE
+    SDN BHD - [A/C I]`, `HANLIM TRADING (JB) SDN BHD (SRT)` - and it is the only part of
+    the name that differs between the ledgers of one trading name.
+    """
+    out: list[str] = []
+    depth = 0
+    for ch in text:
+        if ch in "[(":
+            depth += 1
+            continue
+        if ch in "])":
+            depth = max(0, depth - 1)
+            continue
+        if depth == 0:
+            out.append(ch)
+    return "".join(out)
+
+
+def _ledger_family_key(text: str) -> str:
+    """The TRADING NAME behind a customer row, as a comparison key.
+
+    Main's `gate._cust_base`, rule for rule: upper-cased, bracketed parts dropped, the
+    legal-form words dropped, everything non-alphanumeric collapsed to one space. Written
+    with string operations rather than the three regexes it uses because the turn package
+    may not call `re` (AC-1520).
+    """
+    stripped = _without_brackets(text.upper())
+    cleaned = "".join(ch if ch.isalnum() else " " for ch in stripped)
+    return " ".join(w for w in cleaned.split() if w not in _LEGAL_FORM_WORDS)
+
+
+def _ledger_family_label(text: str) -> str:
+    """What the family is CALLED: the row's own name without its ledger marker."""
+    cleaned = " ".join(_without_brackets(text).split()).strip().strip("-").strip()
+    return cleaned or text
+
+
+def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
+    """The key rows of one family share, or None when this kind has no family rule.
+
+    `chatbot_entity_kinds.family_grouping` is the rule and it had no reader at all until
+    now: the `customer` row has said `ledger_family` since the S0 seed, and the owner's
+    hand pass 2 (item 1) read a six-line roster, one per ledger of ONE trading name, for
+    "Delivery for hanlim". Ledgers of one name are one customer.
+    """
+    if grouping != "ledger_family":
+        return None
+    name = candidate.get("name") or candidate.get("label") or candidate.get("raw")
+    if not name:
+        return None
+    key = _ledger_family_key(str(name))
+    return key or None
+
+
+def _options(
+    candidates: list[dict[str, Any]], kind: str, grouping: str | None = None
+) -> list[dict[str, Any]]:
     """One numbered row per candidate.
 
     `uuid` is the identity the pick resolves to and `uuids` is the FAMILY that identity
@@ -79,7 +152,16 @@ def _options(candidates: list[dict[str, Any]], kind: str) -> list[dict[str, Any]
         # pass 3 turn 10 printed one trading name once per account and asked the customer
         # to choose between rows they cannot tell apart. The pick still yields every
         # member, because `uuids` is the union.
-        key = str(label).strip().casefold() if label else str(identity)
+        family = _family_of(c, grouping)
+        if family:
+            # Item 1: one line per TRADING NAME. The ledgers of one customer are one
+            # choice to the person reading the list ("CHIN CHUN HARDWARE SDN BHD -
+            # [A/C I]" and "- [A/C II]" are the same shop), and the pick still reaches
+            # every ledger because `uuids` is the union.
+            key = family
+            label = _ledger_family_label(str(name or label or ""))
+        else:
+            key = str(label).strip().casefold() if label else str(identity)
         merged = by_label.get(key)
         if merged is not None:
             for u in uuids:
@@ -126,6 +208,8 @@ def decide(
     profile: Profile,
     attributes: tuple[str, ...] | list[str] = (),
     resolved_candidates: list[dict[str, Any]] | None = None,
+    just_picked: bool = False,
+    family_grouping: str | None = None,
 ) -> NarrowOutcome:
     """`attributes` is the verdict's `requested_attributes` - what the question asked ABOUT.
 
@@ -140,17 +224,33 @@ def decide(
 
     candidates = _candidates(focus, kind)
 
+    if just_picked and policy_value in ("narrow_to_code", "must_narrow_one"):
+        # Owner hand pass 2, item 10: this kind was answered by a NUMBERED PICK on this
+        # very turn. Both roster policies below ask about a CARRY - rows that arrived
+        # from an earlier turn and might still be a choice - and neither is a rule about
+        # an answer the customer has just given. Re-asking one printed the roster back
+        # over its own answer (turn 0a181cfd, "All" over a ten-variant product roster).
+        # `narrow_by_tier` is deliberately NOT here: its own branch already reads the
+        # tier the pick just wrote and turns it into the FILTER the promotion fetch
+        # needs, and short-circuiting it would send the tier through as an entity.
+        return NarrowOutcome(None, [], candidates, None, note="just_picked")
+
     # What the RESOLVER matched for the tokens this turn named. It outranks the focus
     # rows for a narrowing decision, because a roster the customer is asked to choose
     # from has to list things that exist: "wc286" is one focus entity and ten real
     # products, and offering the customer their own typo back is not a choice.
     if resolved_candidates:
         if policy_value in _ROSTER_POLICIES and kind != "tier":
-            if len(resolved_candidates) == 1:
+            if _choices(resolved_candidates, family_grouping) <= 1:
                 # A code that resolves to exactly one thing IS narrowed to a code -
-                # there is nothing left to ask.
+                # there is nothing left to ask. One FAMILY is one thing too (item 1):
+                # six ledgers of one trading name are six rows and one customer, and a
+                # picker over them asks the customer to choose between accounts they
+                # cannot tell apart.
                 return NarrowOutcome(None, [], list(resolved_candidates), None)
-            return NarrowOutcome(f"{kind}_pick", _options(resolved_candidates, kind), [], None)
+            return NarrowOutcome(
+                f"{kind}_pick", _options(resolved_candidates, kind, family_grouping), [], None
+            )
         candidates = list(resolved_candidates)
 
     if policy_value == "list_all":
@@ -182,8 +282,10 @@ def decide(
             # through, deferred, rather than an ask manufactured from a name alone.
             if candidates and all(c.get("uuid") for c in candidates):
                 return NarrowOutcome(None, [], candidates, None, note="settled_carry")
-            if len(candidates) > 1:
-                return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
+            if _choices(candidates, family_grouping) > 1:
+                return NarrowOutcome(
+                    f"{kind}_pick", _options(candidates, kind, family_grouping), [], None
+                )
             return NarrowOutcome(
                 None, [], candidates, None, note="settled_carry" if candidates else None
             )

@@ -39,6 +39,11 @@ class Trace:
     # `apply()` itself, which stamps the carry onto the turn's `FetchSpec.filters` so
     # the runtime knows this fetch is a re-run of the question's own report.
     outstanding: dict[str, Any] | None = None
+    # The entity kinds a NUMBERED PICK settled this turn. The narrower reads it and does
+    # not re-ask them: a roster the customer has just answered is not a choice still on
+    # the table, whatever the domain's policy would say about the same rows carried in
+    # from an earlier turn (owner hand pass 2, item 10).
+    picked_kinds: list[str] = field(default_factory=list)
 
 
 @dataclass

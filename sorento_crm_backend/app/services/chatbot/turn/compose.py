@@ -7,11 +7,11 @@
 # composer (kept, unchanged per the plan) has somewhere familiar to write into.
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app.services.chatbot.turn.fetch import envelope_missed
-from app.services.chatbot.turn.pending import ask as pending_ask
+from app.services.chatbot.turn.pending import ask as pending_ask, is_roster
 from app.services.chatbot.turn.policy import Policy
 from app.services.chatbot.turn.state import State
 
@@ -257,7 +257,23 @@ def compose(envelopes: list[dict[str, Any]], state: State, policy: Policy, ctx: 
         if teams:
             offer = Offer(teams=teams)
             text += "\n\nWould you like me to escalate?"
-            question = _team_pick_question(missed_domains, policy)
+            carried = getattr(state, "pending", None)
+            if carried is not None and is_roster(carried.kind):
+                # Owner hand pass 2, item 8 (turns 29605e65 miss, then 586746d3 "5" and
+                # a253e14f "3"): the escalate offer REPLACED the sticky roster the miss
+                # was about, so the next number resolved against a team picker and the
+                # customer got the offer printed back at them twice. A roster survives
+                # its own pick (contract 36) and it survives a miss too - the offer is a
+                # SENTENCE appended under the answer, not a second question. The team it
+                # would escalate to rides on the roster, so a "yes" over this state still
+                # reaches the right team.
+                question = replace(
+                    carried,
+                    team=carried.team or teams[0],
+                    payload={**carried.payload, "escalate_offered": True},
+                )
+            else:
+                question = _team_pick_question(missed_domains, policy)
 
     actions: list[dict[str, Any]] = []
     if files:
