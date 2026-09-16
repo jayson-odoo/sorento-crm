@@ -51,8 +51,12 @@ from tests.chatbot.test_turns_admin_api import db  # noqa: F401 - reuses the bla
 
 BASE = "/api/v1/user-management/contacts"
 CONTACT_VIEW = "user_management.contacts.view"
+# Coordinator fixture item, 16 Sep 2026: `PUT /contacts/{id}/chatbot` now requires
+# this grant too (coder's just-merged permission gate on that route) - a fixture
+# gap, not a route bug.
+CONTACT_EDIT = "user_management.contacts.edit"
 
-_GRANTS: set[str] = {CONTACT_VIEW}
+_GRANTS: set[str] = {CONTACT_VIEW, CONTACT_EDIT}
 _ACTOR: dict = {"id": None, "name": "ZZT Stock Allowed Tester"}
 
 
@@ -60,6 +64,7 @@ _ACTOR: dict = {"id": None, "name": "ZZT Stock Allowed Tester"}
 def _permissions(monkeypatch):
     _GRANTS.clear()
     _GRANTS.add(CONTACT_VIEW)
+    _GRANTS.add(CONTACT_EDIT)
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
