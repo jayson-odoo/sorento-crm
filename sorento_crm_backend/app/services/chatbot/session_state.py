@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.chatbot import jsc
+from app.services.chatbot.turn.narrow import ledger_family_key
 from app.services.chatbot.turn.pending import OFFER_KINDS, Pending, from_wire
 from app.services.chatbot.turn.state import KIND_FIELD_MAP
 
@@ -66,13 +67,23 @@ def five_keys(session_block: Any) -> dict[str, Any]:
     return read
 
 
-def _legacy_option(row: Any, kind: str, position: int) -> dict[str, Any] | None:
+def _legacy_option(
+    row: Any, kind: str, position: int, families: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """One `last_result_set` row as a `Pending` option.
 
     The legacy roster has two shapes and this reads both: the outstanding questions'
     `{idx, label, value}` and the pickers' `{idx, label, uuid(s), entity_type}`. The
     value lands on the option's payload, which is where `turn/compose._lane_question`
     already puts it for a question asked under the new shape.
+
+    `families` is the flat shape's `picker_families` - `{trading name key: [every ledger
+    id]}`, written by the gate when it built the roster. A picker LINE stands for the whole
+    account family (contract 103, and `gate.py`'s own "a picked CUSTOMER selects its whole
+    ACCOUNT FAMILY" re-seat), and under the new shape that family IS the option's `uuids`;
+    a legacy row carries only its own `uuid`, so without this a contact mid-picker at
+    deploy picked one ledger of three and the report answered for a third of their orders
+    under a header naming all of them (AC-1165/R19b).
     """
     if not isinstance(row, dict):
         return None
@@ -88,6 +99,11 @@ def _legacy_option(row: Any, kind: str, position: int) -> dict[str, Any] | None:
     for key in ("value", "team"):
         if row.get(key) is not None:
             option["payload"][key] = row[key]
+    if not option.get("uuids") and option.get("uuid") and families:
+        family = families.get(ledger_family_key(jsc.js_string(row.get("label") or "")))
+        members = [u for u in (family or []) if u]
+        if option["uuid"] in members:
+            option["uuids"] = members
     return option
 
 
@@ -123,7 +139,13 @@ def _legacy_open_question(legacy: dict[str, Any]) -> dict[str, Any] | None:
         if not entity_kind:
             return None
         kind = f"{entity_kind}_pick"
-    options = [o for o in (_legacy_option(r, kind, i + 1) for i, r in enumerate(rows)) if o]
+    families = legacy.get("picker_families")
+    families = families if isinstance(families, dict) else None
+    options = [
+        o
+        for o in (_legacy_option(r, kind, i + 1, families) for i, r in enumerate(rows))
+        if o
+    ]
     payload: dict[str, Any] = {
         "domain": marker.get("domain") or legacy.get("picker_domain") or legacy.get("domain_hint")
     }

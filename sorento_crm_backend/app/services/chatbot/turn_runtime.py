@@ -680,6 +680,34 @@ def candidates_by_kind(
     return grouped
 
 
+def _spec_window(out: dict[str, Any], spec: FetchSpec) -> dict[str, Any]:
+    """The window THIS fetch is for, as the lane's own two keys.
+
+    `FetchSpec.date_window` is the plan's answer to "which dates" - `turn/apply.py` puts
+    the focus window on every spec whose domain `takes_date_filter` - and until now it had
+    no reader at all: the only projection was `outstanding_carry`'s, which runs on an
+    ANSWERING turn alone. So a customer picking "all" off a roster armed inside a question
+    the conversation had already dated read `Order date: all`, and the scope question said
+    it would search a window nobody had asked for (owner round 8, R21's own chain).
+
+    A DEFAULT, never an override: a window this turn named is already on the verdict and
+    stays (N2, the same rule `outstanding_carry` keeps for the answering turn).
+    """
+    window = spec.date_window if isinstance(spec.date_window, dict) else None
+    if not window:
+        return out
+    if out.get("date_filter_start") or out.get("date_filter_end"):
+        return out
+    if not (window.get("start") or window.get("end")):
+        return out
+    out = dict(out)
+    out["date_filter_start"] = window.get("start")
+    out["date_filter_end"] = window.get("end")
+    if not out.get("date_mode"):
+        out["date_mode"] = window.get("mode")
+    return out
+
+
 def outstanding_carry(
     out: dict[str, Any], focus: Focus, answered: dict[str, Any]
 ) -> dict[str, Any]:
@@ -769,6 +797,7 @@ def make_tool_runner(
                 db, carry, access_levels=list(verdict.get("access_levels") or [])
             )
         lane_out = lane_parse_output(verdict, focus=focus, domain=domain)
+        lane_out = _spec_window(lane_out, spec)
         answered = spec.filters.get("outstanding")
         if isinstance(answered, dict):
             lane_out = outstanding_carry(lane_out, focus, answered)

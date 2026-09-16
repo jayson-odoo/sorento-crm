@@ -81,7 +81,7 @@ def _without_brackets(text: str) -> str:
     return "".join(out)
 
 
-def _ledger_family_key(text: str) -> str:
+def ledger_family_key(text: str) -> str:
     """The TRADING NAME behind a customer row, as a comparison key.
 
     Main's `gate._cust_base`, rule for rule: upper-cased, bracketed parts dropped, the
@@ -113,7 +113,7 @@ def _family_of(candidate: dict[str, Any], grouping: str | None) -> str | None:
     name = candidate.get("name") or candidate.get("label") or candidate.get("raw")
     if not name:
         return None
-    key = _ledger_family_key(str(name))
+    key = ledger_family_key(str(name))
     return key or None
 
 
