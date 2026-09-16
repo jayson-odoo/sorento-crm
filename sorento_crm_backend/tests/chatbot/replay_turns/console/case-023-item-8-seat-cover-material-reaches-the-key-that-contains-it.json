@@ -91,7 +91,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product information"
+          ]
+        },
         "text": "Here are the matching products.\n\n1. *Product Code:* SRTWC286-SH\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 250MM). SRTWC286-SH\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n2. *Product Code:* SRTWC286-SH-200\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 200MM). SRTWC286-SH-200\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n3. *Product Code:* SRTWC286-SH-150\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 150MM). SRTWC286-SH-150\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n4. *Product Code:* SRTWC286-SH-UF\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 250MM). SRTWC286-SH-UF\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n5. *Product Code:* SRTWC286-SH-P\n*Description:* ****SORENTO ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM). SRTWC286-SH-P **PLEASE USE SRTWC286-SH-NEW-P\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n6. *Product Code:* SRTWC286-SH-NEW\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 250MM) SRTWC286-SH-NEW\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n7. *Product Code:* SRTWC286-SH-PP\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 250MM). SRTWC286-SH-PP\n*List Price:* MYR 0.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n8. *Product Code:* SRTWC286-SH-NEW-150\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 150MM). SRTWC286-SH-NEW-150\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n9. *Product Code:* SRTWC286-SH-NEW-P\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (P-TRAP 180MM). SRTWC286-SH-NEW-P\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n10. *Product Code:* SRTWC286-SH-NEW-200\n*Description:* SORENTO ONE PIECE TWISTER FLUSH WC (S-TRAP 200MM). SRTWC286-SH-NEW-200\n*List Price:* MYR 1260.00\n*Dimensions:* Not defined\n*Seat cover material:* pp\n\n_Data last updated: 04/09/2026 18:58:44_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a",
         "tools": [
           {

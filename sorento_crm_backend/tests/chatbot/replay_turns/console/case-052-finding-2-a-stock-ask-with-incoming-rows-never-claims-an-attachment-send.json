@@ -82,7 +82,12 @@
           "4d9c3fd5-bbb4-4fa2-b441-ed4b5b4cc93e"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: CWCX7605-S-ECO (+1 more)\n\nBut no inventory matched these.\nNo stock for CWCX7605-S-ECO.\n\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* CWCX7605-S-ECO\n*Container:* WHSU8712991\n*ETA:* 2026-08-22\n*ETA Delay:* 2026-08-26\n*CIDB Inspection:* 2026-08-28\n*CIDB Approval:* 2026-09-02\n*Loading:* 2026-08-10\n*ETC:* 2026-08-12\n*ETD:* 2026-08-14\n*Liner:* WHL\n*China Forwarder:* Haiian\n*Malaysia Forwarder:* Haiian\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 522\n*Warehouse Allocations:* BRW (481), BRW-BB (41)\n\nNo stock, no incoming and nothing on order for CWCX7605-S-ECO-NEW.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {

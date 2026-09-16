@@ -80,7 +80,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },
@@ -328,7 +333,12 @@
           "bf722285-60ab-41f0-815c-dc2ebf6f6c80"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 11\nOrdered: 23,140\nTransferred to DO: 0\nOutstanding: 23,140\nOrder date range: 12/05/2023 to 01/09/2026\n*_By location_*\nBRW-IB: 11,785 (O/S: 11,785)\nBRW-BB: 9,442 (O/S: 9,442)\nBRW-IR: 1,912 (O/S: 1,912)\nBRW: 1 (O/S: 1)\n*_By product_*\nCSA150: 1,576 (O/S: 1,576)\nTPE-9101: 1,310 (O/S: 1,310)\nCB2807-DIY: 1,247 (O/S: 1,247)\nCSH2072: 1,057 (O/S: 1,057)\nB2155-NL-BLUE: 1,056 (O/S: 1,056)\nC-FH14: 1,056 (O/S: 1,056)\nCB1505SS: 1,045 (O/S: 1,045)\nCB2800-DIY: 971 (O/S: 971)\nCB55CR-PJ: 971 (O/S: 971)\nWESERP10B: 954 (O/S: 954)\nCB2805A-DIY: 913 (O/S: 913)\nCWB242: 589 (O/S: 589)\nCB65SS: 529 (O/S: 529)\nTPE-9204: 529 (O/S: 529)\nCB313-NL: 525 (O/S: 525)\nCB315: 519 (O/S: 519)\nCSH2073: 519 (O/S: 519)\nCSK11A: 489 (O/S: 489)\nCB1178A-SS-NEW: 362 (O/S: 362)\nCB81CR-PJ: 362 (O/S: 362)\nCB2829-DIY: 351 (O/S: 351)\nSRT2403-CR: 320 (O/S: 320)\nCB313: 275 (O/S: 275)\nCSA404: 270 (O/S: 270)\nCSH2074-GRY: 270 (O/S: 270)\nCWCSC605: 266 (O/S: 266)\nCWCX605-RL: 266 (O/S: 266)\nCWCY605: 266 (O/S: 266)\nCB1519SS: 260 (O/S: 260)\nCKS1050: 260 (O/S: 260)\nCKSW015: 260 (O/S: 260)\nTPE-9201-300: 260 (O/S: 260)\nCWC1009-SC: 259 (O/S: 259)\nCWCX1009-SH: 259 (O/S: 259)\nCWCY1009: 259 (O/S: 259)\nCB230SS: 186 (O/S: 186)\nCGB762: 186 (O/S: 186)\nCWCSC604-QQ: 185 (O/S: 185)\nCWCX604-S-RL-NEW: 185 (O/S: 185)\nCWCY604: 185 (O/S: 185)\nSRTWT2207: 121 (O/S: 121)\nSRTWC8840-SC: 118 (O/S: 118)\nSRTWCX8840-S-RL: 118 (O/S: 118)\nSRTWCY8840: 118 (O/S: 118)\nSRT78-CR: 110 (O/S: 110)\nSRTWT806: 107 (O/S: 107)\nCB270SS: 90 (O/S: 90)\nCWB1218: 90 (O/S: 90)\nCWC7603-SH-P: 90 (O/S: 90)\nSRTWB245: 88 (O/S: 88)\nSRTWT7408: 80 (O/S: 80)\nSRTWT2203: 68 (O/S: 68)\nSRTWC8605-SC-RL: 61 (O/S: 61)\nSRTWCY8605-PJ: 61 (O/S: 61)\nSRTSP224: 37 (O/S: 37)\nSRTWCX8605-P-RL-PJ: 35 (O/S: 35)\nSRTSC07: 23 (O/S: 23)\nSRTWB246: 23 (O/S: 23)\nSRTWT2215: 11 (O/S: 11)\nSRTWT5902: 10 (O/S: 10)\nSRT59-CR: 8 (O/S: 8)\nSRTWT2216: 8 (O/S: 8)\nSRTH022: 7 (O/S: 7)\nSRTSH882: 7 (O/S: 7)\nSRTSS5590: 7 (O/S: 7)\nSRTWB7018: 7 (O/S: 7)\nSRTWT2219: 6 (O/S: 6)\nSRTWB7055: 3 (O/S: 3)\nCF-6-DF-LL-SI-02: 2 (O/S: 2)\nCS102: 2 (O/S: 2)\nMFV113: 2 (O/S: 2)\nMUB206: 2 (O/S: 2)\nPVC 3 SECTION FLUSH PIPE: 2 (O/S: 2)\nREDUCER: 2 (O/S: 2)\nSRT392-24: 2 (O/S: 2)\nSRT5732: 2 (O/S: 2)\nCWC7603-SH-250: 1 (O/S: 1)\nM502: 1 (O/S: 1)\nM508: 1 (O/S: 1)\nSRTWB248: 1 (O/S: 1)\nSRTWT5813: 1 (O/S: 1)\n\n*Delivery order outstanding*\nDelivery orders: 4\nDO qty: 80\nDelivered: 0\nOutstanding: 80\nDO date range: 21/07/2026 to 07/09/2026\n*_By location_*\nBRW: 72 (O/S: 72)\nBRW-BB: 8 (O/S: 8)\n*_By product_*\nCB2800-DIY: 22 (O/S: 22)\nCB55CR-PJ: 22 (O/S: 22)\nCSA150: 18 (O/S: 18)\nCWCY604: 6 (O/S: 6)\nCB2807-DIY: 4 (O/S: 4)\nCSH2072: 4 (O/S: 4)\nTPE-9203: 3 (O/S: 3)\nSRTUFV101: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
         "tools": [
           {
@@ -606,7 +616,12 @@
           "bf722285-60ab-41f0-815c-dc2ebf6f6c80"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CNK HARDWARE SDN BHD (PROJECT), CNK HARDWARE SDN BHD\nLocation: all\nOrder date: 01/09/2026 to 30/09/2026\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 60\nTransferred to DO: 0\nOutstanding: 60\nOrder date range: 01/09/2026\n*_By location_*\nBRW-BB: 60 (O/S: 60)\n*_By product_*\nCWB242: 60 (O/S: 60)\n\n*Delivery order outstanding*\nDelivery orders: 3\nDO qty: 77\nDelivered: 0\nOutstanding: 77\nDO date range: 03/09/2026 to 07/09/2026\n*_By location_*\nBRW: 69 (O/S: 69)\nBRW-BB: 8 (O/S: 8)\n*_By product_*\nCB2800-DIY: 22 (O/S: 22)\nCB55CR-PJ: 22 (O/S: 22)\nCSA150: 18 (O/S: 18)\nCWCY604: 6 (O/S: 6)\nCB2807-DIY: 4 (O/S: 4)\nCSH2072: 4 (O/S: 4)\nSRTUFV101: 1 (O/S: 1)\n\nReply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
         "tools": [
           {
@@ -896,7 +911,12 @@
           "bf722285-60ab-41f0-815c-dc2ebf6f6c80"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "1. *SO Number:* SO419240\n*Customer:* CNK HARDWARE SDN BHD\n*Product:* CWB242\n*Location:* BRW-BB\n*Ordered:* 60\n*Transferred to DO:* 0\n*Outstanding:* 60\n*Order Date:* 01/09/2026",
         "tools": [
           {
@@ -1187,7 +1207,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Reply with a number for detail:\n1. Sales order list\n2. Delivery order list\n3. Both lists",
         "tools": []
       },

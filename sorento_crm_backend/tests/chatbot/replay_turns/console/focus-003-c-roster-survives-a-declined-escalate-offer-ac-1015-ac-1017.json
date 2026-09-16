@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Couldn't find \"SRTWT2643\" (product). Did you mean:\n1. SRTWT2632 - no stock details\n2. SRTWT2633 - no stock details\n3. SRTWT2634 - no stock details\nReply with a code to continue, or would you like me to escalate to warehouse team?",
         "tools": []
       },
@@ -312,7 +317,12 @@
           "f79939a6-8a41-4823-9e96-ab14e7a0d807"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWT2633\n\nBut no inventory matched these.\nNo stock, no incoming and nothing on order for SRTWT2633.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -812,7 +822,12 @@
           "a3055471-8300-4c2c-94e5-0b5cd9e84442"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWT2632\n\nBut no inventory matched these.\nNo stock, no incoming and nothing on order for SRTWT2632.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {

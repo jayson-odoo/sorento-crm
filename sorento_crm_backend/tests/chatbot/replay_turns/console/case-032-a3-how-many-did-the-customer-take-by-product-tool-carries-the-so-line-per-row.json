@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. HENG SENG HARDWARE SDN BHD (MCH, SRT) - has DO\n2. HENG SENG HARDWARE - SRI MUDA (SRT) - no DO",
         "tools": []
       },

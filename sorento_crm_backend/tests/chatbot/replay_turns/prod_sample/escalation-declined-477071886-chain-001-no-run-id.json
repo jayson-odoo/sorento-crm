@@ -2811,7 +2811,12 @@
           "612448d2-5fc8-49ed-88d9-4900e97c5f2c"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWB8001\n*Container:* IAAU1703569\n*ETA:* 2026-08-21\n*Incoming Quantity:* 10\n*Warehouse Allocations:* BRW (10)",
         "tools": [
           {

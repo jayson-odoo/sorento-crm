@@ -830,7 +830,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Please provide the attachment type for product SRTWT9124-GM - e.g. product image, technical drawing, or certificate.",
         "tools": []
       },

@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH, SRT)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)",
         "tools": []
       },
@@ -404,7 +409,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTKT39SS\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III], CHIN CHUN HARDWARE SDN BHD [A/C IV]\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },
@@ -678,7 +688,12 @@
           "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTKT39SS\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III], CHIN CHUN HARDWARE SDN BHD [A/C IV]\nLocation: all\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nDelivery orders: 1\nDO qty: 5\nDelivered: 0\nOutstanding: 5\nDO date range: 07/09/2026\n*_By location_*\nBRW: 5 (O/S: 5)\n\nReply 1 for the delivery order list.",
         "tools": [
           {

@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
         "tools": []
       },
@@ -349,7 +354,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III]\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },
@@ -579,7 +589,12 @@
           "e8ef061b-3937-4b23-8c06-c8d8ddc784c5"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CHIN CHUN HARDWARE SDN BHD - [A/C I], CHIN CHUN HARDWARE SDN BHD - [CERAMIC], CHIN CHUN HARDWARE SDN BHD - [IBORN], CHIN CHUN HARDWARE SDN BHD [A/C II], CHIN CHUN HARDWARE SDN BHD [A/C I], CHIN CHUN HARDWARE SDN BHD [A/C III]\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 1\nTransferred to DO: 0\nOutstanding: 1\nOrder date range: 15/06/2024\n*_By location_*\nBRW: 1 (O/S: 1)\n*_By product_*\nSRTWC287-LID: 1 (O/S: 1)\n\nReply 1 for the sales order list.",
         "tools": [
           {

@@ -1175,7 +1175,12 @@
           "64d9432e-d969-4c1a-9539-af52877af64f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI)\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\nWould you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -1620,7 +1625,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTWT02\nCustomer: all\nLocation: IB (WH3-IB, MWH-IB, DC1-IB, BRW-IB, RSW-IB)\nOrder date: 01/01/2026 to 31/12/2026\n\n*Sales order outstanding*\nNo open sales order.\n\n*Delivery order outstanding*\nNo outstanding delivery order.\n\nWould you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Ms Bay\n2. Nicky\n3. Kah Xin\n*Sorento:*\n4. Maryam Ariffin\n5. Cyndi\n6. Aisyah\n7. Balqis\n8. Niki\n9. Nurain\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly.",
         "tools": [
           {

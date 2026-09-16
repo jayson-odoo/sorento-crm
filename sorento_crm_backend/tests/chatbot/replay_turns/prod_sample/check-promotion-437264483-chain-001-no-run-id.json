@@ -133,7 +133,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for SRTKT1866SS?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },
@@ -610,7 +617,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for SRTKT1866SS?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },
@@ -2123,7 +2137,13 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "csk11A",
+            "csk 14B"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWC286-SH-NEW-200\n*Container:* SGRU5031232\n*Loading:* 2026-08-02\n*ETC:* 2026-08-05\n*ETD:* 2026-08-07\n*ETA:* 2026-08-18\n*Incoming Quantity:* 50\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n2. *Product Code:* SRTWC286-SH-NEW-200\n*Container:* WHSU7382874\n*Loading:* 2026-08-28\n*ETC:* 2026-08-29\n*ETD:* 2026-08-31\n*ETA:* 2026-09-08\n*Incoming Quantity:* 150\n\ud83d\udea9  *(PENDING ALLOCATION)*",
         "tools": [
           {
@@ -3339,7 +3359,12 @@
           "9a379ec6-a1fe-483f-9bd8-dc2c6e10f459"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "192-gm"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *File Name:* Mocha Catalogue FA 300924.pdf\n*Uploaded:* 2026-08-12\n\n2. *File Name:* SORENTO CATALOGUE 2024 SEARCHABLE_compressed.pdf\n*Company:* Sorento\n*Uploaded:* 2026-05-15\n\n_Data last updated: 12/08/2026 17:01:17_\n\nTip: looking for a specific detail like material or finish? Search the *product code* inside the catalogue and you'll find all its attributes there \ud83d\udc4d",
         "tools": [
           {
@@ -6190,7 +6215,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for MWT2806A?\n1. Office - no promotion\n2. Dealer - has promotion\n3. End user - no promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },

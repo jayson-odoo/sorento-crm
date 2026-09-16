@@ -76,7 +76,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
         "tools": []
       },
@@ -544,7 +549,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
         "tools": []
       },
@@ -772,7 +782,12 @@
           "13eb525b-985c-44a5-abc4-4be5c7db6cd6"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: CHIN CHUN HOMEMART SDN BHD - [A/C I]\nLocation: all\nOrder date: all\n\nSales order figures are not enabled for your account.\n\n*Delivery order outstanding*\nNo outstanding delivery order.\n\nWould you like me to escalate to *Mocha* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Ms Bay\n2. Nicky\n3. Kah Xin\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -1234,7 +1249,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Couldn't find \"srtwt2643\" (product). Did you mean:\n1. SRTWT2632 - no stock details\n2. SRTWT2633 - no stock details\n3. SRTWT2634 - no stock details\nReply with a code to continue, or would you like me to escalate to warehouse team?",
         "tools": []
       },
@@ -1644,7 +1664,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Couldn't find \"srtwt2643\" (product). Did you mean:\n1. SRTWT2632 - no stock details\n2. SRTWT2633 - no stock details\n3. SRTWT2634 - no stock details\nReply with a code to continue, or would you like me to escalate to warehouse team?",
         "tools": []
       },
@@ -2057,7 +2082,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. CHIN CHUN HARDWARE SDN BHD (MCH, SRT)\n2. CHIN CHUN HOMEMART SDN BHD (MCH)\n3. CHIN CHUN HARDWARE AND TIMBER TRADING (SRT)\n4. JIMMY - I (MCH)",
         "tools": []
       },
@@ -2532,7 +2562,12 @@
           "eef08531-f81f-4197-982d-f367b49adf78"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: all\nCustomer: HOME CARE SPECIALIST - [CERAMIC], BATH IDEA BATHROOM & KITCHEN SPECIALIST [A/C I], BATH IDEA BATHROOM & KITCHEN SPECIALIST [A/C III], BATH IDEA BATHROOM & KITCHEN SPECIALIST [A/C IV], G&B WATERPROOFING SPECIALIST SDN BHD, REGENCY SPECIALIST HOSPITAL SDN BHD\nLocation: all\nOrder date: all\n\n*Delivery order outstanding*\nNo outstanding delivery order.\n\nWould you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n*Mocha:*\n1. Ms Bay\n2. Nicky\n3. Kah Xin\n*Sorento:*\n4. Maryam Ariffin\n5. Cyndi\n6. Aisyah\n7. Balqis\n8. Niki\n9. Nurain\n\nIf you have no preference, reply with the company name (*Mocha* / *Sorento*) and we'll assign accordingly.",
         "tools": [
           {
@@ -2949,7 +2984,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for SRTWC286?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },
@@ -3952,7 +3994,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "product_attachment search needs to be more specific. Multiple matches found. Please choose:\n1. SRTWC286-SH-200 - no Product Photos\n2. SRTWC286-SH-P - no Product Photos\n3. SRTWC286-SH-PP - no Product Photos\n4. SRTWC286-SH - has Product Photos\n5. SRTWC286-SH-UF - no Product Photos\n6. SRTWC286-SH-NEW-150 - no Product Photos\n7. SRTWC286-SH-150 - no Product Photos\n8. SRTWC286-SH-NEW-P - no Product Photos\n9. SRTWC286-SH-NEW-200 - no Product Photos\n10. SRTWC286-SH-NEW - no Product Photos",
         "tools": []
       },
@@ -4251,7 +4298,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "Please provide the attachment type for product SRTWC286-SH-P - e.g. product image, technical drawing, or certificate.",
         "tools": []
       },
@@ -4533,7 +4585,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "Please provide the attachment type for product SRTWC286-SH - e.g. product image, technical drawing, or certificate.",
         "tools": []
       },
@@ -4815,7 +4872,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "srtwc286"
+          ]
+        },
         "text": "Sorry, you are not allowed to access purchase cost",
         "tools": []
       },

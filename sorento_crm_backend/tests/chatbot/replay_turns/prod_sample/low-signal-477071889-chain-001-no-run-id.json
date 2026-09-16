@@ -909,7 +909,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWB7237"
+          ]
+        },
         "text": null,
         "tools": []
       },
@@ -1052,7 +1057,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWB7237"
+          ]
+        },
         "text": null,
         "tools": []
       },
@@ -1399,7 +1409,12 @@
           "96343095-fede-42b3-8199-f15347af5639"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWB7237"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWB7237\n*Attachment Type:* Product Photos\n*File Name:* SRTWB7237.jpg\n\n_Data last updated: 29/04/2026 17:15:32_",
         "tools": [
           {

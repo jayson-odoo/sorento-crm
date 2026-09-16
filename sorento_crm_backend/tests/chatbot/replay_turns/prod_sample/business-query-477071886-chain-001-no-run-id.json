@@ -913,7 +913,12 @@
           "ab1a26c5-99a9-4df3-b797-0ad8be8449cd"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRT6538-DIY\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 520\n*Warehouse Allocations:* BRW (520)",
         "tools": [
           {

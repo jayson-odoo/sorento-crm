@@ -838,7 +838,12 @@
           "2c27ed03-dee8-4a14-bf65-4271994c0c1f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "5163"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRT346-ST-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 200\n*Warehouse Allocations:* BRW (200)",
         "tools": [
           {

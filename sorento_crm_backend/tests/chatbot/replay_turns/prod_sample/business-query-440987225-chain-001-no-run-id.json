@@ -147,7 +147,12 @@
           "f722130f-2450-4b78-9b04-a98013ea1144"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWC8354-SH\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n2. *Product Code:* SRTWC8354-SH\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTWC8354-SH\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n4. *Product Code:* SRTWC8354-SH\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n5. *Product Code:* SRTWC8354-SH-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTWC8354-SH-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTWC8354-SH-150\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n8. *Product Code:* SRTWC8354-SH-150\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n9. *Product Code:* SRTWC8354-SH-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTWC8354-SH-200\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n11. *Product Code:* SRTWC8354-SH-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n12. *Product Code:* SRTWC8354-SH-P\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n13. *Product Code:* SRTWC8354-SH-P\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n14. *Product Code:* SRTWC8354-SH-UF\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 23\n*Outstanding:* 65\n\n15. *Product Code:* SRTWC8354-SH-UF\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BILL\n*Quantity On Hand:* 100\n*Outstanding:* 0\n\n16. *Product Code:* SRTWC8354-SH-UF\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 82\n*Outstanding:* 0\n\n17. *Product Code:* SRTWC8354-SH-UF-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 65\n*Outstanding:* 4\n\n18. *Product Code:* SRTWC8354-SH-UF-150\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 54\n*Outstanding:* 0\n\n19. *Product Code:* SRTWC8354-SH-UF-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 31\n*Outstanding:* 13\n\n20. *Product Code:* SRTWC8354-SH-UF-200\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 14\n*Outstanding:* 0\n\n21. *Product Code:* SRTWC8354-SH-UF-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 76\n*Outstanding:* 1\n\n22. *Product Code:* SRTWC8354-SH-UF-P\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 64\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* SRTWC8354-SH-200\n*Container:* FCIU7600305\n*ETA:* 2026-07-04\n*Incoming Quantity:* 137\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC8354-SH-150\n*Container:* FCIU7600305\n*ETA:* 2026-07-04\n*Incoming Quantity:* 100\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC8354-SH-P\n*Container:* FCIU7600305\n*ETA:* 2026-07-04\n*Incoming Quantity:* 50\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC8354-SH-P\n*Container:* SEKU5868210\n*ETA:* 2026-08-01\n*Incoming Quantity:* 50\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\nWould you like me to escalate to warehouse team?",
         "tools": [
           {
@@ -414,7 +419,12 @@
           "9288094c-6258-4f76-ab7c-00ff8642b75a"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTBF11901-NEW\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 7\n*Outstanding:* 0\n\n2. *Product Code:* SRTBF11901-NEW\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 32\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -834,7 +844,12 @@
           "f2d90a1f-5113-4d8b-8b09-efb293fee048"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT5903\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 109\n*Outstanding:* 0\n\n2. *Product Code:* SRTWT5903\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 0\n*Outstanding:* 26\n\n_Data last updated: 14/09/2026 17:25:40_\nNo stock, no incoming and nothing on order for SRTWT5903-NL.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -1255,7 +1270,12 @@
           "c7d54f0a-7bf6-4a22-b217-816a723cb937"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTBF31416\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n2. *Product Code:* SRTBF31416\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTBF31416\n*Warehouse:* MULTIMODAL (SEKSYEN 15)\n*System Location:* RSW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n4. *Product Code:* SRTBF31416-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n5. *Product Code:* SRTBF31416-MBL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 22\n*Outstanding:* 0\n\n6. *Product Code:* SRTBF31416-MBL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 88\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -1823,7 +1843,12 @@
           "be64b6a5-8b69-4c7b-b40c-36e01e173ffa"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTBF11709\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 2\n*Outstanding:* 0\n\n2. *Product Code:* SRTBF11709\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 19\n*Outstanding:* 19\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -2241,7 +2266,12 @@
           "159c360e-cfc9-4706-9dea-845a46c07b1f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRT320-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 538\n\n2. *Product Code:* SRT320-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 114\n*Outstanding:* 347\n\n3. *Product Code:* SRT320-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 6\n*Outstanding:* 20\n\n4. *Product Code:* SRT320-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n*Outstanding:* 10\n\n5. *Product Code:* SRT320-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 227\n*Outstanding:* 227\n\n6. *Product Code:* SRT320-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 18\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -2810,7 +2840,12 @@
           "a786ae31-3e92-4e61-8f59-5de9aea4face"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTSS5726\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 48\n*Outstanding:* 0\n\n2. *Product Code:* SRTSS5726\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n3. *Product Code:* SRTSS5726-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 387\n*Outstanding:* 0\n\n4. *Product Code:* SRTSS5726-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 282\n*Outstanding:* 5\n\n5. *Product Code:* SRTSS5726-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTSS5726-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 19\n*Outstanding:* 25\n\n7. *Product Code:* SRTSS5726-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n8. *Product Code:* SRTSS5726-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 294\n*Outstanding:* 294\n\n9. *Product Code:* SRTSS5726-GMB\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 326\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -3490,7 +3525,12 @@
           "c18c5b19-8398-477d-97b1-de706c8f3297"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTSC03-ABS-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 66\n*Outstanding:* 0\n\n2. *Product Code:* SRTSC03-ABS-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1063\n*Outstanding:* 9131\n\n3. *Product Code:* SRTSC03-ABS-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 457\n*Outstanding:* 1709\n\n4. *Product Code:* SRTSC03-ABS-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n5. *Product Code:* SRTSC03-ABS-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -4019,7 +4059,12 @@
           "dd500516-18e8-4a58-ab6a-d67cea76524c"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTSS3240\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 291\n*Outstanding:* 0\n\n2. *Product Code:* SRTSS3240\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 16\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -4439,7 +4484,12 @@
           "d0b26b3f-fc9d-47c3-997f-dfe68a073f48"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTSA830\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 641\n*Outstanding:* 2\n\n2. *Product Code:* SRTSA830\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n3. *Product Code:* SRTSA830\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n4. *Product Code:* SRTSA830\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n5. *Product Code:* SRTSA830-PJ\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 933\n*Outstanding:* 0\n\n6. *Product Code:* SRTSA830-PJ\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 100\n*Outstanding:* 1363\n\n7. *Product Code:* SRTSA830-PJ\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 75\n*Outstanding:* 386\n\n8. *Product Code:* SRTSA830-PJ\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 28\n*Outstanding:* 28\n\n9. *Product Code:* SRTSA830-PJ\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n10. *Product Code:* SRTSA830-PJ-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 671\n*Outstanding:* 491\n\n11. *Product Code:* SRTSA830-PJ-NL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -5192,7 +5242,12 @@
           "811a9877-5ac7-4756-9614-471ae38bc71a"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTSH22613\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 72\n*Outstanding:* 2\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n2. *Product Code:* SRTSH22613\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n3. *Product Code:* SRTSH22613\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 183\n*Outstanding:* 183\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -5661,7 +5716,12 @@
           "fff3de05-6913-4544-a749-2550e0c301f3"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Company:* Sorento\n*Product Code:* ADX-V170021-2\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 2\n*Outstanding:* 0\n\n2. *Company:* Mocha\n*Product Code:* M228-PVD-GM\n*Warehouse:* MERU\n*System Location:* MOCHA-WH\n*Quantity On Hand:* 60\n\n3. *Company:* Sorento\n*Product Code:* SRT-FH12PVC-GM-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 116\n\n4. *Company:* Sorento\n*Product Code:* SRTFH15PVC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 38\n*Outstanding:* 0\n\n5. *Company:* Sorento\n*Product Code:* SRTFH15PVC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 9\n*Outstanding:* 978\n\n6. *Company:* Sorento\n*Product Code:* SRTFH15PVC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Company:* Sorento\n*Product Code:* SRTFVP23\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 90\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -6319,7 +6379,12 @@
           "ada6a034-c3bb-4344-b145-2b4081b28e0f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 1\n*Outstanding:* 120\n\n2. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 63\n*Outstanding:* 70\n\n4. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-HP\n*Quantity On Hand:* 10\n*Outstanding:* 0\n\n5. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 8\n*Outstanding:* 8\n\n6. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRT59-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_\nNo stock, no incoming and nothing on order for SRT59-CR-NL.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -7130,7 +7195,12 @@
           "6efa451d-4e94-4cdf-892b-6e854af166fd"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT5880-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 189\n*Outstanding:* 6\n\n2. *Product Code:* SRTWT5880-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 10\n*Outstanding:* 896\n\n3. *Product Code:* SRTWT5880-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 5\n*Outstanding:* 1\n\n4. *Product Code:* SRTWT5880-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 142\n*Outstanding:* 142\n\n5. *Product Code:* SRTWT5880-CR\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 156\n*Outstanding:* 218\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -7663,7 +7733,12 @@
           "d8db3d9d-b3dc-4956-aebf-212e5f707576"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 125\n*Outstanding:* 1\n\n2. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 132\n*Outstanding:* 132\n\n3. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n4. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n5. *Product Code:* SRTWT908SS\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTWT908SS-BL-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 251\n*Outstanding:* 0\n\n7. *Product Code:* SRTWT908SS-BL-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n8. *Product Code:* SRTWT908SS-GM\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n9. *Product Code:* SRTWT908SS-GM-DIY\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 32\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -8345,7 +8420,12 @@
           "f3bc83ae-c529-4c88-887d-55db34a27e35"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 25\n*Outstanding:* 2\n\n2. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n3. *Product Code:* SRTKS7061\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\n4. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 216\n*Outstanding:* 0\n\n5. *Product Code:* SRTKS7061\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n6. *Product Code:* SRTKS7061\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n7. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 21\n*Outstanding:* 0\n\n8. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 1\n*Outstanding:* 1\n\n9. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTKS7061-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 4\n*Outstanding:* 4\n\n11. *Product Code:* SRTKS7061-BL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 9\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {

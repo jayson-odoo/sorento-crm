@@ -584,7 +584,12 @@
           "6307346b-0286-41ab-917a-addfa7bf4840"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWC8066-S-NEW\n*Container:* CAIU7157082\n*ETA:* 2026-08-25\n*Incoming Quantity:* 170\n\ud83d\udea9  *(PENDING ALLOCATION)*",
         "tools": [
           {

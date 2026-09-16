@@ -500,7 +500,14 @@
           "ecfdaf8f-3909-4375-afa8-1b8348790d55"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "MWT5727SS-CR",
+            "MHS1028",
+            "MSK11A-QT"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 inbound_shipment: TGHU6295708 (Mocha), TGHU6295708 (Sorento)\n\nBut no incoming matched these - checked in Mocha and Sorento. Would you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -719,7 +726,12 @@
           "790a0dd9-c67b-4d28-9a8c-ff7a19dc4d99"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "srtwb1542"
+          ]
+        },
         "text": "No incoming stock (ETA) found for SRTWB1542.\nNo incoming for SRTWB1542-MW, SRTWB1542-MG, SRTWB1542-MK.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWB1542-MW\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 4\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-S/L\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542-MG\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 5\n*Outstanding:* 0\n\n- *Product Code:* SRTWB1542-MK\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 4\n*Outstanding:* 0\n\nNo incoming, stock is 0 at every location and nothing on order for SRTWB1542.\n\nRelated products:\n1. SRTWB1542 - no incoming\n2. SRTWB1542-MG - no incoming\n3. SRTWB1542-MK - no incoming\n4. SRTWB1542-MW - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
         "tools": [
           {
@@ -1485,7 +1497,12 @@
           "fceefb92-9f04-4a89-96c9-91ca0815b67d"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "IBKS7245-NG-BL"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 attachment: Sorento\u88c5\u7bb1\u5355\u51ef\u8def260717.xls (Sorento) (+14 more)\n\nBut no resource_attachment matched these - checked in Sorento and Mocha. Would you like me to escalate to customer service team?",
         "tools": [
           {
@@ -2215,7 +2232,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. A CRAFT IDEA SDN BHD (SRT, MCH) - has DO\n2. A CRAFT KITCHEN (SRT) (SRT) - no DO\n3. CRAFTLY ASSOCIATES SDN BHD (PROJECT-CASH) (SRT) - no DO\n4. HOMECRAFT CENTER (SRT) - no DO\n5. KB CRAFT STONE SDN BHD (SRT) - no DO\n6. RED POINT SIGNCRAFT SDN BHD (PROJECT) (SRT) - no DO",
         "tools": []
       },
@@ -2710,7 +2732,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: hanlim\nProduct: srtwc286\nDates: all dates\n\nHere's what you want:\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -3154,7 +3181,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: hanlim\nProduct: srtwc286\nDates: 01/08/2026 to 31/08/2026\n\nHere's what you want:\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\nBut no order from 01/08/2026 to 31/08/2026 matched these. Reply 'all dates' to search without the date filter, or would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -3694,7 +3726,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for 7445?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },
@@ -3909,7 +3948,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "tier_pick",
+          "option_labels": [
+            "dealer",
+            "office",
+            "end user"
+          ]
+        },
         "text": "Which access level do you need for 7445?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
         "tools": []
       },
@@ -4461,7 +4507,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Couldn't find: \"DO12345\" (order). Would you like me to escalate to customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": []
       },
@@ -4734,7 +4785,14 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "marketing product",
+            "marketing form",
+            "marketing promotion"
+          ]
+        },
         "text": "Which team should I pass this to - marketing product, marketing form or marketing promotion?",
         "tools": []
       },
@@ -4881,7 +4939,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: hanlim\nProduct: srtwc286\nDates: all dates\n\nHere's what you want:\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -5325,7 +5388,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: hanlim\nProduct: srtwc286\nDates: 01/08/2026 to 31/08/2026\n\nHere's what you want:\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\nBut no order from 01/08/2026 to 31/08/2026 matched these. Reply 'all dates' to search without the date filter, or would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -6345,7 +6413,12 @@
           "dbc021e1-a1f5-40e5-957a-2a50188f98c3"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "srtwc287"
+          ]
+        },
         "text": "No incoming stock (ETA) found for SRTWC287.\nNo incoming for SRTWC287-S-150-RL, SRTWC287A-P-RL, SRTWC287A-RL-320, SRTWC287A-SC, SRTWC287-RL, SRTWC287-P-RL, SRTWC287-S-200-RL.\n\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWC287-S-150-RL\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 170\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-150-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 23\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-150-RL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 22\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-P-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 32\n*Outstanding:* 126\n\n- *Product Code:* SRTWC287A-P-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 17\n*Outstanding:* 20\n\n- *Product Code:* SRTWC287A-RL-320\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 8\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-SC\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 142\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-SC\n*Warehouse:* MERU\n*System Location:* MWH-BB\n*Quantity On Hand:* 14\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287A-SC\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 8\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 18\n*Outstanding:* 1\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n- *Product Code:* SRTWC287-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 1\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n- *Product Code:* SRTWC287-S-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n- *Product Code:* SRTWC287-P-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 33\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-P-RL\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 31\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-P-RL\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 23\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-200-RL\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 82\n*Outstanding:* 0\n\n- *Product Code:* SRTWC287-S-200-RL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 53\n*Outstanding:* 0\n\nNo incoming, no stock and nothing on order for SRTWC287-S-150, SRTWC287-LID, SRTWC287A-RL-7405, SRTWC287AA, SRTWC287-RL-289UF, SRTWC287-SC, SRTWC287.\n\nNo incoming, stock is 0 at every location and nothing on order for SRTWC287-S-200.\n\nRelated products:\n1. SRTWC287 - no incoming\n2. SRTWC287-LID - no incoming\n3. SRTWC287-P - no incoming\n4. SRTWC287-P-RL - no incoming\n5. SRTWC287-RL - no incoming\n6. SRTWC287-RL-289UF - no incoming\n7. SRTWC287-S-150 - no incoming\n8. SRTWC287-S-150-RL - no incoming\n9. SRTWC287-S-200 - no incoming\n10. SRTWC287-S-200-RL - no incoming\n11. SRTWC287-S-300 - no incoming\n12. SRTWC287-SC - no incoming\nReply with a number to check its incoming, or reply 'yes' to escalate to purchasing team.",
         "tools": [
           {

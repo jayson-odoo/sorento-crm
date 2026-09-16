@@ -3640,7 +3640,12 @@
           "ed13ab1e-2f13-4f57-800d-1928173ba201"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWT7445-LV-BL-NEW\n*Container:* SEGU4428362\n*ETA:* 2026-09-06\n*Incoming Quantity:* 200\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n2. *Product Code:* SRTWT7445-LV-NEW\n*Container:* SEGU4428362\n*ETA:* 2026-09-06\n*Incoming Quantity:* 610\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n3. *Product Code:* SRTWT7445-LV-WEPLS\n*Container:* SEGU4428362\n*ETA:* 2026-09-06\n*Incoming Quantity:* 360\n\ud83d\udea9  *(PENDING ALLOCATION)*",
         "tools": [
           {

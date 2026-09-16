@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "product_attachment search needs to be more specific. Multiple matches found. Please choose:\n1. SRTWC286-SH-200 - no Product Photos\n2. SRTWC286-SH-P - no Product Photos\n3. SRTWC286-SH-PP - no Product Photos\n4. SRTWC286-SH - has Product Photos\n5. SRTWC286-SH-UF - no Product Photos\n6. SRTWC286-SH-NEW-150 - no Product Photos\n7. SRTWC286-SH-150 - no Product Photos\n8. SRTWC286-SH-NEW-P - no Product Photos\n9. SRTWC286-SH-NEW-200 - no Product Photos\n10. SRTWC286-SH-NEW - no Product Photos",
         "tools": []
       },
@@ -408,7 +413,12 @@
           "90e76894-8384-4186-a3f7-ef73667726ff"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRTWC286-SH\n*Attachment Type:* Product Photos\n*File Name:* SRTWC286-SH.jpg\n\n_Data last updated: 29/04/2026 08:35:37_",
         "tools": [
           {
@@ -780,7 +790,12 @@
           "d73a33f3-956b-401f-90c7-0ad6ff792ea1"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWC286-SH-P\n\u2022 attachment_type: Product Photos\n\nBut no Product Photos matched these. Would you like me to escalate to marketing product team?",
         "tools": [
           {

@@ -80,7 +80,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\nOutstanding for which document?\n1. Sales orders (not yet transferred to DO)\n2. Delivery orders (not yet delivered)\n3. Both",
         "tools": []
       },
@@ -360,7 +365,12 @@
           "e7fd5960-e46e-49c9-b5cc-ef9e4a18c76c"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Product: SRTWT7445\nCustomer: FULLSHUN SANITARYWARE SDN BHD, *FULLSHUN SANITARYWARE SDN BHD (SHOWCASE), FULLSHUN SANITARYWARE SDN BHD (PROJECT), FULLSHUN SANITARYWARE SDN BHD [A/C II], FULLSHUN SANITARYWARE SDN BHD [A/C I], FULLSHUN SANITARYWARE SDN BHD [A/C III], FULLSHUN SANITARYWARE SDN BHD [A/C IV], FULLSHUN SANITARYWARE SDN BHD (CERAMIC & ELLECI), FULLSHUN SANITARYWARE SDN BHD (SAMPLE), FULLSHUN SANITARYWARE SDN BHD (BRAVAT)\nLocation: all\nOrder date: all\n\n*Sales order outstanding*\nSales orders: 1\nOrdered: 3\nTransferred to DO: 0\nOutstanding: 3\nOrder date range: 28/08/2026\n*_By location_*\nBRW: 3 (O/S: 3)\n\nReply 1 for the sales order list.",
         "tools": [
           {

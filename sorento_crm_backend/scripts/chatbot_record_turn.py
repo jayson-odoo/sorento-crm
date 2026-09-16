@@ -229,7 +229,7 @@ def _derive_resolutions(verdict: dict[str, Any], tool_events: list[dict[str, Any
     }
 
 
-def _pending_of(trace: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _pending_of(trace: list[dict[str, Any]], row: dict[str, Any] | None = None) -> dict[str, Any] | None:
     """The ACTUAL open question this turn left, from the `remembered` stage's own
     `session_patch` - never from `reply.result_set`, which also carries a plain
     multi-row ANSWER listing (measured: a real 11-row stock answer with no question
@@ -239,28 +239,56 @@ def _pending_of(trace: list[dict[str, Any]]) -> dict[str, Any] | None:
     `session_patch.variables.pending`, this lane's own `session_patch.open_question`
     - measured on real rows of each shape); whichever is present wins, and a case
     genuinely asking nothing records `pending: null`, not an empty dict.
+
+    Second source (T2, coder-7 cluster report, 16 Sep 2026): a CANNED lane
+    (`escalate_offer`, `demand_qty`, `clarify_menu`-as-domain-menu, ...) never emits a
+    `remembered` trace stage at all - `engine.py`'s canned-lane arm (~L1596-1630)
+    returns straight from `_complete_canned_lane`, which calls no
+    `_record_memory_trace` - measured: 122/122 sampled escalation-offer turns in
+    `focus_full` have NO `remembered` stage even though every one of them opened a
+    real question, so this function returned `None` for all of them and the recorded
+    `expected.pending` read `null` against a real carried pending (finding 2a made this
+    visible - the harness only compares `pending` when EITHER side is non-null, and
+    before 2a's fix `TurnResult.session_patch` was always None too, so the actual side
+    silently read `None` as well). `reply["quick_replies"]` (n8n's comma-joined option-
+    label string, `_quick_replies_of`/`compile_state`, AC-507) is non-null EXACTLY when
+    a question was asked - unlike `result_set`, which the docstring above already ruled
+    out for false-positiving on a plain multi-row answer - so it is a precise second
+    source. `kind` is left `null` from this source (not recoverable from the string);
+    `test_turn_replay.py::_compare` grades `option_labels` only, never `kind`.
     """
     remembered = _stage(trace, "remembered")
-    if remembered is None:
-        return None
-    session_patch = (remembered.get("raw") or {}).get("session_patch") or {}
-    open_question = session_patch.get("open_question")
-    if open_question is None:
-        open_question = (session_patch.get("variables") or {}).get("pending")
-    if not open_question:
-        return None
-    options = (
-        open_question.get("options")
-        or open_question.get("roster")
-        or open_question.get("candidates")
-        or []
-    )
-    labels = [
-        (o.get("label") or o.get("code") or o.get("name"))
-        for o in options
-        if isinstance(o, dict)
-    ]
-    return {"kind": open_question.get("kind") or open_question.get("type"), "option_labels": labels}
+    if remembered is not None:
+        session_patch = (remembered.get("raw") or {}).get("session_patch") or {}
+        open_question = session_patch.get("open_question")
+        if open_question is None:
+            open_question = (session_patch.get("variables") or {}).get("pending")
+        if open_question:
+            options = (
+                open_question.get("options")
+                or open_question.get("roster")
+                or open_question.get("candidates")
+                or []
+            )
+            labels = [
+                (o.get("label") or o.get("code") or o.get("name"))
+                for o in options
+                if isinstance(o, dict)
+            ]
+            return {
+                "kind": open_question.get("kind") or open_question.get("type"),
+                "option_labels": labels,
+            }
+
+    if row is not None:
+        reply = ((row.get("response") or {}).get("reply")) or {}
+        quick_replies = reply.get("quick_replies")
+        if quick_replies:
+            labels = [s.strip() for s in str(quick_replies).split(",") if s.strip()]
+            if labels:
+                return {"kind": None, "option_labels": labels}
+
+    return None
 
 
 def _expected_of(row: dict[str, Any], trace: list[dict[str, Any]], tool_events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -284,7 +312,7 @@ def _expected_of(row: dict[str, Any], trace: list[dict[str, Any]], tool_events: 
         "tools": tools,
         "entity_ids": sorted(entity_ids),
         "action_kinds": action_kinds,
-        "pending": _pending_of(trace),
+        "pending": _pending_of(trace, row),
         "focus_after": None,  # not captured on a dry-run/test row - see script docstring
         "canned": canned,
         "text": text_value,

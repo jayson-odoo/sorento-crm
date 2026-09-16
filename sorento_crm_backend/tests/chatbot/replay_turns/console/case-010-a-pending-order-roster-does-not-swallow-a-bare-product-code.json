@@ -96,7 +96,12 @@
           "dcaeb074-6b9f-46bd-9e86-97a16e976b59"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Customer: hanlim\nProduct: srtwc286\nDates: all dates\n\nHere's what you want:\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Maryam Ariffin\n2. Cyndi\n3. Aisyah\n4. Balqis\n5. Niki\n6. Nurain\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
         "tools": [
           {
@@ -534,9 +539,19 @@
         ],
         "branch_kind": "low_signal",
         "canned": [],
+        "corrected_per_ruling": "S6 cluster 4 ruling (UAC 'S6 rulings' block, 16 Sep 2026): 'last month' names no entity and no answers_open_question - it is NOT an attempt to answer the open member_offer roster from turn 12 (`previous_conversation_state.open_question`). Recorded pre-fix, the engine unconditionally cleared/re-asked any pending it could not resolve as an accept/decline, so the recording shows `pending: null`. Ruling: an unresolved-but-not-attempted message runs for what it is (here, a low_signal date clarifier - branch_kind is unchanged) and CARRIES the pending unchanged (sticky, never repeated) rather than dropping it - so post-fix this step's pending must still be the SAME six-agent member_offer roster the previous step opened. `option_labels` corrected to that roster; text/tools/entity_ids unaffected (a low_signal turn does not touch them). NOTE (tester 7, measured on the harness): this step ALREADY diverges before either fix lands - the harness's ACTUAL branch_kind for steps 2 and 3 comes back `escalate_offer`, not `low_signal`, because step 1 (`branch_kind: business_query`, the ASK arm) never wrote a `session_patch` either (finding 2a - same bug), so the DB `respond_contacts.session_vars` this step actually reads from carries whatever the blank-schema fixture seeded, not the recorded `previous_conversation_state`. This file was already counted in the 96 pre-existing replay failures (unsigned) before this edit; the correction above states the CONTRACT once findings 2a and cluster 4 both land, it does not itself make the file green - re-verify branch_kind against a real post-fix run before treating this file as done.",
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "option_labels": [
+            "Maryam Ariffin",
+            "Cyndi",
+            "Aisyah",
+            "Balqis",
+            "Niki",
+            "Nurain"
+          ]
+        },
         "text": "Sure - do you mean last month in a specific context, like an order, invoice, or report?",
         "tools": []
       },

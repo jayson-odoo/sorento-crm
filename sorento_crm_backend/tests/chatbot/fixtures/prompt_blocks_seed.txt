@@ -1,5 +1,5 @@
 Domain master_products ("product information"): intents check_product. Switch words: catalogue, catalog, spec, specs, specification, specifications, dimension, dimensions. Escalates to purchasing.
-Domain product_attachment ("product attachments"): intents check_product_attachment. Switch words: (none). attachment_type narrows narrow_by_type. Escalates to marketing_product.
+Domain product_attachment ("product attachments"): intents check_product_attachment. Switch words: (none). attachment_type narrows narrow_by_type; product narrows must_narrow_one. Escalates to marketing_product.
 Domain promotion ("promotions"): intents check_promotion. Switch words: promo, promos, promotion, promotions, promosi. tier narrows narrow_by_tier. Takes a date window. Escalates to marketing_promotion.
 Domain forms ("forms"): intents get_forms. Switch words: (none). Escalates to marketing_form.
 Domain inventory ("stock"): intents check_stock, low_stock_report. Switch words: stock, stocks, inventory, stok, qty, quantity, low stock, reorder report, below level. product narrows list_all. Takes a date window. Escalates to warehouse.

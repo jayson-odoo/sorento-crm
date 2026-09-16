@@ -913,7 +913,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1051,7 +1056,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "BRC22802W-MY"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1178,7 +1188,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1326,7 +1341,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1465,7 +1485,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. BUIMACO SDN BHD (SRT)\n2. BUIMACO HOME CENTRE SDN BHD (SRT)",
         "tools": []
       },
@@ -1604,7 +1629,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. BUIMACO SDN BHD (SRT)\n2. BUIMACO HOME CENTRE SDN BHD (SRT)",
         "tools": []
       },
@@ -1743,7 +1773,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -1893,7 +1928,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2034,7 +2074,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Which customer do you mean? Please choose:\n1. HENG SENG HARDWARE SDN BHD (MCH, SRT)\n2. HENG SENG HARDWARE - SRI MUDA (SRT)",
         "tools": []
       },
@@ -2184,7 +2229,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2323,7 +2373,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWT7445-LV-NEW"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2462,7 +2517,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "C-FH14"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2601,7 +2661,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "C-FH14"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2740,7 +2805,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "CKS1050"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -2879,7 +2949,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3018,7 +3093,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3157,7 +3237,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3296,7 +3381,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3435,7 +3525,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3574,7 +3669,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3712,7 +3812,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "C-FH14"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3839,7 +3944,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -3977,7 +4087,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWC8517"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -4115,7 +4230,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWC8517"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -4254,7 +4374,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -4392,7 +4517,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "orders"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -4531,7 +4661,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "srtwc8610-sh"
+          ]
+        },
         "text": "Couldn't find \"srtwc8610-sh\" (product). Did you mean SRTWC8611, SRTWC8613, or SRTWC8614? Reply with a code to continue, or would you like me to escalate to purchasing team?",
         "tools": []
       },
@@ -4670,7 +4805,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },

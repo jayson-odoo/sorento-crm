@@ -990,7 +990,12 @@
           "ada6a034-c3bb-4344-b145-2b4081b28e0f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "last purchase cost"
+          ]
+        },
         "text": "Here is the last SPO line per product.\n\n1. *SPO Number:* SPO-2026/07-0022\n*Container Number:* DRYU9923315\n*Product Code:* SRT59-CR\n*SPO Quantity:* 1\n*GR Quantity:* 1\n*SPO Date:* 2026-07-14\n*GR Date:* 2026-07-29\n*Warehouse:* BRW-SMC",
         "tools": [
           {
@@ -1306,7 +1311,12 @@
           "ada6a034-c3bb-4344-b145-2b4081b28e0f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "last purchase cost"
+          ]
+        },
         "text": "Stock summary for the requested products.\n\n1. *Product Code:* SRT59-CR\n*Total:* 82 (O/S: 198)\n*BRW:* 1 (O/S: 120)\n*BRW-BB:* 63 (O/S: 70)\n*BRW-HP:* 10 (O/S: 0)\n*BRW-IR:* 8 (O/S: 8)\n\n2. *Product Code:* SRT59-CR-NL\n*Total:* 0 (O/S: 0)\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {

@@ -81,7 +81,12 @@
           "e6d87826-d2c4-4332-98ec-7381ea821a9f"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: SRTWT7445-LV-NEW\n\nBut no inventory matched these.\nNo stock for SRTWT7445-LV-NEW.\n\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* SRTWT7445-LV-NEW\n*Container:* SEGU4428362\n*ETA:* 2026-09-06\n*ETA Delay:* 2026-09-11\n*Loading:* 2026-08-24\n*ETC:* 2026-08-26\n*ETD:* 2026-08-28\n*Liner:* CMA\n*China Forwarder:* Onetouch\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 610\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\nWould you like me to escalate to warehouse team?",
         "tools": [
           {

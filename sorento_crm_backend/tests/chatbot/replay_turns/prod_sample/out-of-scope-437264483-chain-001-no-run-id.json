@@ -757,7 +757,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },

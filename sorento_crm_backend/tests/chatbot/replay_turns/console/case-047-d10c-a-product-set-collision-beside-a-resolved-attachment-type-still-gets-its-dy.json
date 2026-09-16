@@ -81,7 +81,12 @@
           "1439736c-20ca-4bba-b387-b242ff4a4599"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "product attachments"
+          ]
+        },
         "text": "Couldn't find \"SRTWC8610-SH\" (product). Did you mean:\n1. SRTWC8613 - has certificate\n2. SRTWC8611 - no certificate\n3. SRTWC8614 - no certificate\nReply with a code to continue, or would you like me to escalate to purchasing certification team?",
         "tools": [
           {

@@ -59,7 +59,12 @@
         "corrected_per_ruling": "hand-pass-1-16sep.md finding 1: recorded turn was DENIED (branch_kind demand_qty) by the console-borrowed-envelope bug (custom_fields: [], read as is_allowed_stock=missing). Ruling: stock allowance moves to respond_contacts.chatbot_stock_allowed, default TRUE, envelope ignored - this contact must NOT be denied, so branch_kind corrects to business_query. tools/action_kinds/text left UNASSERTED (empty/null), not the buggy recorded values: the real live turn never called crm_inventory_stock_balance_list (it was denied before reaching fetch), so there is no REAL recorded tool result for the corrected happy path to replay against - asserting a fabricated one would invent evidence this case does not have.",
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": null,
         "tools": []
       },

@@ -73,7 +73,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRTWT6236"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -214,7 +219,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRT6550-DIY"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -355,7 +365,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "SRT6550-DIY"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },
@@ -494,7 +509,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Sorry, I ran into a problem understanding that. Please try again in a moment.",
         "tools": []
       },

@@ -931,7 +931,12 @@
           "d60f2efa-b132-40d3-9f58-4e8e96603372"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "srt360-hp"
+          ]
+        },
         "text": "I have attached the file(s) below.\n\n1. *Product Code:* SRT360-HP\n*Container:* CMAU4318062\n*ETA:* 2026-08-20\n*Incoming Quantity:* 210\n*Warehouse Allocations:* BRW (197), BRW-IR (13)",
         "tools": [
           {

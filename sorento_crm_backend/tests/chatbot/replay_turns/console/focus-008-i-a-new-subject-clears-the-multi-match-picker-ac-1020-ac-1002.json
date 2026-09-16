@@ -79,7 +79,12 @@
         "canned": [],
         "entity_ids": [],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "wc286"
+          ]
+        },
         "text": "incoming search needs to be more specific. Multiple matches found. Please choose:\n1. SRTWC286-SH-200 - no incoming\n2. SRTWC286-SH-P - no incoming\n3. SRTWC286-SH-PP - no incoming\n4. SRTWC286-SH - no incoming\n5. SRTWC286-SH-UF - no incoming\n6. SRTWC286-SH-NEW-150 - no incoming\n7. SRTWC286-SH-150 - no incoming\n8. SRTWC286-SH-NEW-P - has incoming\n9. SRTWC286-SH-NEW-200 - has incoming\n10. SRTWC286-SH-NEW - has incoming",
         "tools": []
       },
@@ -391,7 +396,12 @@
           "b9092b1a-eaaf-4e3d-a5e7-8a7ecb975144"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "product_pick",
+          "option_labels": [
+            "wc286"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTWC8517-SH-UF\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n2. *Product Code:* SRTWC8517-SH-UF\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-HP\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n3. *Product Code:* SRTWC8517-SH-UF\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n4. *Product Code:* SRTWC8517-SH-UF\n*Warehouse:* MERU\n*System Location:* MWH-HP\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n5. *Product Code:* SRTWC8517-SH-UF-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 49\n*Outstanding:* 6\n\n6. *Product Code:* SRTWC8517-SH-UF-150\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BILL\n*Quantity On Hand:* 60\n*Outstanding:* 0\n\n7. *Product Code:* SRTWC8517-SH-UF-150\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 78\n*Outstanding:* 0\n\n8. *Product Code:* SRTWC8517-SH-UF-200\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 5\n*Outstanding:* 0\n\n9. *Product Code:* SRTWC8517-SH-UF-NEW\n*Warehouse:* MERU\n*System Location:* MWH\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n10. *Product Code:* SRTWC8517-SH-UF-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 76\n*Outstanding:* 0\n\n11. *Product Code:* SRTWC8517-SH-UF-P\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BILL\n*Quantity On Hand:* 150\n*Outstanding:* 0\n\n12. *Product Code:* SRTWC8517-SH-UF-P\n*Warehouse:* BERSATU (PORT KLANG)\n*System Location:* DC1\n*Quantity On Hand:* 61\n*Outstanding:* 0\n\n13. *Product Code:* SRTWC8517-SH-UF-P\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3\n*Quantity On Hand:* 48\n*Outstanding:* 0\n\n_Data last updated: 04/09/2026 17:30:59_\nNo stock for SRTWC8517-SH-UF-150-NEW, SRTWC8517-SH-UF-P-NEW, SRTWC8517-SH-UF-200-NEW.\n\nBut there is INCOMING stock (ETA) for the requested products:\n\n- *Product Code:* SRTWC8517-SH-UF-150-NEW\n*Container:* WHSU8627647\n*ETA:* 2026-09-04\n*ETA Delay:* 2026-09-04\n*Loading:* 2026-08-24\n*ETC:* 2026-08-26\n*ETD:* 2026-08-28\n*Liner:* WHL\n*China Forwarder:* Kaidila\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 33\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC8517-SH-UF-P-NEW\n*Container:* WHSU8627647\n*ETA:* 2026-09-04\n*ETA Delay:* 2026-09-04\n*Loading:* 2026-08-24\n*ETC:* 2026-08-26\n*ETD:* 2026-08-28\n*Liner:* WHL\n*China Forwarder:* Kaidila\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 17\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC8517-SH-UF-NEW\n*Container:* IAAU1703569\n*ETA:* 2026-08-21\n*ETA Delay:* 2026-08-23\n*CIDB Inspection:* 2026-08-27\n*CIDB Approval:* 2026-09-02\n*Loading:* 2026-08-10\n*ETC:* 2026-08-11\n*ETD:* 2026-08-13\n*Liner:* IAA\n*China Forwarder:* Haiian\n*Malaysia Forwarder:* Haiian\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 61\n*Warehouse Allocations:* BRW (61)\n\n- *Product Code:* SRTWC8517-SH-UF-NEW\n*Container:* WHSU8627647\n*ETA:* 2026-09-04\n*ETA Delay:* 2026-09-04\n*Loading:* 2026-08-24\n*ETC:* 2026-08-26\n*ETD:* 2026-08-28\n*Liner:* WHL\n*China Forwarder:* Kaidila\n*Malaysia Forwarder:* MPM\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 28\n\ud83d\udea9  *(PENDING ALLOCATION)*\n\n- *Product Code:* SRTWC8517-SH-UF-200-NEW\n*Container:* IAAU1703569\n*ETA:* 2026-08-21\n*ETA Delay:* 2026-08-23\n*CIDB Inspection:* 2026-08-27\n*CIDB Approval:* 2026-09-02\n*Loading:* 2026-08-10\n*ETC:* 2026-08-11\n*ETD:* 2026-08-13\n*Liner:* IAA\n*China Forwarder:* Haiian\n*Malaysia Forwarder:* Haiian\n*Consignee:* Sorento\n*Free Days Available:* 14\n*Incoming Quantity:* 20\n*Warehouse Allocations:* BRW (20)\n\nWould you like me to escalate to warehouse team?",
         "tools": [
           {

@@ -81,7 +81,12 @@
           "dac2d3d1-bc4c-4dce-a696-fce8d927dd4d"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Here's what you want:\n\u2022 product: BRC22802W-MY\n\nBut no inventory matched these.\nNo stock and no incoming for BRC22802W-MY, but PO is placed:\n*Product Code:* BRC22802W-MY\n*Ordered:* 10\n*Outstanding:* 10\n*PO date:* 2026-07-29\n*Location:* BRW-BB\n\n*Product Code:* BRC22802W-MY\n*Ordered:* 20\n*Outstanding:* 20\n*PO date:* 2026-07-29\n*Location:* BRW\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {

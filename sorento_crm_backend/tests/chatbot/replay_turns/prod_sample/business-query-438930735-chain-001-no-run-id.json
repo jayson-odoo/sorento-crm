@@ -2819,7 +2819,12 @@
           "e82fd009-7b33-433e-bf0f-dd0e12b443a2"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTMCB8071-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 0\n*Outstanding:* 1\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n2. *Product Code:* SRTMCB8071-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n3. *Product Code:* SRTMCB8071-BL\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\u26a0\ufe0f  *(PRODUCT DISCONTINUED)*\n\n_Data last updated: 14/09/2026 17:25:40_\nStock is 0 at every location, no incoming and nothing on order for SRTMCB8071-BL.\n\nWould you like me to escalate to purchasing team?",
         "tools": [
           {
@@ -3274,7 +3279,12 @@
           "9b94fd22-a374-4d60-933d-346041992948"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "incoming stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTMCB8081-WH\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 32\n*Outstanding:* 9\n\n2. *Product Code:* SRTMCB8081-WH\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
@@ -3904,7 +3914,12 @@
           "ee42afea-f032-46db-968d-b54dd966f0be"
         ],
         "focus_after": null,
-        "pending": null,
+        "pending": {
+          "kind": "team_pick",
+          "option_labels": [
+            "stock"
+          ]
+        },
         "text": "Stock details found for the requested products.\n\n1. *Product Code:* SRTMCB7070-BL\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 18\n*Outstanding:* 0\n\n2. *Product Code:* SRTMCB7070-BL\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-PSM\n*Quantity On Hand:* 0\n*Outstanding:* 0\n\n_Data last updated: 14/09/2026 17:25:40_",
         "tools": [
           {
