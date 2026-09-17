@@ -18,25 +18,38 @@ location: `OI: SO397450 , SO397460`.
 1. A red headline naming the verb(s) in the mail: **ORDER**, **RESERVE & ORDER**, **ORDER
    BACK**, **PRE-ORDERED**, **ALREADY INBOUND**, **ADVANCE**, **DELAY**, **CHANGE SO NO**,
    **CANCEL BALANCE**.
-2. A sales-order table: **S/O NO**, **CUSTOMER**, **PROJECT**.
-3. A line table: **SO DATE**, **S/O NO**, **CUSTOMER**, **PROJECT**, **ITEM CODE**, **QTY**,
-   **DELIVERY DATE**, **REMARK**.
+2. A sales-order table: **S/O NO**, **CUSTOMER**, **PROJECT**. This is the only place
+   **CUSTOMER** and **PROJECT** appear.
+3. A line table: **SO DATE**, **S/O NO**, **ITEM CODE**, **QTY**, **QTY CHANGE TO**,
+   **DELIVERY DATE**, **DELIVERY DATE CHANGE TO**, **REMARK**.
 4. "Raised by \<name\> (\<email\>) on \<date\>."
 5. A link, **Open in Order Inquiries**, that opens the **Order Inquiries** worklist already
    filtered to the sales orders in the mail.
 
-**How a change reads.** When a line's quantity or delivery date moved, the old value shows
-struck through in the same cell, with the new value beside it - for example the **DELIVERY
-DATE** cell shows ~~03/08/2026~~ 21/07/2026, and **REMARK** reads ADVANCE. A cancelled quantity
-reads **CANCEL BALANCE 30 NOS** with the old quantity struck through. A dated verb reads
-ADVANCE when the new date is earlier, DELAY when it's later.
+**How a change reads.** **QTY** and **DELIVERY DATE** always print what the line was; when
+either one moved, the new value prints in its own **QTY CHANGE TO** or **DELIVERY DATE CHANGE
+TO** column next to it - no strikethrough to decode, no cell holding two numbers. A line whose
+quantity moved 182 to 214 reads **QTY 182**, **QTY CHANGE TO 214**. A line whose delivery date
+moved reads **DELIVERY DATE 01/09/2026**, **DELIVERY DATE CHANGE TO 01/04/2027**, and **REMARK**
+reads DELAY or ADVANCE depending on which way it moved. Every date in the mail reads
+`dd/mm/yyyy`. A cancelled line prints its old quantity in **QTY** and **0** in **QTY CHANGE TO**,
+with **REMARK** reading **CANCEL BALANCE 280 NOS** - the same figure either way, never a
+separate cancel-then-order pair. A plain new line prints **QTY** only, both **CHANGE TO**
+columns blank, **REMARK ORDER**.
 
 **How an item swap reads.** Swapping the product on a line prints as two lines in the table: a
 CANCEL BALANCE line for the old item and an ORDER line for the new one, not a single combined
 row.
 
 A line whose quantity and delivery date are unchanged from the last mail never appears - only
-what actually moved or was cancelled is printed.
+what actually moved or was cancelled is printed. Confirming a second time with nothing left to
+change sends no mail at all, not an empty one.
+
+**Still-open amendment instructions.** If the order also carries amendment rows raised by an SO
+change (DELAY, ADVANCE, CANCEL BALANCE, CHANGE SO) that purchasing has not yet actioned, they're
+listed in the same line table, after this Confirm's own lines, so purchasing reads one page per
+Confirm instead of having to remember an earlier mail. An order with nothing still open there
+adds nothing.
 
 ## What sends it, and what doesn't
 
@@ -86,5 +99,8 @@ dedicated combined line is built.
 
 * [Sales order changes after planning](sales-order-changes.md) - the in-app notification
   purchasing gets once a change is confirmed or amended, separate from this email.
+* [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md#undo-last-confirm)
+  - undoing a Confirm, which sends purchasing its own "Order inquiry undone" email instead of
+  this one.
 * [Run a reorder plan](run-a-reorder-plan.md)
 * [Upload the data a reorder plan is built from](upload-plan-data.md)
