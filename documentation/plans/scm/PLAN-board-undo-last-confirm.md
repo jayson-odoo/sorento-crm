@@ -210,6 +210,17 @@ Reviewer (Opus) and security reviewer (Opus), once, in parallel, after S3.
 | Undone email lists a donor's rows | fix: this order's rows only |
 | AC-UC-25 test fabricated the step-3 timestamp | rebuilt off a real step-3 placement |
 
+Follow-up review of the fix round (Opus, once): ready, no blocker. Landed in part 1 (`fe8047615`):
+docstring and plan prose corrected to the code, board reads only the journal pk sets, empty order
+set in the authorisation check raises, one journalled-decision predicate, one pso derivation,
+reason line contrast. Part 2 (tester first): the `actioned` fallback compares the journal's stored
+`old.actioned_at` when present; pass 2 re-insert is `ON CONFLICT DO NOTHING`; the pending-action
+POST answers 409 at park time when the refusal predicate already rejects (the countdown still
+re-checks at commit). Declined: one-line menu label with truncation (the reason would clip at
+375); rowcount assertions on the company predicate; the `__audit_columns__` column set (harmless).
+Filed as own issues: #982 (client `__company_scope` survives UNSET), #983 (`last_outcome`
+ordering).
+
 ## Not in this lane
 
 - Undo of a donor order's own newest revision when that revision was minted by another

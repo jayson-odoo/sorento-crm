@@ -147,7 +147,9 @@ Undo service:
 - AC-UC-27 [BE] Given the pending-actions engine, when `project_sales_order.undo_confirm` is
   created for `entity_type = project_sales_order`, then it uses the reversible window, requires
   `projects.projects.edit`, and commits the undo when the window lapses even with no client
-  polling (scheduler sweep).
+  polling (scheduler sweep). Given the refusal predicate already rejects the order, when the
+  action is created, then 409 with the refusal code and no pending row; a refusal that arises
+  during the countdown still resolves `ineligible` at commit.
 - AC-UC-28 [BE] Given a second Confirm was written after the pending undo was created, when the
   window lapses, then the undo targets the revision named at creation and refuses with
   `refusal = "superseded"` if it is no longer the newest.
