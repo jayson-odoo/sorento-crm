@@ -5084,10 +5084,19 @@ class ProjectOrderInquiryService:
         cited = self._cited_documents(row)
         own_location = (row.stock_location or "").strip().upper() or None
         forced: List[Dict[str, Any]] = []
+        seen: set = set()
         for link in self._links_of(row.id):
             target_id = str(link.po_line_id or link.spo_allocation_id)
-            if target_id not in missing:
+            if target_id not in missing or target_id in seen:
+                # TWO links on the same line (reachable via the ADD path, which does
+                # not merge onto an existing link the way SET semantics does) must
+                # force ONE candidate, not one per link - `own_take_by_target` is
+                # already the SUM across every link on this target, so the second
+                # link here would otherwise render the same line twice, each row
+                # carrying the full summed take (the dialog's own total then double-
+                # counts it).
                 continue
+            seen.add(target_id)
             take = own_take_by_target[target_id]
             if link.po_line_id:
                 found = (

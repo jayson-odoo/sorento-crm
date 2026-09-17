@@ -402,3 +402,38 @@ def test_an_in_place_qty_adjust_writes_the_same_audit_trail_as_retire_and_add(ap
     links = _links_targeting(db, row.id, line.id)
     assert len(links) == 1
     assert Decimal(str(links[0].qty)) == Decimal("2")
+
+
+def test_two_links_on_one_closed_line_force_a_single_candidate_with_the_summed_take(api):
+    """The ADD path (`place_on_po_allocations`, non-SET) writes a fresh link every
+    call rather than merging onto an existing one on the same line - two links can
+    stand on ONE `po_line_id`. `_candidates_including_own_closed_links` must force a
+    SINGLE candidate for that line, not one per link, with `current_take` the SUM -
+    two rows each carrying the full take would double it in the dialog's own total."""
+    from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+    client, db, world, user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="10", item_code=world["product"].product_code)
+    service = ProjectOrderInquiryService(db)
+    service.place_on_po_allocations(
+        str(row.id), [{"po_line_id": line.id, "qty": "3"}], actor_user_id=user_id,
+    )
+    service.place_on_po_allocations(
+        str(row.id), [{"po_line_id": line.id, "qty": "2"}], actor_user_id=user_id,
+    )
+    db.commit()
+    assert len(_links_targeting(db, row.id, line.id)) == 2, "two distinct link rows on one line"
+
+    line.line_status = "closed"
+    db.commit()
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+    assert response.status_code == 200, response.text
+    entries = [c for c in response.json()["candidates"] if c["po_line_id"] == line.id]
+    assert len(entries) == 1, "one candidate, not one per link"
+    assert entries[0]["current_take"] == "5"
+    assert entries[0]["line_open"] is False

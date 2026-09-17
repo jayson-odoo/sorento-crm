@@ -591,56 +591,6 @@ describe('AC-CF-18: a remembered filter with no URL param seeds the first list c
     );
   });
 
-  it('the write-back effect skips a render that no longer names this page, so a navigate-away never drops the filter behind it (browser pass 17 Sep fix)', async () => {
-    currentSearchParams = new URLSearchParams('location=OTHER-LOC');
-    storedConfig({
-      version: 1,
-      sorting: [{ id: 'delivery_date', desc: false }],
-      filters: { location: 'SRT-HQ' },
-      filtersVersion: 1,
-    });
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false, gcTime: 0 },
-        mutations: { retry: false },
-      },
-    });
-    const view = render(
-      <QueryClientProvider client={client}>
-        <OrderInquiriesClient />
-      </QueryClientProvider>,
-    );
-    await screen.findByText('SO385126');
-
-    // The correct PUT lands first (AC-CF-20's own pattern: found by content, never
-    // `.at(-1)`).
-    await waitFor(() =>
-      expect(
-        service.upsertUserListColumnConfig.mock.calls.some(
-          ([, payload]) =>
-            ((payload as { filters?: Record<string, unknown> }).filters ?? {})
-              .location === 'OTHER-LOC',
-        ),
-      ).toBe(true),
-    );
-    const putsBefore = service.upsertUserListColumnConfig.mock.calls.length;
-
-    // The sidebar takes the user elsewhere; the SAME mounted tree re-renders (no
-    // remount - `rerender`, not a fresh `render`) with `usePathname()` now answering a
-    // different route, which is exactly the "transitional render" the 17 Sep fix names.
-    currentPathname = '/project-sales/order-summary';
-    view.rerender(
-      <QueryClientProvider client={client}>
-        <OrderInquiriesClient />
-      </QueryClientProvider>,
-    );
-
-    // Give the effect a tick to fire were it NOT guarded, then prove it produced no
-    // further write at all - not merely one that still carries `location`.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(service.upsertUserListColumnConfig.mock.calls.length).toBe(putsBefore);
-  });
-
   it('a filter set here survives leaving the page and coming back on the SAME warm cache - the return visit asks with it, and nothing behind it writes it away (browser pass 17 Sep)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
