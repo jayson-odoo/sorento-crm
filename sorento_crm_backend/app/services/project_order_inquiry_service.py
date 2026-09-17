@@ -1117,11 +1117,20 @@ class ProjectOrderInquiryService:
         self.derive_bundles(inquiry.id)
         if raised and self.task_for(inquiry.id) is None:
             self._hand_to_purchasing(order, inquiry, raised)
-        # AC-R2-16/17 (owner ruling Q4, 18 Sep): still-raised amendment rows ride along
-        # on THIS confirm's own email, appended after the confirm's own lines, so
-        # purchasing reads one page per Confirm rather than having to remember an
-        # amendment's own earlier publish email.
-        self._append_still_raised_amendment_rows(order, actor_user_id=actor_user_id)
+        # AC-R2-16/17 (owner ruling Q4, 18 Sep), narrowed by S4 (captain ruling, review
+        # round 1): still-raised amendment rows ride along on THIS confirm's own email,
+        # appended after the confirm's own lines - but ONLY when this order actually
+        # queued at least one line of its own this commit. AC-R2-10's widened settle
+        # gate (S2) means a re-confirm can settle every named line SILENTLY (same id,
+        # no handover line at all), and appending the amendment rows onto a commit that
+        # said nothing of its own would dispatch an email whose only content purchasing
+        # already read on the amendment's own publish email.
+        queued_own_line = any(
+            item.get("pso_id") == str(order.id)
+            for item in self.db.info.get(_HANDOVER_PENDING_KEY, [])
+        )
+        if queued_own_line:
+            self._append_still_raised_amendment_rows(order, actor_user_id=actor_user_id)
         return {
             "inquiry": inquiry,
             "created": created,
@@ -2021,6 +2030,16 @@ class ProjectOrderInquiryService:
             if match:
                 day, month, year = match.groups()
                 was["delivery_date"] = date(int(year), int(month), int(day))
+            else:
+                # S1 (review round 1): a PRE-LANE row's note is still in the ISO shape
+                # `_change_note` wrote before AC-R2-07's dd/mm/yyyy fix ("Was
+                # 2026-09-01") - every amendment row confirmed before that migration
+                # landed reads this way, SO314593/SO314594 included, and must still
+                # parse rather than fall through to `was = None`.
+                iso_match = re.search(r"Was (\d{4})-(\d{2})-(\d{2})", row.note)
+                if iso_match:
+                    year, month, day = iso_match.groups()
+                    was["delivery_date"] = date(int(year), int(month), int(day))
         return was or None
 
     def _append_still_raised_amendment_rows(
