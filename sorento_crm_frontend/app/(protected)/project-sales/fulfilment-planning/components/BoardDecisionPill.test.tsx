@@ -86,6 +86,32 @@ describe('BoardDecisionPill: the five labels (C3, R6)', () => {
   });
 });
 
+describe('BoardDecisionPill: With purchasing vs Confirmed (AC-R2-19, PLAN-scm-oi-handover-r2-undo)', () => {
+  it('reads With purchasing, never Confirmed, for a line covered only by a live sheet-migrated inquiry row (no decision)', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({ covered: true, decision: null })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('With purchasing');
+    expect(screen.getByTestId(`decision-pill-${KEY}`).textContent).not.toBe('Confirmed');
+  });
+
+  it('still reads Confirmed for a line an active decision covers', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          covered: true,
+          decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
+        })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+  });
+});
+
 describe('BoardDecisionPill: no "rev" (R6)', () => {
   it('never prints a revision number beside Confirmed', () => {
     render(

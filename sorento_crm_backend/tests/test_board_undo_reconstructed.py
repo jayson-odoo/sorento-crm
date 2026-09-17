@@ -32,9 +32,7 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
     ACK_AWAITING,
     ALLOC_SOURCE_ORDER,
-    INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
-    INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
@@ -61,7 +59,6 @@ from .test_so_supply_confirmation import (  # noqa: F401  (api is a fixture)
     _core_so,
     _project_line,
     _project_so,
-    _stock,
     _suffix,
     _uid,
     _user,
@@ -1221,37 +1218,225 @@ def test_reconstruct_refuses_cleanly_when_confirmed_at_is_none(api):
 # against a state the schema already forbids.
 
 
+
 # =============================================================================== #
-# AC-R2-19: no line reads Confirmed once every revision of an order is undone     #
-# (reconstructed path, no prior decision). Owner hand test 18 Sep found nine      #
-# lines still `Confirmed` on the board with zero decisions left in the DB, on an  #
-# order shaped like SO314594: pre-existing OI rows sheet-migrated in (placed /    #
-# partly_linked / actioned, no `supply_decision_id`) alongside a line an active   #
-# decision covered. TEST-FIRST against today's board read, which still marks the #
-# undone line `covered: true` - the red below fails on that field reading true.  #
+# AC-R2-19: `covered` from a live, decision-less sheet-migrated inquiry row alone  #
+# is a PRE-EXISTING, correct board rule (the 14 Sep ruling) - the fix the owner's  #
+# hand test on SO314594 actually needs is on the FE PILL, which must stop reading #
+# such a line "Confirmed" (see `BoardDecisionPill.test.tsx`'s own AC-R2-19 cases). #
+# This pins today's backend contract (`covered=True, decision=None`) so a later    #
+# change does not "fix" `covered` itself and take away the very distinction the   #
+# pill now needs to read.                                                         #
 # =============================================================================== #
 
 
-def test_no_confirmed_verdict_after_reconstructed_undo_with_no_prior(api):
-    """AC-R2-19. A journal-less decision with `supersedes_id = None` (the order's
-    FIRST and only revision) is reconstructed away entirely. The board read for that
-    order must then show every line undecided (`covered = False`, `decision = None`),
-    the order's own `undo` gone (nothing left to undo), and - as a control that the
-    assertion above is not trivially true because the whole board went blank - a
-    SECOND line that only ever carried a saved draft (never confirmed) still reads
-    Saved (`draft` present, `covered = False`)."""
+def test_board_reads_covered_true_decision_none_for_a_decisionless_live_inquiry_row(api):
+    """AC-R2-19 [BE]. A line whose ONLY order-inquiry row is decision-less
+    (`supply_decision_id IS NULL`) and live (state not cancelled/rejected) must read
+    `covered=True, decision=None` - the shape `BoardDecisionPill`'s own AC-R2-19 fix
+    reads to print "With purchasing" rather than "Confirmed"."""
+    client, world = api
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="30")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    inquiry = OrderInquiry(
+        company_id=world.company_id, project_sales_order_id=order.id,
+        state=INQUIRY_RAISED, raised_by=world.eling,
+    )
+    db.add(inquiry)
+    db.flush()
+    db.add(OrderInquiryRow(
+        company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
+        item_code=world.product.product_code, qty=Decimal("30"), verb=IV_ORDER,
+        state=INQUIRY_PLACED, supply_decision_id=None,
+    ))
+    db.commit()
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    contribution = next(
+        c for c in response.json()["contributions"]
+        if c["sales_order_id"] == str(core_so.id) and c["line_no"] == 10
+    )
+    assert contribution["covered"] is True, (
+        "AC-R2-19: a live decision-less inquiry row must still cover the line"
+    )
+    assert contribution["decision"] is None, (
+        "AC-R2-19: covered-by-inquiry must never invent a decision"
+    )
+
+
+# =============================================================================== #
+# AC-R2-19a: a reconstructed undo of a planning-change apply must return the       #
+# batch to `pending`, the same as the journal path (`test_board_undo_last_confirm  #
+# .py::test_undo_of_a_batch_confirm_returns_the_batch_to_pending_and_leaves_the_   #
+# book`) - and the board must then re-propose the reopened lines rather than       #
+# leave them `covered` by a decision that no longer exists.                       #
+# =============================================================================== #
+
+
+def test_reconstructed_undo_of_a_batch_confirm_returns_the_batch_to_pending_and_reopens_the_board():
+    """AC-R2-19a. Reuses `test_planning_change_apply_on_board.py`'s own seeding
+    wholesale, exactly the way the journal twin above does, but strips the journal a
+    real Confirm always writes BEFORE undoing - standing in for a revision confirmed
+    before the journal existed (S5's own premise) - so `undo_confirm`'s `mode ==
+    "reconstructed"` branch (AC-R2-34) runs `reconstruct_undo` instead of `undo_last_
+    confirm`. A plain (non-batch) revision is covered separately below."""
+    from app.models.base import company_scope
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+    from app.services import project_seed_service
+    from app.services.project_service import register_project
+    from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
+
+    from .test_planning_change_apply_on_board import (
+        MARKER as BATCH_MARKER,
+        _World,
+        _apply_from_board,
+        _client as batch_client,
+        _form_three,
+        _product as batch_product,
+        _real_db_session,
+        _restore as batch_restore,
+        _sorento as batch_sorento,
+        _uid as batch_uid,
+        _user as batch_user,
+        _warehouse as batch_warehouse,
+    )
+
+    with _real_db_session() as db:
+        company_id = batch_sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        actor = batch_user(db, f"{BATCH_MARKER} Cyndi")
+        project = register_project(
+            db, company_id=company_id, actor_user_id=actor, developer_party_id=None,
+            title=f"{BATCH_MARKER} Reconstruct Batch World",
+        )
+        product = batch_product(db)
+        pool_wh = batch_warehouse(db, f"ZZT-BRW-{batch_uid()[:4]}", segment="dealer")
+        own_wh = batch_warehouse(
+            db, f"ZZT-IB-{batch_uid()[:4]}", segment="project", pool_warehouse_id=pool_wh.id
+        )
+        db.flush()
+        db.commit()
+        world = _World(db, company_id, actor, project, product, own_wh, pool_wh)
+
+        client, originals = batch_client(db, actor)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                fixture = _form_three((client, world))
+                response = _apply_from_board(fixture)
+                assert response.status_code == 200, response.text
+
+                decision = (
+                    db.query(SOSupplyDecision)
+                    .filter(SOSupplyDecision.project_sales_order_id == fixture["order"].id)
+                    .order_by(SOSupplyDecision.revision_no.desc())
+                    .first()
+                )
+                assert decision is not None
+                batch_id = fixture["batch"].id
+
+                decision.undo_journal = None
+                db.commit()
+
+                reconstruct_undo(db, fixture["order"], decision, actor_user_id=actor)
+                db.commit()
+                db.expire_all()
+
+                batch_rows = (
+                    db.query(PlanningChangeRow)
+                    .filter(PlanningChangeRow.batch_id == batch_id)
+                    .all()
+                )
+                assert batch_rows, "the batch's own rows must still exist"
+                assert all(row.applied_state == "pending" for row in batch_rows), (
+                    "AC-R2-19a: a reconstructed undo must return the batch to pending, "
+                    "exactly like the journal path"
+                )
+
+                batch = (
+                    db.query(PlanningChangeBatch)
+                    .filter(PlanningChangeBatch.id == batch_id)
+                    .one()
+                )
+                assert batch.applied_at is None, (
+                    "AC-R2-19a: applied_at must clear when no applied row of it remains"
+                )
+
+                board = client.get(
+                    f"{BASE}/fulfilment-planning/board",
+                    params={"orders": fixture["core_so"].so_number},
+                )
+                assert board.status_code == 200, board.text
+                core_line_1 = fixture["core_lines"][0]
+                contribution = next(
+                    c for c in board.json()["contributions"]
+                    if c["sales_order_id"] == str(fixture["core_so"].id)
+                    and c["line_id"] == str(core_line_1.id)
+                )
+                assert contribution["covered"] is False, (
+                    "AC-R2-19a: a reopened (reopened_by_change) line must not read "
+                    f"covered any more: {contribution}"
+                )
+                assert contribution["sources"], (
+                    "AC-R2-19a: a reopened line must be proposed for again, not left blank"
+                )
+        finally:
+            batch_restore(originals)
+
+
+def test_reconstructed_undo_of_a_plain_confirm_touches_no_planning_change_row(api):
+    """AC-R2-19a. A revision from a PLAIN confirm (no batch anywhere near it) must
+    reconstruct cleanly and touch no `planning_change_rows` - `reconstruct_undo` must
+    not assume every revision came off a batch apply."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
+
+    fx = _reconstruct_world(api)
+    db = fx["db"]
+
+    result = reconstruct_undo(db, fx["order"], fx["decision_d"], actor_user_id=fx["world"].eling)
+    db.commit()
+    assert result is not None
+
+    touched = (
+        db.query(PlanningChangeRow)
+        .filter(PlanningChangeRow.project_sales_order_id == fx["order"].id)
+        .count()
+    )
+    assert touched == 0, "AC-R2-19a: a plain confirm must never touch a batch row"
+
+
+# =============================================================================== #
+# AC-R2-19b: a NO-PRIOR reconstruct settles a settled row to NULL (never a         #
+# nonexistent prior decision) and restores its qty, while a row this revision      #
+# RAISED is deleted outright - nothing is left pointing at the deleted decision.   #
+# =============================================================================== #
+
+
+def test_reconstruct_with_no_prior_settles_row_to_null_and_deletes_the_raised_one(api):
+    """AC-R2-19b. `decision_d` is the order's FIRST and only revision
+    (`supersedes_id = None`). One row was sheet-migrated (`supply_decision_id` NULL
+    before D touched it) then SETTLED in place by D (182 -> 214, `previous_qty=182`
+    recorded, D repointed it to itself within the settle window). A second row was
+    RAISED by D fresh, with nothing to fall back to. Reconstructing D away must put
+    the settled row back at 182 with `supply_decision_id` NULL (not some invented
+    prior), delete the raised row outright, and leave no row pointing at D."""
     from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
 
     client, world = api
     db = world.db
-    _stock(db, world.product, world.pool_wh, on_hand=300)
-
     core_so = _core_so(db, world.company_id)
-    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="30")
-    core_line_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="15")
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="214")
     order = _project_so(db, world.project, so_id=core_so.id)
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
-    _project_line(db, order, line_no=20, product=world.product, core_line=core_line_2)
     db.commit()
 
     inquiry = OrderInquiry(
@@ -1272,72 +1457,44 @@ def test_no_confirmed_verdict_after_reconstructed_undo_with_no_prior(api):
     db.add(decision_d)
     db.flush()
 
-    covered_row = OrderInquiryRow(
+    settled_row = OrderInquiryRow(
+        company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
+        item_code=world.product.product_code, qty=Decimal("214"), verb=IV_ORDER,
+        state=INQUIRY_RAISED, supply_decision_id=decision_d.id,
+        created_at=t1 - timedelta(hours=1),
+        previous_qty=Decimal("182"), previous_delivery_date=None,
+        changed_at=t1 + timedelta(seconds=3),
+        note="Was 182 NOS",
+    )
+    db.add(settled_row)
+
+    raised_row = OrderInquiryRow(
         company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
         item_code=world.product.product_code, qty=Decimal("30"), verb=IV_ORDER,
         state=INQUIRY_RAISED, supply_decision_id=decision_d.id,
-        created_at=t1 - timedelta(hours=1),
+        created_at=t1 + timedelta(seconds=5),
     )
-    db.add(covered_row)
-
-    # SO314594's own shape: pre-existing OI rows sheet-migrated onto the order, no
-    # `supply_decision_id` at all - purchasing already partway through them, wholly
-    # independent of the decision that gets reconstructed away.
-    for state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED, INQUIRY_ACTIONED):
-        db.add(OrderInquiryRow(
-            company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
-            item_code=world.product.product_code, qty=Decimal("5"), verb=IV_ORDER,
-            state=state, supply_decision_id=None,
-        ))
+    db.add(raised_row)
     db.commit()
 
     reconstruct_undo(db, order, decision_d, actor_user_id=world.eling)
     db.commit()
+    db.expire_all()
 
-    # The control draft is written AFTER the reconstruct (its own save has nothing to
-    # do with the undo), keyed off the board's own contribution key for line 20 so the
-    # bucket the draft was "saved in" matches what a real Save would have written.
-    before = client.get(
-        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    settled = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == settled_row.id).one()
+    assert settled.supply_decision_id is None, (
+        "AC-R2-19b: no prior decision to repoint to, so this must fall to NULL"
     )
-    assert before.status_code == 200, before.text
-    line_2_key = next(
-        c["key"] for c in before.json()["contributions"]
-        if c["sales_order_id"] == str(core_so.id) and c["line_no"] == 20
-    )
-    db.add(SOSupplyDecisionDraft(
-        id=_uid(), sales_order_id=core_so.id, core_line_id=core_line_2.id,
-        line_no=20, item_code=world.product.product_code,
-        bucket_key=line_2_key.split("|")[3],
-        decision={"buy_qty": "15"}, saved_by=world.eling,
-    ))
-    db.commit()
+    assert settled.qty == Decimal("182"), "AC-R2-19b: the row's qty must be restored"
 
-    response = client.get(
-        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    raised = (
+        db.query(OrderInquiryRow).filter(OrderInquiryRow.id == raised_row.id).first()
     )
-    assert response.status_code == 200, response.text
-    payload = response.json()
+    assert raised is None, "AC-R2-19b: a row this revision raised must be deleted outright"
 
-    by_so = {row["so_number"]: row for row in payload["orders"]}
-    assert by_so[core_so.so_number]["undo"] is None, (
-        "AC-R2-19: a fully undone order must offer no undo entry"
+    dangling = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.supply_decision_id == decision_d.id)
+        .count()
     )
-
-    contributions = [
-        c for c in payload["contributions"] if c["sales_order_id"] == str(core_so.id)
-    ]
-    assert contributions, "sanity: the board must still carry this order's lines"
-    for row in contributions:
-        assert row["covered"] is False, (
-            f"AC-R2-19: line {row['line_no']} still reads covered (Confirmed) after "
-            f"a full undo, with zero decisions left in the DB: {row}"
-        )
-        assert row["decision"] is None, (
-            f"AC-R2-19: line {row['line_no']} still carries a decision after a full undo"
-        )
-
-    saved_line = next(c for c in contributions if c["line_no"] == 20)
-    assert saved_line["draft"] is not None, (
-        "control: a line that only ever carried a saved draft must still read Saved"
-    )
+    assert dangling == 0, "AC-R2-19b: nothing may be left pointing at the deleted decision"
