@@ -284,18 +284,47 @@ def test_a_refused_or_rolled_back_undo_dispatches_nothing(api, monkeypatch, arm)
 
 
 def _find_undo_seed_migration_path() -> Path | None:
-    """Locate the coder's seed migration by its data contract - the revision id is not
-    fixed at brief time, the same reasoning
-    `test_order_inquiry_handover_automation.py::_find_seed_migration_path` states."""
+    """Locate the coder's seed migration by its OWN revision id, not by content-
+    sniffing its body for the template code and trigger type - `oihr_0002_undone_
+    headline.py` (the follow-up migration in this same file that teaches this exact
+    template its RECONSTRUCTED distinction) contains BOTH `order_inquiry_undone_
+    default` and `order_inquiry_undone` too, so the old sniff matched two files and
+    returned whichever one `Path.glob` happened to yield first - unsorted, OS- and
+    filesystem-dependent order. CI shard 1 (run 35279796069) returned `oihr_0002`
+    first, so this "seed" migration actually ran the HEADLINE body: it seeded a
+    template with the RECONSTRUCTED branch already in it and no automation row at
+    all, failing this file's own sanity assertion and `assert 0 == 1` on the
+    automation count - while a local run, whose glob order happened to return
+    `undo_0002_seed_undone_automation.py` first, saw none of it. The revision id
+    (`revision = "undo_0002_seed_undone"`) is the ONE thing that is unique to this
+    file and never shared with a migration that extends it later."""
     versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    for path in versions_dir.glob("*.py"):
-        try:
-            text = path.read_text()
-        except OSError:
-            continue
-        if "order_inquiry_undone_default" in text and "order_inquiry_undone" in text:
-            return path
-    return None
+    matches = [
+        path
+        for path in versions_dir.glob("*.py")
+        if _file_declares_revision(path, "undo_0002_seed_undone")
+    ]
+    assert len(matches) <= 1, (
+        "more than one alembic migration under alembic/versions/ declares "
+        f"revision = \"undo_0002_seed_undone\": {[p.name for p in matches]}"
+    )
+    return matches[0] if matches else None
+
+
+def _file_declares_revision(path: Path, revision_id: str) -> bool:
+    """Whether THIS file is the migration whose own `revision` equals `revision_id` -
+    a bare `revision = "..."` LINE (module scope, no leading whitespace), never
+    `down_revision = "..."`: that variable name ends in the very same substring
+    (`revision = "..."`), so a plain `in text` check over the whole file matches a
+    CHILD migration naming this one as its parent too, which is exactly how the
+    first version of this fix over-matched `undo_0003_journal_sql_null.py` (its own
+    `down_revision = "undo_0002_seed_undone"`) alongside the real seed file."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return False
+    target = f'revision = "{revision_id}"'
+    return any(line.strip() == target for line in lines)
 
 
 def _load_undo_seed_migration():
@@ -396,19 +425,24 @@ def test_the_migration_seeds_an_enabled_automation_and_template_once():
 def _find_undone_headline_migration_path() -> Path | None:
     """Locate the coder's migration that teaches the already-seeded
     `order_inquiry_undone_default` template to print the RECONSTRUCTED headline
-    distinctly (B3, review round 1) - name not fixed at brief time
-    (`oihr_0002_undone_headline`, or `undo_0002` extended in place), found by its
-    own data contract instead, the same way `_find_undo_seed_migration_path` above
-    (and `test_order_inquiry_handover_automation.py::_find_r2_migration_path`) is."""
+    distinctly (B3, review round 1) - by its OWN revision id, the same fix
+    `_find_undo_seed_migration_path` above needed: a content sniff over this
+    migration's own body text is exactly the same class of hazard even though this
+    particular pair of strings does not collide with `undo_0002_seed_undone_
+    automation.py` TODAY - the next migration that touches this template and
+    happens to mention RECONSTRUCTED (a downgrade note, a comment) would collide
+    silently, and CI's own glob order is not something to depend on either way."""
     versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    for path in versions_dir.glob("*.py"):
-        try:
-            text = path.read_text()
-        except OSError:
-            continue
-        if "order_inquiry_undone_default" in text and "RECONSTRUCTED" in text:
-            return path
-    return None
+    matches = [
+        path
+        for path in versions_dir.glob("*.py")
+        if _file_declares_revision(path, "oihr_0002_undone_headline")
+    ]
+    assert len(matches) <= 1, (
+        "more than one alembic migration under alembic/versions/ declares "
+        f"revision = \"oihr_0002_undone_headline\": {[p.name for p in matches]}"
+    )
+    return matches[0] if matches else None
 
 
 def _load_undone_headline_migration():

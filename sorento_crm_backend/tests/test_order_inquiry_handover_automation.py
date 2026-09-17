@@ -1548,17 +1548,43 @@ def test_normalize_recipient_config_keeps_include_actor_as_bool():
 
 
 def _find_seed_migration_path() -> Path | None:
-    """Locate the coder's seed migration by its data contract - the revision id is not
-    fixed at brief time (PLAN section 3.6). `None` until the migration exists."""
+    """Locate the coder's seed migration by its OWN revision id
+    (`oihe_0001_seed_handover`), not by content-sniffing its body for the template
+    code and trigger type it shares with a LATER migration that also touches this
+    exact template (`oihr_0001_handover_r2_layout.py`, which updates the SAME
+    `order_inquiry_handover_default` row in place). CI shard 1 hit exactly this
+    class of collision on the sibling `order_inquiry_undone_default` seed
+    (`_find_undo_seed_migration_path`, `tests/test_board_undo_email.py`) - the old
+    sniff here is spared TODAY only because the coder split `TEMPLATE_CODE =
+    "order_inquiry_handover" + "_default"` in `oihr_0001` specifically to defeat a
+    naive substring search; matching on the revision id makes that split
+    unnecessary rather than relying on it staying in place. `None` until the
+    migration exists."""
     versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    for path in versions_dir.glob("*.py"):
-        try:
-            text = path.read_text()
-        except OSError:
-            continue
-        if "order_inquiry_handover_default" in text and "order_inquiry_handover" in text:
-            return path
-    return None
+    matches = [
+        path
+        for path in versions_dir.glob("*.py")
+        if _file_declares_revision(path, "oihe_0001_seed_handover")
+    ]
+    assert len(matches) <= 1, (
+        "more than one alembic migration under alembic/versions/ declares "
+        f"revision = \"oihe_0001_seed_handover\": {[p.name for p in matches]}"
+    )
+    return matches[0] if matches else None
+
+
+def _file_declares_revision(path: Path, revision_id: str) -> bool:
+    """Whether THIS file is the migration whose own `revision` equals `revision_id` -
+    a bare `revision = "..."` LINE (module scope, no leading whitespace), never
+    `down_revision = "..."`: that variable name ends in the very same substring
+    (`revision = "..."`), so a plain `in text` check over the whole file would match
+    a CHILD migration naming this one as its parent too."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return False
+    target = f'revision = "{revision_id}"'
+    return any(line.strip() == target for line in lines)
 
 
 def _load_seed_migration():
