@@ -64,10 +64,73 @@ Taken**
 * If nothing has stock to spare for this item, the dialog reads **No donor holds this item**
   instead of a table.
 
+## Undo last confirm
+
+Read this when you pressed **Confirm** on the board and want it back, right after, before
+anyone else acts on it.
+
+### Where the entry is
+
+Open the gear menu at the top of the board. Below **Undo all** (which only throws away
+drafts, not anything already confirmed) there is one entry per order on the board whose newest
+Confirm can still be undone, worded **Undo &lt;SO number&gt; confirm (rev &lt;N&gt;)** - for
+example **Undo SO314593 confirm (rev 2)**. An order with nothing to undo (nothing confirmed yet,
+or its confirm is too old to reverse) simply has no entry.
+
+### The countdown
+
+Selecting the entry turns the board's **Confirm** button into a countdown reading
+**Undoing in &lt;N&gt;s** with **Cancel** beside it, and the order number underneath so you can
+see which order it's about to touch. The window length is the reversible window set in
+**System Settings**. Pressing **Cancel** before it runs out puts the **Confirm** button straight
+back and nothing on the board has changed. Pressing Escape does nothing - this is a deliberate
+countdown, not a dialog, so it can't be dismissed by accident.
+
+### What comes back
+
+When the countdown runs out, the board puts everything back exactly as it was the moment before
+you clicked Confirm: the lines go back to undecided (or to whatever their previous confirmed
+revision was, if there was one), any drafts you had typed for those lines come back too, and the
+purchase rows that Confirm had handed to purchasing are removed or restored to their earlier
+state along with them. It's one step back, once - you can't undo an undo, and once you confirm
+again a fresh revision is minted that can be undone in its own right.
+
+### When the entry is greyed out
+
+The entry stays visible but disabled, with the reason written underneath it, when purchasing has
+already started acting on what that Confirm raised:
+
+* **Purchasing linked a PO line** - someone in purchasing has manually linked one of the rows
+  this Confirm raised to a purchase order line.
+* **Purchasing marked a row actioned** - someone in purchasing has marked one of the rows as
+  actioned.
+
+Either way, the fix isn't to force the undo - ask purchasing to unlink the row first if it truly
+needs undoing, or, if the mistake can be fixed going forward instead, leave the confirmed
+revision alone and re-plan the line from here (decide it again and confirm on top of it).
+
+### Purchasing is told automatically
+
+Every undo sends purchasing one email, **Order inquiry undone**, listing the sales order and
+every row that went back or disappeared - the same way the handover email tells them about a
+fresh Confirm. Nothing needs to be forwarded by hand. This automation can be turned off or its
+recipients changed under **[System Management → Automation](/system-management/automation)**,
+same as any other automated email.
+
+### Not the same as Reset planning
+
+**Reset planning**, on **[Project Sales Admin → Sales Orders](/scm/sales-orders)** (**Actions →
+Reset planning**), is a different, larger action: it wipes every revision, every order inquiry
+row, link and stock transfer the order has ever had, for repeating a UAT walkthrough from a
+clean slate. Undo last confirm only ever steps back one Confirm, on one order, and only while it
+is still fresh enough to reverse.
+
 ## See also
 
 * [Plan a sales order nobody decided](plan-undecided-lines.md) (which lines reach this board,
   and the Planned pill on the Sales Orders list)
+* [Sales order changes after planning](sales-order-changes.md) (Confirm/Amend on a changed line -
+  the same Undo applies to that Confirm too)
 * [Manage suppliers](../procurement/manage-suppliers.md) (Country is set there)
 * [Countries](../product/countries.md)
 * [Run a reorder plan](run-a-reorder-plan.md)
