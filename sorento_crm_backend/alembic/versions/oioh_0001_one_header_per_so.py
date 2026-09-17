@@ -38,7 +38,7 @@ would mean inventing which rows belonged to which now-deleted batch header, whic
 after this revision records - there is no way back that is not itself a guess.
 
 Revision ID: oioh_0001_one_header_per_so
-Revises: undo_0002_seed_undone
+Revises: undo_0003_journal_sql_null
 Create Date: 2026-09-17
 """
 from __future__ import annotations
@@ -51,7 +51,7 @@ from alembic import op
 logger = logging.getLogger("alembic.oioh_0001")
 
 revision = "oioh_0001_one_header_per_so"
-down_revision = "undo_0002_seed_undone"
+down_revision = "undo_0003_journal_sql_null"
 branch_labels = None
 depends_on = None
 

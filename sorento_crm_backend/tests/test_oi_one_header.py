@@ -163,7 +163,19 @@ class TestCascadeSkipsUsedRows:
         # candidates cannot cover the row's need in full, so a smaller open SPO would fail
         # this assertion for a reason that has nothing to do with AC-OH-11 (the fresh row
         # never got a chance to be offered a partial).
-        open_alloc = _spo_line(world, qty="220", warehouse=world.warehouse)
+        #
+        # `expected_date` inside the fresh row's lead-time window (#990,
+        # `arrives_outside_window`): this product carries no `product_suppliers` lead time,
+        # so the default 90-day window applies against `new_row.delivery_date` (REPLAN_DATE,
+        # 2027-03-01) - the threshold is 2026-12-01, so 45 days short of REPLAN_DATE is
+        # comfortably on the "not early" side. `_spo_line`'s own default (2026-08-10) is
+        # well before that threshold, and #990's cascade now refuses a document that early.
+        open_alloc = _spo_line(
+            world,
+            qty="220",
+            warehouse=world.warehouse,
+            expected_date=REPLAN_DATE - timedelta(days=45),
+        )
 
         ProjectOrderInquiryService(world.db).auto_place_for_products(
             [str(world.product.id)],
@@ -189,8 +201,14 @@ class TestCascadeSkipsUsedRows:
         fixture = _redirected_fixture(api)
         row = fixture["redirected_row"]
         new_row = fixture["new_row"]
-        # 220, matching the fresh row's own unlinked need - see the AC-OH-11 comment above.
-        open_alloc = _spo_line(world, qty="220", warehouse=world.warehouse)
+        # 220, matching the fresh row's own unlinked need, with an `expected_date` inside
+        # the fresh row's lead-time window - see the AC-OH-11 comment above (#990).
+        open_alloc = _spo_line(
+            world,
+            qty="220",
+            warehouse=world.warehouse,
+            expected_date=REPLAN_DATE - timedelta(days=45),
+        )
 
         ProjectOrderInquiryService(world.db).link_now(
             [str(world.product.id)], actor_user_id=world.cs_user, link_horizon="none"
