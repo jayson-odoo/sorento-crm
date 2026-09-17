@@ -44,6 +44,13 @@ the released 182 row instead of the live 220 row.
   the URL.
 - R6 Two defects: the auto-link cascade must skip `redirected_to_pool` rows; Raised by reads
   the row's own person before the header's.
+- R9 (owner ruling, 17 Sep, found on `sorento_oioh_stack` via TPE-9204 / SO314595) A line
+  decided as a LOCAL buy is not purchasing's job, so it must not sit on the order inquiry
+  worklist at all: its still-raised ORDER rows are cancelled "Superseded by revision N"
+  exactly as for any decided line, no fresh ORDER row is raised, and no DELAY / ADVANCE
+  row either (the same no-reaction list a settled or redirected line already joins).
+  Placed or actioned rows stay - they are history. Supersedes the old S3
+  `PLAN-local-supplier-oi-routing.md` rule that left a local line's raised row untouched.
 
 ## Phase 1 - frontend (mock)
 
@@ -148,6 +155,17 @@ the released 182 row instead of the live 220 row.
 - AC-OH-81 [BE] After the fix, the same measurement shows the page's slowest request under
   1.5 s on the copy, and the list response is unchanged in shape (existing worklist tests
   green).
+
+### A local buy is not purchasing's job (R9)
+
+- AC-OH-90 [BE] Given a line whose confirm decides it as a LOCAL buy (`origin == "local"`)
+  and which carries a still-`raised` ORDER row from an earlier revision, when
+  `refresh_for_decision` runs, then that row is cancelled with note "Superseded by
+  revision N" (no fresh ORDER row is raised for the line), while a `placed`/`actioned` row
+  on the same line is left untouched.
+- AC-OH-91 [BE] Given the same local line named in a planning-change apply's reaction pass,
+  then no DELAY / ADVANCE row is written for it - the line joins `settled_in_place`, the
+  same no-reaction list a settled or redirected line already joins.
 
 ## Phase 3 - end to end
 

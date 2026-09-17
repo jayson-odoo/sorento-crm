@@ -81,6 +81,7 @@ from .test_order_inquiry_handshake import (
     api,
     world,
 )
+from .test_order_inquiry_worklist_raised_by import _decision
 from .test_order_inquiry_worklist import (
     LIST as WL_LIST,
     MARKER as WL_MARKER,
@@ -1398,3 +1399,145 @@ class TestHideCancelledByDefault:
         summary = client.get(f"{WL_LIST}/summary").json()
         months = {entry["month"] for entry in summary["by_month"]}
         assert "2031-01" not in months, "a cancelled-only month must not appear"
+
+
+# =============================================================================
+# R9/AC-OH-90..91 (owner ruling, 17 Sep, TPE-9204 / SO314595): a local buy is not
+# purchasing's job - no raised row, no fresh row, no DELAY/ADVANCE reaction.
+# =============================================================================
+
+
+class TestLocalBuyNotPurchasingsJob:
+    def test_local_buy_supersedes_raised_row_no_fresh_row_AC_OH_90(self, api):
+        """AC-OH-90: a line decided as a LOCAL buy (`origin == "local"`) has its
+        still-raised ORDER row cancelled "Superseded by revision N", no fresh ORDER
+        row is raised for it, and a PLACED row on the same line stays untouched. The
+        raised row is stripped of its `supply_decision_id` first, matching the real
+        defect shape (a migrated row `_retire_uncovered_rows` never reaches, since
+        that method only touches a row that already carries a decision link)."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="176")
+        order = fixture["order"]
+        line = fixture["line"]
+        row = fixture["row"]
+        first_decision = (
+            world.db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.id == row.supply_decision_id)
+            .one()
+        )
+        row.supply_decision_id = None
+        world.db.flush()
+
+        placed_row = OrderInquiryRow(
+            id=_uid(),
+            company_id=world.company_id,
+            order_inquiry_id=row.order_inquiry_id,
+            so_line_id=line.id,
+            item_code=world.product.product_code,
+            qty=Decimal("50"),
+            delivery_date=row.delivery_date,
+            verb=IV_ORDER,
+            state=INQUIRY_PLACED,
+            ack_state=ACK_ACKNOWLEDGED,
+            acknowledged_by=world.cs_user,
+            acknowledged_at=datetime.utcnow(),
+        )
+        world.db.add(placed_row)
+        world.db.flush()
+        world.db.commit()
+        placed_row_id = placed_row.id
+
+        decision_two = _decision(
+            world.db, world.company_id, order,
+            revision_no=2, confirmed_by=world.cs_user,
+            confirmed_at=datetime.utcnow(), supersedes=first_decision,
+        )
+        service = ProjectOrderInquiryService(world.db)
+        service.refresh_for_decision(
+            order, decision_two,
+            [
+                {
+                    "line": line,
+                    "buy_qty": Decimal("219"),
+                    "item_code": world.product.product_code,
+                    "required_date": date(2027, 1, 1),
+                    "line_no": 1,
+                    "origin": "local",
+                }
+            ],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+
+        world.db.refresh(row)
+        assert row.state == INQUIRY_CANCELLED
+        assert row.note == "Superseded by revision 2"
+
+        assert [str(r.id) for r in _rows_for_line(world, line)] == [str(placed_row_id)], (
+            "no fresh ORDER row for a local line, and the placed row is the only "
+            "survivor"
+        )
+
+        world.db.refresh(placed_row)
+        assert placed_row.state == INQUIRY_PLACED
+        assert Decimal(str(placed_row.qty)) == Decimal("50"), "placed supply is history, untouched"
+
+    def test_local_buy_suppresses_delay_row_AC_OH_91(self, api):
+        """AC-OH-91: the local line joins `settled_in_place` so the reaction pass
+        raises no DELAY/ADVANCE row for it - the same no-reaction list a settled or
+        redirected line already joins."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="176")
+        order = fixture["order"]
+        line = fixture["line"]
+        row = fixture["row"]
+        first_decision = (
+            world.db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.id == row.supply_decision_id)
+            .one()
+        )
+        row.supply_decision_id = None
+        world.db.flush()
+        world.db.commit()
+
+        decision_two = _decision(
+            world.db, world.company_id, order,
+            revision_no=2, confirmed_by=world.cs_user,
+            confirmed_at=datetime.utcnow(), supersedes=first_decision,
+        )
+        service = ProjectOrderInquiryService(world.db)
+        result = service.refresh_for_decision(
+            order, decision_two,
+            [
+                {
+                    "line": line,
+                    "buy_qty": Decimal("219"),
+                    "item_code": world.product.product_code,
+                    "required_date": date(2027, 1, 1),
+                    "line_no": 1,
+                    "origin": "local",
+                }
+            ],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+
+        settled_in_place = list(result.get("settled_in_place") or [])
+        assert str(line.id) in settled_in_place
+
+        live_rows = [
+            SimpleNamespace(
+                kind="delayed",
+                project_line_id=str(line.id),
+                core_line_id=str(fixture["core_line"].id),
+                item_code=world.product.product_code,
+                from_json={"required_date": WAS.isoformat()},
+                to_json={"required_date": "2027-01-01", "qty": "219"},
+                held_json={},
+            )
+        ]
+        demand_rows, counts = _oi_demand_rows(
+            world.db, live_rows, fixture["core_so"].so_number, settled_in_place
+        )
+        assert demand_rows == [], "no DELAY/ADVANCE row for a local line"
+        assert "DELAY" not in counts and "ADVANCE" not in counts

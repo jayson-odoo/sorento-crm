@@ -748,14 +748,49 @@ class ProjectOrderInquiryService:
         # `_settle_row_in_place` declines a line whose rows it cannot read as one.
         settled_in_place: List[str] = []
         for entry in buy_lines:
-            # S3 (`PLAN-local-supplier-oi-routing.md`, AC-2.15/AC-2.17/AC-2.18): a Buy
-            # whose product is bought LOCALLY raises no Order Inquiry row and cancels
-            # none - it is neither raised nor treated as dropped. The entry STAYS in
-            # `buy_lines`, so `_retire_uncovered_rows`'s own `covered` set (built from the
-            # whole sequence, below) still names this line and an earlier raised row on
-            # it is left exactly as it is - skipping here, before that pass runs, is what
-            # keeps "local now" from reading as "line dropped from the revision".
+            # R9 (owner ruling, S9, `PLAN-oi-worklist-one-header.md`, superseding the old
+            # S3 `PLAN-local-supplier-oi-routing.md` rule below): a line decided as a
+            # LOCAL buy is not purchasing's job at all, so any of its still-RAISED order
+            # rows are superseded exactly like any other decided line's - no fresh ORDER
+            # row is raised for it (its own `buy_qty` is irrelevant, a local buy has
+            # none), and it joins `settled_in_place` so the reaction pass raises no
+            # DELAY/ADVANCE row for it either (AC-OH-90/91) - the same "this line was
+            # decided, not dropped" list a settled or redirected line already joins.
+            # PLACED/ACTIONED rows stay untouched: purchasing already bought or actioned
+            # them, which is history, not an instruction still open. Scoped to ORDER/
+            # ORDER_BACK only - a local line was never routed to CANCEL_BALANCE. The
+            # entry STAYS in `buy_lines` (old S3 behaviour, unchanged), so
+            # `_retire_uncovered_rows`'s own `covered` set still names this line -
+            # harmless here, since a migrated row with no `supply_decision_id` reads to
+            # that method as the amendment path and it never touches these rows anyway.
             if entry.get("origin") == "local":
+                local_line = entry["line"]
+                local_owned_verbs = (
+                    (IV_ORDER, IV_ORDER_BACK)
+                    if bool(entry.get("order_back"))
+                    else (IV_ORDER,)
+                )
+                local_rows = (
+                    self.db.query(OrderInquiryRow)
+                    .filter(
+                        OrderInquiryRow.order_inquiry_id == inquiry.id,
+                        OrderInquiryRow.so_line_id == local_line.id,
+                        OrderInquiryRow.verb.in_(local_owned_verbs),
+                        OrderInquiryRow.state == INQUIRY_RAISED,
+                    )
+                    .all()
+                )
+                for row in local_rows:
+                    was_qty = row.qty
+                    row.state = INQUIRY_CANCELLED
+                    row.note = f"Superseded by revision {decision.revision_no}"
+                    self._record_handover(
+                        row,
+                        kind="cancelled",
+                        was={"qty": was_qty},
+                        actor_user_id=actor_user_id,
+                    )
+                settled_in_place.append(str(local_line.id))
                 continue
             line = entry["line"]
             need = _dec(entry.get("buy_qty"))

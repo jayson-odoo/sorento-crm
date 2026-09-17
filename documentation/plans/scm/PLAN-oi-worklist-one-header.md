@@ -243,6 +243,23 @@ outside this lane's named scope, reported separately, not fixed here).
 `orderInquiryWorklistColumns.tsx` / `OrderInquiriesClient.tsx`: initial `columnVisibility`
 marks `inquiry_no` hidden; a saved column preference wins. AC-OH-01. Phase 1 (no backend).
 
+### S9 - a local buy is not purchasing's job [BE]
+
+Found via the owner's hand test on `sorento_oioh_stack`: SO314595's TPE-9204 line was
+decided LOCAL (`origin == "local"` in `refresh_for_decision`'s `buy_lines`, set by
+`buy_origin_by_product` in `project_supply_service.py`) but its migrated `raised` row
+(no `supply_decision_id`) stayed untouched at the old qty, AND a DELAY row was written
+for it - the old S3 (`PLAN-local-supplier-oi-routing.md`) rule left a local line's row
+alone entirely, and `_retire_uncovered_rows` never reaches a row with no
+`supply_decision_id` either (reads as the amendment path to it), so nothing in the
+existing code ever cancels it once a line goes local.
+
+R9: `refresh_for_decision`'s own `buy_lines` loop, at the SAME `origin == "local"` check,
+now cancels the line's still-`raised` ORDER/ORDER_BACK rows ("Superseded by revision N"),
+raises nothing fresh, and joins `settled_in_place` so the reaction pass raises no
+DELAY/ADVANCE row either - one seam, the entry still stays in `buy_lines` for
+`_retire_uncovered_rows`'s own `covered` set exactly as before. AC-OH-90..91.
+
 ## No-motion list
 
 Nothing animates. No new component, no new state.
