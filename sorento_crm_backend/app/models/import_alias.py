@@ -15,7 +15,7 @@ not to one of its operating companies.
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -55,22 +55,14 @@ class ImportFieldAlias(Base):
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
-        # Two PARTIAL unique indexes, not one four-column constraint (review round 1, item
-        # 3): Postgres's "NULLs are distinct" default means a single `(doc_type, field,
-        # alias, supplier_id)` constraint never catches two SHARED rows for the same word -
-        # two NULLs never collide. A shared row (`supplier_id IS NULL`) is unique on the
-        # triple alone; a scoped row is unique per supplier on the quadruple.
-        Index(
-            "uq_import_field_alias_shared",
-            "doc_type", "field", "alias",
-            unique=True,
-            postgresql_where=text("supplier_id IS NULL"),
-        ),
-        Index(
-            "uq_import_field_alias_scoped",
-            "doc_type", "field", "alias", "supplier_id",
-            unique=True,
-            postgresql_where=text("supplier_id IS NOT NULL"),
-        ),
+        # The plain triple (migration 311), NOT widened to include `supplier_id` (review
+        # round 3): 22 call sites - every seeder, `scripts/bootstrap_env.py`, several scm
+        # tests - `INSERT ... ON CONFLICT (doc_type, field, alias) DO NOTHING` against this
+        # exact constraint by name, and rewriting them is not this column's call to make.
+        # It is also the right rule: a supplier's OVERRIDE of a word changes its TOKEN
+        # (`field`) for the same `alias`, which is a different triple and was never blocked;
+        # what the triple correctly refuses is a second row - shared or scoped - naming a
+        # (field, alias) pair a row already names, because that mapping already exists.
+        UniqueConstraint("doc_type", "field", "alias", name="uq_import_field_alias_triple"),
         Index("ix_import_field_alias_doc_type_field", "doc_type", "field"),
     )

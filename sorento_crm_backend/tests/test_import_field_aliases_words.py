@@ -162,11 +162,14 @@ def test_ac_w1_an_unknown_supplier_id_is_422(scm_app):
     assert r.json().get("detail") in ("supplier_id", None) or "supplier_id" in str(r.json())
 
 
-def test_a_supplier_scoped_row_does_not_409_against_an_existing_shared_row(scm_app):
-    """A reviewer once dropped the `supplier_id` predicate from the 409 pre-check with
-    nothing going red: a shared row and a same-supplier-later row on the identical (field,
-    alias) are two different scopes (D6, R3) and must coexist - only a SECOND identical
-    SHARED post collides."""
+def test_a_supplier_scoped_row_duplicating_a_shared_pair_is_409(scm_app):
+    """Round 3 ruling: the ORIGINAL `uq_import_field_alias_triple` on (doc_type, field,
+    alias) stays - `supplier_id` is not part of the key at all, so a (field, alias) PAIR
+    exists at most once on file, shared or scoped. A supplier's own row is an OVERRIDE: the
+    same WORD (alias) mapped to a DIFFERENT token (field) - a different triple, so it is
+    free to exist beside the shared one, and `WordList.for_supplier` reads that supplier's
+    row over the shared one for that word while every other supplier still reads the shared
+    token."""
     client, db = _client(scm_app, view=True, edit=True)
     supplier_id = _seed_supplier(db)
     field, alias = "SH", f"{MARKER}_scoping_word"
@@ -174,20 +177,34 @@ def test_a_supplier_scoped_row_does_not_409_against_an_existing_shared_row(scm_a
     shared = client.post(URL, json={"doc_type": DOC_TYPE, "field": field, "alias": alias})
     assert shared.status_code in (200, 201), shared.text
 
-    scoped = client.post(
+    # Same (field, alias) pair, scoped to a supplier - the identical triple, so 409 even
+    # though the supplier differs; the constraint has no supplier_id column to distinguish.
+    dup_scoped = client.post(
         URL,
         json={"doc_type": DOC_TYPE, "field": field, "alias": alias, "supplier_id": supplier_id},
     )
-    assert scoped.status_code in (200, 201), scoped.text
+    assert dup_scoped.status_code == 409, dup_scoped.text
+    assert "shared" in dup_scoped.text.lower(), dup_scoped.text
 
-    rows = db.execute(
-        text("SELECT count(*) FROM import_field_alias WHERE doc_type = :d AND alias = :a"),
-        {"d": DOC_TYPE, "a": alias},
-    ).scalar()
-    assert rows == 2
+    # The OVERRIDE case: the same word, a DIFFERENT token, scoped to the supplier - a new
+    # triple, so it is free to exist.
+    override_field = "SHX"
+    override = client.post(
+        URL,
+        json={
+            "doc_type": DOC_TYPE, "field": override_field, "alias": alias,
+            "supplier_id": supplier_id,
+        },
+    )
+    assert override.status_code in (200, 201), override.text
 
-    dup_shared = client.post(URL, json={"doc_type": DOC_TYPE, "field": field, "alias": alias})
-    assert dup_shared.status_code == 409, dup_shared.text
+    from app.services.scm.supplier_code_composer import WordList
+
+    other_supplier_id = _seed_supplier(db)
+    overridden_words = WordList.for_supplier(db, supplier_id)
+    shared_words = WordList.for_supplier(db, other_supplier_id)
+    assert overridden_words.lookup(alias) == override_field
+    assert shared_words.lookup(alias) == field
 
 
 def test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared():
@@ -220,43 +237,28 @@ def test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared():
         assert expected <= pairs, pairs
 
 
-def test_ac_w2_the_unique_triple_now_allows_two_suppliers_on_the_same_word():
+def test_ac_w2_the_original_triple_constraint_stands_and_supplier_id_was_added():
+    """Round 3 ruling: the partial unique indexes are gone - `uq_import_field_alias_triple`
+    on (doc_type, field, alias) is the ORIGINAL constraint, restored, and `supplier_id` is
+    an added nullable column, not part of any uniqueness key. Two rows for the exact same
+    (field, alias) pair - whatever their `supplier_id` - collide on this constraint; that
+    behaviour is covered by the 409 test above, which exercises it through the route rather
+    than a raw insert."""
     with pg_session() as db:
-        from app.models.procurement import Supplier
-
-        sup_a = Supplier(
-            id=str(uuid.uuid4()), supplier_code=unique_code("SUP"),
-            supplier_name=f"{MARKER} A", is_active=True,
-        )
-        sup_b = Supplier(
-            id=str(uuid.uuid4()), supplier_code=unique_code("SUP"),
-            supplier_name=f"{MARKER} B", is_active=True,
-        )
-        db.add_all([sup_a, sup_b])
-        db.flush()
-
-        db.add(
-            ImportFieldAlias(
-                id=str(uuid.uuid4()), doc_type=DOC_TYPE, field="SH",
-                alias=f"{MARKER}_word", supplier_id=str(sup_a.id),
-            )
-        )
-        db.add(
-            ImportFieldAlias(
-                id=str(uuid.uuid4()), doc_type=DOC_TYPE, field="SH",
-                alias=f"{MARKER}_word", supplier_id=str(sup_b.id),
-            )
-        )
-        db.flush()
-
-        count = db.execute(
+        constraint_exists = db.execute(
             text(
-                "SELECT count(*) FROM import_field_alias "
-                "WHERE doc_type = :d AND alias = :a"
-            ),
-            {"d": DOC_TYPE, "a": f"{MARKER}_word"},
+                "SELECT 1 FROM pg_constraint WHERE conname = 'uq_import_field_alias_triple'"
+            )
         ).scalar()
-        assert count == 2
+        assert constraint_exists == 1
+
+        column_exists = db.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'import_field_alias' AND column_name = 'supplier_id'"
+            )
+        ).scalar()
+        assert column_exists == 1
 
 
 class TestWordListForSupplier:

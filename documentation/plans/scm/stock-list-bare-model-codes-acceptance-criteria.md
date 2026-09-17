@@ -37,12 +37,16 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
 - AC-W1: the admin API accepts `POST {doc_type: supplier_inventory_word, field: SRT, alias:
   SORENTO}` (shared) and the same with `supplier_id`; a token is validated by shape
   (`^[A-Z0-9]{1,10}$`, uppercased on write: `hp` is stored as `HP`); `hp!` or an 11-character
-  token is 422; an unknown or non-UUID `supplier_id` is 422. A shared (field, alias) and a
-  supplier-scoped (field, alias) coexist (201, two rows); a second identical shared row is 409.
+  token is 422; an unknown or non-UUID `supplier_id` is 422. A (field, alias) pair that already
+  exists, shared or scoped, is 409 and the message names the existing row's scope; a
+  supplier-scoped row mapping the same alias to a DIFFERENT token is 201 (override) and
+  `WordList.for_supplier` resolves that word to the supplier's token while another supplier
+  still gets the shared token.
 - AC-W2: Migration adds nullable `import_field_alias.supplier_id` (FK suppliers, cascade),
-  replaces the unique triple with two partial unique indexes (shared / scoped); inserts exactly
+  keeps `uq_import_field_alias_triple` (23 seeders insert with `ON CONFLICT (doc_type, field,
+  alias)` and need it); inserts exactly
   the D7 rows with `supplier_id NULL` (six brand rows: SORENTO, S, CABANA, C, MOCHA, M);
-  downgrade removes every word row and the column; id <= 32 chars; single head. Existing
+  downgrade removes every word row and every scoped row, then the column; id <= 32 chars; single head. Existing
   `proforma_invoice` / `packing_list` rows untouched.
 - AC-W3: `WordList.for_supplier(db, supplier_id)`: a supplier row for a word wins over the
   shared row; a word with only a shared row resolves; a word with neither is unknown.

@@ -239,8 +239,10 @@ class TestWordListForSupplier:
     wins over the shared one, and composing with it changes the outcome.
 
     Test-owned words (not the real D7 spellings): the migration seeds `SORENTO`/`盆` as
-    SHARED rows already, and the new partial unique index (review round 1, item 3) rejects
-    a second shared row for the same word - this class's point is the OVERRIDE mechanism,
+    SHARED rows already, and `uq_import_field_alias_triple` (doc_type, field, alias) -
+    restored round 3, `supplier_id` carries no uniqueness weight at all - rejects a second
+    row for the same (field, alias) pair whatever its `supplier_id`. This class's point is
+    the OVERRIDE mechanism (the SAME word mapped to a DIFFERENT token for one supplier),
     which a marker-prefixed word proves just as well without colliding with the seed.
     """
 

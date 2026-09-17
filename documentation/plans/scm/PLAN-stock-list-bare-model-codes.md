@@ -85,8 +85,14 @@ already uploaded once: 44 rows stored, 2 bound.
   closed `WORD_TOKENS` list: a closed list made D7's "owner types the rest" and D11
   undeliverable). The form shows a plain uppercase text input for the token on this doc type.
   Per supplier (R3): one nullable `supplier_id` column on `import_field_alias` (migration),
-  `NULL` = shared row; two partial unique indexes keep shared rows and scoped rows each unique.
-  Lookup: the supplier's own row wins, else the shared row. The page gains a clearable,
+  `NULL` = shared row. The original unique triple (doc_type, field, alias) STAYS: a supplier's
+  own row differs from the shared row by its token (`S -> SRTX` for one supplier while the
+  shared row says `S -> SRT`), never by repeating a pair that already exists, and a second
+  supplier wanting the same pair is told to use the shared row (409 names the existing row's
+  scope). Review round 3 tried two partial unique indexes instead and CI failed: 23 seeders,
+  migration 311's `seed_import_field_aliases` among them, insert with
+  `ON CONFLICT (doc_type, field, alias)`, which needs exactly that unique index to exist.
+  Lookup: the supplier's own row for a word wins, else the shared row. The page gains a clearable,
   server-searched `Supplier` select (the paged fulfilment supplier lookup, not the 100-row
   bare select) shown for this doc type only, and the list shows the supplier's name as a
   second muted badge beside a scoped alias.
@@ -132,8 +138,7 @@ any change to `supplier_code_matcher.py`.
   `db` + `supplier_id` on the normal path). Tests: `test_supplier_inventory_reader*.py`, new
   `test_supplier_code_composer.py`.
 - **S2 Word list storage** - migration: `import_field_alias.supplier_id` nullable FK; the
-  unique triple is replaced by two partial unique indexes (shared rows on the triple, scoped
-  rows on the quadruple); seed rows; downgrade removes every word row.
+  unique triple is kept; seed rows; downgrade removes every word row and every scoped row.
   `canonical_fields()` branch; `AliasResolver`-style `WordList.for_supplier(db, supplier_id)`.
   Admin API: `supplier_id` accepted on create and returned on list, validated to exist.
   Alembic id <= 32 chars; `down_revision` re-parented at PR time via `scripts/alembic-reparent.sh`.

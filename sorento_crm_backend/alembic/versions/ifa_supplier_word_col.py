@@ -8,18 +8,24 @@ translated into our own code prefixes before the matcher can bind them at all (s
 mechanism that already exists, not a new table.
 
 `supplier_id` nullable: NULL is a SHARED row, answering for every supplier unless one of
-their own overrides it (D6, R3). Review round 1, item 3: a plain `(doc_type, field, alias,
-supplier_id)` unique constraint does NOT do what D6 needs, because Postgres's default
-"NULLs are distinct" rule means the SAME shared row (`SORENTO`, `supplier_id` NULL) could be
-inserted twice without ever violating that constraint - two NULLs never collide. The rule
-this table actually wants is stricter for a shared row (one row per word, full stop) and
-looser for a scoped row (one row PER SUPPLIER per word) - two different uniqueness scopes,
-which is exactly what two PARTIAL unique indexes express and a single four-column constraint
-cannot:
+their own overrides it (D6, R3). Review round 3: `uq_import_field_alias_triple` on
+`(doc_type, field, alias)` stays EXACTLY as migration 311 created it - not touched, not
+replaced with a per-supplier variant. Two reasons landed on that ruling:
 
-  - `uq_import_field_alias_shared` on `(doc_type, field, alias)` WHERE `supplier_id IS NULL`
-  - `uq_import_field_alias_scoped` on `(doc_type, field, alias, supplier_id)`
-    WHERE `supplier_id IS NOT NULL`
+  - 22 other call sites (every seeder, `scripts/bootstrap_env.py`, 9+ scm tests) `INSERT ...
+    ON CONFLICT (doc_type, field, alias) DO NOTHING` against this exact constraint by name.
+    Rounds 1-2 replaced it with two partial unique indexes, and Postgres has no unique index
+    matching that column list once the plain triple is gone - every one of those sites 500s
+    with "no unique or exclusion constraint matching the ON CONFLICT specification" (CI red
+    on #1000). Rewriting 23 sites for one migration's own column is not this migration's
+    call to make.
+  - It is also the RIGHT rule, not just the safe one: an override changes the WORD'S TOKEN
+    for one supplier (`对冲` normally unmapped; DAFUYUAN's own row says `SH`) - a different
+    `field` value for the same `alias`, which is a DIFFERENT (doc_type, field, alias) triple
+    and was never blocked. What the triple correctly refuses is a SECOND row naming the
+    SAME (field, alias) pair that a shared or another supplier's row already names - that
+    mapping already exists, and duplicating it (scoped or not) is not an override, it is
+    exactly the answer "use the existing row" restated as a new row.
 
 D7 seeds exactly what the measured data states, as shared rows: the owner types the rest from
 the new admin page. Six brand rows, not four - `CABANA`'s own single-letter spelling is `C`
@@ -64,6 +70,8 @@ _SEED = [
 def upgrade() -> None:
     bind = op.get_bind()
 
+    # `uq_import_field_alias_triple` (migration 311) is left exactly as it is - see the
+    # module docstring for why. Only the column and its FK are new here.
     op.add_column(
         "import_field_alias",
         sa.Column("supplier_id", UUID(as_uuid=False), nullable=True),
@@ -76,35 +84,14 @@ def upgrade() -> None:
         ["id"],
         ondelete="CASCADE",
     )
-    op.drop_constraint(
-        "uq_import_field_alias_triple", "import_field_alias", type_="unique"
-    )
-    op.create_index(
-        "uq_import_field_alias_shared",
-        "import_field_alias",
-        ["doc_type", "field", "alias"],
-        unique=True,
-        postgresql_where=sa.text("supplier_id IS NULL"),
-    )
-    op.create_index(
-        "uq_import_field_alias_scoped",
-        "import_field_alias",
-        ["doc_type", "field", "alias", "supplier_id"],
-        unique=True,
-        postgresql_where=sa.text("supplier_id IS NOT NULL"),
-    )
 
     for field, alias in _SEED:
         bind.execute(
             sa.text(
                 """
                 INSERT INTO import_field_alias (doc_type, field, alias, supplier_id)
-                SELECT :d, :f, :a, NULL
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM import_field_alias
-                    WHERE doc_type = :d AND field = :f AND alias = :a
-                      AND supplier_id IS NULL
-                )
+                VALUES (:d, :f, :a, NULL)
+                ON CONFLICT (doc_type, field, alias) DO NOTHING
                 """
             ),
             {"d": DOC_TYPE, "f": field, "a": alias},
@@ -113,28 +100,18 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     bind = op.get_bind()
-    # Every row of this doc type, not only the seed - review round 1, item 3. The admin page
-    # this migration exists to feed may have written supplier-scoped rows since upgrade, and
-    # the column carrying them is about to be dropped; leaving them orphaned under the old
-    # triple constraint (which none of these rows were even inserted under) is worse than a
-    # downgrade that removes what it introduced, full stop.
+    # Every row of this doc type, not only the seed - the admin page this migration exists
+    # to feed may have written more rows since upgrade, and the column carrying their scope
+    # is about to be dropped.
     bind.execute(
         sa.text("DELETE FROM import_field_alias WHERE doc_type = :d"), {"d": DOC_TYPE}
     )
-    # `supplier_id` is a column on the WHOLE table, not scoped to this doc type - review
-    # round 2, item 5. Any OTHER doc type's row that ended up carrying one (nothing seeds
-    # this today, but the column does not forbid it) is about to lose the column that scopes
-    # it; restoring the old (doc_type, field, alias) triple next could then collide two rows
-    # that used to be distinct only by supplier. Deleted rather than silently unscoped.
+    # `supplier_id` is a column on the WHOLE table, not scoped to this doc type. Any OTHER
+    # doc type's row that ended up carrying one (nothing seeds this today, but the column
+    # does not forbid it) is about to lose the column that scopes it - deleted rather than
+    # silently unscoped.
     bind.execute(sa.text("DELETE FROM import_field_alias WHERE supplier_id IS NOT NULL"))
 
-    op.drop_index("uq_import_field_alias_scoped", table_name="import_field_alias")
-    op.drop_index("uq_import_field_alias_shared", table_name="import_field_alias")
-    op.create_unique_constraint(
-        "uq_import_field_alias_triple",
-        "import_field_alias",
-        ["doc_type", "field", "alias"],
-    )
     op.drop_constraint(
         "fk_import_field_alias_supplier_id", "import_field_alias", type_="foreignkey"
     )

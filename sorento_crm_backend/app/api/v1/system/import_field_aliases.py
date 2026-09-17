@@ -210,22 +210,31 @@ def create_import_field_alias(
     )
     _assert_known_field(payload.doc_type, field_value)
     _assert_supplier_exists(db, payload.supplier_id)
+    # Matched on the TRIPLE alone, regardless of `supplier_id` (review round 3): the mapping
+    # a (doc_type, field, alias) pair names already exists the moment ANY row - shared, or
+    # another supplier's - names it, and a second row on that same triple is not an
+    # override (an override changes the FIELD, i.e. the word's token, for the same alias),
+    # it is a duplicate of an answer that already exists.
     existing = (
         db.query(ImportFieldAlias)
         .filter(
             ImportFieldAlias.doc_type == payload.doc_type,
             ImportFieldAlias.field == field_value,
             ImportFieldAlias.alias == payload.alias,
-            ImportFieldAlias.supplier_id == payload.supplier_id,
         )
         .first()
     )
     if existing is not None:
+        if existing.supplier_id:
+            supplier_name = _supplier_names(db, [existing]).get(str(existing.supplier_id))
+            scope = f" ({supplier_name})" if supplier_name else " (another supplier's row)"
+        else:
+            scope = " (shared)"
         raise AppException(
             status.HTTP_409_CONFLICT,
             f"Header {payload.alias} is already mapped to "
             f"{_label_for(payload.doc_type, field_value)} for "
-            f"{_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}.",
+            f"{_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}{scope}.",
             code="duplicate_alias",
         )
     row = ImportFieldAlias(
