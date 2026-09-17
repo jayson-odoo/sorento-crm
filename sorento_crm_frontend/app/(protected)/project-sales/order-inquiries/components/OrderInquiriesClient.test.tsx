@@ -446,7 +446,13 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default vie
         expect.objectContaining({ ack: 'to_confirm' }),
       ),
     );
-    expect(screen.getByText('Confirmed: To confirm')).toBeInTheDocument();
+    // The chip names the option alone (review round fix): "To confirm", never
+    // "Confirmed: To confirm" - the filter's own name IS the sentence, and prefixing
+    // the word "Confirmed" read as the row's ack STATE regardless of which option was
+    // actually chosen. Selected by the chip's own Clear button
+    // (`aria-label={Clear filter: ${label}}`, `data-grid-list-toolbar.tsx`) rather
+    // than `getByTitle`, which also matches the "To confirm" stat tile beside it.
+    expect(screen.getByLabelText('Clear filter: To confirm')).toBeInTheDocument();
   });
 
   it('a URL naming an explicit ?ack= still narrows the list and shows its chip', async () => {
@@ -459,7 +465,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default vie
         expect.objectContaining({ ack: 'rejected' }),
       ),
     );
-    expect(screen.getByText('Confirmed: Rejected')).toBeInTheDocument();
+    expect(screen.getByLabelText('Clear filter: Rejected')).toBeInTheDocument();
   });
 
   it('?ack=all shows every row and hides the chip', async () => {
@@ -472,7 +478,7 @@ describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default vie
         expect.objectContaining({ ack: undefined }),
       ),
     );
-    expect(screen.queryByText(/^Confirmed:/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Clear filter:/)).not.toBeInTheDocument();
   });
 
   it('the Confirmed filter offers To confirm, Confirmed, Changed, Rejected, All (AC-CF-13)', async () => {

@@ -384,6 +384,31 @@ describe('AC-CF-5: Confirm (N) is the primary press', () => {
   });
 });
 
+describe('AC-CF-8: skipped rows are named in the toast (review round)', () => {
+  it('the toast names how many were skipped, not just what got confirmed', async () => {
+    const rows = [ackRow({ id: 'row-only', item_code: 'ZZT-ONLY', so_number: 'SO-ONLY' })];
+    listOrderInquiryWorklist.mockResolvedValue(envelope(rows));
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 1,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 0,
+      skipped: 2,
+    });
+    renderClient();
+    await screen.findByText('SO-ONLY');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-ONLY on SO-ONLY'));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm (1)' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith('Confirmed 1 row, 2 skipped'),
+    );
+  });
+});
+
 describe('AC-CF-7: Select all N matching posts filter, not row_ids', () => {
   it('the banner appears at N > loaded, and Confirm sends the current query + ack as `filter`', async () => {
     currentSearchParams = new URLSearchParams('query=SO123');
@@ -392,6 +417,13 @@ describe('AC-CF-7: Select all N matching posts filter, not row_ids', () => {
       ackRow({ id: 'row-2', item_code: 'ZZT-2', so_number: 'SO-2' }),
     ];
     listOrderInquiryWorklist.mockResolvedValue(envelope(rows, 40));
+    // Confirm (N) reads its count off `summary.ack.to_confirm` (review round fix,
+    // AC-CF-7), never the list's own `total` - every eligible row in this filtered
+    // scope happens to be 40 too here, so the banner and the button agree.
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      ack: { awaiting: 40, acknowledged: 0, changed: 0, rejected: 0, to_confirm: 40 },
+    });
     acknowledgeOrderInquiryRowsByFilter.mockResolvedValue({
       acknowledged: 40,
       linked_rows: 0,

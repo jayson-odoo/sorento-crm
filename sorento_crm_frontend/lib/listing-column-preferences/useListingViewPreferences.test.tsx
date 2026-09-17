@@ -254,6 +254,26 @@ describe('useListingViewPreferences', () => {
     );
   });
 
+  it('a FAILED read resolves the gate with defaults, not a permanent stall (review round)', async () => {
+    // `retry: 0` means one failed GET is final - `saved` then stays `undefined`
+    // forever, and gating the "apply" effect on `saved` alone left `isLoading`
+    // (and every data query a page gates on `!isViewPrefsLoading`, e.g. the order
+    // inquiry worklist) stuck `true` for the rest of the session.
+    vi.mocked(service.getUserListColumnConfig).mockRejectedValue(new Error('network'));
+    renderHook();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('ready');
+    });
+    expect(screen.getByTestId('sorting').textContent).toBe(JSON.stringify(DEFAULT_SORTING));
+    expect(screen.getByTestId('filters').textContent).toBe('null');
+
+    await pastTheDebounceWindow();
+    // No memory to apply and none to write back either - a failed read is not a
+    // first-time user's own "nothing stored yet" signal to persist.
+    expect(upsert()).not.toHaveBeenCalled();
+  });
+
   it('seeds the shared cache entry from the write response (AC-B7)', async () => {
     mockStoredConfig(STORED_VIEW);
     const client = renderHook();

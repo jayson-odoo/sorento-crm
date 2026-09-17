@@ -13,7 +13,22 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.services.uuid_path_param import UUID_PATTERN
+
+#: The longest free-text search string the worklist routes accept
+#: (`api/v1/projects/order_inquiries.py` imports this rather than retyping it, so the
+#: list route and `AcknowledgeFilter` below share one cap).
+WORKLIST_QUERY_MAX_LENGTH = 200
+#: The same cap on every other free-text filter (location, PO number, SPO number, a
+#: matrix cell's key). They reach an `ilike` or an equality over a joined query, and a
+#: megabyte of "x" is not a search anybody typed.
+WORKLIST_FILTER_MAX_LENGTH = 200
+
+#: The closed state set the worklist list route accepts on `state` - shared so
+#: `AcknowledgeFilter.state` cannot name a value the list route itself would refuse.
+WorklistState = Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]
 
 
 class OrderInquiryBundledWithOut(BaseModel):
@@ -491,27 +506,41 @@ class AcknowledgeFilter(BaseModel):
     S2 `PLAN-oi-confirm-per-so.md`, `oi-confirm-per-so-contract.md`): "Select all N
     matching" resolves against exactly the scope the worklist itself is filtered to,
     never a client-rebuilt copy of it. Every field is optional; an absent one means "not
-    filtered on that axis", exactly as the list reads it
-    (`OrderInquiryWorklistService._base`, which is where every value here is validated -
-    a bad `ack`/`state`/`linked`/`kind` is refused there the same way the list route
-    refuses it).
+    filtered on that axis", exactly as the list reads it. `query`/`location`/
+    `po_number`/`spo_number` carry the SAME length caps the list route's own `Query(...,
+    max_length=...)` declarations do, and `state` the same closed set - a bad `ack`/
+    `linked`/`kind` (open strings here, same as the list route's own free-standing
+    validation) is still refused by `OrderInquiryWorklistService._base`, which is where
+    the list route's own values are validated too; the length/state checks below just
+    move that refusal to the schema, before any SQL, for the fields the list route
+    itself pins at the route layer rather than in `_base`.
+
+    `project_id`/`supplier_id`/`agent` are pattern-pinned the same way the list route's
+    own `axis_key` query param is (`pattern=UUID_PATTERN`, AC-CF-8d): a JSON body field
+    is a request the caller composed, not a path segment, so a malformed one reads as
+    422 (bad input) here rather than the 404 ("missing resource") `validate_uuid_path`
+    answers for a path param - the route ALSO runs the shared UUID guard those routes
+    use (`_validate_worklist_filter_uuids`), so a value that somehow slipped past this
+    pattern is still refused before it reaches SQL.
     """
 
-    query: Optional[str] = None
+    model_config = ConfigDict(extra="forbid")
+
+    query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    state: Optional[str] = None
-    project_id: Optional[str] = None
-    supplier_id: Optional[str] = None
+    state: Optional[WorklistState] = None
+    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     raised_by: Optional[str] = None
     linked: Optional[str] = None
     kind: Optional[str] = None
     ack: Optional[str] = None
-    location: Optional[str] = None
-    agent: Optional[str] = None
+    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
     so_month: Optional[str] = None
-    po_number: Optional[str] = None
-    spo_number: Optional[str] = None
+    po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
     delivery_from: Optional[str] = None
     delivery_to: Optional[str] = None
     axis: Optional[str] = None

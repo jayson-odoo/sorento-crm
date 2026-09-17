@@ -45,6 +45,8 @@ from app.schemas.project_order_inquiry import (
     UnplaceAllRequest,
     UnplaceAllResult,
     UploadJobScope,
+    WORKLIST_FILTER_MAX_LENGTH,
+    WORKLIST_QUERY_MAX_LENGTH,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -95,6 +97,28 @@ MatrixAxis = Literal["product", "sales_order", "customer", "agent"]
 MatrixGranularity = Literal["day", "week", "month", "year"]
 
 
+def _validate_worklist_filter_uuids(filters: dict) -> None:
+    """The UUID guard every worklist filter caller must run before a value reaches SQL
+    (AC-CF-8d): `project_id`, `supplier_id` and `agent` are UUID columns, and a
+    malformed one otherwise reaches Postgres as `invalid input syntax for type uuid` -
+    a 500 carrying the statement. Shared between `_worklist_filters` (the list,
+    summary and matrix routes) and the acknowledge route's `filter` branch
+    (`AcknowledgeFilter`), so a bad id is refused the same way through either door
+    rather than only the one that happens to call `validate_uuid_path` directly.
+    """
+    project_id = filters.get("project_id")
+    if project_id:
+        validate_uuid_path(project_id, resource="Project")
+    supplier_id = filters.get("supplier_id")
+    if supplier_id:
+        validate_uuid_path(supplier_id, resource="Supplier")
+    # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
+    # caller error, not a filter that silently matches nothing.
+    agent = filters.get("agent")
+    if agent:
+        validate_uuid_path(agent, resource="Sales agent")
+
+
 def _worklist_filters(
     query: Optional[str],
     delivery_month: Optional[str],
@@ -119,19 +143,6 @@ def _worklist_filters(
     axis: Optional[str] = None,
     axis_key: Optional[str] = None,
 ) -> dict:
-    if project_id:
-        validate_uuid_path(project_id, resource="Project")
-    if supplier_id:
-        validate_uuid_path(supplier_id, resource="Supplier")
-    # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
-    # caller error, not a filter that silently matches nothing.
-    if agent:
-        validate_uuid_path(agent, resource="Sales agent")
-    # `axis_key` is NOT validated here: it is compared against a UUID column on every
-    # axis, so it needs the same guard, but a QUERY param has no "missing row" reading
-    # and `validate_uuid_path` answers 404 ("Schedule cell not found") - the lie
-    # `uuid_path_param`'s own note warns about. It carries `pattern=UUID_PATTERN` on the
-    # list route below instead, which FastAPI refuses with a 422 before this runs.
     filters = {
         "query": query,
         "delivery_month": delivery_month,
@@ -152,6 +163,12 @@ def _worklist_filters(
         "delivery_from": delivery_from,
         "delivery_to": delivery_to,
     }
+    _validate_worklist_filter_uuids(filters)
+    # `axis_key` is NOT validated here: it is compared against a UUID column on every
+    # axis, so it needs the same guard, but a QUERY param has no "missing row" reading
+    # and `validate_uuid_path` answers 404 ("Schedule cell not found") - the lie
+    # `uuid_path_param`'s own note warns about. It carries `pattern=UUID_PATTERN` on the
+    # list route below instead, which FastAPI refuses with a 422 before this runs.
     # Absent unless a cell asked for them: the matrix route takes `axis` as its own
     # argument, and a key of the same name in this dict would collide with it.
     if axis and axis_key:
@@ -161,12 +178,14 @@ def _worklist_filters(
 
 
 #: The longest search string the worklist routes accept. The service caps the number of
-#: WORDS it applies; this caps the string itself, before any of them are read.
-_MAX_QUERY_LENGTH = 200
+#: WORDS it applies; this caps the string itself, before any of them are read. Shared
+#: with `AcknowledgeFilter` (`app/schemas/project_order_inquiry.py`) rather than
+#: retyped, so the list route and the `filter` branch of Confirm enforce the same cap.
+_MAX_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 #: The same cap on every other free-text filter (location, PO number, SPO number, a
 #: matrix cell's key). They reach an `ilike` or an equality over a joined query, and a
 #: megabyte of "x" is not a search anybody typed.
-_MAX_FILTER_LENGTH = 200
+_MAX_FILTER_LENGTH = WORKLIST_FILTER_MAX_LENGTH
 
 
 @router.get("/order-inquiries", response_model=ListResponse[OrderInquiryWorklistRow])
@@ -558,6 +577,7 @@ async def acknowledge_order_inquiry_rows(
             filter_kwargs = (
                 payload.filter.model_dump(exclude_none=True) if payload.filter else {}
             )
+            _validate_worklist_filter_uuids(filter_kwargs)
             eligible_ids, skipped = OrderInquiryWorklistService(db).acknowledge_scope(
                 **filter_kwargs
             )

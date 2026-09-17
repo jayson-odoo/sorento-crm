@@ -949,9 +949,16 @@ export function OrderInquiriesClient() {
   const linkingRow = linkingRowId
     ? (rows.find((row) => row.id === linkingRowId) ?? null)
     : null;
-  // AC-CF-7: once "Select all N matching" is taken, Confirm's own count is the FULL
-  // matching total, not the twenty-five loaded rows' share of it.
-  const confirmCount = selectAllMatchingActive ? total : selectedConfirmable.length;
+  // AC-CF-7 (review round fix): once "Select all N matching" is taken, Confirm's own
+  // count is the ELIGIBLE total (`summary.ack.to_confirm` - awaiting + changed, computed
+  // with every OTHER filter applied and the `ack` filter itself dropped, same as `kinds`
+  // above), never the list's own `total`. `total` counts every row the current filters
+  // match regardless of ack state, so on `ack=all` it over-states by every already-
+  // acknowledged and rejected row in scope - "Confirm 11809 rows?" for a press that only
+  // ever confirms the ones still to confirm.
+  const confirmCount = selectAllMatchingActive
+    ? (summary.data?.ack?.to_confirm ?? 0)
+    : selectedConfirmable.length;
 
   /** Confirm (N) (AC-CF-5/7/8): ticked rows by id, or the whole matching scope by
    * `filter` once "Select all N matching" is taken - the endpoint accepts exactly one. */
@@ -1049,10 +1056,8 @@ export function OrderInquiriesClient() {
   // because the page opens narrowed to purchasing's own work queue on purpose.
   const ackChipLabel =
     ackFilter && ackFilter !== ACK_ANY
-      ? `Confirmed: ${
-          ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
-            ?.label ?? ackFilter
-        }`
+      ? (ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
+          ?.label ?? ackFilter)
       : null;
 
   const filtersActiveCount =
@@ -1639,7 +1644,7 @@ export function OrderInquiriesClient() {
                 </AlertDescription>
               </AlertContent>
             </Alert>
-          ) : matrixQuery.isLoading ? (
+          ) : matrixQuery.isLoading || isViewPrefsLoading ? (
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-72 w-full" />
@@ -1691,7 +1696,7 @@ export function OrderInquiriesClient() {
         <DataGrid
           table={table}
           recordCount={total}
-          isLoading={list.isLoading}
+          isLoading={list.isLoading || isViewPrefsLoading}
           isPlaceholderData={list.isPlaceholderData}
           listingKey="projects.projects.view::order-inquiry-worklist"
           tableLayout={{

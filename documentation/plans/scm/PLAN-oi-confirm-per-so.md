@@ -105,6 +105,10 @@ memory the stock inquiries and sales orders grids already have.
   sends `filter` (the list's own query params) instead of `row_ids`; the endpoint applies
   `_base` and confirms every eligible row in scope. One body, two mutually exclusive keys.
 - Toast "Confirmed N rows" and query invalidation (list + summary).
+- **Ruling (review round):** `filter: {}` stays ALLOWED - it is Select all N on an
+  unfiltered list, the owner's own explicit press, and it still resolves through the
+  SAME `_base` predicate as every other filter, so `CompanyScopedMixin` still confines
+  it to the caller's own company (AC-CF-8g).
 
 ### S3 To confirm is the default view
 - Absent `?ack` = `to_confirm`; `ack=all` stays the cleared value; every other value as today.

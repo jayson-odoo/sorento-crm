@@ -26,19 +26,27 @@ which a blank scratch schema does not carry.
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
-import pytest
+from sqlalchemy import text
 
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
     ACK_CHANGED,
+    ACK_REJECTED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    IV_ORDER,
+    IV_ORDER_BACK,
+    OrderInquiry,
+    OrderInquiryRow,
 )
+from app.services.project_supply_service import ProjectSupplyService
 
 from ..test_order_inquiry_handshake import (
     ACK_URL,
@@ -60,6 +68,7 @@ from ..test_order_inquiry_handshake import (
     api,
     world,
 )
+from ..test_planning_changes import MARKER, _uid
 
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
 
@@ -201,31 +210,78 @@ def test_ac_cf_3_change_on_an_acknowledged_row_marks_changed_not_reacknowledged(
     assert Decimal(str(row.previous_qty)) == Decimal("10")
 
 
+def test_ac_cf_1b_borrow_asker_row_is_born_awaiting(api):
+    """AC-CF-1b (review round). `ProjectSupplyService._place_supply_borrows` writes a
+    step-3 supply borrow's own asker-side ORDER_BACK row with `supply_decision_id` set
+    - board-origin exactly like any other decision-linked row - so S1's rule covers it
+    too: born `ACK_AWAITING`, no acknowledge stamps, even though the cascade may have
+    already linked it to the donor document (AC-CF-4). Built the same way
+    `tests/test_project_supply_borrow_row_ack.py::test_a_supply_borrow_row_is_born_awaiting`
+    exercises the method directly, since this file's own fixtures never reach step 3."""
+    _client, world = api
+    fixture = _raise_one_row(api, qty="10")
+    order = fixture["order"]
+    line = fixture["line"]
+    _po, po_line = _open_po_line(world, qty=50)
+
+    supply = ProjectSupplyService(world.db)
+    decision = supply.active_decision(str(order.id))
+    assert decision is not None
+    inquiry = (
+        world.db.query(OrderInquiry)
+        .filter(OrderInquiry.id == fixture["row"].order_inquiry_id)
+        .one()
+    )
+
+    item = SimpleNamespace(
+        supply_key=f"po:{po_line.id}",
+        qty=Decimal("5"),
+        donor_core_line_id=None,
+        supply_document=None,
+        reason="Step 3 supply borrow",
+    )
+    entry = SimpleNamespace(borrow=[item])
+    checked = [(line, entry, None)]
+
+    supply._place_supply_borrows(
+        order, decision, checked, inquiry, actor_user_id=world.buyer
+    )
+    world.db.commit()
+
+    row = (
+        world.db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == line.id,
+            OrderInquiryRow.verb == IV_ORDER_BACK,
+        )
+        .order_by(OrderInquiryRow.created_at.desc())
+        .first()
+    )
+    assert row is not None, "the borrow-asker row was not written at all"
+    assert row.supply_decision_id is not None, "board-origin, so S1's rule applies"
+    assert row.ack_state == ACK_AWAITING
+    assert row.acknowledged_by is None
+    assert row.acknowledged_at is None
+
+
 # ---------------------------------------------------------------------------
 # AC-CF-4: the cascade never waited for confirm
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason=(
-        "AC-CF-4 already holds today: `ProjectSupplyService._draft_links_for_decision` "
-        "always calls `auto_place_for_products(..., include_awaiting=True)` at raise "
-        "time, so an open PO line links to a fresh row whatever its ack_state. Cannot "
-        "force the row to genuinely BE awaiting before that raise-time cascade runs "
-        "(that is exactly what S1 changes), so this only proves the weaker, "
-        "currently-true half - it passes by coincidence pre-S1 and for real once the "
-        "raise is born awaiting. xfail(strict=False) so an XPASS is not a failure "
-        "either side of that change."
-    ),
-)
 def test_ac_cf_4_cascade_still_auto_links_an_awaiting_row_on_raise(api):
+    """AC-CF-4. `ProjectSupplyService._draft_links_for_decision` always calls
+    `auto_place_for_products(..., include_awaiting=True)` at raise time, so an open PO
+    line links to a fresh row whatever its ack_state - and under S1 the row IS
+    genuinely awaiting the instant it is raised, so this now holds for the real reason
+    (the cascade never waits for confirm), not by pre-S1 coincidence."""
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
 
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
 
+    assert row.ack_state == ACK_AWAITING
     assert [link.document for link in _links_of(world, row)] == [po.po_number]
 
 
@@ -308,6 +364,43 @@ def test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so(api):
     assert elsewhere["row"].ack_state == ACK_AWAITING, "a different SO is untouched"
 
 
+def test_ac_cf_8b2_skipped_counts_every_rejected_and_cancelled_row_matched(api):
+    """AC-CF-8b (review round). `skipped` (the contract's own field) was written by
+    the server but asserted by no test: a caller had no way to know it actually
+    reports the rejected-and-cancelled count a filter matched rather than, say, 0 or
+    the WHOLE matched count. Isolated from `test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so`
+    on purpose: that fixture's `reject` press cascades a whole-order re-confirm that
+    cancels-and-carries every OTHER covered line too (its own docstring explains why),
+    so its own `skipped` counts those superseded rows as well as the two this test
+    means to isolate - not a clean "rejected + cancelled seeded" arithmetic. Here the
+    rejected and cancelled states are forced directly on freshly raised rows, the same
+    way AC-CF-11 forces `changed` - no endpoint cascade, so `skipped` is exactly the
+    two rows this test seeded."""
+    _client, world = api
+    here = _raise_n_rows_one_so(api, ["4", "6", "3"])
+    eligible_row, to_reject_row, to_cancel_row = here["rows"]
+
+    to_reject_row.ack_state = ACK_REJECTED
+    to_reject_row.rejected_reason = "No stock"
+    to_cancel_row.state = INQUIRY_CANCELLED
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(ACK_URL, json={"filter": {"query": here["so_number"]}})
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["acknowledged"] == 1
+    assert body["skipped"] == 2, body
+
+    world.db.refresh(eligible_row)
+    assert eligible_row.ack_state == ACK_ACKNOWLEDGED
+    world.db.refresh(to_reject_row)
+    assert to_reject_row.ack_state == ACK_REJECTED, "left alone, not acknowledged"
+    world.db.refresh(to_cancel_row)
+    assert to_cancel_row.ack_state != ACK_ACKNOWLEDGED, "left alone, not acknowledged"
+
+
 def test_ac_cf_8c_row_ids_and_filter_are_mutually_exclusive(api):
     """AC-CF-8c. Both named at once, or neither, is 422. Today `filter` is an
     undeclared field the schema silently ignores (no `model_config`, pydantic v2
@@ -329,6 +422,98 @@ def test_ac_cf_8c_row_ids_and_filter_are_mutually_exclusive(api):
 
     assert both.status_code == 422, both.text
     assert neither.status_code == 422, neither.text
+
+
+def test_ac_cf_8d_filter_with_a_bad_uuid_is_422(api):
+    """AC-CF-8d (review round). The list/summary/matrix routes all resolve their
+    filters through `_worklist_filters`, which runs `validate_uuid_path` on
+    `project_id`/`supplier_id`/`agent` before any of it reaches SQL. The acknowledge
+    route's `filter` branch called `OrderInquiryWorklistService.acknowledge_scope`
+    directly, bypassing that guard, so a malformed id reached Postgres as `invalid
+    input syntax for type uuid` - a 500 carrying the statement - instead of a 422
+    naming the bad field."""
+    _client, world = api
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(ACK_URL, json={"filter": {"project_id": "not-a-uuid"}})
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_cf_8e_filter_over_long_query_is_422(api):
+    """AC-CF-8e (review round). `AcknowledgeFilter.query` carries no length cap unlike
+    the list route's own `Query(..., max_length=_MAX_QUERY_LENGTH)` - a filter could
+    send an unbounded string straight into an `ilike` across eleven joined columns."""
+    _client, world = api
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(ACK_URL, json={"filter": {"query": "x" * 201}})
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_cf_8f_filter_unknown_key_is_422(api):
+    """AC-CF-8f (review round). `AcknowledgeFilter` carried no `model_config`, so
+    pydantic v2's default `extra="ignore"` silently dropped a misspelled or unknown
+    filter key rather than refusing it - a caller who mistyped a key got every row in
+    scope confirmed, unfiltered, with no error at all."""
+    _client, world = api
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL, json={"filter": {"not_a_real_filter_key": "x"}}
+        )
+
+    assert response.status_code == 422, response.text
+
+
+def test_ac_cf_8g_empty_filter_confirms_only_this_companys_rows(api):
+    """AC-CF-8g (ruling, review round: `filter: {}` stays ALLOWED - it is Select all N
+    on an unfiltered list, the owner's own explicit press). It must never reach past
+    `CompanyScopedMixin`'s scope: a row seeded directly under another company is
+    invisible to `_base()` the same way it is to the list route, so an empty filter
+    leaves it exactly alone - the `filter` door's own version of
+    `test_order_inquiry_handshake_edges.py::test_row_ids_naming_another_companys_row_are_refused_not_skipped`."""
+    _client, world = api
+    mine = _raise_one_row(api, qty="6")
+    row = mine["row"]
+
+    other_company_id = _uid()
+    world.db.execute(
+        text("INSERT INTO companies (id, name, code) VALUES (:i, :n, :c)"),
+        {
+            "i": other_company_id,
+            "n": f"{MARKER} Other Co",
+            "c": f"ZZT{uuid.uuid4().hex[:6]}",
+        },
+    )
+    foreign_row_id = _uid()
+    world.db.execute(
+        text(
+            "INSERT INTO projects.order_inquiry_rows (id, company_id, order_inquiry_id, "
+            "so_line_id, qty, verb, ack_state, created_at) VALUES "
+            "(:i, :c, :inq, :l, :q, :v, 'awaiting', now())"
+        ),
+        {
+            "i": foreign_row_id,
+            "c": other_company_id,
+            "inq": str(row.order_inquiry_id),
+            "l": str(row.so_line_id),
+            "q": Decimal("5"),
+            "v": IV_ORDER,
+        },
+    )
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(ACK_URL, json={"filter": {}})
+
+    assert response.status_code == 200, response.text
+    world.db.refresh(row)
+    assert row.ack_state == ACK_ACKNOWLEDGED, "the one row this company owns is confirmed"
+
+    foreign_state = world.db.execute(
+        text("SELECT ack_state FROM projects.order_inquiry_rows WHERE id = :i"),
+        {"i": foreign_row_id},
+    ).scalar()
+    assert foreign_state == "awaiting", "a foreign-company row is invisible, never confirmed"
 
 
 # ---------------------------------------------------------------------------
