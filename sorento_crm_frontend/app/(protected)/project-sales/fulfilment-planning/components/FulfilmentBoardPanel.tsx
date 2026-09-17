@@ -1493,8 +1493,11 @@ export function FulfilmentBoardPanel({
                 second line) truncates INSIDE the menu instead of growing the menu wider
                 than a 375px viewport - `DropdownMenuContent` carries no width cap of its
                 own (only `min-w-[8rem]`), so an unbounded flex item would otherwise just
-                grow to fit its untruncated text. */}
-            <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)] sm:max-w-80">
+                grow to fit its untruncated text. `sm:max-w-md` (review round 1, S7), not
+                `sm:max-w-80`: the reconstructed label plus its own "Saved drafts and row
+                notes are not restored" second line needs more room at 1280 than the
+                narrower cap left, and was itself getting truncated. */}
+            <DropdownMenuContent align="end" className="max-w-[calc(100vw-2rem)] sm:max-w-md">
               {/* Every decision taken on this board since it was opened, or since the
                   last confirm, goes back to the suggestion - on the SERVER too (S4): each
                   key is deleted through `decide(key, null)`, or the next board read would
