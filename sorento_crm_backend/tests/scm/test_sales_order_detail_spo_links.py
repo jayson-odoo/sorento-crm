@@ -21,10 +21,11 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+from app.models.procurement import SPOAllocation
 from app.services.scm import spo_conversion_service as svc
 from app.services.scm.sales_order_service import SalesOrderService
 from tests._pg_fixture import pg_session
-from tests.scm.conftest import requires_pg
+from tests.scm.conftest import grant_permission, requires_pg
 from tests.scm.test_outstanding_import_routes import as_company_user
 from tests.scm.test_spo_conversion import MARKER, World, _u
 from tests.scm.test_spo_planner_selection import _confirm, _retail_demand
@@ -268,4 +269,112 @@ def test_the_route_carries_the_spo_link(scm_app):
         "expected_date": None,
         "late": False,
         "late_days": None,
+        # Declared on `SalesOrderLineLink` since the 17 Sep derived-SPO fix; False on a
+        # stored link.
+        "derived": False,
     }]
+
+
+def _open_spo_covering(db, *, product_id, from_po_number, allocated_quantity):
+    """A SYNTHETIC-triggering `SPOAllocation`: open per `derived_spo_open_clauses()`
+    (`line_status` defaults `"open"`, `receipt_status` defaults `"pending"`, no shipment
+    so never "landed", `retired_at` unset) and naming the SAME `from_po_number` +
+    `product_id` as a row's own PO link - the join `_append_derived_spo_entries` fires
+    on. Mirrors `tests/test_order_inquiry_derived_spo.py::_spo`'s minimal-open shape;
+    not imported from there because this file's own `World`/company-scope pattern
+    (CompanyScopedMixin stamps `company_id` from session scope) differs from that
+    file's explicit `company_id` arguments.
+    """
+    allocation = SPOAllocation(
+        id=_u(), spo_number=f"ZZT-SPO-{_u()[:8]}", product_id=product_id,
+        from_po_number=from_po_number, allocated_quantity=allocated_quantity,
+        quantity_received=0, receipt_status="pending",
+    )
+    db.add(allocation)
+    db.flush()
+    return allocation
+
+
+def test_ac_hf1_so_detail_survives_a_derived_spo_entry_on_a_po_linked_line():
+    """Production 500, 17 Sep: `SalesOrderService._line_links` hard-indexes
+    `link["line_label"]` (and `late`/`late_days`) on EVERY entry `links_for_rows`
+    returns, but S5's `_append_derived_spo_entries` (#951) appends a SYNTHETIC
+    `derived`-kind spo dict carrying only id/kind/derived/document/qty/location/
+    expected_date - no `line_label`, no `purchase_order_id`, no `late`, no
+    `late_days`. Any sales order with a PO-linked line whose PO carries an open
+    SPOAllocation for the same product 500s its own detail read with
+    `KeyError: 'line_label'`.
+    """
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        po = w.po("A", supplier, [("A", 100, 0)])
+        po_line = po.lines[0]
+        retail, so = _retail_demand(db, w, "A", wh, qty=8, required=date(2026, 9, 1))
+        _link_core_line_to_a_project(
+            db, so, retail, po_line=po_line, qty=8, document=po.po_number,
+        )
+        _open_spo_covering(
+            db, product_id=po_line.product_id, from_po_number=po.po_number,
+            allocated_quantity=5,
+        )
+        db.commit()
+
+        # The exact call the route makes. Must not raise.
+        body = SalesOrderService(db).get(str(so.id))
+
+        line = next(ln for ln in body["lines"] if str(ln["id"]) == str(retail.id))
+        kinds = {(l["kind"], l.get("derived", False)) for l in line["linked_to"]}
+        assert ("po", False) in kinds, line["linked_to"]
+        assert ("spo", True) in kinds, line["linked_to"]
+        derived = next(l for l in line["linked_to"] if l.get("derived"))
+        assert derived["document"].startswith("ZZT-SPO-")
+        assert derived["line_label"] is None
+        assert derived["purchase_order_id"] is None
+        assert derived["late"] is False
+        assert derived["late_days"] is None
+        # `_qty_str`: allocated 5 - received 0, formatted bare, not "5.0000".
+        assert derived["qty"] == "5"
+
+
+def test_ac_hf2_so_detail_route_returns_200_with_a_derived_spo_entry(scm_app):
+    """Route-level twin of AC-HF1, and the `response_model` guard: `SalesOrderLineLink`
+    has to declare `derived` (and the other synthetic-entry fields) or FastAPI's
+    response serialization silently drops them even though the service-level dict
+    carries them - a passing HF1 with a 200-but-wrong-shape route would hide that."""
+    from app.services.reference_seed import seed_roles
+
+    app, db, gcu, gcuk = scm_app
+    # This private CI database is built by `alembic upgrade head` alone, which never
+    # replays a migration's role/grant seed - `user_roles` starts empty, so
+    # `as_company_user`'s default `role="purchasing"` would otherwise fail on
+    # `seed_user`'s own assertion for a reason that has nothing to do with this bug.
+    # `seed_roles` is idempotent and flush-only (no commit); `grant_permission` is this
+    # suite's own established pattern for the same gap (see its docstring - a route
+    # permission nobody has granted on a freshly migrated, dataless database).
+    seed_roles(db)
+    as_company_user(app, db, gcu, gcuk)
+    grant_permission(db, "purchasing", "scm.dashboard.view")
+    w = World(db)
+    supplier = w.supplier()
+    wh = w.warehouse()
+    po = w.po("A", supplier, [("A", 100, 0)])
+    po_line = po.lines[0]
+    retail, so = _retail_demand(db, w, "A", wh, qty=8, required=date(2026, 9, 1))
+    _link_core_line_to_a_project(
+        db, so, retail, po_line=po_line, qty=8, document=po.po_number,
+    )
+    _open_spo_covering(
+        db, product_id=po_line.product_id, from_po_number=po.po_number,
+        allocated_quantity=5,
+    )
+    db.commit()
+
+    client = TestClient(app)
+    r = client.get(f"/api/v1/scm/sales-orders/{so.id}")
+
+    assert r.status_code == 200, r.text
+    line = next(ln for ln in r.json()["lines"] if ln["id"] == str(retail.id))
+    derived = next(l for l in line["linked_to"] if l["kind"] == "spo")
+    assert derived["derived"] is True, derived

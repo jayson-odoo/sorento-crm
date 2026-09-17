@@ -760,6 +760,7 @@ class SalesOrderService:
                             if link["expected_date"]
                             else None
                         ),
+                        "derived": link.get("derived", False),
                     }
                 )
         return out

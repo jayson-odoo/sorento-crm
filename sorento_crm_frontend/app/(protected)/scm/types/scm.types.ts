@@ -387,6 +387,12 @@ export interface SalesOrderLineLink {
   late?: boolean;
   /** BY HOW MUCH, in days (AC-D17). Null when the document is not late. */
   late_days?: number | null;
+  /**
+   * A derived SPO is an OPEN SPO allocation the row's linked PO was raised from (S5 of
+   * `PLAN-scm-oi-excel-parity.md`) - never a stored link, so the SO detail marks it "via PO"
+   * rather than treating it as a link this system made independently.
+   */
+  derived?: boolean;
 }
 
 /**

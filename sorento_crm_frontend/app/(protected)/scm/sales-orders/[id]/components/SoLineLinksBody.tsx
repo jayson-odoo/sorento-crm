@@ -43,15 +43,28 @@ export function SoLineLinksBody({ links }: { links: SalesOrderLineLink[] }) {
           const link = row.original;
           const withLabel = link.line_label ? `${link.document} ${link.line_label}` : link.document;
           if (!withLabel) return textCell(withLabel);
-          if (!link.purchase_order_id) return textCell(withLabel);
+          // S5, R-E: never a real link - the derived SPO's own allocation, read off the
+          // row's own PO link, same as the worklist's `via PO` mark beside its number.
+          const viaSuffix = link.derived ? <span className="text-muted-foreground"> via PO</span> : null;
+          if (!link.purchase_order_id) {
+            return (
+              <>
+                {textCell(withLabel)}
+                {viaSuffix}
+              </>
+            );
+          }
           return (
-            <Link
-              href={`/scm/purchase-orders/${link.purchase_order_id}`}
-              className="font-medium text-primary hover:underline"
-              title={`Open ${withLabel}`}
-            >
-              {withLabel}
-            </Link>
+            <>
+              <Link
+                href={`/scm/purchase-orders/${link.purchase_order_id}`}
+                className="font-medium text-primary hover:underline"
+                title={`Open ${withLabel}`}
+              >
+                {withLabel}
+              </Link>
+              {viaSuffix}
+            </>
           );
         },
         size: 170,

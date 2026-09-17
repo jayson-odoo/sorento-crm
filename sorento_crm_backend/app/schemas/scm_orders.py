@@ -85,6 +85,11 @@ class SalesOrderLineLink(BaseModel):
     #: does not declare is dropped, so the badge here would say less than the identical
     #: badge on Order Inquiries.
     late_days: Optional[int] = None
+    #: A derived SPO is an OPEN SPO allocation the row's linked PO was raised from (S5 of
+    #: `PLAN-scm-oi-excel-parity.md`), read here so the SO detail can say "via PO" the same
+    #: way the worklist does. Never a stored link - `order_inquiry_links` never gets a row
+    #: for one.
+    derived: bool = False
 
 
 class SalesOrderLinePlanningChangeResult(BaseModel):

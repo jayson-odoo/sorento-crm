@@ -1889,6 +1889,53 @@ describe('SalesOrderDetail - two links to the same SPO line', () => {
   });
 });
 
+/**
+ * Prod 500, 17 Sep: S5's synthetic `derived`-kind spo entry (a row's own PO link's open SPO
+ * allocation for the same product) now carries the same shape as a real link. The FE marks
+ * it "via PO" - never a stored link - the same wording the order-inquiry worklist uses.
+ */
+describe('SalesOrderDetail - a derived SPO link on a PO-linked line', () => {
+  const derivedLine = () =>
+    so({
+      lines: [
+        {
+          id: 'l-planned',
+          sku: 'SKU-PLANNED',
+          product_name: 'Planned line',
+          qty_ordered: 10,
+          qty_delivered: 0,
+          uom: 'PCS',
+          warehouse_code: 'BRW-BB',
+          line_status: 'open',
+          required_date: '2026-08-30',
+          linked_to: [
+            { kind: 'po', document: '202607-S0105', qty: '8', location: 'BRW' },
+            {
+              kind: 'spo',
+              document: 'ZZT-SPO-abc12345',
+              qty: '5',
+              location: 'BRW',
+              derived: true,
+            },
+          ],
+        } as unknown as SalesOrderLine,
+      ],
+      line_count: 1,
+    });
+
+  it('marks the derived SPO document "via PO", and leaves the real PO link alone', () => {
+    useSalesOrder.mockReturnValue({ data: derivedLine(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+    fireEvent.click(screen.getByRole('button', { name: 'Linked to SKU-PLANNED' }));
+
+    const dialog = within(screen.getByRole('dialog'));
+    expect(dialog.getByText('ZZT-SPO-abc12345')).toBeInTheDocument();
+    expect(dialog.getByText('via PO')).toBeInTheDocument();
+    expect(dialog.getByText('202607-S0105').closest('tr')).not.toHaveTextContent('via PO');
+  });
+});
+
 describe('SalesOrderDetail - removing a line', () => {
   /**
    * The backend already refuses a removal that would orphan a project sales order or a
