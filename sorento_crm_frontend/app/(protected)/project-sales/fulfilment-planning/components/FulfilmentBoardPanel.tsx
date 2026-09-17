@@ -35,14 +35,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
+  PLANNING_BOARD_KEY,
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useLineDraftMutation,
@@ -114,6 +118,14 @@ type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string };
 export function boardViewFrom(value: string | null): BoardView {
   return value === 'grid' ? 'grid' : 'list';
 }
+
+/** The reason a disabled "Undo confirm" gear entry states, visibly, inside the item
+ * itself (AC-UC-03, review round: a `title` on a `data-disabled` item never renders -
+ * `pointer-events-none` kills the tooltip on both a screen reader and a touch device). */
+const UNDO_REFUSAL_TITLES: Record<string, string> = {
+  linked: 'Purchasing linked a PO line',
+  actioned: 'Purchasing marked a row actioned',
+};
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
@@ -362,14 +374,27 @@ export function FulfilmentBoardPanel({
         : null,
     [bySoNumber],
   );
+  /**
+   * The UNCOVER step's own input, review round 2 (AC-F6): an APPLIED batch is history - the
+   * line's decision already carries what Apply did to it - and uncovering it would offer a
+   * Save the server refuses outright (R1). Filtered out here only: `appliedSoNumbers`, the
+   * Confirm-blocked banner and the change-icon annotations still read `changeBatchData` above
+   * unfiltered, because a deep link to an applied batch still has to SAY what it applied.
+   */
+  const openChangeBatchData: Pick<PlanningChangeBatch, 'orders'> | null = React.useMemo(() => {
+    const orders = Array.from(bySoNumber.values())
+      .filter((entry) => !entry.batch.applied_at)
+      .map((entry) => entry.order);
+    return orders.length > 0 ? { orders } : null;
+  }, [bySoNumber]);
   const board = React.useMemo(
     () => ({
       ...rawBoard,
       data: rawBoard.data
-        ? uncoverChangedLines(rawBoard.data, changeBatchData)
+        ? uncoverChangedLines(rawBoard.data, openChangeBatchData)
         : rawBoard.data,
     }),
-    [rawBoard, changeBatchData],
+    [rawBoard, openChangeBatchData],
   );
 
   /**
@@ -501,6 +526,16 @@ export function FulfilmentBoardPanel({
   const pendingDeletes = React.useRef<Set<string>>(new Set());
 
   /**
+   * Keys whose SAVE is on the wire right now (R3, AC-F5): added before `saveLineDraft`
+   * fires in `decide` below, cleared once it settles either way. The covered-line drop a
+   * few lines down has to skip a key here - a board read that races an in-flight Save can
+   * land BEFORE the write it is racing, and dropping the local entry on that read would
+   * flicker the pill back to Confirmed for a frame ahead of the very save that is about to
+   * make it Saved again.
+   */
+  const pendingSaves = React.useRef<Set<string>>(new Set());
+
+  /**
    * A line SAVED elsewhere - another device, another planner, or this one before a reload -
    * arrives ON THE BOARD ITSELF (S4, R-F): `contribution.draft` is the server's own row, and
    * this seeds it into the SAME `draft` map a click here would write, so a Saved pill, the
@@ -514,10 +549,21 @@ export function FulfilmentBoardPanel({
    * is the other half of that guard: a key whose Undo is still in flight is ALSO missing
    * from `draft`, and without the skip a same-tick refetch racing that DELETE puts the pill
    * straight back to Saved a moment after the click cleared it.
+   *
+   * R3 (SO314595, 17 Sep 2026): the SAME read also drops a local entry whose contribution is
+   * now `covered` and carries no server `draft`. A covered line with no draft means the
+   * server has already PROMOTED it (Confirm deletes the draft it promotes) or had it
+   * REMOVED some other way - either way this tab's own local copy is stale, and it is what
+   * printed Saved/Rejected over eleven lines a lost Confirm response had actually already
+   * confirmed. `pendingDeletes` and `pendingSaves` are both checked, because a key mid-write
+   * either way is not yet the state this board read is describing.
    */
   React.useEffect(() => {
     const serverDrafts = allContributions.filter((contribution) => contribution.draft);
-    if (serverDrafts.length === 0) return;
+    const coveredWithNoDraft = allContributions.filter(
+      (contribution) => contribution.covered && !contribution.draft,
+    );
+    if (serverDrafts.length === 0 && coveredWithNoDraft.length === 0) return;
     setDraft((current) => {
       let changed = false;
       const next = { ...current };
@@ -525,6 +571,14 @@ export function FulfilmentBoardPanel({
         if (pendingDeletes.current.has(contribution.key)) continue;
         if (!next[contribution.key] && contribution.draft) {
           next[contribution.key] = contribution.draft.decision;
+          changed = true;
+        }
+      }
+      for (const contribution of coveredWithNoDraft) {
+        if (pendingDeletes.current.has(contribution.key)) continue;
+        if (pendingSaves.current.has(contribution.key)) continue;
+        if (next[contribution.key]) {
+          delete next[contribution.key];
           changed = true;
         }
       }
@@ -601,7 +655,12 @@ export function FulfilmentBoardPanel({
           // (#573) adds the contribution's own `sources` as `proposed` for a DIFFERENT
           // reason: the Sales Order page's Suggested column reads it back on this line
           // until Confirm freezes a revision.
-          await saveLineDraft(key, decision, contribution?.sources);
+          pendingSaves.current.add(key);
+          try {
+            await saveLineDraft(key, decision, contribution?.sources);
+          } finally {
+            pendingSaves.current.delete(key);
+          }
         } else {
           await removeDraftKey(key);
         }
@@ -799,6 +858,43 @@ export function FulfilmentBoardPanel({
       singleBatch.applied_by_name ? ` by ${singleBatch.applied_by_name}` : ''
     }.`;
   }, [singleBatch]);
+
+  /**
+   * Undo last confirm (`PLAN-board-undo-last-confirm.md`, S2/#979).
+   *
+   * One `useDeferredAction` for the whole board: `undoTarget` names whichever order the
+   * planner just picked from the gear, and the effect below fires `start()` once the hook
+   * has re-rendered against that order's id - `start()` reads `entityId`/`payload` from
+   * THIS render's closure, so it must run after the state that produced them has landed,
+   * never in the same tick as the click that set it.
+   */
+  const [undoTarget, setUndoTarget] = React.useState<{
+    orderId: string;
+    soNumber: string;
+    decisionId: string;
+  } | null>(null);
+  const undoAction = useDeferredAction({
+    actionKey: 'project_sales_order.undo_confirm',
+    entityType: 'project_sales_order',
+    entityId: undoTarget?.orderId ?? null,
+    verb: 'Undoing',
+    subject: undoTarget?.soNumber ?? '',
+    surface: 'inline',
+    successMessage: `${undoTarget?.soNumber ?? 'Order'} confirm undone`,
+    payload: undoTarget ? { decision_id: undoTarget.decisionId } : undefined,
+    invalidateKeys: [[PLANNING_BOARD_KEY]],
+  });
+  React.useEffect(() => {
+    if (!undoTarget) return;
+    if (undoAction.pending || undoAction.isPending) return;
+    undoAction.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoTarget]);
+
+  const undoableOrders = React.useMemo(
+    () => (board.data?.orders ?? []).filter((order) => order.undo),
+    [board.data],
+  );
 
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
@@ -1394,25 +1490,88 @@ export function FulfilmentBoardPanel({
                 <Undo2 className="size-4" aria-hidden />
                 Undo all
               </DropdownMenuItem>
+              {/* Undo last confirm, one entry per order the newest revision can be undone
+                  for (R6): below Undo all, same permission as Confirm, hidden entirely when
+                  nothing on the board is undoable (AC-UC-04). A refused order keeps its
+                  entry so purchasing's reason is where the planner is already looking,
+                  rather than a control that silently is not there (AC-UC-03). */}
+              {undoableOrders.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  {undoableOrders.map((order) => {
+                    const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})`;
+                    const reason = UNDO_REFUSAL_TITLES[order.undo?.refusal ?? ''];
+                    const disabled = Boolean(order.undo?.refusal);
+                    return (
+                      <DropdownMenuItem
+                        key={order.sales_order_id}
+                        disabled={disabled}
+                        onSelect={
+                          disabled
+                            ? undefined
+                            : () =>
+                                setUndoTarget({
+                                  orderId: order.project_sales_order_id as string,
+                                  soNumber: order.so_number,
+                                  decisionId: order.undo?.decision_id as string,
+                                })
+                        }
+                      >
+                        <Undo2 className="size-4" aria-hidden />
+                        {/* Exactly one `title` owner in this item, the label span - a
+                            disabled item's own `title` never renders (AC-UC-03), so the
+                            reason is plain visible text underneath instead. */}
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate" title={label}>
+                            {label}
+                          </span>
+                          {reason ? (
+                            // `text-foreground/70`, not `text-muted-foreground`
+                            // (review round follow-up): the disabled item's own
+                            // reduced opacity stacks with a muted foreground and
+                            // drops this line below the contrast floor.
+                            <span className="truncate text-xs text-foreground/70">
+                              {reason}
+                            </span>
+                          ) : null}
+                        </span>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </>
+              )}
               <DropdownMenuItem onSelect={onBack}>
                 <ArrowLeft className="size-4" aria-hidden />
                 Back to sales orders
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {board.data && board.data.cells.length > 0 ? (
-            <Button
-              type="button"
-              size="sm"
-              data-testid="board-confirm"
-              disabled={
-                confirmSummary.toConfirm === 0 || confirmingAll || Boolean(confirmBlockedReason)
+          {/* An undo countdown must keep showing even once its own commit has cleared the
+              board down to zero cells (review round) - the Confirm slot this occupies is
+              not gated on there being anything left to confirm while it is counting down. */}
+          {board.data && (board.data.cells.length > 0 || undoAction.pending) ? (
+            <DeferredActionButton
+              pending={undoAction.pending}
+              verb="Undoing"
+              subject={undoTarget?.soNumber}
+              onCancel={undoAction.cancel}
+              idle={
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="board-confirm"
+                  disabled={
+                    confirmSummary.toConfirm === 0 ||
+                    confirmingAll ||
+                    Boolean(confirmBlockedReason)
+                  }
+                  title={confirmBlockedReason ?? undefined}
+                  onClick={() => setConfirmAllOpen(true)}
+                >
+                  {`Confirm (${confirmSummary.toConfirm})`}
+                </Button>
               }
-              title={confirmBlockedReason ?? undefined}
-              onClick={() => setConfirmAllOpen(true)}
-            >
-              {`Confirm (${confirmSummary.toConfirm})`}
-            </Button>
+            />
           ) : null}
         </div>
       </div>

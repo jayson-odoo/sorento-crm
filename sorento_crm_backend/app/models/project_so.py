@@ -1207,6 +1207,22 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     __tablename__ = "so_supply_decisions"
     __audit_entity_type__ = "project_so_supply_decisions"
     __audit_track__ = True
+    # `undo_journal` deliberately excluded (review round, board-undo-last-confirm): it
+    # is a replay script, not a fact CS or purchasing reads, and it can be large - the
+    # audit trail names WHAT happened, never carries the raw journal that reverses it.
+    __audit_columns__ = [
+        "project_sales_order_id",
+        "revision_no",
+        "state",
+        "source_revision",
+        "line_snapshots",
+        "confirmed_by",
+        "confirmed_at",
+        "suspected_system_issue",
+        "supersedes_id",
+        "superseded_at",
+        "superseded_reason",
+    ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(
@@ -1239,6 +1255,13 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     )
     superseded_at = Column(DateTime(timezone=False), nullable=True)
     superseded_reason = Column(Text, nullable=True)
+
+    #: What THIS revision's own Confirm wrote, for `undo_last_confirm` to replay
+    #: backwards (`PLAN-board-undo-last-confirm.md`, migration `undo_0001`). NULL means
+    #: unjournalled - minted outside the two board confirm routes (`uncover_lines`, a
+    #: pre-lane revision) - and therefore not undoable. `app.services.
+    #: project_supply_undo_service.UndoJournal` writes it; nothing else does.
+    undo_journal = Column(JSONB, nullable=True)
 
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 

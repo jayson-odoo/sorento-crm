@@ -1706,3 +1706,40 @@ register(
         label="Void request",
     )
 )
+
+
+def _undo_confirm(db: Session, payload: dict):
+    """The board's gear entry, "Undo <SO> confirm (rev N)" (S2, #979).
+
+    `entity_id` is the planning record (`project_sales_order_id`), and `decision_id` in
+    the payload is the decision the pending action was created against - a Confirm
+    written during the countdown makes a DIFFERENT decision the newest by the time the
+    window lapses, and `undo_last_confirm` refuses `superseded` rather than undoing the
+    wrong revision (AC-UC-28).
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    order = ProjectSupplyService(db).get_order(_entity_id(payload))
+    return undo_last_confirm(
+        db,
+        order,
+        actor_user_id=payload.get("requested_by_id"),
+        expected_decision_id=payload.get("decision_id"),
+    )
+
+
+register(
+    FormAction(
+        key="project_sales_order.undo_confirm",
+        entity_types=("project_sales_order",),
+        execute=_undo_confirm,
+        # Reversible: the previous revision comes back exactly as it was (R2), not a
+        # hard delete with nothing left to catch.
+        window=WINDOW_REVERSIBLE,
+        # Confirm's own slug (`fulfilment_planning.py:73`) - undoing it takes the same
+        # grant as doing it.
+        permission="projects.projects.edit",
+        label="Undo confirm",
+    )
+)

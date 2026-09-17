@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   amendNeedsReason,
@@ -37,6 +38,18 @@ import type {
 import { BoardLadderOptionsTable } from './BoardLadderOptionsTable';
 import { BorrowAddDialog } from './BorrowAddDialog';
 import { ReserveAddDialog } from './ReserveAddDialog';
+
+/**
+ * R1's own 409 sentence (`project_line_draft_service.save_draft`), stated here before the
+ * round trip rather than after it (R2): a covered line refuses a plain Save or Reject, so
+ * the panel says so up front instead of sending a PUT the server would only refuse.
+ *
+ * Carried in a Radix `Tooltip`, never a bare `title` (review round 1, S1): the `Button`
+ * primitive disables `pointer-events` on a disabled button, so a `title` attribute there
+ * never reaches a real hover - the sentence has to live on a focusable wrapper instead.
+ */
+const CONFIRMED_LINE_TITLE =
+  'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
 
 /**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
@@ -205,9 +218,27 @@ export function BoardLineDecisionPanel({
   // does not pass this and still refuses the mix (`SupplyLineCard`).
   const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
   const needsReason = amendNeedsReason(contribution, draft);
-  // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
-  // own composition is never blocked, because there is nothing about it to balance or justify.
+  /**
+   * Which verdict Save takes, and therefore what it may be pressed for: approving the
+   * engine's own composition is never blocked, because there is nothing about it to balance
+   * or justify. NEVER on a COVERED line, though (R1, `save()` below) - the server has
+   * refused an `approved` verdict there with a 409 since the SO314595 incident (17 Sep
+   * 2026), and the suspected-system-issue tick is part of what was decided, not a detail
+   * riding beside it, so it counts toward whether there is anything left to amend.
+   */
   const approving = matchesSuggestion(contribution, draft);
+  const covered = Boolean(contribution.covered);
+  const suspectedChanged =
+    suspected !== Boolean(contribution.decision?.suspected_system_issue);
+  /**
+   * R1/R2: on a covered line the server only accepts a real amendment, so the panel refuses
+   * BEFORE the round trip rather than after. `needsReason` is already "has the composition
+   * moved since the frozen decision" (`amendNeedsReason`'s own baseline, on a covered line,
+   * IS `contribution.decision`) - a draft that has not moved has nothing to amend. The tick
+   * is the other half: unticking (or ticking) it with the composition otherwise untouched is
+   * still a change to what was decided, so it alone must be enough to unlock Save.
+   */
+  const alreadyConfirmed = covered && !needsReason && !suspectedChanged;
   const canSave =
     blockers.length === 0 && (!needsReason || reason.trim().length > 0);
   const fromStockMinor =
@@ -339,10 +370,16 @@ export function BoardLineDecisionPanel({
    * (`decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`), so this is the same
    * derivation one step earlier - a draft and its own confirmation cannot disagree about what
    * an approval actually composed.
+   *
+   * NEVER on a COVERED line (R1): the server refuses an `approved` verdict there outright,
+   * so a covered line always takes the ELSE branch below regardless of `approving` - an
+   * unlocked, re-typed suggestion on a confirmed line is still an amendment that happens to
+   * match the engine's numbers, not an approval.
    */
   const save = async () => {
     let ok: boolean | void;
-    if (approving) {
+    const approvingNow = approving && !covered;
+    if (approvingNow) {
       ok = await onDecide({
         ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
         verdict: 'approved',
@@ -369,7 +406,7 @@ export function BoardLineDecisionPanel({
     if (ok === false) return;
     setDirty(false);
     setLocked(false);
-    if (approving) {
+    if (approvingNow) {
       setDraft(suggestionDraftFrom(contribution));
       setReason('');
     }
@@ -391,6 +428,20 @@ export function BoardLineDecisionPanel({
   const summary = amendSummary(
     decisionFromAmendDraft(draft, reason),
     contribution.fulfilment_location,
+  );
+
+  // Shared between the bare Save button and its tooltip-wrapped, disabled twin below, so the
+  // two never drift apart on what the button says.
+  const saveButtonLabel = saved ? (
+    <>
+      <CheckCircle2 className="size-4" aria-hidden />
+      Saved
+    </>
+  ) : (
+    <>
+      <Check className="size-4" aria-hidden />
+      Save decision
+    </>
   );
 
   /**
@@ -817,41 +868,100 @@ export function BoardLineDecisionPanel({
             </Button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                // Disabled ON the saved state too (D4): there is nothing left to save, and a
-                // live button under the word "Saved" invites a second write of the same row.
-                disabled={saved || (!approving && !canSave)}
-                onClick={save}
-              >
-                {saved ? (
-                  <>
-                    <CheckCircle2 className="size-4" aria-hidden />
-                    Saved
-                  </>
-                ) : (
-                  <>
-                    <Check className="size-4" aria-hidden />
-                    Save decision
-                  </>
-                )}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={reason.trim().length === 0}
-                title={
-                  reason.trim().length === 0
-                    ? 'Say why this line is being refused first.'
-                    : undefined
-                }
-                onClick={reject}
-              >
-                <X className="size-4" aria-hidden />
-                Reject
-              </Button>
+              {covered ? (
+                // Wrapped for the LIFE of a covered line, not only while `alreadyConfirmed`
+                // is true: that flips as the draft moves (a tick, a composition edit), and
+                // swapping the wrapped Button for a bare one on that same flip would unmount
+                // and remount the button - the element a planner (or a test) is mid-focus or
+                // mid-click on. `disabled` and whether the tooltip carries the sentence are
+                // what move; the trigger itself does not.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`save-decision-trigger-${contribution.key}`}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={saved || alreadyConfirmed || (!approving && !canSave)}
+                        onClick={save}
+                      >
+                        {saveButtonLabel}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {alreadyConfirmed && (
+                    // 375px (review round 2): the sentence alone is wider than the viewport,
+                    // so it needs its own max-width and Radix's own collision padding rather
+                    // than the primitive's ordinary width - every OTHER tooltip on the board
+                    // stays at that default.
+                    <TooltipContent
+                      className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                      collisionPadding={16}
+                    >
+                      {CONFIRMED_LINE_TITLE}
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  // Disabled ON the saved state too (D4): there is nothing left to save, and
+                  // a live button under the word "Saved" invites a second write of the same
+                  // row.
+                  disabled={saved || (!approving && !canSave)}
+                  onClick={save}
+                >
+                  {saveButtonLabel}
+                </Button>
+              )}
+              {covered ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`reject-decision-trigger-${contribution.key}`}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled
+                        onClick={reject}
+                      >
+                        <X className="size-4" aria-hidden />
+                        Reject
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                    collisionPadding={16}
+                  >
+                    {CONFIRMED_LINE_TITLE}
+                  </TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={reason.trim().length === 0}
+                  title={
+                    reason.trim().length === 0
+                      ? 'Say why this line is being refused first.'
+                      : undefined
+                  }
+                  onClick={reject}
+                >
+                  <X className="size-4" aria-hidden />
+                  Reject
+                </Button>
+              )}
             </div>
           )}
         </div>

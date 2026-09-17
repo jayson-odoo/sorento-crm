@@ -411,7 +411,14 @@ export function useConfirmManyMutation() {
         );
       }
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => {
+      // R3 (SO314595): a Confirm whose response never reached this tab has still committed
+      // on the server, so the board has to be re-read either way - a refetch is what turns
+      // the pill from Saved/Rejected back to Confirmed once the real state arrives.
+      queryClient.invalidateQueries({ queryKey: [PLANNING_BOARD_KEY] });
+      queryClient.invalidateQueries({ queryKey: [FULFILMENT_PLANNING_KEY] });
+      toast.error(error.message);
+    },
   });
 }
 

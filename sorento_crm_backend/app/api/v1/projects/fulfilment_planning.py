@@ -62,6 +62,7 @@ from app.services.project_so_reconciliation_service import (
     ProjectSOReconciliationService,
 )
 from app.services.project_supply_service import ProjectSupplyService
+from app.services.project_supply_undo_service import UndoJournal
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -89,6 +90,42 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     project = projects.get_project_or_404(db, order.project_id)
     projects.assert_can_edit_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
+    )
+
+
+def _attach_undo_journal(db: Session, order, journal: UndoJournal, before_id) -> None:
+    """Give the confirm's own journal to the decision it just minted (S1, #978).
+
+    `before_id` is whatever was active before this call ran, read by the caller
+    BEFORE the confirm - a call that refused mid-way, or one whose whole composition
+    was cancellations with nothing new to confirm, leaves the SAME decision active,
+    and attaching to it would overwrite an unrelated (possibly already-undone)
+    journal with this call's own, irrelevant one.
+    """
+    from app.models.project_so import SOSupplyDecision
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == "active",
+        )
+        .first()
+    )
+    if decision is not None and str(decision.id) != str(before_id or ""):
+        journal.attach(decision)
+
+
+def _active_decision_id(db: Session, order) -> Optional[str]:
+    from app.models.project_so import SOSupplyDecision
+
+    return (
+        db.query(SOSupplyDecision.id)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == "active",
+        )
+        .scalar()
     )
 
 
@@ -431,11 +468,20 @@ def confirm_all(
 
         def write_one(order, entry):
             resolved_batch_id = entry.batch_id or (None if any_per_order else payload.batch_id)
-            if resolved_batch_id:
-                return _confirm_a_planning_change(
-                    db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id
-                )
-            return supply.confirm(order, entry, actor_user_id=actor_id)
+            # One journal per order (S1, #978): `confirm_many` commits or rolls back
+            # each entry on its own, so wrapping HERE - inside that per-order try -
+            # means a refused order's partial capture is rolled back with everything
+            # else it refused, and never reaches `attach`.
+            before_id = _active_decision_id(db, order)
+            with UndoJournal(db) as journal:
+                if resolved_batch_id:
+                    body = _confirm_a_planning_change(
+                        db, order, _BatchedEntry(list(entry.lines), resolved_batch_id), actor_id
+                    )
+                else:
+                    body = supply.confirm(order, entry, actor_user_id=actor_id)
+            _attach_undo_journal(db, order, journal, before_id)
+            return body
 
         results = supply.confirm_many(
             payload.orders,
@@ -628,10 +674,13 @@ def confirm_supply(
         service = ProjectSupplyService(db)
         order = service.get_order(pso_id)
         _assert_can_act_on(db, order, current_user)
-        if payload.batch_id:
-            body = _confirm_a_planning_change(db, order, payload, current_user["id"])
-        else:
-            body = service.confirm(order, payload, actor_user_id=current_user["id"])
+        before_id = _active_decision_id(db, order)
+        with UndoJournal(db) as journal:
+            if payload.batch_id:
+                body = _confirm_a_planning_change(db, order, payload, current_user["id"])
+            else:
+                body = service.confirm(order, payload, actor_user_id=current_user["id"])
+        _attach_undo_journal(db, order, journal, before_id)
         db.commit()
         return body
     except Exception as exc:

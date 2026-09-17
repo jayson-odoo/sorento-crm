@@ -908,6 +908,9 @@ def test_the_sales_order_detail_states_where_each_lines_buy_sits(world):
             "late": False,
             "late_days": None,
             "expected_date": "2026-08-19",
+            # Declared on `SalesOrderLineLink` since the 17 Sep derived-SPO fix; False on
+            # a stored link.
+            "derived": False,
         }
     ]
 
