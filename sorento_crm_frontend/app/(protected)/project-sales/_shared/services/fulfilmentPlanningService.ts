@@ -5,9 +5,7 @@ import type {
   BoardDecision,
   BoardGranularity,
   BoardLineDraft,
-  BoardOrderStanding,
   BoardSource,
-  BoardUndo,
   ClassificationEvidence,
   PlanningBoard,
   ConfirmManyBody,
@@ -435,11 +433,10 @@ export async function confirmSupply(
  * to the plain `qty_on_hand` / `so_qty` / ... fields already on `BorrowCandidate`, which stay
  * on the wire for exactly that reason.
  *
- * ── BOARD UNDO MODE (`PLAN-scm-oi-handover-r2-undo.md`, S6 Phase 1) ─────────────────────────
+ * ── BOARD UNDO MODE (`PLAN-scm-oi-handover-r2-undo.md`, S4/S5) ──────────────────────────────
  *
- * API CONTRACT for Phase 2 (S4/S5 backend, not written yet). `BoardOrderStanding.undo`
- * (already live since `undo_0001`) gains one field and one new enum member, both on
- * `BoardUndo`:
+ * LIVE since S4/S5. `BoardOrderStanding.undo` (already live since `undo_0001`) carries one
+ * field and one enum member beyond the original `undo_0001` shape, both on `BoardUndo`:
  *
  *   BoardUndo.mode      'journal' | 'reconstructed'   ALWAYS present once `undo` is present.
  *                        'journal' replays the order's own journalled revision, same as
@@ -453,15 +450,12 @@ export async function confirmSupply(
  *                        after the confirm, so replaying the journal would overwrite that
  *                        write and the gear entry is disabled instead.
  *
- * `NEXT_PUBLIC_BOARD_UNDO_MOCK=1` patches whatever `getPlanningBoard` returns - real or, on an
- * empty dev DB, synthesised - so the panel (`FulfilmentBoardPanel`'s gear menu) is exercisable
- * against all three shapes before S4/S5 land: the first undoable order's `undo.mode` becomes
- * `'journal'`, the second `'reconstructed'`, the third refused `'changed'`. It never calls a
- * different endpoint or changes the request - only `orders[].undo` is touched - so Phase 2
- * deletes `BOARD_UNDO_MOCK`, `mockBoardUndo` and `MOCK_UNDO_ORDERS` and nothing else in this
- * file changes.
+ * `FulfilmentBoardPanel`'s payload for `project_sales_order.undo_confirm` carries
+ * `{decision_id, mode}` - the server 409s a `mode` that does not match the decision's own
+ * journal state (AC-R2-34) and 403s a `mode: "reconstructed"` payload from a non-admin
+ * (AC-R2-35). Phase 1's `NEXT_PUBLIC_BOARD_UNDO_MOCK` flag, `mockBoardUndo` and
+ * `MOCK_UNDO_ORDERS` are gone - every order's `undo` is the server's own now.
  */
-export const BOARD_UNDO_MOCK = process.env.NEXT_PUBLIC_BOARD_UNDO_MOCK === '1';
 
 export async function getPlanningBoard(
   soNumbers: string[],
@@ -492,8 +486,7 @@ export async function getPlanningBoard(
   const response = await apiFetch(`${BASE}/fulfilment-planning/board?${search.toString()}`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load the planning board'));
-  const board: PlanningBoard = await response.json();
-  return BOARD_UNDO_MOCK ? mockBoardUndo(board) : board;
+  return response.json();
 }
 
 
@@ -657,84 +650,4 @@ export async function deleteLineDraft(contributionKey: string): Promise<void> {
   // error toast on a discard that did exactly what it said.
   if (!response.ok && response.status !== 404)
     throw new Error(await extractApiError(response, 'Failed to remove the saved decision'));
-}
-
-// ---------------------------------------------------------------------------
-// BOARD UNDO MODE fixtures, served only when NEXT_PUBLIC_BOARD_UNDO_MOCK=1. See the doc
-// comment above `getPlanningBoard` for the contract this stands in for.
-// ---------------------------------------------------------------------------
-
-/**
- * Three orders' worth of `undo`, so the mock has something to patch onto even a lane DB with
- * no orders in it at all. Appended to whatever `getPlanningBoard` actually returned, never
- * replacing a real order - the lane stack's own `sorento_oihr_ci` is CI-shaped and empty, so
- * a board opened against it would otherwise show no gear entries to verify against.
- */
-const MOCK_UNDO_ORDERS: BoardOrderStanding[] = [
-  {
-    sales_order_id: 'mock-undo-so-journal',
-    so_number: 'SO900001',
-    project_sales_order_id: 'mock-undo-pso-journal',
-    customer_name: 'Mock Trading Sdn Bhd',
-    line_count: 4,
-    decided_count: 0,
-    unplannable_count: 0,
-  },
-  {
-    sales_order_id: 'mock-undo-so-reconstructed',
-    so_number: 'SO900002',
-    project_sales_order_id: 'mock-undo-pso-reconstructed',
-    customer_name: 'Mock Fittings Sdn Bhd',
-    line_count: 6,
-    decided_count: 0,
-    unplannable_count: 0,
-  },
-  {
-    sales_order_id: 'mock-undo-so-changed',
-    so_number: 'SO900003',
-    project_sales_order_id: 'mock-undo-pso-changed',
-    customer_name: 'Mock Hardware Sdn Bhd',
-    line_count: 3,
-    decided_count: 0,
-    unplannable_count: 0,
-  },
-];
-
-/**
- * The three demo shapes AC-R2-F01/F02/F03 need, in order: a plain journal undo, a
- * reconstructed undo, and a journal undo refused `changed`. `mode`/`refusal` overwrite
- * whatever the (real or fixture) order carried; everything else about the order is untouched.
- */
-const MOCK_UNDO_PATCHES: Array<Pick<BoardUndo, 'mode' | 'refusal'>> = [
-  { mode: 'journal', refusal: null },
-  { mode: 'reconstructed', refusal: null },
-  { mode: 'journal', refusal: 'changed' },
-];
-
-function mockBoardUndo(board: PlanningBoard): PlanningBoard {
-  const source = board.orders.length > 0 ? board.orders : [];
-  // Pad up to three orders with the fixtures above so there is always one of each demo shape,
-  // real orders first so a lane DB that DOES have data still shows its own SO numbers.
-  const orders =
-    source.length >= MOCK_UNDO_PATCHES.length
-      ? source
-      : [...source, ...MOCK_UNDO_ORDERS.slice(source.length)];
-  return {
-    ...board,
-    orders: orders.map((order, index) => {
-      const patch = MOCK_UNDO_PATCHES[index];
-      if (!patch) return order;
-      return {
-        ...order,
-        undo: {
-          revision_no: order.undo?.revision_no ?? 2,
-          confirmed_at: order.undo?.confirmed_at ?? '2026-09-17T02:11:00',
-          confirmed_by_name: order.undo?.confirmed_by_name ?? 'Eling',
-          decision_id: order.undo?.decision_id ?? `mock-undo-decision-${index + 1}`,
-          mode: patch.mode,
-          refusal: patch.refusal,
-        },
-      };
-    }),
-  };
 }
