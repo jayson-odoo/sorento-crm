@@ -75,6 +75,16 @@ Matchers, all optional, combined with AND inside one step's `expect`:
   must appear no more than `max_count` times in the same text - catches a section/line that
   repeats itself (e.g. a fan-out reply that prints "0 products have incoming stock." once
   per internal branch instead of once per rendered section).
+* `db_add_comment_contains` - a list of substrings (hand pass 6, item 2). The console
+  response carries no `actions[]` (`ConsoleTurnResponse` never declares the field - measured
+  17 Sep 2026), so this reads `response->'actions'` for this turn's own `turn_id` straight
+  out of `chatbot.turns` (requires `--db-url`) and requires an `add_comment` action whose
+  `text` contains EVERY substring here (case-insensitive) - e.g. `["Team: customer_service"]`
+  to pin which team an escalation actually named. Fails loudly (not silently) if `--db-url`
+  was not given, or if the turn's `response->'actions'` carries no `add_comment` action.
+* `db_no_assign_conversation` (bool) - same `response->'actions'` read; fails if any action
+  has `kind == "assign_conversation"` - proves a turn did NOT escalate, catching the case
+  where an open escalate offer eats a plain data ask.
 
 Exits non-zero if any step fails. `--record <dir>` additionally writes one text file per
 case with every step's turn id, branch, elapsed seconds and full reply, for a human to read.
@@ -178,7 +188,27 @@ def _roster_lines(text: str) -> list[tuple[str, str]]:
     return ROSTER_LINE_RE.findall(text)
 
 
-def _grade(expect: dict[str, Any], body: dict[str, Any]) -> list[str]:
+def _fetch_actions(db_conn: Any, turn_id: str | None) -> list[dict[str, Any]] | None:
+    """`response->'actions'` for this turn_id out of `chatbot.turns`, or None when there
+    is no db connection, no turn_id, or the row/column carries nothing - the caller tells
+    those apart in its own failure message rather than this helper guessing which one."""
+    if db_conn is None or not turn_id:
+        return None
+    with db_conn.cursor() as cur:
+        cur.execute(
+            "select response -> 'actions' from chatbot.turns where id = %s",
+            (turn_id,),
+        )
+        row = cur.fetchone()
+    if not row or row[0] is None:
+        return None
+    actions = row[0]
+    return actions if isinstance(actions, list) else None
+
+
+def _grade(
+    expect: dict[str, Any], body: dict[str, Any], *, db_conn: Any = None
+) -> list[str]:
     """Every expectation that did NOT hold, as sentences. Empty list is a pass."""
     if "_http_error" in body:
         return [body["_http_error"]]
@@ -240,6 +270,59 @@ def _grade(expect: dict[str, Any], body: dict[str, Any]) -> list[str]:
                 f"{needle!r} appears {count} times, expected at most {max_count}"
             )
 
+    add_comment_needles = expect.get("db_add_comment_contains")
+    if add_comment_needles:
+        turn_id = body.get("turn_id")
+        if db_conn is None:
+            failures.append(
+                "db_add_comment_contains was expected but no --db-url was given"
+            )
+        else:
+            actions = _fetch_actions(db_conn, turn_id)
+            if actions is None:
+                failures.append(
+                    f"no response->'actions' found in chatbot.turns for turn_id="
+                    f"{turn_id!r}"
+                )
+            else:
+                comments = [
+                    str(a.get("text") or "")
+                    for a in actions
+                    if isinstance(a, dict) and a.get("kind") == "add_comment"
+                ]
+                if not comments:
+                    failures.append(
+                        f"no add_comment action in actions for turn_id={turn_id!r}: "
+                        f"{actions!r}"
+                    )
+                else:
+                    joined = "\n".join(comments)
+                    for needle in add_comment_needles:
+                        if str(needle).lower() not in joined.lower():
+                            failures.append(
+                                f"add_comment action text does not contain {needle!r} "
+                                f"(got {joined!r})"
+                            )
+
+    if expect.get("db_no_assign_conversation"):
+        turn_id = body.get("turn_id")
+        if db_conn is None:
+            failures.append(
+                "db_no_assign_conversation was expected but no --db-url was given"
+            )
+        else:
+            actions = _fetch_actions(db_conn, turn_id) or []
+            assign_kinds = [
+                a
+                for a in actions
+                if isinstance(a, dict) and a.get("kind") == "assign_conversation"
+            ]
+            if assign_kinds:
+                failures.append(
+                    f"turn_id={turn_id!r} carries an assign_conversation action, "
+                    f"expected none: {assign_kinds!r}"
+                )
+
     return failures
 
 
@@ -255,6 +338,7 @@ def _run_case(
     prompt_version_id: str | None,
     timeout: float,
     record_dir: str | None,
+    db_conn: Any = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """One case's steps, run in order. Returns (step rows, failed step count)."""
     name = str(case.get("name") or "case")
@@ -289,7 +373,7 @@ def _run_case(
             timeout=timeout,
         )
         elapsed = time.perf_counter() - started
-        failures = _grade(turn.get("expect") or {}, body)
+        failures = _grade(turn.get("expect") or {}, body, db_conn=db_conn)
         is_fail = bool(failures)
         failed += 1 if is_fail else 0
         words = _customer_words(body)
@@ -368,6 +452,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--record", default=None, metavar="DIR", help="write one .txt per case here"
     )
+    parser.add_argument(
+        "--db-url",
+        default=None,
+        metavar="URL",
+        help=(
+            "postgres URL for the SAME database :--base talks to - only needed by "
+            "db_add_comment_contains / db_no_assign_conversation matchers (a plain "
+            "psycopg2 DSN, e.g. postgresql://user:pass@host:5432/dbname)"
+        ),
+    )
     args = parser.parse_args(argv)
 
     backend_root = Path(__file__).resolve().parents[1]
@@ -386,6 +480,14 @@ def main(argv: list[str] | None = None) -> int:
     session.trust_env = False
     token = _login(session, args.base, email, password, args.timeout)
     print(f"logged in as {email} against {args.base}, auth = Authorization: Bearer <token>")
+
+    db_conn = None
+    if args.db_url:
+        import psycopg2
+
+        db_conn = psycopg2.connect(args.db_url)
+        db_conn.autocommit = True
+        print(f"db_add_comment_contains / db_no_assign_conversation reads: {args.db_url}")
 
     run_id = f"journey-{int(time.time())}-{uuid.uuid4().hex[:8]}"
     all_rows: list[dict[str, Any]] = []
@@ -412,9 +514,13 @@ def main(argv: list[str] | None = None) -> int:
                 prompt_version_id=args.prompt_version,
                 timeout=args.timeout,
                 record_dir=args.record,
+                db_conn=db_conn,
             )
             all_rows.extend(rows)
             total_failed += failed
+
+    if db_conn is not None:
+        db_conn.close()
 
     print()
     _print_table(all_rows)
