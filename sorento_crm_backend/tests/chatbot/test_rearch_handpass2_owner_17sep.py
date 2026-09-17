@@ -101,17 +101,27 @@ class TestFinding1FamilyGroupingOnTheCustomerRoster:
 
 class TestFinding3PurchaseCostSeedsListAllNarrowing:
     """Ruling 3 (turn 70be252c, "Last purchase cost for srtwc286"): purchase cost lists
-    all variants - seed `purchase_cost` narrowing.product = `list_all` (stays
-    configurable on the Domains page, i.e. a seed default, not a hard-coded rule)."""
+    all variants - seed `purchase_cost` narrowing.product = `narrow_by_type` (stays
+    configurable on the Domains page, i.e. a seed default, not a hard-coded rule).
 
-    def test_purchase_cost_product_narrowing_is_list_all(self) -> None:
+    Re-pinned 17 Sep 2026 (coder 23's defect 6, `1a065da1c`, migration `chatbot_rearch_s8`):
+    `list_all` never asks even when nothing is in play, so a bare "purchase cost" with no
+    carried/resolved product reached the tool with no filter and was refused
+    (`ENTITY_FILTER_REQUIRED_TOOLS`). `narrow_by_type` is the SAME existing policy value
+    already used for `attachment_type` - it asks `{kind}_ask` (here `product_ask`) only
+    when candidates are empty, and passes a carried/resolved family straight through
+    otherwise, so the ruling's own "lists every variant" behaviour is unchanged whenever a
+    product IS in play; only the previously-broken empty case now asks instead of
+    refusing."""
+
+    def test_purchase_cost_product_narrowing_is_narrow_by_type(self) -> None:
         from app.services.chatbot.turn import policy_rows
 
         row = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "purchase_cost")
-        assert row["narrowing"].get("product") == "list_all", (
-            "purchase_cost's product narrowing must seed 'list_all' (a bare family "
-            f"code lists every variant's cost, not a picker) - currently "
-            f"{row['narrowing'].get('product')!r} (measured: 'narrow_to_code' today)"
+        assert row["narrowing"].get("product") == "narrow_by_type", (
+            "purchase_cost's product narrowing must seed 'narrow_by_type' (asks when "
+            "nothing is in play, still lists every variant's cost when a product IS in "
+            f"play) - currently {row['narrowing'].get('product')!r}"
         )
 
 

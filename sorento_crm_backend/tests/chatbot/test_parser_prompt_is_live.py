@@ -120,7 +120,15 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # OUT of the schema and the prompt entirely (the engine read was already retired by
 # coder 20; this is the follow-up that drops the declaration too, per the same 17 Sep
 # ruling). Net -394. Measured against the coder's landed change, not derived.
-CONSTANT_CHARS = 58853
+# 58853 -> 61284 (17 Sep 2026, coder 23's hand pass 6 R-a/R-b/R-c + defect 7, `1a065da1c`):
+# four additions to PRONOUN REFERENCE / DOCUMENT / POSITIONAL REFERENCES / ASKS - R-b's
+# prompt half (a pronoun pointing outside the message sets `anaphora.backward_reference`
+# instead of naming an entity), a worked example for "can show both?" over a detail offer
+# (defect 7a), the bare-number-no-larger-than-the-roster rule plus "reference_positions is
+# only set when a numbered list is open" (defect 7b / defect 4's prompt half), and the
+# "also"/"as well"/"too" union rule (defect 7c). Net +2431. Measured against the coder's
+# landed change (`str.replace` count-verified edits on the raw source), not derived.
+CONSTANT_CHARS = 61284
 
 
 def _without_growth_r1_addendum(text: str) -> str:

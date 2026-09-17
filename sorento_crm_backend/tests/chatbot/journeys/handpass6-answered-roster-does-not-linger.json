@@ -1,6 +1,6 @@
 {
   "name": "handpass6-answered-roster-does-not-linger",
-  "source": "hand pass 6 owner console turns 13:54:05-13:54:26 and 08:53:17-08:53:44 (contact_respond_id 437264483, 17 Sep 2026). Case 1: an answered product roster's own domain (stock+PO) swallows the NEXT ask ('any purchase cost') as a broaden_all of itself instead of switching domain - measured pre-fix (psql chatbot.turns 13:54:05-13:54:26): 13:54:26 'hmm ok, any purchase cost' still carried has_stock=t, has_po=t and NEVER carried has_pcost. Case 1 uses `contact: '437264483'` (the real owner's own contact, not the default 440987225) - confirmed by running: 440987225 has no `purchase_orders.cost` row in `contact_field_reveals` (returns 'Sorry, you are not allowed to access purchase cost' regardless of the carry bug), 437264483 does (only 3 contacts in the whole DB hold it). Case 2: an escalate offer's 'yes' must assign the customer_service team - db_add_comment_contains reads response->'actions' straight off chatbot.turns (no --db-url given at runner ArgumentParser level is a hard failure of the matcher itself, not a skip).",
+  "source": "hand pass 6 owner console turns 13:54:05-13:54:26 and 08:53:17-08:53:44 (contact_respond_id 437264483, 17 Sep 2026). Case 1: an answered product roster's own domain swallows the NEXT ask ('any purchase cost') as a broaden_all of itself instead of switching domain - measured pre-fix (psql chatbot.turns 13:54:05-13:54:26): 13:54:26 'hmm ok, any purchase cost' still carried has_stock=t, has_po=t and NEVER carried has_pcost. Re-pinned 17 Sep 2026 (tester 24, coder 23's R-a ruling `1a065da1c`): the brief's original precondition ('check stock srtwc286' then 'i want stock and PO only') was itself the roster-on-a-settled-carry-domain-switch behaviour R-a retires - a settled multi-code carry switching domain now runs for ALL codes, no roster, so that step could never legitimately arm a roster to answer. Swapped to a precondition that still genuinely arms a roster under R-a's own 'must narrow to one' exception: 'incoming for srtwc286' (the `incoming` domain's product narrowing is `narrow_to_code`, which asks even under R-a since it must settle to ONE code, not all ten) - confirmed live (probe run, 17 Sep 2026): 10-option stamped roster, answered by position, THEN the domain-switch-over-a-settled-single-code-carry defect this case actually tests fires cleanly. Case 2: an escalate offer's 'yes' must assign the customer_service team - db_add_comment_contains reads response->'actions' straight off chatbot.turns (no --db-url given at runner ArgumentParser level is a hard failure of the matcher itself, not a skip).",
   "cases": [
     {
       "name": "answered-roster-domain-does-not-swallow-a-later-domain-switch",
@@ -8,23 +8,17 @@
       "contact": "437264483",
       "turns": [
         {
-          "text": "check stock srtwc286",
+          "text": "incoming for srtwc286",
           "expect": {
             "branch_kind": "business_query",
-            "reply_contains": ["*stock*", "SRTWC286-SH"]
-          }
-        },
-        {
-          "text": "i want stock and PO only",
-          "expect": {
-            "roster_min_options": 2,
+            "roster_min_options": 10,
             "roster_stamped": true
           }
         },
         {
-          "text": "all",
+          "text": "1",
           "expect": {
-            "reply_contains": ["*stock*", "*outstanding purchase orders*"]
+            "reply_contains": ["SRTWC286-SH-200"]
           }
         },
         {

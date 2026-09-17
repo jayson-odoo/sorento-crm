@@ -1,6 +1,6 @@
 {
   "name": "typo-token-dym",
-  "source": "captain's test list: 'stock for srttwc286' must not silently broad-match ('products have stock. Showing'), must carry a did-you-mean or not-found line; 'stock wc287 wc2867 7445' must name wc2867 as unresolved",
+  "source": "captain's test list: 'stock for srttwc286' must not silently broad-match ('products have stock. Showing'), must carry a did-you-mean or not-found line; 'stock wc287 wc2867 7445' must name wc2867 as unresolved. Re-pinned 17 Sep 2026 (tester 24, coder 23's R-c ruling `1a065da1c`): case 1's phrase list predates R-c's did-you-mean ROSTER mechanism (`_alternatives_ask`, defect 6's own fix landed the same round) - measured live, twice, consistent: 'srttwc286' now correctly renders 'Which product do you mean? 1. SRTWC286-SH 2. SRTWC286-SH-P ...', the system's own did-you-mean roster header used throughout this suite (6 other chain files assert it literally), which is exactly the 'carries a did-you-mean line, never a silent broad match' behaviour this case's own source note asks for. Added the roster header to the accepted phrase list rather than loosening the assertion's intent.",
   "cases": [
     {
       "name": "typo-srttwc286-no-silent-broad-match-carries-dym-or-not-found",
@@ -10,7 +10,7 @@
           "text": "stock for srttwc286",
           "expect": {
             "reply_not_contains": ["products have stock. Showing"],
-            "reply_contains_any": ["Did you mean", "No matching results found", "not found"]
+            "reply_contains_any": ["Did you mean", "Which product do you mean", "No matching results found", "not found"]
           }
         }
       ]

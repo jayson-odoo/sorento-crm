@@ -11,7 +11,7 @@ Domain goods_receive ("goods receive"): intents check_goods_receive. Switch word
 Domain spo_allocation ("last in"): intents check_spo. Switch words: spo. product narrows narrow_to_code.
 Domain ideate ("ideas"): intents submit_idea. Switch words: (none).
 Domain purchase_order ("outstanding purchase orders"): intents check_po. Switch words: po. product narrows narrow_to_code. Takes a date window. Escalates to purchasing.
-Domain purchase_cost ("last purchase cost"): intents check_po_cost. Switch words: (none). product narrows list_all. Escalates to purchasing.
+Domain purchase_cost ("last purchase cost"): intents check_po_cost. Switch words: (none). product narrows narrow_by_type. Escalates to purchasing.
 
 Entity kind attachment: resolver attachments. Did-you-mean off. Default narrowing not_applicable.
 Entity kind attachment_type: resolver attachment_types. Did-you-mean on. Default narrowing narrow_by_type.
