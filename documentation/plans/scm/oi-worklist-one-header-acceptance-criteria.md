@@ -137,7 +137,7 @@ the released 182 row instead of the live 220 row.
 
 - AC-OH-70 [FE] Given the worklist Filters popover open at a 700px tall viewport, then its
   content scrolls inside the popover (max height bounded by the viewport, `overflow-y: auto`)
-  and the last field (Confirmed) is reachable; nothing clips. Verified at 375px and 1280px.
+  and the last field is reachable (State sits after Confirmed since S5b); nothing clips. Verified at 375px and 1280px.
 
 ### Worklist speed
 
