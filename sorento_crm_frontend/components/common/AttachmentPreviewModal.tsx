@@ -64,20 +64,62 @@ async function downloadItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes)
 }
 
 /**
+ * A blob url inherits the app's own origin and carries no `Content-Disposition`, so an
+ * uploaded file of any OTHER type opened inline would run as this staff user (an HTML or
+ * SVG attachment executing script - review round 1, security blocker). Only these render
+ * safely inline; everything else - `image/svg+xml` included, deliberately - is re-wrapped
+ * as an opaque download instead of being handed a mime type a browser will execute or
+ * script.
+ */
+const OPEN_INLINE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'text/plain',
+]);
+
+/** The blob Open actually opens: the fetched bytes, unless their mime type is not on the
+ *  inline allow-list, in which case the SAME bytes are re-wrapped as an opaque download so
+ *  the browser neither renders nor executes them. */
+function safeOpenBlob(blob: Blob): Blob {
+  const mime = (blob.type || '').split(';')[0].trim().toLowerCase();
+  return OPEN_INLINE_MIME_TYPES.has(mime) ? blob : new Blob([blob], { type: 'application/octet-stream' });
+}
+
+/**
  * Same fix as `downloadItem` (D10, `PLAN-stock-list-bare-model-codes.md`): an item with no
  * CDN url has no `<a href target=_blank>` that could carry auth, so a plain anchor to the
  * same-origin `/download` route sent no Bearer token and 401ed with a raw JSON page. Open
  * fetches the bytes the same way Download does, then opens the resulting blob in a new tab.
+ *
+ * `targetWindow` is opened SYNCHRONOUSLY in the click handler, before this async function
+ * ever runs - a `window.open` called after an `await` is a background tab a popup blocker
+ * drops, since it is no longer inside the click's own call stack. `null` here means the
+ * popup was blocked: nothing to navigate, so this falls back to `downloadItem` instead of
+ * silently doing nothing.
  */
-async function openItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes) {
+async function openItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes, targetWindow: Window | null) {
   if (!item.downloadUrl) return;
+  if (!targetWindow) {
+    toast.error(`Could not open ${item.name} in a new tab - downloading instead`);
+    await downloadItem(item, fetchBytes);
+    return;
+  }
   try {
     const resp = await fetchBytes(item);
     if (!resp.ok) throw new Error('Open failed');
     const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    window.open(url, '_blank');
+    const url = URL.createObjectURL(safeOpenBlob(blob));
+    targetWindow.location.href = url;
+    // The tab has to finish loading the blob before revoking it would be safe, and there is
+    // no load event to hang that off across an opaque `location.href` navigation - a fixed
+    // delay is the same trade `downloadItem`'s synchronous click makes, just longer because
+    // this crosses a tab boundary instead of a same-document anchor click.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
   } catch {
+    targetWindow.close();
     toast.error(`Could not open ${item.name}`);
   }
 }
@@ -153,6 +195,9 @@ export default function AttachmentPreviewModal({
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
+  // Which item's Open fetch is in flight - disables that item's own Open button and shows a
+  // spinner, the same busy pattern the Add-mapping dialogs use for their submit button.
+  const [openingItemId, setOpeningItemId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -239,9 +284,23 @@ export default function AttachmentPreviewModal({
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => openItem(activeItem, resolvedFetchBytes)}
+                  disabled={openingItemId === activeItem.id}
+                  onClick={() => {
+                    // Opened HERE, synchronously inside the click - a `window.open` after the
+                    // `await` in `openItem` runs outside the click's own call stack, which a
+                    // popup blocker treats as an unsolicited new tab and drops.
+                    const targetWindow = window.open('', '_blank', 'noopener');
+                    setOpeningItemId(activeItem.id);
+                    void openItem(activeItem, resolvedFetchBytes, targetWindow).finally(() => {
+                      setOpeningItemId((id) => (id === activeItem.id ? null : id));
+                    });
+                  }}
                 >
-                  <ExternalLink className="size-4 mr-1" />
+                  {openingItemId === activeItem.id ? (
+                    <LoaderCircle className="size-4 mr-1 animate-spin" />
+                  ) : (
+                    <ExternalLink className="size-4 mr-1" />
+                  )}
                   Open
                 </Button>
               )}

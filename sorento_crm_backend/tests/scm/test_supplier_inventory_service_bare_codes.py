@@ -39,6 +39,23 @@ def workbook(rows, header=None) -> bytes:
     return buf.getvalue()
 
 
+def merged_workbook(rows, merges: list[str], header=None) -> bytes:
+    """Same shape as `workbook`, plus merged ranges named the way the real sheet does
+    (`"A2:A5"`) - AC-R7's four `8613` siblings share one merged 型号/品名/商标 family."""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(list(header or HEADER))
+    for r in rows:
+        ws.append(list(r))
+    for rng in merges:
+        ws.merge_cells(rng)
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 class Codes:
     def __init__(self):
         tag = uuid.uuid4().hex[:8].upper()
@@ -88,24 +105,43 @@ def seed(db, codes: Codes, *, product_code: str | None = None) -> str:
     return str(supplier.id)
 
 
-def _seed_shared_words(db) -> None:
+_D7_PAIRS = (("SRT", "SORENTO"), ("WB", "盆"))
+
+
+def _seed_shared_words(db, pairs=_D7_PAIRS) -> None:
     """The D7 seed's shape, restated by hand (not read off the migration) - the exact rows
-    `SRTWB7055` needs: SORENTO -> SRT, 盆 -> WB."""
+    `SRTWB7055` needs: SORENTO -> SRT, 盆 -> WB. Real D7 spellings on purpose (fix round 1,
+    item c): the point of AC-S1/AC-S2 is that the REAL spellings compose, not a marker-
+    prefixed stand-in. `pairs` is overridable for a test that needs a different subset of
+    the real D7 vocabulary (AC-R7's `连体马桶`/`横排`).
+
+    Idempotent (fix round 1, item c): the migration's own seed already ships these exact
+    rows as SHARED (`supplier_id IS NULL`), and the new partial unique index
+    (`uq_import_field_alias_shared`) rightly rejects inserting them a second time on a
+    migrated database. Checking first keeps this pass on a migrated DB (rows already exist)
+    and a bare `create_all` DB (rows do not exist yet) alike.
+    """
     from app.models.import_alias import ImportFieldAlias
     from app.services.scm.supplier_code_composer import WORD_DOC_TYPE
 
-    db.add_all(
-        [
-            ImportFieldAlias(
-                id=str(uuid.uuid4()), doc_type=WORD_DOC_TYPE, field="SRT",
-                alias="SORENTO", supplier_id=None,
-            ),
-            ImportFieldAlias(
-                id=str(uuid.uuid4()), doc_type=WORD_DOC_TYPE, field="WB",
-                alias="盆", supplier_id=None,
-            ),
-        ]
-    )
+    for field, alias in pairs:
+        exists = (
+            db.query(ImportFieldAlias.id)
+            .filter(
+                ImportFieldAlias.doc_type == WORD_DOC_TYPE,
+                ImportFieldAlias.field == field,
+                ImportFieldAlias.alias == alias,
+                ImportFieldAlias.supplier_id.is_(None),
+            )
+            .first()
+        )
+        if exists is None:
+            db.add(
+                ImportFieldAlias(
+                    id=str(uuid.uuid4()), doc_type=WORD_DOC_TYPE, field=field,
+                    alias=alias, supplier_id=None,
+                )
+            )
     db.flush()
 
 
@@ -147,6 +183,40 @@ def test_ac_s1_a_bare_code_file_binds_via_the_exact_rung_and_writes_no_alias():
         assert remembered == 0
 
 
+def test_ac_r7_four_bare_rows_sharing_a_merged_model_become_four_rows_with_their_own_quantities():
+    """The owner's own `8613` example (plan D2): 品名/商标/型号 merged over four rows that
+    each state their own 规格 (150/200/250mm, 横排180mm) compose to FOUR different codes,
+    so `apply`'s dedup-by-`item_code` never collapses them and each keeps its own quantity -
+    unlike the merged-cells suite's quantity fields, which are never merge-fill fields at
+    all and always stayed on their own row."""
+    with pg_session() as db:
+        codes = Codes()
+        supplier_id = seed(db, codes)
+        _seed_shared_words(db, pairs=(("SRT", "SORENTO"), ("WC", "连体马桶"), ("P", "横排")))
+        data = merged_workbook(
+            [
+                ["8613", "连体马桶", "SORENTO", "150mm", 10, 0, 0.2, ""],
+                [None, None, None, "200mm", 20, 0, 0.2, ""],
+                [None, None, None, "250mm", 30, 0, 0.2, ""],
+                [None, None, None, "横排180mm", 40, 0, 0.2, ""],
+            ],
+            merges=["A2:A5", "B2:B5", "C2:C5"],
+        )
+
+        out = svc.apply(db, data, supplier_id=supplier_id, as_of=date(2026, 9, 14))
+
+        assert out["rows_written"] == 4
+        assert out["duplicate_models_merged"] == 0
+        rows = held(db, supplier_id)
+        expected_codes = {"SRTWC8613-150", "SRTWC8613-200", "SRTWC8613-250", "SRTWC8613-P-180"}
+        assert {r.item_code for r in rows} == expected_codes
+        by_code = {r.item_code: r for r in rows}
+        assert float(by_code["SRTWC8613-150"].qty_packed) == 10
+        assert float(by_code["SRTWC8613-200"].qty_packed) == 20
+        assert float(by_code["SRTWC8613-250"].qty_packed) == 30
+        assert float(by_code["SRTWC8613-P-180"].qty_packed) == 40
+
+
 def test_ac_s2_a_letter_led_fixture_is_identical_with_or_without_a_word_list():
     codes = Codes()
 
@@ -160,11 +230,22 @@ def test_ac_s2_a_letter_led_fixture_is_identical_with_or_without_a_word_list():
             out = svc.apply(db, data, supplier_id=supplier_id, as_of=date(2026, 7, 31))
 
             row = held(db, supplier_id)[0]
+            # `product_id` is a fresh uuid seeded fresh in EACH `run()` call, so it can
+            # never be equal across the two arms for any implementation - the bound
+            # PRODUCT's own code is the stable, comparable fact (both arms seed the same
+            # `codes.known` as the product's `product_code`).
+            from app.models.product import Product
+
+            bound_product_code = (
+                db.query(Product.product_code).filter(Product.id == row.product_id).scalar()
+                if row.product_id
+                else None
+            )
             return (
                 out["rows_written"],
                 out["summary"]["items_matched"],
                 row.item_code,
-                row.product_id,
+                bound_product_code,
                 float(row.qty_packed),
                 float(row.qty_unfinished),
             )

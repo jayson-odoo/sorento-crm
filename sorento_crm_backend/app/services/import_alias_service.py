@@ -154,13 +154,11 @@ def canonical_fields(doc_type: str) -> list[str]:
         from app.services.scm.packing_list_reader import PackingBlock, PackingLine
 
         classes = (PackingLine, PackingBlock)
-    elif doc_type == "supplier_inventory_word":
-        # Not a reader's dataclass fields - the closed vocabulary a word row may resolve TO
-        # (D6, `PLAN-stock-list-bare-model-codes.md`), declared once in the composer.
-        from app.services.scm.supplier_code_composer import WORD_TOKENS
-
-        return list(WORD_TOKENS)
     else:
+        # `supplier_inventory_word` included (review round 1, item 4): its field is an OPEN,
+        # shape-validated vocabulary (`supplier_code_composer.WORD_TOKEN_RE`), not a reader's
+        # dataclass fields at all - `_assert_known_field` validates it by shape instead of
+        # reading this list.
         return []
 
     seen: set[str] = set()

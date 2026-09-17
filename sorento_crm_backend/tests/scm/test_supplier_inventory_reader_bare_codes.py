@@ -2,9 +2,11 @@
 does with a supplier who writes a bare 型号 (`^[-0-9]`), and the proof that a letter-led one
 takes today's path byte for byte (D1/D2/AC-R3).
 
-TEST-FIRST (Phase 2): `read_workbook` does not yet accept a `words` keyword and
-`InventoryRow` does not yet carry `model_no`, so every test below is expected to be RED with
-a `TypeError` (unexpected keyword `words`) or `AttributeError` (`model_no`) until S1 lands.
+TEST-FIRST (Phase 2): `read_workbook` does not yet accept a `words` keyword, so every test
+below is expected to be RED with a `TypeError` (unexpected keyword `words`) until S1 lands.
+
+Fix round 1 (review round 1, item 8): `InventoryRow.model_no` was dropped (no consumer read
+it) - every `r.model_no` assertion below was removed, noted at each site.
 
 AC-R8 (the existing reader suites stay green with a word list supplied) is proven by running
 `test_supplier_inventory_reader.py` and `test_supplier_inventory_reader_merged_cells.py`
@@ -106,7 +108,7 @@ def test_ac_r1_a_merged_bare_model_fills_item_code_on_every_covered_row():
 
     assert out.ok
     assert [r.item_code for r in out.rows] == ["SRTWC8613-250", "SRTWC8613-P-180"]
-    assert [r.model_no for r in out.rows] == ["8613", "8613"]
+    # (item 8: `r.model_no` assertion removed - the field no longer exists)
 
 
 def test_ac_r2_a_covered_row_with_stock_and_a_merged_model_no_longer_complains():
@@ -153,7 +155,7 @@ def test_ac_r3_letter_led_model_ignores_the_word_list_entirely():
     out = read_workbook(data, resolver(), words=d7_words())
 
     assert out.rows[0].item_code == "SRTWC8357-RL-250"
-    assert out.rows[0].model_no == "SRTWC8357-RL-250"
+    # (item 8: `r.model_no` assertion removed - the field no longer exists)
 
 
 def test_ac_r3_a_letter_led_model_composes_the_same_with_no_word_list_at_all():
@@ -164,7 +166,7 @@ def test_ac_r3_a_letter_led_model_composes_the_same_with_no_word_list_at_all():
     assert out.rows[0].item_code == "SRTWC8613"
 
 
-# AC-R4: bare 型号, every word known - item_code composes, model_no is the raw 型号.
+# AC-R4: bare 型号, every word known - item_code composes.
 _CASES = [
     ("8613", "连体马桶", "SORENTO", "250mm", "SRTWC8613-250"),
     ("8613", "连体马桶", "SORENTO", "横排180mm", "SRTWC8613-P-180"),
@@ -187,7 +189,7 @@ def test_ac_r4_bare_model_composes_through_the_reader():
     out = read_workbook(data, resolver(), words=d7_words())
 
     assert [r.item_code for r in out.rows] == [expected for *_, expected in _CASES]
-    assert [r.model_no for r in out.rows] == [c[0] for c in _CASES]
+    # (item 8: `r.model_no` assertion removed - the field no longer exists)
 
 
 def test_ac_r5_bare_model_with_a_blank_brand_falls_back_to_the_raw_join():
@@ -196,7 +198,7 @@ def test_ac_r5_bare_model_with_a_blank_brand_falls_back_to_the_raw_join():
     out = read_workbook(data, resolver(), words=d7_words())
 
     assert out.rows[0].item_code == "7609对冲 150mm 连体马桶"
-    assert out.rows[0].model_no == "7609对冲"
+    # (item 8: `r.model_no` assertion removed - the field no longer exists)
 
 
 def test_ac_r5_bare_model_with_an_unknown_cjk_run_falls_back_to_the_raw_join():
@@ -205,7 +207,7 @@ def test_ac_r5_bare_model_with_an_unknown_cjk_run_falls_back_to_the_raw_join():
     out = read_workbook(data, resolver(), words=d7_words())
 
     assert out.rows[0].item_code == "7604-RL高压 横排180mm CABANA 座头"
-    assert out.rows[0].model_no == "7604-RL高压"
+    # (item 8: `r.model_no` assertion removed - the field no longer exists)
 
 
 def test_read_workbook_still_needs_a_resolver_or_a_session_with_words_supplied():
@@ -213,3 +215,18 @@ def test_read_workbook_still_needs_a_resolver_or_a_session_with_words_supplied()
 
     with pytest.raises(ValueError):
         read_workbook(b"", None, words=d7_words())
+
+
+def test_a_raw_join_key_over_100_characters_is_a_row_problem_not_a_row():
+    # Review round 1, item 7: neither `product_code` nor
+    # `supplier_product_code_alias.supplier_code` can hold a key this long, so the row
+    # waits as a named problem rather than 500ing the insert - a blank brand aborts
+    # composition here, forcing the (long) raw join.
+    long_model = "7609" + "对冲" * 50  # far past MAX_KEY_LENGTH once joined with the rest
+    data = workbook([HEADER, [long_model, "连体马桶", None, "150mm", 1, 0, 0.1, ""]])
+
+    out = read_workbook(data, resolver(), words=d7_words())
+
+    assert out.rows == []
+    assert len(out.problems) == 1
+    assert "too long" in out.problems[0].reason

@@ -64,8 +64,12 @@ already uploaded once: 44 rows stored, 2 bound.
 - **D4. Trap size is the matcher's existing rule, not "mm".** `_size_of` (3 digits, 100 to
   499) decides. `parse_spec` over 规格: `mm` removed; `横排` anywhere = `P`; first in-range
   3-digit number = size; leftover ASCII letter groups (`UF` `A` `PP` `NEW`) become trailing
-  tokens; leftover CJK goes through the word list (abort on a miss); a `*` means a dimension
-  string, no trap tokens at all.
+  tokens; leftover CJK goes through the word list (abort on a miss) and is replaced by a
+  separator, never by nothing; any leftover DIGIT run after the size is taken aborts (a `500`
+  or a second number is not a trap spec we understand, so the row keeps its raw key rather
+  than composing to a sibling's code); two or more numbers joined by `*` `x` `X` `×` are a
+  dimension string, no trap tokens at all. The first model token must be at least two
+  characters. A composed or raw key over 100 characters is a `RowProblem`, never a 500.
 - **D5. Candidate string = prefix + model tokens + trap tokens, joined by `-`.** prefix =
   word(商标) + word(品名); model tokens = `_tokens(型号)` (sign already dropped) with CJK runs
   translated; trap = `P` then size then extras. `SRTWC8613-P-180`, `SRTWC8066-PP-150`,
@@ -74,17 +78,21 @@ already uploaded once: 44 rows stored, 2 bound.
   `250MM`; `SRTWC8613-P-180` binds nothing while three `SRTWC8613-P*` products tie, so the
   owner picks once and the alias remembers.
 - **D6. Word list = `import_field_alias`, doc type `supplier_inventory_word`, per supplier.**
-  `field` = our token, `alias` = their word. Our tokens are a closed vocabulary declared once
-  (`WORD_TOKENS` in the composer) and `canonical_fields("supplier_inventory_word")` returns
-  it, so the existing admin API validation and page accept rows. Per supplier (R3): one
-  nullable `supplier_id` column on `import_field_alias` (migration), `NULL` = shared row.
-  Lookup: the supplier's own row wins, else the shared row. The page gains a clearable
-  `Supplier` select (`SearchableSelect`, existing supplier select service) shown for this doc
-  type only, and a Supplier column in the list. A NEW token (say `UR` for urinals) is a
-  one-line code change; a new spelling of an old word is a UI row.
+  `field` = our token, `alias` = their word. A token is any string matching
+  `^[A-Z0-9]{1,10}$` (uppercased on write, `WORD_TOKEN_RE` in the composer); the admin API
+  validates the shape for this doc type instead of a closed list, so the owner can add
+  `高压 -> HP` or `飞机 -> UR` from the page with no code change (review round 1 replaced the
+  closed `WORD_TOKENS` list: a closed list made D7's "owner types the rest" and D11
+  undeliverable). The form shows a plain uppercase text input for the token on this doc type.
+  Per supplier (R3): one nullable `supplier_id` column on `import_field_alias` (migration),
+  `NULL` = shared row; two partial unique indexes keep shared rows and scoped rows each unique.
+  Lookup: the supplier's own row wins, else the shared row. The page gains a clearable,
+  server-searched `Supplier` select (the paged fulfilment supplier lookup, not the 100-row
+  bare select) shown for this doc type only, and the list shows the supplier's name as a
+  second muted badge beside a scoped alias.
 - **D7. Seed only what the data states, as shared rows; the owner types the rest.**
-  Migration seeds (supplier NULL): `SORENTO` `S` -> `SRT`; `CABANA` `C` -> `C`; `MOCHA` `M`
-  -> `M`; `连体马桶` `分体马桶` -> `WC`; `座头` `分体座头` -> `WCX`; `水箱` -> `WCY`; `盆`
+  Migration seeds (supplier NULL), six brand rows and nine type/trap rows: `SORENTO` `S` ->
+  `SRT`; `CABANA` `C` -> `C`; `MOCHA` `M` -> `M`; `连体马桶` `分体马桶` -> `WC`; `座头` `分体座头` -> `WCX`; `水箱` -> `WCY`; `盆`
   `盆小孔` -> `WB`; `盖板` -> `SC`; `横排` -> `P`. NOT seeded: `对冲` `高压` `上线` `薄边` `新`
   `飞机` `葫芦飞机` `大四方飞机` `2078盆` `iB` `BRAVAT` and the BRAVAT basin kinds.
 - **D8. Merged 型号 fills through.** `item_code` joins `_MERGE_FILL_FIELDS` with the same
@@ -115,14 +123,17 @@ any change to `supplier_code_matcher.py`.
 ## Slices (one PR)
 
 - **S1 Reader + composer** - `supplier_inventory_reader.py`: `item_code` fill-through (D8);
-  `InventoryRow.model_no` (raw 型号); bare rows composed through a `WordList` built for the
-  supplier. New `app/services/scm/supplier_code_composer.py`: `WORD_TOKENS`, `parse_spec()`,
-  `compose(model_no, spec, brand, product_name, words) -> Optional[str]`, `raw_key(...)`.
+  bare rows composed through a `WordList` built for the supplier (no `model_no` field: nothing
+  downstream reads the raw 型号, the key is the code). New
+  `app/services/scm/supplier_code_composer.py`: `WORD_TOKEN_RE`, `MAX_KEY_LENGTH`,
+  `parse_spec()`, `compose(model_no, spec, brand, product_name, words) -> Optional[str]`,
+  `raw_key(...)`.
   `read_workbook` gains `words: Optional[WordList]` (injectable like `resolver`; built from
   `db` + `supplier_id` on the normal path). Tests: `test_supplier_inventory_reader*.py`, new
   `test_supplier_code_composer.py`.
 - **S2 Word list storage** - migration: `import_field_alias.supplier_id` nullable FK; the
-  unique triple becomes (doc_type, field, alias, supplier_id) with NULLs distinct; seed rows.
+  unique triple is replaced by two partial unique indexes (shared rows on the triple, scoped
+  rows on the quadruple); seed rows; downgrade removes every word row.
   `canonical_fields()` branch; `AliasResolver`-style `WordList.for_supplier(db, supplier_id)`.
   Admin API: `supplier_id` accepted on create and returned on list, validated to exist.
   Alembic id <= 32 chars; `down_revision` re-parented at PR time via `scripts/alembic-reparent.sh`.
@@ -131,8 +142,12 @@ any change to `supplier_code_matcher.py`.
   for the chosen supplier and pass it to the reader; nothing else changes. Tests:
   `test_supplier_inventory_service.py` (a bare-code file binds `SRTWB7055`; a letter-led file
   produces the same rows and binds as before).
-- **S4 FE** - Import field aliases page: `Stock list words` doc type, clearable Supplier
-  select on the form, Supplier column in the list; Open fix in `AttachmentPreviewModal.tsx`.
+- **S4 FE** - Import field aliases page: `Stock list words` doc type, clearable server-searched
+  Supplier select + uppercase token input on the form, supplier badge in the list; Open fix in
+  `AttachmentPreviewModal.tsx` (security round 1: only PDF, PNG, JPEG, GIF, WebP and plain text
+  open inline, anything else is re-typed as octet-stream so an uploaded HTML or SVG cannot run
+  in the app origin; the window opens synchronously with `noopener`, the blob URL is revoked,
+  the button shows a busy state).
   Supplier codes tab (`SupplierCodesTab.tsx`): a `Stock list words` link (icon button with
   label, `PageHeader`-adjacent toolbar) to `/system-management/import-field-aliases?doc_type=supplier_inventory_word`,
   the page honouring that query param as its initial doc type.

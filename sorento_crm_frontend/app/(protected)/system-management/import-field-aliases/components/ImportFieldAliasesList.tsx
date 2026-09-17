@@ -88,30 +88,34 @@ export default function ImportFieldAliasesList() {
           return (
             <div className="flex flex-wrap gap-1.5 py-1">
               {visible.map((a) => (
-                <Badge key={a.id} variant="secondary" appearance="light" size="sm" className="gap-1">
-                  {a.alias}
-                  {a.locale ? <span className="text-muted-foreground">({a.locale})</span> : null}
+                <span key={a.id} className="inline-flex items-center gap-1">
+                  <Badge variant="secondary" appearance="light" size="sm" className="gap-1">
+                    {a.alias}
+                    {a.locale ? <span className="text-muted-foreground">({a.locale})</span> : null}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${a.alias}`}
+                      className="ms-0.5 rounded-full hover:bg-muted"
+                      onClick={() =>
+                        removal.run({
+                          id: a.id,
+                          subject: `"${a.alias}" from ${row.original.label}`,
+                        })
+                      }
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </Badge>
                   {/* Per-supplier word row (S4, D6) - the name, never the id (no UUID in the
-                      UI); a shared row (supplier_id NULL) carries none. */}
+                      UI), a second badge beside the alias rather than text folded into it
+                      (review round 1, item 9); a shared row (supplier_id NULL) carries
+                      none. */}
                   {a.supplier_name ? (
-                    <span className="text-muted-foreground">
-                      (<span>{a.supplier_name}</span>)
-                    </span>
+                    <Badge variant="outline" appearance="light" size="sm">
+                      {a.supplier_name}
+                    </Badge>
                   ) : null}
-                  <button
-                    type="button"
-                    aria-label={`Remove ${a.alias}`}
-                    className="ms-0.5 rounded-full hover:bg-muted"
-                    onClick={() =>
-                      removal.run({
-                        id: a.id,
-                        subject: `"${a.alias}" from ${row.original.label}`,
-                      })
-                    }
-                  >
-                    <X className="size-3" />
-                  </button>
-                </Badge>
+                </span>
               ))}
             </div>
           );

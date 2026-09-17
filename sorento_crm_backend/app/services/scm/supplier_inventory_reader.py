@@ -25,7 +25,13 @@ from sqlalchemy.orm import Session
 
 from app.services.import_alias_service import AliasResolver, normalize_header
 from app.services.scm.outstanding_reader import RowProblem, sheet_merges, sheet_rows
-from app.services.scm.supplier_code_composer import WordList, compose, is_bare, raw_key
+from app.services.scm.supplier_code_composer import (
+    MAX_KEY_LENGTH,
+    WordList,
+    compose,
+    is_bare,
+    raw_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +62,6 @@ class InventoryRow:
     brand: Optional[str] = None
     spec: Optional[str] = None
     remark: Optional[str] = None
-    #: The 型号 exactly as the supplier wrote it (after merge fill-through), whatever
-    #: `item_code` ends up being - composed, raw-joined, or (letter-led) identical to it.
-    model_no: Optional[str] = None
 
 
 @dataclass
@@ -231,6 +234,13 @@ def read_workbook(
             item_code = composed if composed is not None else raw_key(
                 code, spec, brand, product_name
             )
+            # A composed or raw-joined key this long is not a code any rung would ever bind
+            # - review round 1, item 7. Skipped as a problem row rather than stored: a
+            # `product_code`/`supplier_product_code_alias.supplier_code` column this long
+            # would 500 the insert instead of just failing to match.
+            if len(item_code) > MAX_KEY_LENGTH:
+                result.problems.append(RowProblem(offset, "supplier code too long"))
+                continue
         else:
             item_code = code
 
@@ -245,7 +255,6 @@ def read_workbook(
                 brand=brand,
                 spec=spec,
                 remark=_text(values.get("remark")),
-                model_no=code,
             )
         )
 

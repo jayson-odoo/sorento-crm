@@ -80,10 +80,11 @@ def _seed_supplier(db) -> str:
     return str(supplier.id)
 
 
-def test_ac_w1_canonical_fields_returns_the_composers_word_tokens():
-    from app.services.scm.supplier_code_composer import WORD_TOKENS
-
-    assert canonical_fields(DOC_TYPE) == list(WORD_TOKENS)
+def test_ac_w1_canonical_fields_is_empty_the_word_vocabulary_is_open_not_a_reader_list():
+    # Review round 1, item 4: the word doc type's field is an OPEN, shape-validated
+    # vocabulary (`WORD_TOKEN_RE`), never a reader's declared field set - `canonical_fields`
+    # deliberately answers `[]` and `_assert_known_field` validates by shape instead.
+    assert canonical_fields(DOC_TYPE) == []
 
 
 def test_ac_w1_create_a_shared_word_row(scm_app):
@@ -111,12 +112,37 @@ def test_ac_w1_create_a_supplier_scoped_word_row(scm_app):
     assert r.status_code in (200, 201), r.text
 
 
-def test_ac_w1_an_unknown_field_is_422(scm_app):
+def test_ac_w1_a_field_violating_the_token_shape_is_422(scm_app):
+    # The vocabulary is OPEN (any 1-10 char uppercase alphanumeric token is a valid word
+    # token - "XYZ" included), so what is refused is the SHAPE, not membership in a list.
     client, _db = _client(scm_app, view=True, edit=True)
 
-    r = client.post(URL, json={"doc_type": DOC_TYPE, "field": "XYZ", "alias": f"{MARKER}_x"})
+    r = client.post(URL, json={"doc_type": DOC_TYPE, "field": "SH!", "alias": f"{MARKER}_x"})
 
     assert r.status_code == 422, r.text
+
+
+def test_ac_w1_an_eleven_character_field_is_422(scm_app):
+    client, _db = _client(scm_app, view=True, edit=True)
+
+    r = client.post(
+        URL, json={"doc_type": DOC_TYPE, "field": "A" * 11, "alias": f"{MARKER}_x11"}
+    )
+
+    assert r.status_code == 422, r.text
+
+
+def test_ac_w1_a_lowercase_field_is_accepted_and_stored_uppercased(scm_app):
+    client, db = _client(scm_app, view=True, edit=True)
+
+    r = client.post(URL, json={"doc_type": DOC_TYPE, "field": "hp", "alias": f"{MARKER}_hp"})
+
+    assert r.status_code in (200, 201), r.text
+    stored_field = db.execute(
+        text("SELECT field FROM import_field_alias WHERE doc_type = :d AND alias = :a"),
+        {"d": DOC_TYPE, "a": f"{MARKER}_hp"},
+    ).scalar()
+    assert stored_field == "HP"
 
 
 def test_ac_w1_an_unknown_supplier_id_is_422(scm_app):
@@ -136,6 +162,34 @@ def test_ac_w1_an_unknown_supplier_id_is_422(scm_app):
     assert r.json().get("detail") in ("supplier_id", None) or "supplier_id" in str(r.json())
 
 
+def test_a_supplier_scoped_row_does_not_409_against_an_existing_shared_row(scm_app):
+    """A reviewer once dropped the `supplier_id` predicate from the 409 pre-check with
+    nothing going red: a shared row and a same-supplier-later row on the identical (field,
+    alias) are two different scopes (D6, R3) and must coexist - only a SECOND identical
+    SHARED post collides."""
+    client, db = _client(scm_app, view=True, edit=True)
+    supplier_id = _seed_supplier(db)
+    field, alias = "SH", f"{MARKER}_scoping_word"
+
+    shared = client.post(URL, json={"doc_type": DOC_TYPE, "field": field, "alias": alias})
+    assert shared.status_code in (200, 201), shared.text
+
+    scoped = client.post(
+        URL,
+        json={"doc_type": DOC_TYPE, "field": field, "alias": alias, "supplier_id": supplier_id},
+    )
+    assert scoped.status_code in (200, 201), scoped.text
+
+    rows = db.execute(
+        text("SELECT count(*) FROM import_field_alias WHERE doc_type = :d AND alias = :a"),
+        {"d": DOC_TYPE, "a": alias},
+    ).scalar()
+    assert rows == 2
+
+    dup_shared = client.post(URL, json={"doc_type": DOC_TYPE, "field": field, "alias": alias})
+    assert dup_shared.status_code == 409, dup_shared.text
+
+
 def test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared():
     with pg_session() as db:
         rows = db.execute(
@@ -150,7 +204,9 @@ def test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared():
             ("SRT", "SORENTO"),
             ("SRT", "S"),
             ("C", "CABANA"),
+            ("C", "C"),
             ("M", "MOCHA"),
+            ("M", "M"),
             ("WC", "连体马桶"),
             ("WC", "分体马桶"),
             ("WCX", "座头"),

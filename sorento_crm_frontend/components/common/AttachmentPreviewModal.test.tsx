@@ -408,6 +408,13 @@ describe('AttachmentPreviewModal', () => {
   // D10 (`PLAN-stock-list-bare-model-codes.md`): a plain `<a href=/download target=_blank>`
   // sends no auth header, so the stock-list attachment's Open button 401ed with a raw JSON
   // page. Same fetch as Download, then a new tab - no backend change.
+  //
+  // Fix round 1 (security blocker, review round 1): a blob url inherits the app's own
+  // origin and carries no `Content-Disposition`, so an uploaded HTML/SVG attachment opened
+  // inline would run as the staff user. These assertions were rewritten for the resulting
+  // contract change - noted per test below - rather than the original "opens `window.open`
+  // with the blob url directly" shape, which the fix replaces with a synchronously-opened
+  // blank window later navigated via `location.href`, and a mime-type gate before that.
   describe('Open (AC-F2/AC-F3/AC-F4, D10)', () => {
     const noCdnUrlItem: AttachmentPreviewItem = {
       id: 'z',
@@ -416,16 +423,24 @@ describe('AttachmentPreviewModal', () => {
       downloadUrl: '/api/v1/scm/supplier-inventory/attachments/z/download',
     };
 
+    function stubWindow() {
+      return { location: { href: '' }, close: vi.fn() } as unknown as Window;
+    }
+
     afterEach(() => {
       vi.restoreAllMocks();
     });
 
-    it('AC-F2: with no CDN url, Open fetches bytes and opens a blob url in a new tab', async () => {
+    // Rewritten (was: asserts `window.open(blobUrl, '_blank')` directly). The fix opens a
+    // BLANK window synchronously in the click handler - so a popup blocker sees it as part
+    // of the user gesture - and only navigates it to the blob url once the fetch resolves.
+    it('AC-F2: opens a blank window synchronously, then navigates it to the fetched blob', async () => {
       const customFetchBytes = vi.fn().mockResolvedValue({
         ok: true,
-        blob: async () => new Blob(['x']),
+        blob: async () => new Blob(['x'], { type: 'application/pdf' }),
       });
-      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const target = stubWindow();
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => target);
       (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
         .fn()
         .mockReturnValue('blob:mock-open-url');
@@ -442,15 +457,133 @@ describe('AttachmentPreviewModal', () => {
 
       fireEvent.click(screen.getByRole('button', { name: /open/i }));
 
+      // Opened blank, synchronously, before the fetch has even started.
+      expect(openSpy).toHaveBeenCalledWith('', '_blank', 'noopener');
       await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(noCdnUrlItem));
-      await waitFor(() =>
-        expect(openSpy).toHaveBeenCalledWith('blob:mock-open-url', '_blank'),
-      );
+      await waitFor(() => expect(target.location.href).toBe('blob:mock-open-url'));
       // No same-origin anchor to the download route for this item - that anchor is
       // exactly what sent no Bearer token and 401ed.
       expect(
         document.querySelector(`a[href="${noCdnUrlItem.downloadUrl}"]`),
       ).toBeNull();
+    });
+
+    // New (security blocker): a mime type outside the inline allow-list must never reach
+    // the new tab as itself - an uploaded `text/html` or `image/svg+xml` attachment would
+    // otherwise execute as this staff user on the app's own origin.
+    it('re-wraps a non-inline mime type (e.g. text/html) as an opaque download before opening it', async () => {
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(['<script>alert(1)</script>'], { type: 'text/html' }),
+      });
+      vi.spyOn(window, 'open').mockImplementation(() => stubWindow());
+      const createObjectURL = vi.fn().mockReturnValue('blob:mock-open-url');
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+      const openedBlob = createObjectURL.mock.calls[0][0] as Blob;
+      expect(openedBlob.type).toBe('application/octet-stream');
+    });
+
+    // New: an inline-safe type (already allow-listed) is opened unchanged.
+    it('keeps an inline-safe mime type (application/pdf) unchanged', async () => {
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(['%PDF-1.4'], { type: 'application/pdf' }),
+      });
+      vi.spyOn(window, 'open').mockImplementation(() => stubWindow());
+      const createObjectURL = vi.fn().mockReturnValue('blob:mock-open-url');
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+      await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
+      const openedBlob = createObjectURL.mock.calls[0][0] as Blob;
+      expect(openedBlob.type).toBe('application/pdf');
+    });
+
+    // New: the Open button shows a busy state (disabled) for the duration of its own fetch.
+    it('disables the Open button while its fetch is in flight, and re-enables after', async () => {
+      let resolveFetch: (value: { ok: boolean; blob: () => Promise<Blob> }) => void;
+      const pending = new Promise((resolve) => {
+        resolveFetch = resolve;
+      });
+      const customFetchBytes = vi.fn().mockReturnValue(pending);
+      vi.spyOn(window, 'open').mockImplementation(() => stubWindow());
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
+        .fn()
+        .mockReturnValue('blob:mock-open-url');
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+
+      const openButton = screen.getByRole('button', { name: /open/i });
+      fireEvent.click(openButton);
+
+      await waitFor(() => expect(openButton).toBeDisabled());
+
+      resolveFetch!({ ok: true, blob: async () => new Blob(['x'], { type: 'application/pdf' }) });
+
+      await waitFor(() => expect(openButton).not.toBeDisabled());
+    });
+
+    // New: a popup blocker returning `null` from `window.open` has nothing to navigate, so
+    // Open falls back to the same authenticated download the Download button already uses,
+    // rather than silently doing nothing.
+    it('falls back to downloading when the popup is blocked (window.open returns null)', async () => {
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(['x'], { type: 'application/pdf' }),
+      });
+      vi.spyOn(window, 'open').mockImplementation(() => null);
+      const errorSpy = vi.spyOn(toast, 'error');
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
+        .fn()
+        .mockReturnValue('blob:mock-download-url');
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+      await waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
+      await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(noCdnUrlItem));
     });
 
     it('AC-F3: an http CDN url keeps Open as a plain anchor to that url, unchanged', () => {
@@ -460,9 +593,13 @@ describe('AttachmentPreviewModal', () => {
       expect(link).toHaveAttribute('href', img.url);
     });
 
-    it('AC-F4: a fetch failure on Open shows one error toast and never navigates', async () => {
+    // Rewritten (was: asserts `window.open` never called - there is no separate call to
+    // assert on any more, since the window is opened synchronously before the fetch that can
+    // fail). Now asserts the opened window is closed and never navigated.
+    it('AC-F4: a fetch failure on Open shows one error toast, closes the blank tab, and never navigates', async () => {
       const failingFetchBytes = vi.fn().mockRejectedValue(new Error('network down'));
-      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const target = stubWindow();
+      vi.spyOn(window, 'open').mockImplementation(() => target);
       const errorSpy = vi.spyOn(toast, 'error');
 
       render(
@@ -477,7 +614,8 @@ describe('AttachmentPreviewModal', () => {
       fireEvent.click(screen.getByRole('button', { name: /open/i }));
 
       await waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
-      expect(openSpy).not.toHaveBeenCalled();
+      expect(target.close).toHaveBeenCalledTimes(1);
+      expect(target.location.href).toBe('');
     });
   });
 });

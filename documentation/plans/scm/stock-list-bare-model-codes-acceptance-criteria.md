@@ -11,7 +11,7 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
 - AC-R3: Letter-led 型号: `item_code` = 型号 exactly as today, whatever 规格 / 商标 / 品名
   hold and whatever the word list holds. `SRTWC8357-RL-250` with 规格 `250` stays
   `SRTWC8357-RL-250`. Every existing reader test passes unchanged with a word list supplied.
-- AC-R4: Bare 型号, every word known: `item_code` = composed code; `model_no` = raw 型号.
+- AC-R4: Bare 型号, every word known: `item_code` = composed code.
   `8613` / `250mm` / `SORENTO` / `连体马桶` -> `SRTWC8613-250`; `8613` / `横排180mm` ->
   `SRTWC8613-P-180`; `8066-PP` / `150mm` -> `SRTWC8066-PP-150`; `-7055` / blank / `SORENTO` /
   `盆` -> `SRTWB7055`; `8605-RL` / blank / `SORENTO` / `水箱` -> `SRTWCY8605-RL`;
@@ -19,26 +19,31 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
   `SORENTO` / `盆` -> `SRTWB888`.
 - AC-R5: Bare 型号, a word unknown (商标 blank, 品名 unknown, or a CJK run in 型号 / 规格 with
   no row): `item_code` = raw join 型号 + 规格 + 商标 + 品名 (present parts, space-joined):
-  `7609对冲 150mm 连体马桶`, `7604-RL高压 横排180mm CABANA 座头`. `model_no` = raw 型号.
+  `7609对冲 150mm 连体马桶`, `7604-RL高压 横排180mm CABANA 座头`.
 - AC-R6: `parse_spec` (parametrized over every distinct 规格 value stored on the 0915 copy
   plus this file's): `250` -> (250, None, []); `180横排` and `横排180mm` -> (180, P, []);
   `250UF` -> (250, None, [UF]); `250-PP` -> (250, None, [PP]); `180A横排` -> (180, P, [A]);
   `250对冲` -> abort without a `对冲` row, (250, None, [<token>]) with one;
-  `600*450*200mm` -> (None, None, []); `背部没有孔` -> abort; blank -> (None, None, []).
-- AC-R7: After `apply`, the four `8613` rows are four `supplier_inventory` rows with their
-  own quantities and codes; the SORENTO and CABANA `7604-RL高压` pedestal rows are two rows.
+  `600*450*200mm` and `600x450x200mm` -> (None, None, []); `背部没有孔` -> abort; blank ->
+  (None, None, []); `500` -> abort (leftover digits); `180横排250` -> abort.
+- AC-R6b: `compose` returns None when the first model token is shorter than two characters;
+  a composed or raw key longer than 100 characters yields a `RowProblem` and no row.
+- AC-R7 (service test through `apply`): the four `8613` rows are four `supplier_inventory`
+  rows with their own, unsummed quantities and distinct codes; the SORENTO and CABANA `7604-RL高压` pedestal rows are two rows.
 - AC-R8: `test_stock_list_xlsm_upload.py` and every merged-cells test stay green.
 
 ## Word list storage (S2)
 
-- AC-W1: `canonical_fields("supplier_inventory_word")` returns `WORD_TOKENS`; the admin
-  API accepts `POST {doc_type: supplier_inventory_word, field: SRT, alias: SORENTO}` (shared)
-  and the same with `supplier_id`; rejects `field: XYZ` with the existing 422 and an unknown
-  `supplier_id` with 422.
+- AC-W1: the admin API accepts `POST {doc_type: supplier_inventory_word, field: SRT, alias:
+  SORENTO}` (shared) and the same with `supplier_id`; a token is validated by shape
+  (`^[A-Z0-9]{1,10}$`, uppercased on write: `hp` is stored as `HP`); `hp!` or an 11-character
+  token is 422; an unknown or non-UUID `supplier_id` is 422. A shared (field, alias) and a
+  supplier-scoped (field, alias) coexist (201, two rows); a second identical shared row is 409.
 - AC-W2: Migration adds nullable `import_field_alias.supplier_id` (FK suppliers, cascade),
-  replaces the unique triple with (doc_type, field, alias, supplier_id); inserts exactly the
-  D7 rows with `supplier_id NULL`; downgrade removes rows and column; id <= 32 chars; single
-  head. Existing `proforma_invoice` / `packing_list` rows untouched.
+  replaces the unique triple with two partial unique indexes (shared / scoped); inserts exactly
+  the D7 rows with `supplier_id NULL` (six brand rows: SORENTO, S, CABANA, C, MOCHA, M);
+  downgrade removes every word row and the column; id <= 32 chars; single head. Existing
+  `proforma_invoice` / `packing_list` rows untouched.
 - AC-W3: `WordList.for_supplier(db, supplier_id)`: a supplier row for a word wins over the
   shared row; a word with only a shared row resolves; a word with neither is unknown.
   Lookup is case- and whitespace-insensitive on the alias (`S` and `s`, `SORENTO ` and
@@ -55,19 +60,25 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
   summary and bindings with and without a word list in the database.
 - AC-S3: `supplier_code_matcher.py` has no diff in the PR.
 - AC-S4: On the 0915 copy (hand-measured, not CI): re-running `apply` for the JINBAICHUAN
-  plan keeps 363 bound rows with identical product ids; ROYAL keeps 36.
+  plan keeps 363 bound rows with identical product ids and identical per-code qty_packed /
+  qty_unfinished totals (merged 型号 fill-through must not inflate an anchor); ROYAL keeps 36.
 
 ## Frontend (S4)
 
-- AC-F1: Import field aliases page lists a `Stock list words` doc type; its field select
-  offers `WORD_TOKENS` labels; the form shows a clearable `Supplier` select for this doc type
-  only; adding `对冲 -> SH` for DAFUYUAN succeeds and the list shows the row with the
-  supplier name; a shared row shows a blank Supplier cell.
+- AC-F1: Import field aliases page lists a `Stock list words` doc type; its form shows an
+  uppercase token text input and a clearable, server-searched `Supplier` select for this doc
+  type only (no supplier request is made for other doc types); adding `对冲 -> SH` for
+  DAFUYUAN succeeds and the list shows the supplier name as a badge beside the alias; a shared
+  row shows no supplier badge.
 - AC-F2: `AttachmentPreviewModal` Open, item with `url: ''` and a `downloadUrl`: clicking
-  calls `fetchBytes(item)` and `window.open(<blob url>, '_blank')`; no `<a href=/download>`
-  is rendered for that item.
+  opens a blank window synchronously with `noopener`, calls `fetchBytes(item)`, then points
+  that window at a blob URL; no `<a href=/download>` is rendered for that item. A `text/html`
+  or `image/svg+xml` response is re-typed `application/octet-stream` before opening; a PDF or
+  image passes through. The button is disabled with a spinner while fetching. A blocked popup
+  shows one toast and falls back to download.
 - AC-F3: Item with an `http` CDN url: Open stays a plain anchor to that url (unchanged).
 - AC-F4: Fetch failure on Open: one non-sticky error toast, no navigation.
+- AC-F4b: Supplier codes toolbar (search + words link) wraps at 375px, nothing clipped.
 - AC-F5: Supplier codes tab renders a `Stock list words` link to
   `/system-management/import-field-aliases?doc_type=supplier_inventory_word`; the page opens
   on that doc type when the query param is present and on its default otherwise.

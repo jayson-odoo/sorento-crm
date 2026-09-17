@@ -22,6 +22,7 @@ from app.models.import_alias import ImportFieldAlias
 from app.services.error_handler import AppException
 from app.services.field_access import field_label
 from app.services.import_alias_service import canonical_fields
+from app.services.scm.supplier_code_composer import WORD_DOC_TYPE, WORD_TOKEN_RE
 
 router = APIRouter()
 
@@ -56,7 +57,21 @@ def _assert_known_field(doc_type: str, field: str) -> None:
     (AC-E1): the resolver looks up `canonical_fields(doc_type)` and nothing else, so a row
     naming a document type with no reader, or a field that reader never reads, is a row
     that can never resolve anything - and it would sit on the settings page looking as if
-    it had."""
+    it had.
+
+    `supplier_inventory_word` is the one exception (review round 1, item 4): its vocabulary
+    is OPEN, so `canonical_fields` deliberately answers `[]` for it and membership is not
+    what decides a valid field - shape is (`WORD_TOKEN_RE`).
+    """
+    if doc_type == WORD_DOC_TYPE:
+        if not WORD_TOKEN_RE.match(field):
+            raise AppException(
+                422,
+                f"'{field}' is not a valid stock-list word token "
+                "(1-10 uppercase letters/digits).",
+                detail="field",
+            )
+        return
     known = canonical_fields(doc_type)
     if not known:
         raise AppException(
@@ -72,11 +87,19 @@ def _assert_known_field(doc_type: str, field: str) -> None:
 
 def _assert_supplier_exists(db: Session, supplier_id: Optional[str]) -> None:
     """A word row scoped to a supplier that does not exist would sit on the page unable to
-    ever apply - the composer looks suppliers up by id, never by name."""
+    ever apply - the composer looks suppliers up by id, never by name.
+
+    A value that is not a uuid at all (review round 1, item 6) is rejected the same way as
+    an unknown id, rather than reaching the uuid column comparison - which raises
+    `InvalidTextRepresentation`, not an `AppException`, and leaves the session aborted.
+    """
     if not supplier_id:
         return
     from app.models.procurement import Supplier
+    from app.services.scm.supplier_scope import is_uuid
 
+    if not is_uuid(supplier_id):
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
     if db.query(Supplier.id).filter(Supplier.id == supplier_id).first() is None:
         raise AppException(422, "That supplier does not exist.", detail="supplier_id")
 
@@ -154,13 +177,18 @@ def create_import_field_alias(
     db: Session = Depends(get_db),
 ):
     """One new header spelling for a field. 409 on a triple already on file."""
-    _assert_known_field(payload.doc_type, payload.field)
+    # An open-vocabulary word token is uppercased on write (review round 1, item 4) - the
+    # shape check and every later lookup then sees exactly what it validated.
+    field_value = (
+        payload.field.strip().upper() if payload.doc_type == WORD_DOC_TYPE else payload.field
+    )
+    _assert_known_field(payload.doc_type, field_value)
     _assert_supplier_exists(db, payload.supplier_id)
     existing = (
         db.query(ImportFieldAlias)
         .filter(
             ImportFieldAlias.doc_type == payload.doc_type,
-            ImportFieldAlias.field == payload.field,
+            ImportFieldAlias.field == field_value,
             ImportFieldAlias.alias == payload.alias,
             ImportFieldAlias.supplier_id == payload.supplier_id,
         )
@@ -170,11 +198,11 @@ def create_import_field_alias(
         raise AppException(
             status.HTTP_409_CONFLICT,
             f"Header {payload.alias} is already mapped to "
-            f"{field_label(payload.field)} for {_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}.",
+            f"{field_label(field_value)} for {_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}.",
             code="duplicate_alias",
         )
     row = ImportFieldAlias(
-        doc_type=payload.doc_type, field=payload.field, alias=payload.alias,
+        doc_type=payload.doc_type, field=field_value, alias=payload.alias,
         locale=payload.locale, supplier_id=payload.supplier_id,
     )
     db.add(row)
@@ -184,15 +212,15 @@ def create_import_field_alias(
         db.query(ImportFieldAlias)
         .filter(
             ImportFieldAlias.doc_type == payload.doc_type,
-            ImportFieldAlias.field == payload.field,
+            ImportFieldAlias.field == field_value,
         )
         .order_by(ImportFieldAlias.alias)
         .all()
     )
     names = _supplier_names(db, siblings)
     return {
-        "field": payload.field,
-        "label": field_label(payload.field),
+        "field": field_value,
+        "label": field_label(field_value),
         "aliases": [_serialize_alias(r, names) for r in siblings],
     }
 

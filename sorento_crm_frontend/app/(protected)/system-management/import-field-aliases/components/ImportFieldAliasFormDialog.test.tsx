@@ -6,6 +6,17 @@
  *
  * TEST-FIRST (Phase 2): the dialog has no Supplier select yet, so every test in the first
  * two `describe` blocks is expected to be RED until S4 lands.
+ *
+ * Fix round 1 (review round 1): two production-shape changes moved the mock/assertions
+ * below, noted at each site -
+ *   - item 5 (review blocker): the Supplier select now reads through the server-searched,
+ *     paged `getFulfilmentSuppliers` (via a small `enabled`-gated hook in the dialog itself)
+ *     instead of the bare, 100-row-capped `/select` endpoint - the mock changed to that
+ *     service function.
+ *   - item 4 (review blocker): `WORD_TOKENS` is no longer a closed list; the word doc
+ *     type's "System field" is a plain uppercase text input, not a `SearchableSelect` - the
+ *     two submit tests in the second `describe` block now type into it instead of picking
+ *     an option.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -45,19 +56,19 @@ vi.mock('../hooks/useImportFieldAliases', () => ({
   useCreateImportFieldAlias: () => ({ mutateAsync: createMutateAsync, isPending: false }),
 }));
 
-// The codebase's established supplier-select hook (reused, per grep, by
-// ProductSuppliersSection/AddCompanionRuleModal/PackingListForm and others) - the
-// "existing supplier select service" this lane's brief points at.
-vi.mock('../../../procurement-management/suppliers/hooks/useSupplierSelectQuery', () => ({
-  useSupplierSelectQuery: () => ({
-    data: [{ id: 'sup-1', supplier_code: 'DFY', supplier_name: 'DAFUYUAN' }],
-  }),
+// Fix round 1, item 5: the server-searched, paged supplier lookup - `SearchableSelect`'s own
+// `fetchOptions(query, pageIndex)` contract, so the mock returns option shape directly
+// rather than raw supplier rows.
+const getFulfilmentSuppliersMock = vi.fn().mockResolvedValue([{ value: 'sup-1', label: 'DAFUYUAN' }]);
+vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
+  getFulfilmentSuppliers: (...args: unknown[]) => getFulfilmentSuppliersMock(...args),
 }));
 
 import { ImportFieldAliasFormDialog } from './ImportFieldAliasFormDialog';
 
 beforeEach(() => {
   createMutateAsync.mockReset().mockResolvedValue({ field: 'SRT', label: 'SRT', aliases: [] });
+  getFulfilmentSuppliersMock.mockReset().mockResolvedValue([{ value: 'sup-1', label: 'DAFUYUAN' }]);
 });
 
 describe('ImportFieldAliasFormDialog - Supplier select (AC-F1)', () => {
@@ -103,6 +114,9 @@ describe('ImportFieldAliasFormDialog - Supplier select (AC-F1)', () => {
 });
 
 describe('ImportFieldAliasFormDialog - submitting a supplier-scoped word (AC-F1)', () => {
+  // Rewritten (item 4, review round 1): the word doc type's "System field" is now a plain
+  // uppercase text input (open vocabulary), not a `SearchableSelect` over a closed list -
+  // was `fireEvent.click` + pick an option, now `fireEvent.change` + type.
   it('carries supplier_id on the create call when a supplier is chosen', async () => {
     render(
       <ImportFieldAliasFormDialog
@@ -112,8 +126,7 @@ describe('ImportFieldAliasFormDialog - submitting a supplier-scoped word (AC-F1)
       />,
     );
 
-    fireEvent.click(screen.getByLabelText('System field'));
-    fireEvent.click(await screen.findByRole('option', { name: 'SRT' }));
+    fireEvent.change(screen.getByLabelText('System field'), { target: { value: 'srt' } });
     fireEvent.change(screen.getByLabelText('Header'), { target: { value: 'SORENTO' } });
 
     const supplierField = await screen.findByLabelText('Supplier');
@@ -129,6 +142,27 @@ describe('ImportFieldAliasFormDialog - submitting a supplier-scoped word (AC-F1)
     );
   });
 
+  it('uppercases the typed field on the create call', async () => {
+    render(
+      <ImportFieldAliasFormDialog
+        open
+        onOpenChange={() => {}}
+        docType={'supplier_inventory_word' as never}
+      />,
+    );
+
+    const fieldInput = screen.getByLabelText('System field') as HTMLInputElement;
+    fireEvent.change(fieldInput, { target: { value: 'srt' } });
+    expect(fieldInput.value).toBe('SRT');
+    fireEvent.change(screen.getByLabelText('Header'), { target: { value: 'SORENTO' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /add mapping/i }));
+
+    await waitFor(() =>
+      expect(createMutateAsync).toHaveBeenCalledWith(expect.objectContaining({ field: 'SRT' })),
+    );
+  });
+
   it('omits supplier_id (shared row) when no supplier is chosen', async () => {
     render(
       <ImportFieldAliasFormDialog
@@ -138,8 +172,7 @@ describe('ImportFieldAliasFormDialog - submitting a supplier-scoped word (AC-F1)
       />,
     );
 
-    fireEvent.click(screen.getByLabelText('System field'));
-    fireEvent.click(await screen.findByRole('option', { name: 'SRT' }));
+    fireEvent.change(screen.getByLabelText('System field'), { target: { value: 'srt' } });
     fireEvent.change(screen.getByLabelText('Header'), { target: { value: 'SORENTO' } });
 
     fireEvent.click(screen.getByRole('button', { name: /add mapping/i }));

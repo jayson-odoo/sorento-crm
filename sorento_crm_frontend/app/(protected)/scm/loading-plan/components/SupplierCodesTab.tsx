@@ -492,7 +492,7 @@ export function SupplierCodesTab({
         </p>
         {/* One box over both tables (S1): the queue and the memory answer the same question
             about the same code, and two boxes would be two places to type it. */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <ListSearchInput
             value={search}
             onChange={setSearch}
