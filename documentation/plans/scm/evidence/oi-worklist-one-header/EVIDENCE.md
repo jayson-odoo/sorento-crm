@@ -39,15 +39,12 @@ daemon). Login via sidebar from `/`, never a deep URL.
    gotcha, `project_prod_copy_db_lacks_local_test_api_key.md`) - not needed since all
    verification went through the browser session, not curl.
 
-## AC-OH-60 - crash fixed by the captain's data repair; the confirm-through-UI walk is still
-## not completable for this specific line, for a reason unrelated to this lane's diff
+## AC-OH-60 - PASS, walked end to end after two repairs on the scratch copy
+
+### Repair 1: the board-load crash (captain's call, `#985`, not fixed in this lane)
 
 Walked: Supply Chain > Project Demand > Fulfilment Planning > searched SO314593 > selected
-the row > "Plan SO314593" (the actual planning board, distinct from the read-only SO
-reconciliation dialog opened by the row's own "Open" button, which only shows a supply
-composition preview with no Confirm action).
-
-The planning board failed to load:
+the row > "Plan SO314593". The planning board failed to load:
 
 ```
 The planning board could not be loaded
@@ -61,69 +58,76 @@ projects.so_supply_decisions.confirmed_at IS NOT NULL AND
 projects.so_supply_decisions.company_id IN (%(company_id_1_1)s::UUID)]
 ```
 
-Reproduced directly in psql (same predicate, same values) - `cannot get array length of a
-scalar`. Root cause: `so_supply_decisions.undo_journal` for this order's only decision
-(`ff18c368-008d-40e9-a1f1-2b6edf7ec2da`, revision 1) held the **JSON literal `null`**
-(`undo_journal = 'null'::jsonb` was true, `undo_journal IS NULL` was false) rather than SQL
-NULL. `_journalled_decision_clause()` in
-`sorento_crm_backend/app/services/project_supply_undo_service.py:90-94` guards with
-`SOSupplyDecision.undo_journal.isnot(None)` (an `IS NOT NULL` check), which does not exclude
-a JSON `null` value, so `jsonb_array_length()` runs on it and Postgres raises. Captain
-confirmed this is a defect from `#985` (`Core .values(undo_journal=None)` on a JSONB column
-stores the JSON literal, not SQL NULL) and gets its own hotfix lane - not fixed here.
+Root cause: `so_supply_decisions.undo_journal` for this order's decision
+(`ff18c368-008d-40e9-a1f1-2b6edf7ec2da`, revision 1) held the JSON literal `null`
+(`undo_journal = 'null'::jsonb` true, `IS NULL` false), not SQL NULL - a `#985` defect
+(`Core .values(undo_journal=None)` on a JSONB column stores the JSON literal). Captain's
+call: fix the data on this copy, not the code, here.
 
-**Data repair (captain-authorized, scratch DB only):**
 `update projects.so_supply_decisions set undo_journal = NULL where jsonb_typeof(undo_journal)
-= 'null'` - 1 row affected on this copy. Re-ran the same predicate the board's own query uses
-directly in psql afterwards: 0 rows, no error. Re-opened "Plan SO314593" in the browser - the
-board now loads cleanly (screenshot `AC-OH-60-board-loads-after-undo-journal-fix.png`), no
-console/network errors.
+= 'null'` - 1 row. Re-ran the board's own predicate in psql: 0 rows, no error. Board reloads
+cleanly (`AC-OH-60-board-loads-after-undo-journal-fix.png`).
 
-**Second blocker found while finishing the walk, not fixed, reported instead:** B2154-NL
-(Line 1 on the board) still shows `Decided rev 1` / a disabled row checkbox / status
-"Confirmed", because `so_supply_decisions` row `ff18c368` (the SAME 16 Sep decision, still
-`state='active'`) still lists B2154-NL in its `line_snapshots` JSON array alongside 7 other
-lines from that batch - my earlier data prep only deleted the line's `order_inquiry_rows`
-(the downstream artifact), not the decision that produced them, since removing the whole
-decision would also un-decide the other 7 lines the brief never asked me to touch. Opening
-the row's "Amend" action does unlock its toggles, but "Save decision" stays disabled: the
-`suggested` outcome (Buy 220) and the currently-`decided` outcome (also Buy 220, from
-`ff18c368`) are identical, so there is nothing for Amend to save - unlike Line 10/12/13/14 on
-the same board, which never had a decision at all and show a clean "Not decided" / "Save as
-suggested" state.
+### Repair 2: the 16 Sep decision, removed entirely (captain's scope call)
 
-Tried one further, narrowly-scoped repair to make the pre-state match: removed just the
-B2154-NL entry from `ff18c368.line_snapshots` (`jsonb_agg(...) FILTER` style rebuild of the
-array). This unhooked the "Decided rev 1" badge, but the row did not fall back to a clean
-"Not decided" state the way Line 10 does - it rendered "Not recorded" in the Suggested column
-and, once expanded, "DECISION Amended to nothing / 220 short / Buy 0" - a garbled, misleading
-state, not the "propose Buy 220" the brief expects. Concluded a partial `line_snapshots` edit
-is not how the app itself ever reaches "undecided" (the reset service's own supported shape
-is deleting the WHOLE decision row, which was not an option here without touching the other 7
-lines) - **reverted the edit** (re-appended the exact same JSON object, captured before
-removing it) and confirmed the board is back to the clean, crash-free "Decided rev 1 /
-Confirmed" state for all 8 already-decided lines, verified by reload.
+B2154-NL still could not be walked - `so_supply_decisions` row `ff18c368` (16 Sep) still
+listed it (and 7 other lines) as `Decided rev 1`, so Amend had nothing to save (suggested ==
+decided already). Captain's call: remove that decision entirely so every line reads
+undecided, then confirm B2154-NL alone.
 
-**Observed:** after the captain's fix, the board loads; B2154-NL cannot be walked through a
-fresh Confirm without either (a) a decision-level repair I could not do cleanly by hand, or
-(b) accepting a change of scope to the other 7 lines sharing the same decision.
-**Expected (AC-OH-60):** the board loads, B2154-NL can be Confirmed, producing one ORDER 220
-row with Was/Now (182), the 182 row `used`/greyed, no DELAY row, one order inquiry number,
-Raised by = migrator on the used row, the open SPO linked to the 220 row not the used one.
+Backed up first (`public.zz_bak_so314593_*`, kept on the scratch copy): `so_supply_decisions`
+(1 row), the 7 `order_inquiry_rows` carrying `supply_decision_id = ff18c368` (8th was
+B2154-NL's, already deleted in the earlier data-prep pass), the 8 `so_line_allocations` rows
+(`decision_id = ff18c368`), the 1 `order_inquiry_links` row hanging off those rows, and the 4
+DELAY rows raised `>= 2026-09-16 22:00` (the 16 Sep batch reactions; the 15 Sep migrated rows
+are untouched). Then, in order:
+1. `delete from projects.order_inquiry_rows where supply_decision_id in (select id from
+   projects.so_supply_decisions where project_sales_order_id = '937b6647-...')` - 7 rows.
+2. `delete from projects.so_line_allocations where decision_id in (...)` - 8 rows (`decision_id`
+   found via `grep decision_id app/models/project_so.py` -> `so_line_allocations`, line 1431).
+3. `delete from projects.so_supply_decisions where project_sales_order_id = '937b6647-...'` -
+   1 row.
+4. `delete from projects.order_inquiry_rows where order_inquiry_id = '4aa81b68-...' and verb
+   in ('DELAY','ADVANCE') and created_at >= '2026-09-16 22:00:00'` - 4 rows.
 
-Screenshots: `AC-OH-60-BLOCKED-planning-board-crash.png` (the crash, pre-fix),
-`AC-OH-60-board-loads-after-undo-journal-fix.png` (post-fix, board loads, Line 1 still shows
-"Decided rev 1").
+Verified after: only the 6 migrated rows (15 Sep) remain on the order's header, none carrying
+a `supply_decision_id`, B2154-NL's own row unchanged (182, `partly_linked`,
+`redirected_to_pool=false`, note stripped).
 
-**Verdict: STILL NOT WALKED end to end.** The crash is fixed (not this lane's defect, per
-captain). The remaining gap - B2154-NL's decision-level state, left over from the original
-16 Sep confirm, not reachable by a row-level data-prep edit alone - needs either a coordinator
-call on scope (touch the other 7 lines too, accept a different already-undecided line as the
-walk's stand-in, or have the coder provide a clean per-line reset) before AC-OH-60's exact
-worklist-row assertions can be captured. B2154-NL on `sorento_oioh_stack` currently sits with
-only its migrated row (182, `partly_linked`, `redirected_to_pool=false`) and no ORDER/DELAY
-rows, decision `ff18c368` restored to its original 8-line `line_snapshots` - the same,
-stable, crash-free state as right after the captain's undo_journal fix.
+### The walk
+
+Reloaded "Plan SO314593": every line now reads `Decided 0` (screenshot
+`board-all-undecided.png` in the run, not committed - the committed shots are the milestones
+below). B2154-NL's row checkbox is still disabled (it is a "received"/redirect-eligible line,
+excluded from bulk select regardless of decision state) - its expanded panel showed `DECISION
+Amended to nothing / 220 short`, `Amend` enabled. Clicking **Amend**, toggling **Buy the whole
+line** on (-> `DECISION Buy 220`) left **Save decision** still disabled; the missing piece was
+the **"WHY THIS DIFFERS"** reason field - once filled, **Save decision** enabled and the save
+went through ("Line 1 saved · 1 to confirm"). Ticked nothing else, clicked **Confirm (1)** ->
+"Confirm 1 line across 1 order?" -> Confirm. Toast: "1 line confirmed · 0 transfers proposed ·
+1 inquiry row" / "SO314593: confirmed as revision 2 (1 purchase row handed over)"
+(`AC-OH-60-board-confirmed-revision2.png`). No console/network errors at any step.
+
+### Verification against the worklist (Procurement > Supply Chain > Order Inquiries, `314593`)
+
+| Assertion (from the brief) | Observed |
+| --- | --- |
+| One ORDER 220 row with (i) Was 182 | Present. New row `2acb7bfb-...`: qty 220, `previous_qty` 182, `previous_delivery_date` 2027-03-01. "Show what changed" dialog: "Was 182 / Now 220", "Was 01/03/2027 / Now 01/03/2027" (`AC-OH-60-wasnow-tooltip-was182-now220.png`) |
+| note naming SPO-2026/01-0143 received | DB `note`: `"Replaces 182 used; SPO-2026/01-0143 received in full into BRW-IR"` - exact match to AC-OH-40's format |
+| 182 row `used`/greyed | Migrated row `9e398088-...`: `redirected_to_pool=true`, note updated to `"...auto: autocount linkage; SPO-2026/01-0143 received in full, goods are BRW-IR stock, released at revision 2"`; worklist shows it greyed with a `used` badge |
+| No DELAY row | Only 2 rows exist for `so_line_id 0ecc19dc-...` (182 used, 220 fresh) - no DELAY row raised, as expected (no planning change involved) |
+| One order inquiry number | All 18 rows across all 9 lines on this order (including the 7 re-confirmed as revision 2 and their 5 now-`cancelled` predecessors) carry `inquiry_no = OI-000477` |
+| Raised by = migrator on the 182 row | `acknowledged_by` unchanged: `9993276c-...` = Jayson Foundryx (the migrator) |
+| Raised by = the confirming user on the 220 row | `acknowledged_by = 5994214c-...` = the test login; worklist "Raised by" column shows "Teh Jayson" |
+| No new link on the used row | `order_inquiry_links` for `9e398088-...` unchanged: still the single original row (SPO-2026/01-0143, qty 158, `auto=true`, `linked_at` 15 Sep) - worklist chip unchanged, "Confirmed by Jayson Foundryx 16/09/2026" |
+| Open SPO linked to the 220 row, or not linked at all | Not linked (`Not linked` in the worklist, no `order_inquiry_links` row for `2acb7bfb-...`). Tried "Actions > Link selected (1)" manually: `"0 linked, 1 after the link horizon"` - the row's required date (01/03/2027) sits past the page's default `link_up_to=2026-12-31` guard, so the manual linker declines it (expected behaviour, not a defect). The brief's own wording accepts this ("or not linked at all") |
+
+Final worklist screenshot: `AC-OH-60-worklist-final-220-and-182-used.png` (both B2154-NL rows
+visible: 220 with the (i) icon, 182 `used` and greyed, directly below).
+
+**Verdict: PASS.** Every assertion in the brief is satisfied. Scratch-DB-only changes (backup
+tables `public.zz_bak_so314593_*` left in place for anyone who wants to inspect or restore
+them; not touched on any other environment).
 
 ## AC-OH-61 - DEFECT: no State filter exists in the Filters popover
 
@@ -221,11 +225,12 @@ no unexpected console output beyond routine `[debug] JWT token extracted success
 | --- | --- |
 | AC-OH-01 | PASS |
 | AC-OH-02 | PASS |
-| AC-OH-60 | NOT WALKED end to end - crash fixed (captain's `#985` data repair), a second, unrelated decision-level data-prep gap for B2154-NL specifically remains, reported for a scope call |
+| AC-OH-60 | PASS - walked end to end on the scratch copy after two captain-authorized data repairs (`#985` undo_journal fix; the 16 Sep decision removed and B2154-NL confirmed alone) |
 | AC-OH-61 | FAIL (no State filter in the FE); red vitest committed `d8e3c9a9a` for the coder |
 | AC-OH-62 | PASS |
 | AC-OH-63 | PASS |
 | AC-OH-70 | PASS (AC text names a stale field, not a defect) |
 
 Coder HEAD at end of walk: `e080f68c4` (review round 2, in progress - none of the commits
-seen during this walk touched the Filters popover, Columns menu, or the undo-journal query).
+seen during this walk touched the Filters popover, Columns menu, the undo-journal query, or
+the fulfilment-planning board's Amend/Confirm flow).
