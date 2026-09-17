@@ -114,6 +114,36 @@ def _assert_required_payload(action_key: str, payload: dict) -> None:
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
 
 
+def _assert_undo_not_refused(db: Session, action_key: str, entity_id: str) -> None:
+    """`project_sales_order.undo_confirm`'s own `linked`/`actioned` refusal,
+    checked at PARK time too (review round, follow-up), not only when the
+    countdown lapses several seconds later - a raw API call must get the same
+    synchronous 409 the disabled gear entry already implies. The commit-time
+    check inside `undo_last_confirm` stays: a link or an actioned row can still
+    land purchasing's way DURING the window, and that is caught there.
+
+    The order is loaded under the requester's own company scope
+    (`ProjectSupplyService.get_order`), so a foreign company's order 404s here
+    exactly as it would at commit time, before anything is parked.
+    """
+    if action_key != "project_sales_order.undo_confirm":
+        return
+    from app.services.project_supply_service import ProjectSupplyService
+    from app.services.project_supply_undo_service import (
+        _REFUSAL_MESSAGES,
+        refusal_for_order,
+    )
+
+    order = ProjectSupplyService(db).get_order(entity_id)
+    refusal = refusal_for_order(db, str(order.id))
+    if refusal:
+        raise AppException(
+            status_code=status.HTTP_409_CONFLICT,
+            message=_REFUSAL_MESSAGES[refusal],
+            code=refusal,
+        )
+
+
 def _assert_permission(db: Session, user_id: Optional[str], slug: str) -> None:
     """Enforce the action's own slug at the CLICK.
 
@@ -243,6 +273,7 @@ async def create_pending_action(
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.permission)
     _assert_required_payload(body.action_key, body.payload)
+    _assert_undo_not_refused(db, body.action_key, body.entity_id)
 
     try:
         service = FormActionService(db)

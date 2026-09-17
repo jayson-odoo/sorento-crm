@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import Date, DateTime, Numeric, and_, bindparam, event, func, inspect, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import get_history, set_committed_value
@@ -128,16 +129,53 @@ def _assert_single_pk(obj: Any) -> None:
         )
 
 
+def _stale_column_values(obj: Any, keys: List[str]) -> Dict[str, Any]:
+    """The columns `_changed_old_values` found a real CHANGE for but no baseline
+    to report it against - `get_history` returns neither `deleted` nor
+    `unchanged` for an attribute that was EXPIRED (a `commit()` earlier in the
+    same request cleared SQLAlchemy's own cached "committed value") before this
+    write set a new one on it, even under `get_history`'s own default
+    `passive=PASSIVE_OFF` (confirmed empirically: this is a scalar-column
+    expiry gap, not a relationship-loading one `passive` flags address).
+
+    Read straight off Postgres instead, mid-flush: this row's own UPDATE for
+    the current flush has not executed yet, so its CURRENT stored value on the
+    actual connection IS the true old one.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import object_session
+
+    table = obj.__table__
+    pk_col = _pk_column(table)
+    pk_val = _entity_id_str(obj)
+    session = object_session(obj)
+    if session is None:
+        return {}
+    row = session.connection().execute(
+        select(*[table.c[k] for k in keys]).where(pk_col == pk_val)
+    ).first()
+    if row is None:
+        return {}
+    return {key: _json_serial(value) for key, value in zip(keys, row)}
+
+
 def _changed_old_values(obj: Any) -> Dict[str, Any]:
     """Only the columns that actually changed, old side (plan "Capture")."""
     mapper = inspect(obj).mapper
     old: Dict[str, Any] = {}
+    stale_keys: List[str] = []
     for prop in mapper.column_attrs:
         hist = get_history(obj, prop.key)
         if not hist.has_changes():
             continue
-        old_val = hist.deleted[0] if hist.deleted else (hist.unchanged[0] if hist.unchanged else None)
-        old[prop.key] = _json_serial(old_val)
+        if hist.deleted:
+            old[prop.key] = _json_serial(hist.deleted[0])
+        elif hist.unchanged:
+            old[prop.key] = _json_serial(hist.unchanged[0])
+        else:
+            stale_keys.append(prop.key)
+    if stale_keys:
+        old.update(_stale_column_values(obj, stale_keys))
     return old
 
 
@@ -390,6 +428,14 @@ def _replay(
     # confirm both inserted and later deleted (Contract E, review round) - a link
     # drafted and removed inside one confirm never existed before it at all, and
     # re-inserting it would bring back a row nothing before this confirm ever had.
+    #
+    # `ON CONFLICT DO NOTHING` on the pk (follow-up review round): a delete-journal
+    # entry whose row still exists at undo time - a savepoint that rolled the
+    # delete back after the journal had already captured it, or any other reason
+    # the row survived - must not raise a duplicate-key error `_run_with_retries`
+    # cannot resolve (a genuine unique-constraint violation, not an FK-ordering
+    # one). Idempotent re-insert: the row that is already there wins, undo still
+    # succeeds, and nothing is duplicated.
     insert_jobs = []
     for entry in reversed_entries:
         if entry["op"] != "delete":
@@ -402,7 +448,11 @@ def _replay(
             continue
 
         def _insert(table=table, values=values):
-            db.execute(table.insert().values(**values))
+            db.execute(
+                pg_insert(table)
+                .values(**values)
+                .on_conflict_do_nothing(index_elements=[_pk_column(table)])
+            )
 
         insert_jobs.append(_insert)
     _run_with_retries(db, insert_jobs)
@@ -527,11 +577,17 @@ def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[s
     equal to `"actioned"` - meaning the row was already actioned before this
     confirm ran, and the confirm's own cascade merely re-touched it (a different
     column, or a re-stamped `actioned_at`) without itself being the one that
-    actioned it. The clock fallback (`actioned_at` after `confirmed_at`) applies to
-    every OTHER case: the row absent from the journal entirely, present only for an
-    INSERT (a freshly-raised row has no `old` at all), or present with an `old`
-    that has no `state` key (some other column changed, `state` did not) - none of
-    those tell us the row's state before the confirm, so the clock is what is left.
+    actioned it. When there is no `state` key but the journal's own `old` DOES
+    carry an `actioned_at` (some other column changed under the confirm's write
+    and `actioned_at` happened to be one of them), THAT stored value is compared
+    against `confirmed_at`, never the live column - the live column can be
+    re-stamped by a later, unrelated write between the confirm and this check
+    (follow-up review round, the same clock-mismatch shape `linked` already
+    guards against by insert-set membership rather than a raw timestamp). Only
+    when the journal has NEITHER key for the row - absent entirely, present only
+    as an INSERT (a freshly-raised row has no `old` at all), or present for some
+    other column with neither `state` nor `actioned_at` touched - does the LIVE
+    `actioned_at` stand in, compared the same way against `confirmed_at`.
     """
     journal_by_decision = {d.id: (d.undo_journal or []) for d in decisions}
     confirmed_at_by_decision = {d.id: d.confirmed_at for d in decisions}
@@ -612,10 +668,25 @@ def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[s
                     refusal = "actioned"
                     break
                 continue
-            # The journal says nothing about `state` for this row - either it was
-            # never touched by the confirm at all, or it was touched for OTHER
-            # columns only, which tells us nothing about when it became actioned.
-            # Fall back to the same clock test an untouched row gets.
+            # No `state` key. If the journal captured an `actioned_at` for this
+            # row anyway (some OTHER column changed under the confirm's own
+            # write, and `actioned_at` happened to be one of them), compare THAT
+            # stored value against `confirmed_at` - not the live column, which can
+            # be re-stamped by a later, unrelated write between the confirm and
+            # this check (follow-up review round: the same clock-mismatch shape
+            # `linked` already guards against by insert-set membership).
+            stored_actioned_at = old.get("actioned_at")
+            if stored_actioned_at is not None:
+                if isinstance(stored_actioned_at, str):
+                    stored_actioned_at = datetime.fromisoformat(stored_actioned_at)
+                if stored_actioned_at > confirmed_at:
+                    refusal = "actioned"
+                    break
+                continue
+            # The journal has neither key for this row - either it was never
+            # touched by the confirm at all, or it was touched for some column
+            # that tells us nothing about when it became actioned. The live
+            # column is all that is left.
             if actioned_at is not None and actioned_at > confirmed_at:
                 refusal = "actioned"
                 break
@@ -643,6 +714,30 @@ def _refusal_reason(db: Session, decision: SOSupplyDecision) -> Optional[str]:
     checks exactly one, so batching buys it nothing; `board_undo_map` is the caller
     that batches, over every decision on the board at once."""
     return _grouped_refusals(db, [decision]).get(decision.id)
+
+
+def refusal_for_order(db: Session, pso_id: str) -> Optional[str]:
+    """The SAME `linked`/`actioned` predicate `undo_last_confirm` checks at
+    commit time, run early - at PARK time (review round, follow-up) - so
+    `POST /pending-actions` gives a raw caller the same synchronous 409 the
+    disabled gear entry already implies, instead of a 202 followed by a failure
+    several seconds later when the countdown lapses.
+
+    `None` when the order has no active, journalled decision at all - that is
+    the commit-time `no_journal` refusal's own job (`undo_last_confirm`),
+    unchanged; this predicate only ever answers `linked` or `actioned`.
+    """
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == pso_id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .first()
+    )
+    if decision is None or not _decision_is_journalled(decision):
+        return None
+    return _refusal_reason(db, decision)
 
 
 # --------------------------------------------------------------------------- email
