@@ -2122,10 +2122,28 @@ def test_r2_migration_inserts_when_row_absent():
 # --------------------------------------------------------------------------- #
 
 
+def _expected_r2_line_headers(was: dict | None) -> list[str]:
+    """AC-R2-18: a CHANGE TO column is a property of the EMAIL, not of the line - but
+    each of these test cases is a ONE-line email, so the email's own answer is exactly
+    this line's own `was` keys. QTY CHANGE TO only when `was.qty` is set; DELIVERY DATE
+    CHANGE TO only when `was.delivery_date` is set; neither for a plain raise."""
+    was = was or {}
+    headers = ["SO DATE", "S/O NO", "ITEM CODE", "QTY"]
+    if was.get("qty") is not None:
+        headers.append("QTY CHANGE TO")
+    headers.append("DELIVERY DATE")
+    if was.get("delivery_date") is not None:
+        headers.append("DELIVERY DATE CHANGE TO")
+    headers.append("REMARK")
+    return headers
+
+
 @pytest.mark.parametrize(
     ("kind_label", "line_ctx", "expected_cells"),
     [
         (
+            # AC-R2-18: QTY CHANGE TO present (`was.qty` set), DELIVERY DATE CHANGE TO
+            # absent - so `expected_cells` carries no trailing "" for the absent column.
             "settled qty (182 -> 214)",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
@@ -2134,9 +2152,11 @@ def test_r2_migration_inserts_when_row_absent():
                 "was": {"qty": "182"},
             },
             ["01/09/2026", "SO314594", "SRTWCX8605-S-RL-PJ", "182", "214",
-             "01/09/2026", "", "ORDER 32"],
+             "01/09/2026", "ORDER 32"],
         ),
         (
+            # AC-R2-18: DELIVERY DATE CHANGE TO present (`was.delivery_date` set), QTY
+            # CHANGE TO absent - no "" cell for the absent column.
             "settled date (01/09/2026 -> 01/04/2027)",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
@@ -2144,10 +2164,12 @@ def test_r2_migration_inserts_when_row_absent():
                 "delivery_date": "01/04/2027", "remark": "DELAY",
                 "was": {"delivery_date": "01/09/2026"},
             },
-            ["01/09/2026", "SO314594", "CB2806A", "280", "",
+            ["01/09/2026", "SO314594", "CB2806A", "280",
              "01/09/2026", "01/04/2027", "DELAY"],
         ),
         (
+            # AC-R2-18: QTY CHANGE TO present (`was.qty` set), DELIVERY DATE CHANGE TO
+            # absent.
             "cancelled (old qty 280)",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
@@ -2156,9 +2178,11 @@ def test_r2_migration_inserts_when_row_absent():
                 "was": {"qty": "280"},
             },
             ["01/09/2026", "SO314594", "CB2807", "280", "0",
-             "01/09/2026", "", "CANCEL BALANCE 280 NOS"],
+             "01/09/2026", "CANCEL BALANCE 280 NOS"],
         ),
         (
+            # AC-R2-18: a plain raise carries no `was` at all - neither column, six
+            # headers, six cells.
             "plain raised",
             {
                 "so_date": "01/09/2026", "so_number": "SO314594",
@@ -2166,13 +2190,13 @@ def test_r2_migration_inserts_when_row_absent():
                 "delivery_date": "01/09/2026", "remark": "ORDER",
                 "was": None,
             },
-            ["01/09/2026", "SO314594", "CSH2072", "214", "",
-             "01/09/2026", "", "ORDER"],
+            ["01/09/2026", "SO314594", "CSH2072", "214",
+             "01/09/2026", "ORDER"],
         ),
     ],
 )
 def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
-    """AC-R2-01..05, 09."""
+    """AC-R2-01..05, 09, 18."""
     from app.services.email_template_service import EmailTemplateService
 
     with blank_session() as db:
@@ -2201,13 +2225,15 @@ def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
             re.sub(r"<[^>]+>", "", h).strip()
             for h in re.findall(r"<th[^>]*>(.*?)</th>", html, re.S)
         ]
-        # CUSTOMER/PROJECT belong to the SO table above only - the line table's own
-        # headers are the LAST eight.
-        line_headers = headers[-8:]
-        assert line_headers == [
-            "SO DATE", "S/O NO", "ITEM CODE", "QTY", "QTY CHANGE TO",
-            "DELIVERY DATE", "DELIVERY DATE CHANGE TO", "REMARK",
-        ], f"AC-R2-01 ({kind_label}): header order/count wrong, got {line_headers}"
+        # CUSTOMER/PROJECT belong to the SO table above only - the SO table always has
+        # exactly three <th>s, so the line table's own headers are everything after them
+        # (AC-R2-18: the count is no longer fixed at eight).
+        line_headers = headers[3:]
+        expected_headers = _expected_r2_line_headers(line_ctx["was"])
+        assert line_headers == expected_headers, (
+            f"AC-R2-01/18 ({kind_label}): header order/count wrong, got {line_headers}, "
+            f"expected {expected_headers}"
+        )
         assert "CUSTOMER" not in line_headers and "PROJECT" not in line_headers
 
         rows = _table_rows(html)
@@ -2825,7 +2851,9 @@ def test_handover_r2_template_cell_was_qty_zero_prints_0_and_change_to():
         rendered = EmailTemplateService(db).render(template, context)
         rows = _table_rows(rendered["body_html"])
         line_row = rows[-1]
+        # AC-R2-18: DELIVERY DATE CHANGE TO is absent (no line carries `was.delivery_
+        # date`), so there is no trailing "" cell for it.
         assert line_row == [
             "01/09/2026", "SO314594", "CB9999", "0", "214",
-            "01/09/2026", "", "ORDER 214",
+            "01/09/2026", "ORDER 214",
         ], f"nit: was.qty='0' must print '0 | 214', got {line_row}"

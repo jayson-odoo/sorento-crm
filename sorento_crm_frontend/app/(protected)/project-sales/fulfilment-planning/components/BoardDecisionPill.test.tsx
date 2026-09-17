@@ -240,6 +240,11 @@ describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.
       <BoardDecisionPill
         contribution={contributionOf({
           covered: true,
+          // A revision actually confirmed this line (AC-R2-19: `covered` alone is not
+          // enough to read Confirmed - a live, decision-less inquiry row sets it too,
+          // and reads "With purchasing" instead; this fixture's own intent is the
+          // decision-covered case).
+          decision: { revision_no: 3, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
           draft: {
             decision: { verdict: 'amended' },
             saved_by: 'Eling',
