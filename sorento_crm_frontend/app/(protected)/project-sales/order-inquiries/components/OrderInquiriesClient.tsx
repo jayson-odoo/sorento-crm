@@ -605,9 +605,17 @@ export function OrderInquiriesClient() {
   // list - they keep the horizon's own, older per-browser memory (`readStoredLinkHorizon`
   // above), which already does the same job for that one field.
   const memorySeededRef = React.useRef(false);
+  // Mirrored into STATE as well as the ref, deliberately. The ref makes this run once;
+  // the state is what everything downstream waits on, because a ref set inside this
+  // effect is already `true` for the effects that run AFTER it in the very same pass -
+  // which still see the pre-seed filter values. That is the whole of the AC-CF-18 defect:
+  // on a re-mount the write-back below fired in this pass, wrote the empty pre-seed blob
+  // over the remembered one, and the seed then read back what it had just erased.
+  const [memorySeeded, setMemorySeeded] = React.useState(false);
   React.useEffect(() => {
     if (memorySeededRef.current || isViewPrefsLoading) return;
     memorySeededRef.current = true;
+    setMemorySeeded(true);
     const stored = viewFilters ?? {};
     const urlHad = urlProvidedFilters.current;
     if (!urlHad.ack) setAckFilter(stored.ack ?? 'to_confirm');
@@ -629,22 +637,27 @@ export function OrderInquiriesClient() {
     setKindFilter(stored.kind ?? null);
   }, [isViewPrefsLoading, viewFilters, resetPoNumberInput, resetSpoNumberInput]);
 
+  // What every request on this page waits for (AC-CF-21): not just the stored row landing,
+  // but the seed above having moved it into the filters this render actually reads. The
+  // hook's own `isLoading` releases one commit earlier, which used to let the first list
+  // call go out with the shipped defaults and flash the whole worklist before the
+  // remembered filter narrowed it a render later.
+  const isViewMemoryPending = isViewPrefsLoading || !memorySeeded;
+
   // The other half (AC-CF-18): every change here is written back to the same remembered
   // row. Safe to run from the very first commit - `useListingViewPreferences` does not
   // persist anything until IT has applied what was already stored, so an early call here
   // only updates its in-memory value and is superseded the moment that happens.
   //
-  // GUARDED on `pathname` (AC-CF-18 fix, browser pass 17 Sep): navigating away via the
-  // sidebar was measured writing a SECOND, narrower PUT right behind the correct one -
-  // `{ack: 'to_confirm'}` with `location` gone - because leaving the route can still run
-  // this effect once more (a transitional render/remount whose local filter state has
-  // not carried over) before this component is actually torn down, and nothing here
-  // could tell that render apart from a reader genuinely clearing the field. `pathname`
-  // is App Router's own answer to "which route is this", so a render that fires while it
-  // no longer names this page is a navigation artefact, never a person's edit - skip it
-  // rather than persist it.
+  // GUARDED on `memorySeeded` (AC-CF-18, browser pass 17 Sep): until the seed above has
+  // LANDED IN A RENDER, the filters read here are this mount's blank starting state, not
+  // anybody's choice. Writing them back was the measured defect - leave the page by the
+  // sidebar and come back, and the return mount wrote `{ack: 'to_confirm'}` over the
+  // `{ack, location}` it had just read, because this effect ran a commit before the seed
+  // did. A re-mount is indistinguishable from a first visit from in here, so there is
+  // nothing to test but "has this page decided what it shows yet".
   React.useEffect(() => {
-    if (!pathname.endsWith('/order-inquiries')) return;
+    if (!memorySeeded) return;
     const blob: OrderInquiryViewFilters = {};
     if (ackFilter) blob.ack = ackFilter;
     if (view !== 'list') blob.view = view;
@@ -663,7 +676,7 @@ export function OrderInquiriesClient() {
     if (kindFilter) blob.kind = kindFilter;
     setViewFilters(Object.keys(blob).length ? blob : null);
   }, [
-    pathname,
+    memorySeeded,
     ackFilter,
     view,
     matrixGranularity,
@@ -694,7 +707,7 @@ export function OrderInquiriesClient() {
       // AC-CF-11: `ack=all` (the explicit "show everything") sends no filter at all;
       // anything else - including the transient '' before the memory-seed effect above
       // resolves it - reads as `to_confirm`, the page's own default. The list query is
-      // gated off until that effect has run (`!isViewPrefsLoading`), so `to_confirm` is
+      // gated off until that effect has run (`!isViewMemoryPending`), so `to_confirm` is
       // never actually asked for on the transient's account.
       ack: (ackFilter === ACK_ANY
         ? undefined
@@ -768,18 +781,18 @@ export function OrderInquiriesClient() {
     [listFilters, pagination, sorting],
   );
 
-  // Gated on `!isViewPrefsLoading` (AC-CF-21): the first fetch waits for the remembered
+  // Gated on `!isViewMemoryPending` (AC-CF-21): the first fetch waits for the remembered
   // view, so it asks with the filters the buyer actually left it on rather than the
   // shipped defaults for one request and the real ones for the next.
   const list = useOrderInquiryWorklist(params, {
-    enabled: view === 'list' && !isViewPrefsLoading,
+    enabled: view === 'list' && !isViewMemoryPending,
   });
   // Asked WITH the pressed card, so the header badges and the month / supplier / project
   // controls describe the rows actually on screen. Its `kinds` facet is the one thing
   // computed with the card dropped (server-side), which is what keeps the other two
   // cards readable while one is held down.
   const summary = useOrderInquiryWorklistSummary(listFilters, {
-    enabled: !isViewPrefsLoading,
+    enabled: !isViewMemoryPending,
   });
   const planHorizon = summary.data?.link_up_to_default ?? null;
 
@@ -812,7 +825,7 @@ export function OrderInquiriesClient() {
     [listFilters, matrixAxis, matrixGranularity],
   );
   const matrixQuery = useOrderInquiryMatrix(matrixParams, {
-    enabled: view === 'schedule' && !isViewPrefsLoading,
+    enabled: view === 'schedule' && !isViewMemoryPending,
   });
   const matrix = React.useMemo(
     () => buildOrderInquiryMatrix(matrixQuery.data?.data ?? [], matrixGranularity),
@@ -894,7 +907,7 @@ export function OrderInquiriesClient() {
   // rows to unplace" on a company that may hold hundreds. Held off entirely rather than
   // fired-and-403'd for a person who could never press the button anyway.
   const unplacePreview = useUnplaceAllPreview(unplaceAllFilters, {
-    enabled: view === 'list' && canActOnOrderInquiry && !isViewPrefsLoading,
+    enabled: view === 'list' && canActOnOrderInquiry && !isViewMemoryPending,
   });
   const unplaceCount = unplacePreview.data?.count ?? 0;
 
@@ -1656,7 +1669,7 @@ export function OrderInquiriesClient() {
                 </AlertDescription>
               </AlertContent>
             </Alert>
-          ) : matrixQuery.isLoading || isViewPrefsLoading ? (
+          ) : matrixQuery.isLoading || isViewMemoryPending ? (
             <div className="space-y-3">
               <Skeleton className="h-10 w-full" />
               <Skeleton className="h-72 w-full" />
@@ -1708,7 +1721,7 @@ export function OrderInquiriesClient() {
         <DataGrid
           table={table}
           recordCount={total}
-          isLoading={list.isLoading || isViewPrefsLoading}
+          isLoading={list.isLoading || isViewMemoryPending}
           isPlaceholderData={list.isPlaceholderData}
           listingKey="projects.projects.view::order-inquiry-worklist"
           tableLayout={{

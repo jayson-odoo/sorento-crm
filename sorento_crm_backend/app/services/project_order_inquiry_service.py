@@ -5041,6 +5041,131 @@ class ProjectOrderInquiryService:
         candidates.sort(key=lambda candidate: candidate["sort"])
         return candidates
 
+    def _candidates_including_own_closed_links(
+        self, row: OrderInquiryRow, *, manual: bool
+    ) -> List[Dict[str, Any]]:
+        """`_candidates_for_row(credit_own_links=True)` widened to FORCE-INCLUDE every
+        line this row already holds a live link on, even one the ordinary walk's OPEN
+        line-status / ACTIVE-PO filters would drop (S8 review round, 17 Sep). A PO line
+        closed, or a purchase order taken off active/partial, after the link was written
+        still has to answer BOTH the dialog's GET (so the buyer sees what the row holds,
+        AC-CF-24/26) and `_place_on_po_set`'s own validation (so re-submitting or
+        lowering that same take does not read as "not a candidate" and 409, and an
+        untouched take never falls out of the submission and gets retired for having
+        nowhere to be resubmitted to - the merge-blocker this method exists to close).
+
+        A forced entry's `remaining` / `raw_remaining` is the row's own credited take and
+        nothing more: a closed line has nothing ELSE left to offer, but what this row
+        already holds there is always still there to keep or hand back. `dedicated_to` /
+        `unattributed` / `cascadable` stay at their ordinary defaults (unclaimed,
+        unlocked, cascadable) - a closed line is never something the automatic pass
+        reaches anyway, and the dialog's grey states exist to explain what a MANUAL link
+        may still take, not to grade one the row already holds.
+
+        Every entry the ordinary walk offers carries `line_open: True`; a forced one
+        carries `line_open: False` - the ONLY reason it needed forcing in the first
+        place.
+        """
+        candidates = self._candidates_for_row(row, manual=manual, credit_own_links=True)
+        for candidate in candidates:
+            candidate["line_open"] = True
+        present = {candidate["target_id"] for candidate in candidates}
+        own_take_by_target: Dict[str, Decimal] = {}
+        for link in self._links_of(row.id):
+            target = str(link.po_line_id or link.spo_allocation_id)
+            own_take_by_target[target] = own_take_by_target.get(target, _ZERO) + _dec(
+                link.qty
+            )
+        missing = {target for target in own_take_by_target if target not in present}
+        if not missing:
+            return candidates
+
+        pools = self._pool_codes()
+        cited = self._cited_documents(row)
+        own_location = (row.stock_location or "").strip().upper() or None
+        forced: List[Dict[str, Any]] = []
+        for link in self._links_of(row.id):
+            target_id = str(link.po_line_id or link.spo_allocation_id)
+            if target_id not in missing:
+                continue
+            take = own_take_by_target[target_id]
+            if link.po_line_id:
+                found = (
+                    self.db.query(PurchaseOrderLine, PurchaseOrder, Supplier, Warehouse)
+                    .join(
+                        PurchaseOrder,
+                        PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
+                    )
+                    .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
+                    .outerjoin(
+                        Warehouse, Warehouse.id == PurchaseOrderLine.warehouse_id
+                    )
+                    .filter(PurchaseOrderLine.id == link.po_line_id)
+                    .first()
+                )
+                if found is None:
+                    continue
+                line, po, supplier, warehouse = found
+                candidate = self._candidate(
+                    kind="po",
+                    target_id=target_id,
+                    document=po.po_number,
+                    line_label=self._line_label(line.source_ref),
+                    location=warehouse.warehouse_code if warehouse else None,
+                    issue_date=po.issue_date,
+                    expected_date=line.expected_date,
+                    remaining=take,
+                    qty_ordered=_dec(line.qty_ordered),
+                    qty_received=_dec(line.qty_received),
+                    supplier_name=supplier.supplier_name if supplier else None,
+                    unit_cost=line.unit_cost,
+                    currency=line.currency,
+                    own_location=own_location,
+                    pools=pools,
+                    cited=cited,
+                    raw_remaining=take,
+                )
+            elif link.spo_allocation_id:
+                found = (
+                    self.db.query(SPOAllocation, Supplier, Warehouse)
+                    .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
+                    .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+                    .filter(SPOAllocation.id == link.spo_allocation_id)
+                    .first()
+                )
+                if found is None:
+                    continue
+                allocation, supplier, warehouse = found
+                candidate = self._candidate(
+                    kind="spo",
+                    target_id=target_id,
+                    document=allocation.spo_number,
+                    line_label=self._line_label(allocation.spo_line_number),
+                    location=(
+                        warehouse.warehouse_code if warehouse else allocation.location_code
+                    ),
+                    issue_date=allocation.issue_date,
+                    expected_date=allocation.expected_date,
+                    remaining=take,
+                    qty_ordered=_dec(allocation.allocated_quantity),
+                    qty_received=_dec(allocation.quantity_received),
+                    supplier_name=supplier.supplier_name if supplier else None,
+                    unit_cost=allocation.unit_cost,
+                    currency=allocation.currency,
+                    own_location=own_location,
+                    pools=pools,
+                    cited=cited,
+                    raw_remaining=take,
+                )
+            else:
+                continue
+            candidate["line_open"] = False
+            forced.append(candidate)
+
+        combined = candidates + forced
+        combined.sort(key=lambda candidate: candidate["sort"])
+        return combined
+
     def _netting(self, product_ids: Sequence[Optional[str]]) -> GroupNetting:
         """Ladder v4's availability reader, over every product asked about so far.
 
@@ -5476,6 +5601,12 @@ class ProjectOrderInquiryService:
         still shows, with `current_take` naming what this row already holds there and
         `remaining` read as if that take were free to re-place. A line nothing of this
         row's sits on carries `current_take: "0"`, unaffected either way.
+
+        S8 review round (17 Sep, merge-blocker): a line closed - or its PO taken off
+        active/partial - AFTER this row's link was written used to vanish from this list
+        entirely, and a "Choose document" press that never touched it then read as
+        retiring it (`_candidates_including_own_closed_links` force-includes it, with
+        `line_open: False` so the dialog can grey it apart from an ordinary candidate).
         """
         row = self._row_or_404(row_id)
         self._assert_linkable(row)
@@ -5487,7 +5618,7 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_no_product",
             )
         need = self._unlinked_need(row)
-        candidates = self._candidates_for_row(row, credit_own_links=True)
+        candidates = self._candidates_including_own_closed_links(row, manual=False)
         cascade = {
             candidate["target_id"]: take
             for candidate, take in self._cascade_take(candidates, need)
@@ -5547,12 +5678,26 @@ class ProjectOrderInquiryService:
                     "current_take": _qty_str(
                         own_take_by_target.get(candidate["target_id"], _ZERO)
                     ),
+                    # S8 review round: False on a forced entry - a line closed, or on a
+                    # PO no longer active/partial, since this row's link was written.
+                    "line_open": candidate.get("line_open", True),
                 }
             )
         recommended = next((entry for entry in out if entry["covers"]), None)
         if recommended is not None:
             recommended["recommended"] = True
         return out
+
+    def linkable_qty_for_row(self, row_id: str) -> str:
+        """What the row's OWN placement capacity is (AC-CF-25's SET-total ceiling,
+        `_place_on_po_set`'s own `capacity`): `qty - bundled_qty`, never the bare `qty`
+        the dialog's props otherwise default to. A bundled row's ala-carte remainder is
+        smaller than its whole quantity - what a bundle already covers is never something
+        THIS row's own links additionally claim (S8 review round, 17 Sep: the dialog's
+        footer and its enable check used to read the bare `qty` and would let a bundled
+        row compose an allocation the server was always going to refuse)."""
+        row = self._row_or_404(row_id)
+        return _qty_str(_dec(row.qty) - _dec(row.bundled_qty))
 
     def still_to_link_for_row(self, row_id: str) -> str:
         """The Link dialog's own header line (S8, AC-CF-24): "N still to link of Q" -
@@ -5859,6 +6004,7 @@ class ProjectOrderInquiryService:
         actor_user_id: str,
         auto_trigger: Optional[str] = None,
         full_set: bool = False,
+        offered_line_ids: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Link this row across one or more document lines, in one call.
 
@@ -5876,12 +6022,21 @@ class ProjectOrderInquiryService:
         `full_set=True` is S8's SET semantics, the "Choose document" dialog's own write:
         the submitted allocations become the row's ENTIRE link set, so a line the row held
         before that is missing from this call is retired, not merely uncounted. See
-        `_place_on_po_set`.
+        `_place_on_po_set`. `offered_line_ids` (S8 review round, 17 Sep) is the candidate
+        ids the CALLER actually rendered before this press - a line the row holds that
+        is missing from the submission AND absent from this list was never shown to the
+        caller at all, and survives rather than being read as a deliberate drop. `None`
+        (every API caller before this round) keeps retiring every omitted line, unchanged.
         """
         row = self._row_or_404(row_id)
         self._assert_linkable(row)
         if full_set:
-            return self._place_on_po_set(row, allocations, actor_user_id=actor_user_id)
+            return self._place_on_po_set(
+                row,
+                allocations,
+                actor_user_id=actor_user_id,
+                offered_line_ids=offered_line_ids,
+            )
         if not allocations:
             raise AppException(
                 status_code=422,
@@ -5997,17 +6152,24 @@ class ProjectOrderInquiryService:
         allocations: Sequence[Dict[str, Any]],
         *,
         actor_user_id: str,
+        offered_line_ids: Optional[Sequence[str]] = None,
     ) -> List[Dict[str, Any]]:
         """S8's one-press re-link (AC-CF-25): the submitted allocations ARE the row's
         link set afterwards.
 
         A line left out of the submission is RETIRED, through the same `_remove_links`
-        `unplace` uses - audit note and claim release included. A line submitted with a
-        different qty than it already holds is ADJUSTED in place (the link row's own
-        `qty` is changed directly): no "Unlinked from X; Linked to X" churn on a line the
-        buyer never actually let go of, which is what "nothing else on the row changes"
-        (AC-CF-25) means for a line whose take only moved by a number. A line the row
-        held NOTHING on before is a fresh link, written the usual way. The caller
+        `unplace` uses - audit note and claim release included - but ONLY when
+        `offered_line_ids` names it too (S8 review round, 17 Sep): a line this row
+        holds that the CALLER never even saw (missing from both the submission and what
+        it says it rendered) is left exactly as it stands rather than read as a silent
+        drop. `offered_line_ids=None` (every caller before this round, and any that
+        still omits it) keeps retiring every line missing from the submission, same as
+        always. A line submitted with a different qty than it already holds is ADJUSTED
+        in place (the link row's own `qty` is changed directly, with its own audit
+        stamp): no "Unlinked from X; Linked to X" churn on a line the buyer never
+        actually let go of, which is what "nothing else on the row changes" (AC-CF-25)
+        means for a line whose take only moved by a number. A line the row held NOTHING
+        on before is a fresh link, written the usual way. The caller
         (`place_on_po_allocations(full_set=True)`) has already checked `_assert_linkable`.
         """
         if not allocations:
@@ -6088,9 +6250,14 @@ class ProjectOrderInquiryService:
         # that take were free (S8's whole point - re-place it without first unlinking),
         # and a person naming a line by hand may still reach one a redeal walk would not
         # (`manual=True`, the same override `place_on_po_allocations`'s ADD path grants).
+        # `_candidates_including_own_closed_links` (not the bare `_candidates_for_row`):
+        # a line closed, or its PO taken off active/partial, since this row's link was
+        # written is still THIS row's own line to resubmit or lower - without it,
+        # re-submitting the unchanged take on such a line 409'd as "not a candidate"
+        # before this call ever reached the retire/adjust logic below (S8 review round).
         by_target = {
             candidate["target_id"]: candidate
-            for candidate in self._candidates_for_row(row, manual=True, credit_own_links=True)
+            for candidate in self._candidates_including_own_closed_links(row, manual=True)
         }
         for target_id, slot in resolved.items():
             candidate = by_target.get(target_id)
@@ -6113,8 +6280,12 @@ class ProjectOrderInquiryService:
                     code="order_inquiry_po_line_short",
                 )
 
+        offered_ids = set(offered_line_ids) if offered_line_ids is not None else None
         to_retire = [
-            link for target_id, link in existing.items() if target_id not in resolved
+            link
+            for target_id, link in existing.items()
+            if target_id not in resolved
+            and (offered_ids is None or target_id in offered_ids)
         ]
         if to_retire:
             self._remove_links(row, to_retire)
@@ -6123,6 +6294,17 @@ class ProjectOrderInquiryService:
             link = existing.get(target_id)
             if link is not None:
                 if _dec(link.qty) != slot["qty"]:
+                    # ADJUSTED in place - its own audit stamp, the same as a fresh link
+                    # or a retirement leaves, so a re-deal that only moved a NUMBER on a
+                    # line the buyer never let go of is not the one branch of the three
+                    # that left no trail (S8 review round, 17 Sep).
+                    candidate = by_target.get(target_id)
+                    document = candidate["document"] if candidate else link.document
+                    stamp = (
+                        f"Adjusted {document or 'an unnamed document'} from "
+                        f"{_qty_str(link.qty)} to {_qty_str(slot['qty'])}"
+                    )
+                    row.note = f"{row.note}; {stamp}" if row.note else stamp
                     link.qty = slot["qty"]
                 continue
             candidate = by_target[target_id]

@@ -1,37 +1,24 @@
 /**
  * AC-CF-24/AC-CF-26 (`PLAN-oi-confirm-per-so.md` S8, `oi-confirm-per-so-acceptance-
- * criteria.md`): written from the contract, not from reading the coder's diff.
- *
- * NAMING NOTE for whoever reviews this file's placement: S8's plan text calls the
- * dialog `OrderInquiryDocumentDialog`, which is why this spec sits beside that
- * component's own test file and carries its name with a `.linked` suffix. The dialog
- * "Choose document (1)" actually opens, today, is `LinkDocumentDialog`
- * (`_shared/components/LinkDocumentDialog.tsx`) - the read-only `OrderInquiryDocumentDialog`
- * in THIS folder is a different surface entirely (the document lightbox opened from a PO/
- * SPO number in a listing, `AC-D18`/`AC-D19`, no Take input at all). This file exercises
- * `LinkDocumentDialog` by its real import path so the assertions trace to the component
- * S8 actually has to change; flag it to the coder if the plan intends a rename/merge
- * instead, and adjust the import rather than the behaviour under test.
- *
- * CONCURRENT-EDIT NOTE (17 Sep): the coder was live in this same worktree while this
- * file was being written. By the time it first ran, `getOrderInquiryPoCandidates` had
- * already been widened to resolve `{ candidates, still_to_link }` (S8's envelope) rather
- * than a bare array, and `LinkDocumentDialog` already read `.candidates` off it, prefilled
- * `takeFor()` from `current_take` and rendered a `Current N` mark
- * (`po-candidate-current-<key>`, AC-CF-24 - DONE). The DataGrid table + full document
- * number + "line N of M" (AC-CF-26) were NOT yet done - the table was still the old bare
- * `<table>`. The mocks below resolve the REAL envelope shape so the AC-CF-24 tests pin
- * the finished behaviour as regression coverage and the AC-CF-26 tests stay genuinely red.
+ * criteria.md`): written from the contract. S8 landed at fea50ba99 (`LinkDocumentDialog`
+ * - the component "Choose document (1)" actually opens - converted its candidate table
+ * to a `DataGrid`/`DataGridTable` with `listingKey={null}`, a full untruncated Document
+ * column and "line N of M"). Moved here from `order-inquiries/components/` to sit next
+ * to the component it exercises, per the captain's follow-up (17 Sep): the earlier path
+ * carried the name `OrderInquiryDocumentDialog` (the plan text's name for this dialog),
+ * which collided with the UNRELATED read-only document lightbox that actually owns that
+ * name in this folder (`AC-D18`/`AC-D19`, no Take input).
  *
  * Patterns copied from `LinkDocumentDialog.test.tsx` (candidate fixtures, the
- * `renderDialog` helper, mocking `../services/orderInquiryService`) and from
+ * `renderDialog` helper, mocking `../services/orderInquiryService`, `listingKey={null}`
+ * needing no `useListingColumnPreferences` mock) and from the sibling
  * `OrderInquiryDocumentDialog.test.tsx` (the DataGrid assertion shape, AC-B1).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { OrderInquiryPoCandidate } from '../../_shared/types/orderInquiry.types';
+import type { OrderInquiryPoCandidate } from '../types/orderInquiry.types';
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -40,8 +27,8 @@ vi.mock('@/lib/toast', () => ({
 const getOrderInquiryPoCandidates = vi.fn();
 const placeOrderInquiryRowOnPoAllocations = vi.fn();
 
-vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
+vi.mock('../services/orderInquiryService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/orderInquiryService')>();
   return {
     ...actual,
     getOrderInquiryPoCandidates: (...args: unknown[]) => getOrderInquiryPoCandidates(...args),
@@ -50,7 +37,7 @@ vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => 
   };
 });
 
-import { LinkDocumentDialog } from '../../_shared/components/LinkDocumentDialog';
+import { LinkDocumentDialog } from './LinkDocumentDialog';
 
 function renderDialog(node: React.ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -137,6 +124,33 @@ describe('AC-CF-24: a linked candidate carries its current take, prefilled and m
     expect(within(row).queryByText(/current/i)).not.toBeInTheDocument();
     const input = screen.getByLabelText('Take off ZZT-PO-0002') as HTMLInputElement;
     expect(input.value).toBe('');
+  });
+
+  it('a closed line the row already holds (line_open: false) still renders with its Current take', async () => {
+    // S8 review round (17 Sep): `line_open: false` marks a candidate FORCED into the
+    // list only because this row already links to it - the line itself (or its PO) has
+    // since closed. The dialog's whole point here is that this row's OWN link still
+    // shows, unaffected by whatever else changed on the document.
+    const closedButHeld: OrderInquiryPoCandidate = {
+      ...ALREADY_LINKED,
+      po_line_id: 'po-line-closed',
+      po_number: 'ZZT-PO-0003',
+      current_take: '6',
+      default_take: '0',
+      line_open: false,
+    };
+    getOrderInquiryPoCandidates.mockResolvedValue(envelope([closedButHeld], '4'));
+
+    renderDialog(
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="10" linkedQty="6" onDone={onDone} />,
+    );
+
+    const row = await screen.findByTestId('po-candidate-po:po-line-closed');
+    expect(within(row).getByText(/current/i)).toBeInTheDocument();
+    const input = (await screen.findByLabelText(
+      'Take off ZZT-PO-0003',
+    )) as HTMLInputElement;
+    expect(input.value).toBe('6');
   });
 });
 

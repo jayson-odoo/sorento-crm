@@ -793,6 +793,12 @@ export interface OrderInquiryPoCandidate {
    * never reads as over the line's remaining.
    */
   current_take?: string;
+  /**
+   * S8 review round (17 Sep): `false` only on a candidate FORCED into the list because
+   * this row already links to it - a line closed, or its PO taken off active/partial,
+   * since that link was written. Every ordinary candidate the walk offers is `true`.
+   */
+  line_open?: boolean;
 }
 
 /**
@@ -802,6 +808,13 @@ export interface OrderInquiryPoCandidate {
 export interface OrderInquiryPoCandidatesResponse {
   candidates: OrderInquiryPoCandidate[];
   still_to_link: string;
+  /**
+   * S8 review round (17 Sep): `row.qty - row.bundled_qty` - the SAME ceiling
+   * `_place_on_po_set` enforces server-side. The dialog's own capacity check and
+   * footer total read this, not the row's bare `qty` prop, which overstates what a
+   * bundled row can actually hold.
+   */
+  linkable_qty?: string;
 }
 
 /**

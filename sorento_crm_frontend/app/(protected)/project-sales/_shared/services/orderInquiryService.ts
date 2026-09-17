@@ -201,15 +201,24 @@ export async function placeOrderInquiryRowOnPo(
  * ARE the row's link set afterwards - a line the row held before that is missing from
  * this call is retired, a resubmitted line is adjusted to the new qty, and a new line is
  * linked. The row keeps its full quantity, so the response is that same row.
+ *
+ * `offeredLineIds` (S8 review round, 17 Sep): the candidate ids the CALLER actually
+ * rendered before this press. Scopes the retire step to what the caller saw - a line
+ * the row holds that is missing from both `allocations` and this list was never shown
+ * to it, and survives rather than being read as a deliberate drop. Omitted, the
+ * server keeps retiring every line `allocations` left out, unchanged.
  */
 export async function placeOrderInquiryRowOnPoAllocations(
   rowId: string,
   allocations: OrderInquiryPoAllocation[],
+  offeredLineIds?: string[],
 ): Promise<OrderInquiryRow> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/place-on-po`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ allocations }),
+    body: JSON.stringify(
+      offeredLineIds ? { allocations, offered_line_ids: offeredLineIds } : { allocations },
+    ),
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to link this row to a document'));

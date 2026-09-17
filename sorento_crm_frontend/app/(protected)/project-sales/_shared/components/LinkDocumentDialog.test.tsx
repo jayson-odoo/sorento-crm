@@ -223,11 +223,22 @@ describe('LinkDocumentDialog: confirming', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '15' },
-        { po_line_id: 'po-line-later', qty: '10' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [
+          { po_line_id: 'po-line-early', qty: '15' },
+          { po_line_id: 'po-line-later', qty: '10' },
+        ],
+        // S8 review round (17 Sep): the third argument is `offeredLineIds` - every
+        // candidate this press RENDERED, exactly the rendered set, so the server never
+        // retires a line the dialog never showed.
+        ['po-line-early', 'po-line-later'],
+      ),
     );
+    expect(placeOrderInquiryRowOnPoAllocations.mock.calls[0][2]).toEqual([
+      'po-line-early',
+      'po-line-later',
+    ]);
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
@@ -244,9 +255,11 @@ describe('LinkDocumentDialog: confirming', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '12' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [{ po_line_id: 'po-line-early', qty: '12' }],
+        ['po-line-early'],
+      ),
     );
   });
 
@@ -263,9 +276,14 @@ describe('LinkDocumentDialog: confirming', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '15' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [{ po_line_id: 'po-line-early', qty: '15' }],
+        // The zeroed line is still RENDERED (still in `offeredLineIds`) even though its
+        // own take dropped it from `allocations` - the server needs to see it was
+        // offered, or a genuinely-zeroed line reads as never shown and survives.
+        ['po-line-early', 'po-line-later'],
+      ),
     );
   });
 
@@ -411,9 +429,11 @@ describe('LinkDocumentDialog: G7 / G12 dedication (AC-6.5)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '10' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [{ po_line_id: 'po-line-early', qty: '10' }],
+        ['po-line-early'],
+      ),
     );
   });
 
@@ -494,5 +514,42 @@ describe('LinkDocumentDialog: the link horizon', () => {
 
     await screen.findByTestId('po-candidates-table');
     expect(screen.queryByTestId('link-dialog-horizon')).toBeNull();
+  });
+});
+
+describe("S8 review round (17 Sep): a bundled row's capacity is the server's linkable_qty, never the bare qty prop", () => {
+  it("the footer total reads against linkable_qty, not the row's whole qty", async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue({
+      candidates: [EARLY],
+      still_to_link: '10',
+      linkable_qty: '10',
+    });
+
+    renderDialog(
+      // `qty="25"` is the row's WHOLE quantity; a bundled row's own ala-carte
+      // remainder (`linkable_qty`) is smaller - `10` here.
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(screen.getByText(/of 10(?!\d)/)).toBeInTheDocument();
+  });
+
+  it("refuses a take the bundle's own remainder cannot hold, even though the bare qty would allow it", async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue({
+      candidates: [EARLY],
+      still_to_link: '10',
+      linkable_qty: '10',
+    });
+
+    renderDialog(
+      // EARLY's default_take is 15 - inside a bare qty of 25, but 5 over a bundled
+      // row's real 10-unit capacity.
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(screen.getByText('5 more than this row needs')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
   });
 });

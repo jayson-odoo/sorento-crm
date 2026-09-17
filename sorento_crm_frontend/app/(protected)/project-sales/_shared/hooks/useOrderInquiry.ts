@@ -271,16 +271,21 @@ export function useOrderInquiryPlacementMutations() {
 
   /**
    * The cascade shape: one or more `{po_line_id | spo_allocation_id, qty}` lines in one
-   * call. The row keeps its full quantity and gains one link per allocation (AC-I6).
+   * call. SET semantics (S8, AC-CF-25): the submission becomes the row's whole link
+   * set - a line the row held that is missing from it is retired (unless
+   * `offeredLineIds` says the caller never saw it), a resubmitted line is adjusted, and
+   * a new line is linked.
    */
   const placeAllocations = useMutation({
     mutationFn: ({
       rowId,
       allocations,
+      offeredLineIds,
     }: {
       rowId: string;
       allocations: OrderInquiryPoAllocation[];
-    }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations),
+      offeredLineIds?: string[];
+    }) => placeOrderInquiryRowOnPoAllocations(rowId, allocations, offeredLineIds),
     onSuccess: () => {
       invalidateAfterPlacement();
       toast.success('Linked');

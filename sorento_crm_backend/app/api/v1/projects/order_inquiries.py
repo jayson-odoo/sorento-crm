@@ -899,7 +899,12 @@ async def order_inquiry_po_candidates(
         service = ProjectOrderInquiryService(db)
         candidates = service.po_candidates_for_row(row_id)
         still_to_link = service.still_to_link_for_row(row_id)
-        return {"candidates": candidates, "still_to_link": still_to_link}
+        linkable_qty = service.linkable_qty_for_row(row_id)
+        return {
+            "candidates": candidates,
+            "still_to_link": still_to_link,
+            "linkable_qty": linkable_qty,
+        }
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -949,6 +954,10 @@ async def place_order_inquiry_row_on_po(
                 # link set - SET semantics, not an add-on-top. The single `po_line_id`
                 # form below keeps its old ADD meaning.
                 full_set=True,
+                # S8 review round (17 Sep): the candidate ids the caller actually
+                # rendered - scopes the retire step to what it saw. `None` when the
+                # caller omits it, unchanged.
+                offered_line_ids=payload.offered_line_ids,
             )
             body = written[0]
         else:

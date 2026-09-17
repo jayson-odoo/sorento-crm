@@ -295,4 +295,48 @@ describe('useListingViewPreferences', () => {
     // Only one read of the row: the write seeds, it does not refetch.
     expect(vi.mocked(service.getUserListColumnConfig)).toHaveBeenCalledTimes(1);
   });
+
+  it('a re-mount on the same warm cache applies what was last SAVED, and writes nothing behind it (AC-B7)', async () => {
+    mockStoredConfig(STORED_VIEW);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const first = render(
+      <StrictMode>
+        <QueryClientProvider client={client}>
+          <Harness />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('ready');
+    });
+    act(() => {
+      screen.getByText('set-responded').click();
+    });
+    await waitFor(() => expect(upsert()).toHaveBeenCalled());
+    const writesBefore = upsert().mock.calls.length;
+
+    // Leaving the listing and coming back inside one SPA session: the row is NOT re-read
+    // (`staleTime: Infinity`, and nothing invalidates it), so the only thing this re-mount
+    // can apply is the blob the write left in the cache.
+    first.unmount();
+    render(
+      <StrictMode>
+        <QueryClientProvider client={client}>
+          <Harness />
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('ready');
+    });
+    expect(screen.getByTestId('filters').textContent).toBe(
+      JSON.stringify({ statuses: ['responded'] }),
+    );
+    expect(vi.mocked(service.getUserListColumnConfig)).toHaveBeenCalledTimes(1);
+    // And the re-mount is not itself a change: applying what storage holds writes nothing.
+    await pastTheDebounceWindow();
+    expect(upsert().mock.calls.length).toBe(writesBefore);
+  });
 });

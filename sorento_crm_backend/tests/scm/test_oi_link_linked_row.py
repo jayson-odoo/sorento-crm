@@ -40,6 +40,7 @@ local database.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 from app.models.project_so import (
     INQUIRY_ACTIONED,
@@ -299,3 +300,105 @@ def test_ac_cf_27_a_cancelled_row_is_refused_on_both_candidates_and_place_on_po(
     )
     assert placed.status_code == 409
     assert placed.json()["code"] == "order_inquiry_not_raised"
+
+
+# ------------------------------------------ S8 review round (17 Sep, merge-blocker)
+
+
+def test_candidates_lists_the_closed_line_the_row_already_holds_with_line_open_false(api):
+    """`po_candidates_for_row` force-includes a line closed AFTER this row linked to
+    it, `line_open: False`, so the dialog can show the row's own link on a line the
+    ordinary open/active walk would otherwise have dropped entirely."""
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="6", expected_date=date(2026, 9, 1),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="6", item_code=world["product"].product_code)
+    placed = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed.status_code == 200, placed.text
+
+    line.line_status = "closed"
+    db.commit()
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    entry = next(c for c in body["candidates"] if c["po_line_id"] == line.id)
+    assert entry["line_open"] is False
+    assert entry["current_take"] == "6"
+    assert entry["remaining"] == "6", "credited to this row's own take, nothing else"
+
+
+def test_an_existing_link_on_a_closed_line_survives_a_set_call_that_never_offered_it(api):
+    """The merge-blocker itself: a SET request that omits BOTH the closed line and its
+    id from `offered_line_ids` never saw that line at all, so it is left standing while
+    a DIFFERENT line moves - not retired for having nowhere to be resubmitted to."""
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="6", expected_date=date(2026, 9, 1),
+    )
+    other_line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 5),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="6", item_code=world["product"].product_code)
+    placed = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed.status_code == 200, placed.text
+
+    line.line_status = "closed"
+    db.commit()
+
+    moved = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po",
+        json={
+            "allocations": [{"po_line_id": other_line.id, "qty": "4"}],
+            "offered_line_ids": [other_line.id],
+        },
+    )
+    assert moved.status_code == 200, moved.text
+
+    db.expire_all()
+    assert len(_links_targeting(db, row.id, line.id)) == 1, (
+        "a link on a line the caller never offered survives an omission"
+    )
+    assert len(_links_targeting(db, row.id, other_line.id)) == 1
+
+
+def test_an_in_place_qty_adjust_writes_the_same_audit_trail_as_retire_and_add(api):
+    """The adjust branch (`_place_on_po_set`, a resubmitted line whose qty moved) used
+    to write no trail at all, unlike retire ("Unlinked from X") and add ("Linked to
+    X..."). 6 -> 2 on the SAME line: one link stands, at qty 2, and the row's note
+    grew."""
+    client, db, world, _user_id = api
+    line = _po_line(
+        db, world["company_id"], world["po"], world["product"], world["warehouse"],
+        qty_ordered="10", expected_date=date(2026, 9, 1),
+    )
+    row = _row(db, world["company_id"], world["inquiry"], qty="6", item_code=world["product"].product_code)
+    placed = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": line.id}
+    )
+    assert placed.status_code == 200, placed.text
+    note_before = placed.json()["note"] or ""
+
+    adjusted = client.post(
+        f"{BASE}/order-inquiry-rows/{row.id}/place-on-po",
+        json={"allocations": [{"po_line_id": line.id, "qty": "2"}]},
+    )
+    assert adjusted.status_code == 200, adjusted.text
+    body = adjusted.json()
+    assert body["note"] != note_before and body["note"].startswith(note_before), (
+        "the adjust branch appends its own stamp the same way retire/add do"
+    )
+    assert "Adjusted" in body["note"]
+
+    db.expire_all()
+    links = _links_targeting(db, row.id, line.id)
+    assert len(links) == 1
+    assert Decimal(str(links[0].qty)) == Decimal("2")

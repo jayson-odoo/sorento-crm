@@ -233,7 +233,15 @@ export function LinkDocumentDialog({
   // whether each one is a fresh take or a line this row already held (S8): `totalTaken`
   // below is the row's PROSPECTIVE total after Link, not just what is newly added, so it
   // is measured against the row's full quantity rather than against `need`.
-  const capacity = toNumber(qty);
+  //
+  // `linkable_qty` (S8 review round, 17 Sep), never the bare `qty` prop: the server's
+  // own `qty - bundled_qty` ceiling - `_place_on_po_set`'s own `capacity` - so a bundled
+  // row's footer and enable check agree with what the POST will actually accept. Falls
+  // back to `qty` only while the query has not answered yet.
+  const capacity =
+    candidatesQuery.data?.linkable_qty !== undefined
+      ? toNumber(candidatesQuery.data.linkable_qty)
+      : toNumber(qty);
   const totalTaken = candidates.reduce(
     (sum, candidate) => sum + toNumber(takeFor(candidate)),
     0,
@@ -262,7 +270,13 @@ export function LinkDocumentDialog({
       )
       .filter((allocation) => toNumber(allocation.qty) > 0);
     if (allocations.length === 0) return;
-    placeAllocations.mutate({ rowId, allocations }, { onSuccess: onDone });
+    // S8 review round (17 Sep): every candidate this press RENDERED, whatever its take -
+    // the SET the server may retire an omitted line against. A line the dialog never
+    // fetched at all (missing from this list too) is left standing rather than retired.
+    const offeredLineIds = candidates.map(
+      (candidate) => candidate.po_line_id ?? candidate.spo_allocation_id ?? '',
+    );
+    placeAllocations.mutate({ rowId, allocations, offeredLineIds }, { onSuccess: onDone });
   }
 
   return (

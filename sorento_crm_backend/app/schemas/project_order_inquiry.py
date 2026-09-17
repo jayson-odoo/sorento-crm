@@ -751,6 +751,10 @@ class OrderInquiryPoCandidate(BaseModel):
     # `remaining` above is already credited back to include it, so re-placing the same
     # take never reads as "over the line's remaining".
     current_take: str = "0"
+    # S8 review round (17 Sep): `False` only on a FORCED entry - a line this row already
+    # holds a link on that is closed, or on a PO no longer active/partial. Every ordinary
+    # candidate the walk offers is `True`.
+    line_open: bool = True
 
 
 class OrderInquiryPoCandidatesResponse(BaseModel):
@@ -761,6 +765,10 @@ class OrderInquiryPoCandidatesResponse(BaseModel):
 
     candidates: List[OrderInquiryPoCandidate] = []
     still_to_link: str
+    # S8 review round (17 Sep): `row.qty - row.bundled_qty`, the SAME ceiling
+    # `_place_on_po_set` enforces server-side - never the row's bare `qty`, which a
+    # bundled row's dialog used to check the submitted total against instead.
+    linkable_qty: str
 
 
 class PlaceOnPoAllocation(BaseModel):
@@ -795,6 +803,12 @@ class PlaceOnPoRequest(BaseModel):
             "Link across one or more lines: {po_line_id | spo_allocation_id, qty}."
         ),
     )
+    # S8 review round (17 Sep): the candidate ids the Link dialog actually rendered
+    # before this press. With `allocations` present this scopes SET semantics' retire
+    # step - a line the row holds that is missing from BOTH `allocations` and this list
+    # was never shown to the caller and survives; omitted entirely, every caller before
+    # this round keeps retiring whatever `allocations` left out, unchanged.
+    offered_line_ids: Optional[List[str]] = None
 
     @model_validator(mode="after")
     def _names_something_to_place(self) -> "PlaceOnPoRequest":

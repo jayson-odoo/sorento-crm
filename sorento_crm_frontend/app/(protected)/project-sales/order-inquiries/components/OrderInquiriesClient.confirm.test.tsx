@@ -45,13 +45,16 @@ vi.mock('@/hooks/usePermissions', () => ({
 
 const routerReplace = vi.fn();
 let currentSearchParams = new URLSearchParams('');
+// AC-CF-18 (navigate-away guard): mutable so a test can flip the route mid-render and
+// prove the write-back effect skips a render that no longer names this page.
+let currentPathname = '/project-sales/order-inquiries';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
     push: vi.fn(),
     replace: (...args: unknown[]) => routerReplace(...args),
   }),
-  usePathname: () => '/project-sales/order-inquiries',
+  usePathname: () => currentPathname,
   useSearchParams: () => currentSearchParams,
 }));
 
@@ -250,6 +253,14 @@ function openActionsMenu() {
   });
 }
 
+/** Radix opens the Filters popover on pointerdown, which `fireEvent.click` does not send. */
+function openFilters() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   window.localStorage.clear();
@@ -258,6 +269,7 @@ beforeEach(() => {
     'projects.order_inquiries.acknowledge',
   ]);
   currentSearchParams = new URLSearchParams('');
+  currentPathname = '/project-sales/order-inquiries';
   storedConfig(null);
   listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
   getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
@@ -577,6 +589,130 @@ describe('AC-CF-18: a remembered filter with no URL param seeds the first list c
         expect.objectContaining({ location: 'SRT-HQ' }),
       ),
     );
+  });
+
+  it('the write-back effect skips a render that no longer names this page, so a navigate-away never drops the filter behind it (browser pass 17 Sep fix)', async () => {
+    currentSearchParams = new URLSearchParams('location=OTHER-LOC');
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'delivery_date', desc: false }],
+      filters: { location: 'SRT-HQ' },
+      filtersVersion: 1,
+    });
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, gcTime: 0 },
+        mutations: { retry: false },
+      },
+    });
+    const view = render(
+      <QueryClientProvider client={client}>
+        <OrderInquiriesClient />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('SO385126');
+
+    // The correct PUT lands first (AC-CF-20's own pattern: found by content, never
+    // `.at(-1)`).
+    await waitFor(() =>
+      expect(
+        service.upsertUserListColumnConfig.mock.calls.some(
+          ([, payload]) =>
+            ((payload as { filters?: Record<string, unknown> }).filters ?? {})
+              .location === 'OTHER-LOC',
+        ),
+      ).toBe(true),
+    );
+    const putsBefore = service.upsertUserListColumnConfig.mock.calls.length;
+
+    // The sidebar takes the user elsewhere; the SAME mounted tree re-renders (no
+    // remount - `rerender`, not a fresh `render`) with `usePathname()` now answering a
+    // different route, which is exactly the "transitional render" the 17 Sep fix names.
+    currentPathname = '/project-sales/order-summary';
+    view.rerender(
+      <QueryClientProvider client={client}>
+        <OrderInquiriesClient />
+      </QueryClientProvider>,
+    );
+
+    // Give the effect a tick to fire were it NOT guarded, then prove it produced no
+    // further write at all - not merely one that still carries `location`.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(service.upsertUserListColumnConfig.mock.calls.length).toBe(putsBefore);
+  });
+
+  it('a filter set here survives leaving the page and coming back on the SAME warm cache - the return visit asks with it, and nothing behind it writes it away (browser pass 17 Sep)', async () => {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      locations: [{ id: 'BRW-IR', label: 'BRW-IR', rows: 3 }],
+    });
+    // One SPA session: the cache OUTLIVES this page's unmount (no `gcTime: 0` here,
+    // unlike `renderClient`), which is what makes the return visit a cache HIT with no
+    // second GET - exactly what the browser measured, and the shape the defect needed.
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const first = render(
+      <QueryClientProvider client={client}>
+        <OrderInquiriesClient />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('SO385126');
+
+    openFilters();
+    fireEvent.change(await screen.findByLabelText('Every location'), {
+      target: { value: 'BRW-IR' },
+    });
+
+    // Found by CONTENT: the PUT this test's own press caused.
+    await waitFor(
+      () =>
+        expect(
+          service.upsertUserListColumnConfig.mock.calls.some(
+            ([, payload]) =>
+              ((payload as { filters?: Record<string, unknown> }).filters ?? {})
+                .location === 'BRW-IR',
+          ),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+    const putsBefore = service.upsertUserListColumnConfig.mock.calls.length;
+    listOrderInquiryWorklist.mockClear();
+
+    // Away through the sidebar and back: this page unmounts, the URL it wrote goes with
+    // it (the sidebar link carries no params), and the return visit re-mounts.
+    first.unmount();
+    currentSearchParams = new URLSearchParams('');
+    render(
+      <QueryClientProvider client={client}>
+        <OrderInquiriesClient />
+      </QueryClientProvider>,
+    );
+    await screen.findByText('SO385126');
+
+    // EVERY list call of the return visit carries the remembered location - not merely
+    // one of them after a first, unfiltered request flashed the whole worklist.
+    expect(listOrderInquiryWorklist).toHaveBeenCalled();
+    for (const [params] of listOrderInquiryWorklist.mock.calls as [
+      Record<string, unknown>,
+    ][]) {
+      expect(params.location).toBe('BRW-IR');
+    }
+    // The row was never re-read - so anything written from here is written over the
+    // memory this session already holds (`staleTime: Infinity`, seeded by the PUT).
+    expect(service.getUserListColumnConfig).toHaveBeenCalledTimes(1);
+
+    // Past the hook's 800ms debounce: no write behind the re-mount, and certainly not
+    // one that drops the location the way the measured `{ack: 'to_confirm'}` PUT did.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    for (const [, payload] of service.upsertUserListColumnConfig.mock.calls.slice(
+      putsBefore,
+    ) as [string, { filters?: Record<string, unknown> }][]) {
+      expect((payload.filters ?? {}).location).toBe('BRW-IR');
+    }
   });
 });
 
