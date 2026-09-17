@@ -1420,3 +1420,252 @@ def test_the_undo_action_needs_a_decision_id(api):
         .count()
         == 0
     )
+
+
+# --------------------------------------------------------------------------- follow-up: stored actioned_at, idempotent re-insert, park-time refusal
+
+
+def test_a_confirm_that_restamps_actioned_at_on_an_actioned_row_does_not_refuse(api):
+    """New contract, follow-up to the review round's `actioned` refusal (contract A):
+    when the journal's own `old` dict for a row carries an `actioned_at` key but NO
+    `state` key - some OTHER column changed under this confirm's own write, `state`
+    did not - the refusal must compare the JOURNAL'S OWN stored `old.actioned_at`
+    against `confirmed_at`, not the live column. The live value can be re-stamped by
+    a later, unrelated write between the confirm and the undo check, exactly the
+    clock-mismatch shape `test_the_confirms_own_step3_borrow_link_does_not_refuse`
+    documents for `linked`; the `state`-key branch right above already solves it for
+    a re-actioned row, this closes the same gap for an `actioned_at`-only touch.
+
+    Today `_grouped_refusals` only reads `old["state"]`; absent that key it falls
+    through straight to the LIVE `actioned_at` column (`_grouped_refusals`'s own
+    "Fall back to the same clock test an untouched row gets" branch), so this is
+    refused - wrongly, since the row's STORED old value predates the confirm and
+    only something else re-stamped the live column afterward.
+
+    Built directly against the decision + journal shape, same as
+    `test_the_confirms_own_cascade_restamp_of_an_actioned_row_does_not_refuse` above,
+    minus the `state` key.
+    """
+    from app.models.project_so import INQUIRY_ACTIONED, OrderInquiry
+
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+    )
+    db.add(inquiry)
+    db.flush()
+    old_actioned_at = datetime.utcnow() - timedelta(days=1)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, item_code="ZZT-ACTIONED-AT-ONLY", qty=Decimal("20"),
+        verb=IV_ORDER, state=INQUIRY_ACTIONED, actioned_by=world.eling,
+        actioned_at=old_actioned_at,
+    )
+    db.add(row)
+    db.commit()
+
+    confirmed_at = datetime.utcnow()
+    # The LIVE column is re-stamped to AFTER `confirmed_at`, by something other than
+    # a `state` change - today's clock fallback reads exactly this and refuses; the
+    # journal's own captured `old.actioned_at` below is what the new contract wants
+    # compared instead.
+    row.actioned_at = confirmed_at + timedelta(seconds=1)
+    db.flush()
+
+    decision_id = _uid()
+    decision = SOSupplyDecision(
+        id=decision_id, company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling, confirmed_at=confirmed_at,
+        undo_journal=[
+            {
+                "seq": 1, "op": "update", "table": "projects.order_inquiry_rows",
+                "pk": str(row.id),
+                # No "state" key: only `actioned_at` changed under the confirm's own
+                # write, and its STORED old value is well before `confirmed_at`.
+                "old": {"actioned_at": old_actioned_at.isoformat()},
+            },
+            {
+                "seq": 1, "op": "insert", "table": "projects.so_supply_decisions",
+                "pk": decision_id, "old": None,
+            },
+        ],
+    )
+    db.add(decision)
+    db.commit()
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    result = undo_last_confirm(db, order, actor_user_id=world.eling)
+    assert result["revision_no"] == 1
+
+
+def test_replay_re_insert_is_idempotent_when_the_row_still_exists(api):
+    """New contract, follow-up to Contract E (`test_a_link_created_and_removed_
+    inside_one_confirm_does_not_come_back` above): a delete-journal entry whose row
+    still exists in the table at undo time - a savepoint that rolled the delete back
+    after the journal had already captured it, or any other reason the row survived -
+    must not raise a duplicate-key error on replay. Undo succeeds, and the row exists
+    exactly once afterward (idempotent), not zero and not two.
+
+    Today pass 2 of `_replay` ("re-insert every row this confirm deleted, skipping a
+    pk this SAME confirm both inserted and later deleted") has no existence check at
+    all for the pk it is not skipping - it blindly `INSERT`s the captured old values,
+    so a pk already present ends in an `IntegrityError` that `_run_with_retries`
+    cannot resolve by reordering (a genuine unique-constraint violation, not an
+    FK-ordering one), and re-raises it uncaught after exhausting its retries.
+
+    Built with the REAL `UndoJournal` capture (same tool
+    `test_a_link_created_and_removed_inside_one_confirm_does_not_come_back` uses),
+    so the delete entry's `old` dict is byte-for-byte what a real confirm would
+    record - then, after the journal has captured the delete and the row is
+    genuinely gone, the row is re-inserted by hand with the SAME id, simulating a
+    savepoint that rolled the actual delete back after capture: the journal's own
+    entry and the table now disagree, exactly the shape the brief describes.
+    """
+    from app.services.project_supply_undo_service import UndoJournal, undo_last_confirm
+
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert first.status_code == 200, first.text
+    decision1 = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, po_line = _po_line(db, world, qty=20)
+    link, claim = _link_with_claim(db, world, row, po_line, qty=20, so_number=core_so.so_number)
+    db.commit()
+    link_id = link.id
+    link_document = link.document
+    claim_id = claim.id
+
+    decision2_id = _uid()
+    with UndoJournal(db) as journal:
+        decision1.state = "superseded"
+        decision1.superseded_at = datetime.utcnow()
+        decision1.superseded_reason = "Reconfirmed by CS."
+        db.flush()
+        decision2 = SOSupplyDecision(
+            id=decision2_id, company_id=world.company_id, project_sales_order_id=order.id,
+            revision_no=2, state="active",
+            line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+            confirmed_by=world.eling, confirmed_at=datetime.utcnow(),
+            supersedes_id=decision1.id,
+        )
+        db.add(decision2)
+        db.flush()
+        db.delete(link)
+        db.flush()
+    journal.attach(decision2)
+    db.commit()
+
+    assert (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_id).first() is None
+    ), "the delete really ran - the setup this test needs"
+
+    # A savepoint rolled the delete back AFTER the journal already captured it: the
+    # row is back in the table with the SAME id, but the journal's own entry still
+    # says `delete`.
+    db.add(
+        OrderInquiryLink(
+            id=link_id, company_id=world.company_id, row_id=row.id, po_line_id=po_line.id,
+            document=link_document, qty=Decimal("20"), linked_by=world.eling, auto=True,
+            claim_id=claim_id,
+        )
+    )
+    db.commit()
+
+    assert (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_id).count() == 1
+    ), "the row survived - the setup this test needs"
+
+    result = undo_last_confirm(db, order, actor_user_id=world.eling)
+    assert result["revision_no"] == 2
+
+    assert (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_id).count() == 1
+    ), "replay must not duplicate a row that survived"
+
+
+def test_parking_an_undo_that_would_be_refused_answers_409_at_park_time(api):
+    """New contract, follow-up to AC-UC-41: the CREATE route itself pre-checks the
+    refusal predicate before parking a countdown, for an order whose undo
+    `_grouped_refusals` already rejects - here the `linked_after` arm from
+    `test_purchasing_action_after_the_confirm_refuses_the_undo` above, a link on the
+    touched row timestamped after the confirm, absent from the confirm's own insert
+    set. Expect a synchronous 409 with the refusal code in the body, and no pending
+    row parked at all - the disabled gear entry is the only place a browser click
+    ever reaches this, but a raw API call must get the same answer, not a countdown
+    that fails a few seconds later (see `documentation/plans/scm/evidence/
+    board-undo-last-confirm/AC-UC-41-refused-409.txt` for the measured 202 today).
+
+    Today `create_pending_action` parks unconditionally for any UI-channel caller
+    (202) and only refuses at COMMIT time, several seconds after this call returns.
+    """
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    client = fixture["client"]
+    db = fixture["db"]
+    world = fixture["world"]
+    order = fixture["order"]
+    row = fixture["row"]
+    decision2 = fixture["decision2"]
+
+    db.expire_all()
+    row = db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
+    decision2 = db.query(SOSupplyDecision).filter(SOSupplyDecision.id == decision2.id).one()
+
+    po, po_line = _po_line(db, world, qty=15)
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=world.company_id, row_id=row.id, po_line_id=po_line.id,
+            document=po.po_number, qty=Decimal("5"), linked_by=world.eling, auto=False,
+            linked_at=decision2.confirmed_at + timedelta(minutes=1),
+        )
+    )
+    db.commit()
+
+    response = client.post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": "project_sales_order.undo_confirm",
+            "entity_type": "project_sales_order",
+            "entity_id": str(order.id),
+            "payload": {"decision_id": str(decision2.id)},
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert response.json().get("code") == "linked"
+
+    from app.models.sla import SlaFormAction
+
+    assert (
+        db.query(SlaFormAction)
+        .filter(SlaFormAction.source_entity_id == str(order.id))
+        .count()
+        == 0
+    ), "no pending row was parked for a refusal caught at park time"
