@@ -6293,6 +6293,12 @@ class ProjectOrderInquiryService:
             # board's own raise. What a link on an awaiting row MEANS is the whole
             # difference: it is a draft, and Confirm is still the buyer's word.
             OrderInquiryRow.ack_state.in_(linkable_ack),
+            # S1/AC-OH-10..12 (SO314593): a row released to stock (`redirected_to_pool`)
+            # is USED, not owed - its own unlinked remainder is the quantity the fresh row
+            # raised after it already replaces, never a fresh cascade's to fill. One seam
+            # for every trigger through this method: Confirm's own raise pass, Link now /
+            # Auto link all, and a purchase-order confirm.
+            OrderInquiryRow.redirected_to_pool.is_(False),
         )
         if row_ids is not None:
             # The NAMED rows and nothing else. A product scope is right for "this purchase

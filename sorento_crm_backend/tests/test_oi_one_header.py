@@ -134,7 +134,12 @@ class TestCascadeSkipsUsedRows:
         fixture = _redirected_fixture(api)
         row = fixture["redirected_row"]
         new_row = fixture["new_row"]
-        open_alloc = _spo_line(world, qty="50", warehouse=world.warehouse)
+        # 220, matching the fresh row's own unlinked need (REPLAN_QTY): the standing 8 Sep
+        # 2026 cascade rule (`_cascade_take`, "slice D") takes NOTHING when the cascadable
+        # candidates cannot cover the row's need in full, so a smaller open SPO would fail
+        # this assertion for a reason that has nothing to do with AC-OH-11 (the fresh row
+        # never got a chance to be offered a partial).
+        open_alloc = _spo_line(world, qty="220", warehouse=world.warehouse)
 
         ProjectOrderInquiryService(world.db).auto_place_for_products(
             [str(world.product.id)],
@@ -160,7 +165,8 @@ class TestCascadeSkipsUsedRows:
         fixture = _redirected_fixture(api)
         row = fixture["redirected_row"]
         new_row = fixture["new_row"]
-        open_alloc = _spo_line(world, qty="50", warehouse=world.warehouse)
+        # 220, matching the fresh row's own unlinked need - see the AC-OH-11 comment above.
+        open_alloc = _spo_line(world, qty="220", warehouse=world.warehouse)
 
         ProjectOrderInquiryService(world.db).link_now(
             [str(world.product.id)], actor_user_id=world.cs_user, link_horizon="none"
