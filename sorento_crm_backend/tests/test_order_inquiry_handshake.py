@@ -40,6 +40,8 @@ from app.database import engine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
+    ACK_CHANGED,
     ACK_REJECTED,
     INQUIRY_CANCELLED,
     IV_ORDER,
@@ -378,14 +380,13 @@ def _project_committed(world, *, planned: bool) -> Decimal:
 # ---------------------------------------------------------------------------
 
 
-def test_a_board_confirm_raises_rows_born_acknowledged_holding_a_firm_link(api):
-    """SUPERSEDED by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4, AC-1.2).
-
-    A board confirm used to raise `awaiting` rows and leave any link it found as a DRAFT
-    (`PLAN-scm-oi-draft-links.md` R6) - the row still had a Confirm press to survive. There
-    is no manual confirm anywhere any more: the row is born ACKNOWLEDGED, attributed to
-    whoever confirmed the board (CS, here), and the document the raise-time cascade found
-    is a firm placement from the moment it is written.
+def test_a_board_confirm_raises_rows_awaiting_holding_a_firm_link(api):
+    """AC-1.2 REVERSED by `PLAN-oi-confirm-per-so.md` S1 (owner ruling 17 Sep 2026): a
+    board confirm raises `awaiting` rows again - purchasing's own Confirm press is back,
+    G4's "born acknowledged" is retired. What G4 did NOT touch is untouched here either:
+    the raise-time cascade never waited for acknowledgement (`include_awaiting=True`
+    everywhere it matters), so the document it finds is still a FIRM placement - as a
+    draft, since the row is unread - from the moment it is written.
     """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
@@ -393,9 +394,9 @@ def test_a_board_confirm_raises_rows_born_acknowledged_holding_a_firm_link(api):
     fixture = _raise_one_row(api)
     row = fixture["row"]
 
-    assert row.ack_state == ACK_ACKNOWLEDGED
-    assert str(row.acknowledged_by) == str(world.cs_user)
-    assert row.acknowledged_at is not None
+    assert row.ack_state == ACK_AWAITING
+    assert row.acknowledged_by is None
+    assert row.acknowledged_at is None
     assert [link.document for link in _links_of(world, row)] == [po.po_number]
 
 
@@ -405,16 +406,25 @@ def test_a_board_confirm_raises_rows_born_acknowledged_holding_a_firm_link(api):
 
 
 def test_acknowledging_an_already_acknowledged_row_is_a_tolerant_no_op(api):
-    """The endpoint is kept for a caller this build does not control, and its guard is
-    TOLERANT of the born-ack world (G4): a row already acknowledged - the ordinary case now
-    - is not refused and not re-stamped, it just joins the cascade again.
+    """The guard is TOLERANT of a row already acknowledged - a genuine press, now that a
+    row is born `awaiting` again (`PLAN-oi-confirm-per-so.md` S1) and Confirm is what gets
+    it there: it is not refused and not re-stamped on a second press, it just joins the
+    cascade again.
     """
     _client, world = api
     _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
     row = fixture["row"]
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
+
+    with _as_purchasing(world) as buyer:
+        first = buyer.post(ACK_URL, json={"row_ids": [str(row.id)]})
+    assert first.status_code == 200, first.text
+    assert first.json()["acknowledged"] == 1
+    world.db.commit()
+    world.db.refresh(row)
     stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
+    assert stamped_by and stamped_at
 
     with _as_purchasing(world) as buyer:
         response = buyer.post(ACK_URL, json={"row_ids": [str(row.id)]})
@@ -422,30 +432,30 @@ def test_acknowledging_an_already_acknowledged_row_is_a_tolerant_no_op(api):
     world.db.commit()
 
     body = response.json()
-    # 0, not 1 (nit, review of PR #471): the row was ALREADY acknowledged, so nothing
-    # TRANSITIONED - this press is a genuine no-op, and the count says so.
+    # 0, not 1 (nit, review of PR #471): the row was ALREADY acknowledged by the FIRST
+    # press, so nothing TRANSITIONED on this second one - a genuine no-op, and the count
+    # says so.
     assert body["acknowledged"] == 0
-    # Nothing left to link BY THIS PRESS: the raise-time cascade already placed it firmly.
+    # Nothing left to link BY THIS PRESS: the first acknowledge already placed it firmly.
     assert body["linked_rows"] == 0
 
     world.db.refresh(row)
     assert row.ack_state == ACK_ACKNOWLEDGED
-    # NOT re-stamped: the buyer who pressed Acknowledge is not who took the row on.
+    # NOT re-stamped: the second press does not move who took the row on or when.
     assert row.acknowledged_by == stamped_by
     assert row.acknowledged_at == stamped_at
     assert sum(Decimal(str(link.qty)) for link in _links_of(world, row)) == Decimal("10")
 
 
 def test_acknowledge_takes_a_batch_on_in_one_press(api):
-    """Both rows are born acknowledged already (S1), so a press over the pair is
-    tolerant of both - 0 TRANSITIONED, not 2, and neither row's stamp moves."""
+    """Both rows are born `awaiting` (`PLAN-oi-confirm-per-so.md` S1), so a press over
+    the pair genuinely takes BOTH on - 2 TRANSITIONED, and both rows carry a fresh stamp
+    of the SAME buyer and (very nearly) the SAME instant."""
     _client, world = api
     first = _raise_one_row(api, qty="4")
     second = _raise_one_row(api, qty="6")
-    stamps = {
-        str(fixture["row"].id): (fixture["row"].acknowledged_by, fixture["row"].acknowledged_at)
-        for fixture in (first, second)
-    }
+    for fixture in (first, second):
+        assert fixture["row"].ack_state == ACK_AWAITING
 
     with _as_purchasing(world) as buyer:
         response = buyer.post(
@@ -454,14 +464,12 @@ def test_acknowledge_takes_a_batch_on_in_one_press(api):
         )
     assert response.status_code == 200, response.text
     world.db.commit()
-    assert response.json()["acknowledged"] == 0
+    assert response.json()["acknowledged"] == 2
     for fixture in (first, second):
         world.db.refresh(fixture["row"])
         assert fixture["row"].ack_state == ACK_ACKNOWLEDGED
-        assert (
-            fixture["row"].acknowledged_by,
-            fixture["row"].acknowledged_at,
-        ) == stamps[str(fixture["row"].id)]
+        assert str(fixture["row"].acknowledged_by) == str(world.buyer)
+        assert fixture["row"].acknowledged_at is not None
 
 
 def test_acknowledging_a_rejected_row_is_refused(api):
@@ -509,10 +517,8 @@ def test_a_cs_user_is_refused_by_every_write_route(api):
 
 
 def test_the_ack_filter_narrows_the_list_and_the_facet_counts_all_four_states(api):
-    """A row is born acknowledged now (G4), so `rejected` is the reliable way to seed a row
-    NOT reading `acknowledged` - `awaiting` is still a legal filter value (the facet still
-    names it, for the rare pre-migration or system row), but nothing this suite raises ever
-    sits in it."""
+    """A row is born `awaiting` now (`PLAN-oi-confirm-per-so.md` S1), so an explicit
+    Confirm press is what puts a row into `acknowledged` for this test to filter on."""
     client, world = api
     rejected = _raise_one_row(api, qty="4")
     acknowledged = _raise_one_row(api, qty="6")
@@ -521,6 +527,12 @@ def test_the_ack_filter_narrows_the_list_and_the_facet_counts_all_four_states(ap
         assert (
             buyer.post(
                 f"{LIST}/{rejected['row'].id}/reject", json={"reason": "No stock"}
+            ).status_code
+            == 200
+        )
+        assert (
+            buyer.post(
+                ACK_URL, json={"row_ids": [str(acknowledged["row"].id)]}
             ).status_code
             == 200
         )
@@ -572,7 +584,7 @@ def test_a_reject_with_no_reason_is_refused(api):
     assert blank.status_code == 422, blank.text
     assert missing.status_code == 422, missing.text
     world.db.refresh(fixture["row"])
-    assert fixture["row"].ack_state == ACK_ACKNOWLEDGED
+    assert fixture["row"].ack_state == ACK_AWAITING
 
 
 def test_a_rejected_row_records_who_when_and_why(api):
@@ -742,32 +754,37 @@ def _settle(world, fixture, *, qty, required_date=NOW):
     return result
 
 
-def test_an_amend_settles_in_place_stamps_changed_then_auto_acknowledges(api):
-    """AC-1.3 (`PLAN-scm-reorder-oi-feedback-1sep.md` S1, supersedes AC-H7/AC-H8).
-
-    A row is born acknowledged now, so there is no "before acknowledgement" case left to
-    leave alone - CS amending an instruction always settles an ALREADY acknowledged row.
-    The settle still stamps `changed_at` and the previous value, exactly as it always did,
-    and then immediately re-acknowledges: no manual confirm exists anywhere any more.
+def test_an_amend_before_acknowledgement_is_silent_on_the_handshake(api):
+    """AC-H7, restored by `PLAN-oi-confirm-per-so.md` S1 (owner ruling 17 Sep 2026): a row
+    is born AWAITING again, so the "before acknowledgement" case G4 collapsed away is real
+    once more. `_settle_row_in_place`'s ack_state guard only fires for
+    ACKNOWLEDGED/CHANGED, so amending an unread row updates its qty/date and the Was/Now
+    figures but leaves the handshake itself untouched - CS is free to change what
+    purchasing has not read, and marking it would ask them to re-read something they never
+    read.
     """
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
 
     _settle(world, fixture, qty="25")
 
     world.db.refresh(row)
-    assert row.ack_state == ACK_ACKNOWLEDGED
-    assert row.changed_at is not None
-    assert str(row.acknowledged_by) == str(world.cs_user)
+    assert row.ack_state == ACK_AWAITING
+    assert row.changed_at is None
+    assert row.acknowledged_by is None
+    assert row.acknowledged_at is None
     assert Decimal(str(row.qty)) == Decimal("25")
     assert Decimal(str(row.previous_qty)) == Decimal("10")
 
 
-def test_an_amend_after_a_manual_acknowledge_auto_acknowledges_again_and_keeps_its_links(api):
-    """AC-1.3. The row is updated in place with the previous value, and immediately reads
-    acknowledged again rather than sitting on a `changed` a person has to clear."""
+def test_an_amend_after_acknowledgement_marks_changed_without_reacknowledging(api):
+    """AC-H8/AC-H9, REVERSED again by `PLAN-oi-confirm-per-so.md` S1/R2 (owner ruling 17
+    Sep 2026: "change is inevitable ... need to change that back to be To confirm"). The
+    row is updated in place with the previous value, stamps `changed`, and goes BACK to
+    To confirm rather than auto-reacknowledging - purchasing's own PRIOR stamp travels
+    untouched, because this is the change coming back to them to confirm again."""
     _client, world = api
     _open_po_line(world, qty=50)
     fixture = _raise_one_row(api)
@@ -776,13 +793,18 @@ def test_an_amend_after_a_manual_acknowledge_auto_acknowledges_again_and_keeps_i
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
-    assert _links_of(world, row), "born acknowledged, so the raise already linked it"
+    world.db.refresh(row)
+    stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
+    assert stamped_by and stamped_at
+    assert _links_of(world, row), "acknowledging linked it against the open line"
 
     _settle(world, fixture, qty="25")
 
     world.db.refresh(row)
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_CHANGED
     assert row.changed_at is not None
+    assert row.acknowledged_by == stamped_by
+    assert row.acknowledged_at == stamped_at
     assert Decimal(str(row.qty)) == Decimal("25")
     assert _links_of(world, row), "a change keeps what the buyer already arranged"
     assert "Was 10" in (row.note or ""), "the previous value travels with the row"
@@ -796,8 +818,9 @@ def test_an_amend_after_a_manual_acknowledge_auto_acknowledges_again_and_keeps_i
 def test_the_previous_value_reaches_the_wire_as_two_figures(api):
     """AC-H14 for the Was half: the list states `previous_qty` / `previous_delivery_date`,
     so nothing downstream has to read the note's prose to draw the change. Read off THOSE
-    two figures, not off `ack_state` (S1, AC-1.5): the row auto-acknowledges the instant it
-    settles, so a screen keying the Was/Now table off `changed` would never draw it."""
+    two figures, not off `ack_state` alone: `ack_state` genuinely reads `changed` once
+    purchasing has read the row and CS amends it again (`PLAN-oi-confirm-per-so.md` S1/R2),
+    but the Was/Now table has to draw from the SAME two columns whatever `ack_state` says."""
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
@@ -812,7 +835,7 @@ def test_the_previous_value_reaches_the_wire_as_two_figures(api):
     wire = next(
         entry for entry in listed.json()["data"] if entry["id"] == str(row.id)
     )
-    assert wire["ack_state"] == ACK_ACKNOWLEDGED
+    assert wire["ack_state"] == ACK_CHANGED
     assert wire["previous_qty"] == "10"
     assert wire["previous_delivery_date"] == WAS.isoformat()
     assert wire["qty"] == "25", "and the Now half is the row's own quantity"
@@ -866,7 +889,9 @@ def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_acknowledged(
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
+    world.db.refresh(row)
     stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
+    assert stamped_by and stamped_at
 
     # The book gains a purchase order for the item AFTER purchasing took the line on.
     po, _line = _open_po_line(world, qty=50)
@@ -996,14 +1021,16 @@ def test_confirming_one_line_leaves_the_other_lines_acknowledgement_alone(api):
 
 
 def test_a_carried_line_that_nobody_manually_acknowledged_keeps_its_born_stamp(api):
-    """The other half of the same rule (superseded by G4): a carry says nothing about a
-    row - born acknowledged at raise, here, since nobody pressed anything for it - its
-    handshake travels verbatim (AC-1.2)."""
+    """The other half of the same rule: a carry says nothing about a row - born AWAITING
+    at raise, here, since nobody pressed anything for it (`PLAN-oi-confirm-per-so.md` S1)
+    - its handshake travels verbatim (AC-1.2), which for a never-read row is simply
+    staying `awaiting` with no stamp."""
     _client, world = api
     fixture = _raise_two_rows(api)
     first_row = fixture["first"]["row"]
-    assert first_row.ack_state == ACK_ACKNOWLEDGED
-    born_by, born_at = first_row.acknowledged_by, first_row.acknowledged_at
+    assert first_row.ack_state == ACK_AWAITING
+    assert first_row.acknowledged_by is None
+    assert first_row.acknowledged_at is None
 
     response = _confirm(
         _client, fixture["order"].id, [_line_payload(fixture["second"]["line"].id, buy_qty="6")]
@@ -1012,9 +1039,9 @@ def test_a_carried_line_that_nobody_manually_acknowledged_keeps_its_born_stamp(a
     world.db.commit()
 
     carried = _order_row(world, fixture["first"]["line"])
-    assert carried.ack_state == ACK_ACKNOWLEDGED
-    assert carried.acknowledged_by == born_by
-    assert carried.acknowledged_at == born_at
+    assert carried.ack_state == ACK_AWAITING
+    assert carried.acknowledged_by is None
+    assert carried.acknowledged_at is None
 
 
 def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp(api):
@@ -1025,14 +1052,16 @@ def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp
     reaching `_settle_row_in_place` with `need == previous_qty` and no date change must
     settle as a no-op: no `changed_at`, no rewritten note, no repeated `previous_qty`,
     and the SAME link untouched - not a false "Was 10 -> Now 10" on a line the reconfirm
-    never named.
+    never named. The row stays `awaiting` throughout
+    (`PLAN-oi-confirm-per-so.md` S1): a no-op settle never reaches the ack_state guard at
+    all, so there is nothing here for it to move.
     """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
     fixture = _raise_two_rows(api)
     first_row = fixture["first"]["row"]
     assert first_row.state == "placed", "the raise-time cascade has to have linked it whole"
-    born_by, born_at = first_row.acknowledged_by, first_row.acknowledged_at
+    assert first_row.ack_state == ACK_AWAITING
     born_note = first_row.note
     (first_link,) = _links_of(world, first_row)
     first_link_id = str(first_link.id)
@@ -1046,9 +1075,9 @@ def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp
 
     carried = _order_row(world, fixture["first"]["line"])
     assert str(carried.id) == str(first_row.id), "the same row, not a fresh one"
-    assert carried.ack_state == ACK_ACKNOWLEDGED
-    assert carried.acknowledged_by == born_by
-    assert carried.acknowledged_at == born_at
+    assert carried.ack_state == ACK_AWAITING
+    assert carried.acknowledged_by is None
+    assert carried.acknowledged_at is None
     assert carried.changed_at is None, "nothing about this line changed"
     assert carried.previous_qty is None, "a no-op settle writes no Was/Now"
     assert carried.previous_delivery_date is None
@@ -1060,8 +1089,10 @@ def test_a_carried_lines_own_link_survives_reconfirm_with_no_false_changed_stamp
 
 def test_a_rejected_line_re_decided_raises_a_fresh_acknowledged_row(api):
     """AC-H6's last clause, pinned against the inheritance rule above: what CS raises
-    after a refusal is a NEW instruction, born acknowledged like any other (G4) - never the
-    refused one's state, and never a manual confirm."""
+    after a refusal is a NEW instruction, born AWAITING like any other
+    (`PLAN-oi-confirm-per-so.md` S1) - never the refused one's state, and never a manual
+    stamp: a rejected row is not `_live_handshake`'s to point at, whatever it carried
+    before the refusal."""
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
@@ -1083,8 +1114,8 @@ def test_a_rejected_line_re_decided_raises_a_fresh_acknowledged_row(api):
 
     fresh = _order_row(world, fixture["line"])
     assert str(fresh.id) != str(row.id)
-    assert fresh.ack_state == ACK_ACKNOWLEDGED
-    assert str(fresh.acknowledged_by) == str(world.cs_user)
+    assert fresh.ack_state == ACK_AWAITING
+    assert fresh.acknowledged_by is None
     assert fresh.changed_at is None
     world.db.refresh(row)
     assert row.ack_state == ACK_REJECTED, "the refusal itself stays readable"
@@ -1095,17 +1126,25 @@ def test_a_rejected_line_re_decided_raises_a_fresh_acknowledged_row(api):
 # ---------------------------------------------------------------------------
 
 
-def test_the_plan_counts_the_row_the_instant_it_is_raised_no_confirm_needed(api):
-    """AC-1.8 (`PLAN-scm-reorder-oi-feedback-1sep.md` S1): born acknowledged means the
-    plan's own committed SELECT sees a fresh row immediately - there is no confirm step
-    between the raise and the next reorder run counting the demand."""
+def test_the_plan_counts_a_row_only_once_purchasing_confirms_it(api):
+    """AC-H10, RESTORED by `PLAN-oi-confirm-per-so.md` S1 (owner ruling 17 Sep 2026): a
+    row is born AWAITING again, so the plan's own committed SELECT does not see it until
+    purchasing's Confirm press takes it on - the "instant count, no confirm step" this
+    test used to pin (G4, AC-1.8) is exactly what S1 reverses. `committed_v` (the
+    unplanned reading) still counts it either way - it is still owed - which is what
+    `test_a_rejected_row_leaves_committed_v_and_the_plans_own_demand` already pins."""
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
 
-    assert _project_committed(world, planned=True) == Decimal("10")
+    assert _project_committed(world, planned=True) == Decimal("0")
     assert _project_committed(world, planned=False) >= Decimal("10")
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
+    world.db.commit()
+    assert _project_committed(world, planned=True) == Decimal("10")
 
 
 def test_a_rejected_row_is_not_something_to_buy_against(api):
@@ -1126,15 +1165,16 @@ def test_a_rejected_row_is_not_something_to_buy_against(api):
     assert _project_committed(world, planned=True) == Decimal("0")
 
 
-def test_raising_a_row_no_longer_moves_the_awaiting_count(api):
-    """The plan page's own chip is gone (S1, AC-1.8): a fresh row is born acknowledged, so
-    the count this function reports does not move when one is raised any more."""
+def test_raising_a_row_moves_the_awaiting_count_again(api):
+    """The plan page's own chip is back (`PLAN-oi-confirm-per-so.md` S1): a fresh row is
+    born AWAITING again, so the count this function reports moves the instant one is
+    raised - the opposite of the G4-era test this replaces."""
     from app.services.scm.reorder_run_service import awaiting_acknowledgement_rows
 
     _client, world = api
     before = awaiting_acknowledgement_rows(world.db)
     _raise_one_row(api)
-    assert awaiting_acknowledgement_rows(world.db) == before
+    assert awaiting_acknowledgement_rows(world.db) == before + 1
 
 
 # ---------------------------------------------------------------------------
@@ -1268,7 +1308,7 @@ def test_the_sales_order_detail_carries_the_handshake(api):
 
     body = client.get(f"{BASE}/sales-orders/{fixture['order'].id}/order-inquiry").json()
     row = next(item for item in body["rows"] if item["id"] == str(fixture["row"].id))
-    assert row["ack_state"] == ACK_ACKNOWLEDGED
+    assert row["ack_state"] == ACK_AWAITING
     assert "rejected_reason" in row and "changed_at" in row
 
 
@@ -1318,9 +1358,11 @@ def _taken_off(world, line) -> Decimal:
 
 
 def test_acknowledge_leaves_a_row_due_after_the_horizon_not_linked(api):
-    """AC-LH1. Two acknowledged rows of one product, one open purchase-order line of 100,
-    and a horizon between them: the near row links, the far one stays Not linked and the
-    line keeps the rest of its quantity for whoever needs it sooner."""
+    """AC-LH1. Two rows of one product, both born `awaiting`
+    (`PLAN-oi-confirm-per-so.md` S1), one open purchase-order line of 100, and a horizon
+    between them: the press genuinely takes both on, the near row links, the far one
+    stays Not linked and the line keeps the rest of its quantity for whoever needs it
+    sooner."""
     _client, world = api
     _po, line = _open_po_line(world, qty=100)
     near = _due(world, _raise_one_row(api, qty="10")["row"], NEAR)
@@ -1338,10 +1380,9 @@ def test_acknowledge_leaves_a_row_due_after_the_horizon_not_linked(api):
     world.db.commit()
 
     body = response.json()
-    # 0, not 2 (nit, review of PR #471): both rows are born acknowledged already, so the
-    # press TRANSITIONS neither - it only runs the cascade, which is what this test is
-    # really about.
-    assert body["acknowledged"] == 0
+    # Both TRANSITION (2), not 0: both rows started `awaiting`, and this press is their
+    # first genuine Confirm.
+    assert body["acknowledged"] == 2
     assert body["linked_rows"] == 1
     assert body["after_horizon"] == 1
     assert body["link_up_to"] == HORIZON.isoformat()

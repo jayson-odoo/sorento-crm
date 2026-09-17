@@ -636,6 +636,12 @@ export interface AcknowledgeResult {
   link_up_to?: string | null;
   /** Whether a horizon was in force at all (S1). */
   link_horizon?: 'date' | 'none';
+  /**
+   * PLAN-oi-confirm-per-so (AC-CF-8): a rejected or cancelled row named in `row_ids` or
+   * matching `filter` that this press left alone. Optional so a page rendered against an
+   * older answer still reads; the FE reads `undefined` as 0 rather than hiding the count.
+   */
+  skipped?: number;
 }
 
 /* --------------------------------------------------------- the schedule matrix
@@ -781,6 +787,34 @@ export interface OrderInquiryPoCandidate {
    * still succeeds and writes the claim; always false on a pool-destination line.
    */
   unattributed?: boolean;
+  /**
+   * S8 (AC-CF-24): what THIS row already takes off this line, `"0"` when it holds none.
+   * `remaining` is already credited back to include it, so re-placing the same take
+   * never reads as over the line's remaining.
+   */
+  current_take?: string;
+  /**
+   * S8 review round (17 Sep): `false` only on a candidate FORCED into the list because
+   * this row already links to it - a line closed, or its PO taken off active/partial,
+   * since that link was written. Every ordinary candidate the walk offers is `true`.
+   */
+  line_open?: boolean;
+}
+
+/**
+ * The Link dialog's own GET (S8): the candidate list, plus the header line the dialog
+ * reads - "N still to link of Q" - computed off the row's own unlinked remainder.
+ */
+export interface OrderInquiryPoCandidatesResponse {
+  candidates: OrderInquiryPoCandidate[];
+  still_to_link: string;
+  /**
+   * S8 review round (17 Sep): `row.qty - row.bundled_qty` - the SAME ceiling
+   * `_place_on_po_set` enforces server-side. The dialog's own capacity check and
+   * footer total read this, not the row's bare `qty` prop, which overstates what a
+   * bundled row can actually hold.
+   */
+  linkable_qty?: string;
 }
 
 /**
