@@ -32,7 +32,10 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
     ACK_AWAITING,
     ALLOC_SOURCE_ORDER,
+    INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
+    INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiry,
@@ -58,6 +61,7 @@ from .test_so_supply_confirmation import (  # noqa: F401  (api is a fixture)
     _core_so,
     _project_line,
     _project_so,
+    _stock,
     _suffix,
     _uid,
     _user,
@@ -1215,3 +1219,125 @@ def test_reconstruct_refuses_cleanly_when_confirmed_at_is_none(api):
 # attempting exactly this fixture: `psycopg2.errors.UniqueViolation` on `uq_project_
 # order_inquiry_per_sales_order`. Reported to the captain rather than landing a test
 # against a state the schema already forbids.
+
+
+# =============================================================================== #
+# AC-R2-19: no line reads Confirmed once every revision of an order is undone     #
+# (reconstructed path, no prior decision). Owner hand test 18 Sep found nine      #
+# lines still `Confirmed` on the board with zero decisions left in the DB, on an  #
+# order shaped like SO314594: pre-existing OI rows sheet-migrated in (placed /    #
+# partly_linked / actioned, no `supply_decision_id`) alongside a line an active   #
+# decision covered. TEST-FIRST against today's board read, which still marks the #
+# undone line `covered: true` - the red below fails on that field reading true.  #
+# =============================================================================== #
+
+
+def test_no_confirmed_verdict_after_reconstructed_undo_with_no_prior(api):
+    """AC-R2-19. A journal-less decision with `supersedes_id = None` (the order's
+    FIRST and only revision) is reconstructed away entirely. The board read for that
+    order must then show every line undecided (`covered = False`, `decision = None`),
+    the order's own `undo` gone (nothing left to undo), and - as a control that the
+    assertion above is not trivially true because the whole board went blank - a
+    SECOND line that only ever carried a saved draft (never confirmed) still reads
+    Saved (`draft` present, `covered = False`)."""
+    from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=300)
+
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="30")
+    core_line_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="15")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    _project_line(db, order, line_no=20, product=world.product, core_line=core_line_2)
+    db.commit()
+
+    inquiry = OrderInquiry(
+        company_id=world.company_id, project_sales_order_id=order.id,
+        state=INQUIRY_RAISED, raised_by=world.eling,
+    )
+    db.add(inquiry)
+    db.flush()
+
+    t1 = datetime.utcnow() - timedelta(hours=1)
+    decision_d = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling, confirmed_at=t1, supersedes_id=None,
+        undo_journal=None,
+    )
+    db.add(decision_d)
+    db.flush()
+
+    covered_row = OrderInquiryRow(
+        company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
+        item_code=world.product.product_code, qty=Decimal("30"), verb=IV_ORDER,
+        state=INQUIRY_RAISED, supply_decision_id=decision_d.id,
+        created_at=t1 - timedelta(hours=1),
+    )
+    db.add(covered_row)
+
+    # SO314594's own shape: pre-existing OI rows sheet-migrated onto the order, no
+    # `supply_decision_id` at all - purchasing already partway through them, wholly
+    # independent of the decision that gets reconstructed away.
+    for state in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED, INQUIRY_ACTIONED):
+        db.add(OrderInquiryRow(
+            company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
+            item_code=world.product.product_code, qty=Decimal("5"), verb=IV_ORDER,
+            state=state, supply_decision_id=None,
+        ))
+    db.commit()
+
+    reconstruct_undo(db, order, decision_d, actor_user_id=world.eling)
+    db.commit()
+
+    # The control draft is written AFTER the reconstruct (its own save has nothing to
+    # do with the undo), keyed off the board's own contribution key for line 20 so the
+    # bucket the draft was "saved in" matches what a real Save would have written.
+    before = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert before.status_code == 200, before.text
+    line_2_key = next(
+        c["key"] for c in before.json()["contributions"]
+        if c["sales_order_id"] == str(core_so.id) and c["line_no"] == 20
+    )
+    db.add(SOSupplyDecisionDraft(
+        id=_uid(), sales_order_id=core_so.id, core_line_id=core_line_2.id,
+        line_no=20, item_code=world.product.product_code,
+        bucket_key=line_2_key.split("|")[3],
+        decision={"buy_qty": "15"}, saved_by=world.eling,
+    ))
+    db.commit()
+
+    response = client.get(
+        f"{BASE}/fulfilment-planning/board", params={"orders": core_so.so_number}
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    by_so = {row["so_number"]: row for row in payload["orders"]}
+    assert by_so[core_so.so_number]["undo"] is None, (
+        "AC-R2-19: a fully undone order must offer no undo entry"
+    )
+
+    contributions = [
+        c for c in payload["contributions"] if c["sales_order_id"] == str(core_so.id)
+    ]
+    assert contributions, "sanity: the board must still carry this order's lines"
+    for row in contributions:
+        assert row["covered"] is False, (
+            f"AC-R2-19: line {row['line_no']} still reads covered (Confirmed) after "
+            f"a full undo, with zero decisions left in the DB: {row}"
+        )
+        assert row["decision"] is None, (
+            f"AC-R2-19: line {row['line_no']} still carries a decision after a full undo"
+        )
+
+    saved_line = next(c for c in contributions if c["line_no"] == 20)
+    assert saved_line["draft"] is not None, (
+        "control: a line that only ever carried a saved draft must still read Saved"
+    )

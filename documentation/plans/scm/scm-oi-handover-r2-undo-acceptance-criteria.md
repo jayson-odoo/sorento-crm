@@ -115,6 +115,25 @@ reconstructed undo (the countdown is the confirmation). Everything else is deriv
   18 Sep): purchasing reads one page per Confirm. A Confirm on an order with no still-raised
   amendment rows appends nothing.
 
+- **AC-R2-18 [BE]** Given no line in one email carries a `was.qty`, when the line table
+  prints, then the `QTY CHANGE TO` column is absent from header and rows (HTML and text); the
+  same rule for `DELIVERY DATE CHANGE TO` on `was.delivery_date`. Either column appears as
+  soon as one line in that email carries the matching change. (Owner ruling Q5, 18 Sep.)
+- **AC-R2-19 [BE+FE]** Given a line whose only cover is a live sheet-migrated inquiry row (no
+  active decision names it), when the board renders it, then the pill reads `With purchasing`
+  (not `Confirmed`), `decision` is null and `undo` for the order is None. Owner hand test 18 Sep:
+  nine lines read `Confirmed` with zero decisions in the DB.
+- **AC-R2-19a [BE]** Given a revision minted by a planning-change apply (its batch row is
+  `applied`, the batch names this order's lines), when that revision is reconstructed-undone,
+  then the batch's rows for this order return to `pending` and the batch's `applied_at` is
+  cleared when no applied row of it remains, so the board proposes the drifted lines again
+  (same as the journal undo, ruling 4 of PLAN-board-undo-last-confirm). A revision from a plain
+  confirm touches no batch.
+- **AC-R2-19b [BE]** Given a row this revision SETTLED in place with no prior decision to repoint
+  to, when the revision is reconstructed-undone, then the row keeps `supply_decision_id` NULL
+  ONLY if it was NULL before the settle (a sheet-migrated row, restored to `previous_qty`), and
+  a row this revision raised is deleted; no row is left alive pointing at a deleted decision.
+
 ### S3 Subject location
 
 - **AC-R2-14 [BE]** Given the lines of one email carry `stock_location` values `{"BRW-IR",

@@ -2218,6 +2218,157 @@ def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
 
 
 # --------------------------------------------------------------------------- #
+# AC-R2-18: the QTY CHANGE TO / DELIVERY DATE CHANGE TO columns are each      #
+# absent (header AND every row) unless at least one line in THAT email       #
+# carries the matching `was` field - a per-batch, not a per-line, decision.  #
+# TEST-FIRST against the r2 template as it stands today (both columns always #
+# print): every assertion below that a CHANGE TO column is ABSENT is the red #
+# - the column is present unconditionally, so it fails for the right reason. #
+# (Owner ruling Q5, 18 Sep.)                                                  #
+# --------------------------------------------------------------------------- #
+
+_PLAIN_LINE_HEADERS = [
+    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE", "REMARK",
+]
+_QTY_CHANGE_LINE_HEADERS = [
+    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "QTY CHANGE TO", "DELIVERY DATE", "REMARK",
+]
+_DATE_CHANGE_LINE_HEADERS = [
+    "SO DATE", "S/O NO", "ITEM CODE", "QTY", "DELIVERY DATE",
+    "DELIVERY DATE CHANGE TO", "REMARK",
+]
+
+
+def _handover_context(lines: list[dict]) -> dict:
+    return {
+        "handover": {
+            "subject_scope": "SO314594",
+            "verbs": [line["remark"].split()[0] for line in lines],
+            "headline": lines[0]["remark"],
+            "orders": [
+                {"so_number": "SO314594", "customer": "BUIMACO", "project": "TUJU RESIDENCE"}
+            ],
+            "lines": lines,
+            "line_count": len(lines),
+            "link": "https://crm.test/project-sales/order-inquiries?query=SO314594",
+        },
+        "actor": {"name": "Eling", "email": "eling@sorento.com.my"},
+        "today": "18/09/2026",
+    }
+
+
+def _render_r2(db, lines: list[dict]) -> dict:
+    from app.services.email_template_service import EmailTemplateService
+
+    template = _r2_template(db)
+    return EmailTemplateService(db).render(template, _handover_context(lines))
+
+
+def _line_headers(html: str) -> list[str]:
+    headers = [
+        re.sub(r"<[^>]+>", "", h).strip()
+        for h in re.findall(r"<th[^>]*>(.*?)</th>", html, re.S)
+    ]
+    # CUSTOMER/PROJECT belong to the SO table above only - the SO table always has
+    # exactly three <th>s (S/O NO, CUSTOMER, PROJECT), so the line table's own headers
+    # are everything after those three.
+    return headers[3:]
+
+
+def test_handover_r2_column_visibility_no_changes_omits_both_columns():
+    """AC-R2-18(a). Three plain raised lines, none carrying `was` - neither CHANGE TO
+    column should appear anywhere, header or row, HTML or text."""
+    lines = [
+        {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "CSH2072",
+            "qty": "214", "delivery_date": "01/09/2026", "remark": "ORDER", "was": None,
+        },
+        {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "CSH2073",
+            "qty": "100", "delivery_date": "01/09/2026", "remark": "ORDER", "was": None,
+        },
+        {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "CSH2074",
+            "qty": "50", "delivery_date": "01/09/2026", "remark": "ORDER", "was": None,
+        },
+    ]
+    with blank_session() as db:
+        rendered = _render_r2(db, lines)
+        html, text = rendered["body_html"], rendered["body_text"]
+
+        assert "QTY CHANGE TO" not in html, "AC-R2-18(a): QTY CHANGE TO must not appear in body_html"
+        assert "QTY CHANGE TO" not in text, "AC-R2-18(a): QTY CHANGE TO must not appear in body_text"
+        assert "DELIVERY DATE CHANGE TO" not in html, (
+            "AC-R2-18(a): DELIVERY DATE CHANGE TO must not appear in body_html"
+        )
+        assert "DELIVERY DATE CHANGE TO" not in text, (
+            "AC-R2-18(a): DELIVERY DATE CHANGE TO must not appear in body_text"
+        )
+        assert _line_headers(html) == _PLAIN_LINE_HEADERS, (
+            f"AC-R2-18(a): remaining six headers must stay in order, got {_line_headers(html)}"
+        )
+
+
+def test_handover_r2_column_visibility_qty_change_shows_only_that_column():
+    """AC-R2-18(b). One settled-qty line plus one plain line - QTY CHANGE TO must
+    appear (at least one line carries `was.qty`); DELIVERY DATE CHANGE TO must not
+    (no line carries `was.delivery_date`)."""
+    lines = [
+        {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "SRTWCX8605-S-RL-PJ",
+            "qty": "214", "delivery_date": "01/09/2026", "remark": "ORDER 32",
+            "was": {"qty": "182"},
+        },
+        {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "CSH2072",
+            "qty": "50", "delivery_date": "01/09/2026", "remark": "ORDER", "was": None,
+        },
+    ]
+    with blank_session() as db:
+        rendered = _render_r2(db, lines)
+        html, text = rendered["body_html"], rendered["body_text"]
+
+        assert "QTY CHANGE TO" in html, "AC-R2-18(b): QTY CHANGE TO must appear in body_html"
+        assert "QTY CHANGE TO" in text, "AC-R2-18(b): QTY CHANGE TO must appear in body_text"
+        assert "DELIVERY DATE CHANGE TO" not in html, (
+            "AC-R2-18(b): DELIVERY DATE CHANGE TO must not appear in body_html"
+        )
+        assert "DELIVERY DATE CHANGE TO" not in text, (
+            "AC-R2-18(b): DELIVERY DATE CHANGE TO must not appear in body_text"
+        )
+        assert _line_headers(html) == _QTY_CHANGE_LINE_HEADERS, (
+            f"AC-R2-18(b): headers wrong, got {_line_headers(html)}"
+        )
+
+
+def test_handover_r2_column_visibility_date_change_shows_only_that_column():
+    """AC-R2-18(c). One settled-date line - the reverse of (b): DELIVERY DATE
+    CHANGE TO must appear, QTY CHANGE TO must not."""
+    lines = [
+        {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "CB2806A",
+            "qty": "280", "delivery_date": "01/04/2027", "remark": "DELAY",
+            "was": {"delivery_date": "01/09/2026"},
+        },
+    ]
+    with blank_session() as db:
+        rendered = _render_r2(db, lines)
+        html, text = rendered["body_html"], rendered["body_text"]
+
+        assert "DELIVERY DATE CHANGE TO" in html, (
+            "AC-R2-18(c): DELIVERY DATE CHANGE TO must appear in body_html"
+        )
+        assert "DELIVERY DATE CHANGE TO" in text, (
+            "AC-R2-18(c): DELIVERY DATE CHANGE TO must appear in body_text"
+        )
+        assert "QTY CHANGE TO" not in html, "AC-R2-18(c): QTY CHANGE TO must not appear in body_html"
+        assert "QTY CHANGE TO" not in text, "AC-R2-18(c): QTY CHANGE TO must not appear in body_text"
+        assert _line_headers(html) == _DATE_CHANGE_LINE_HEADERS, (
+            f"AC-R2-18(c): headers wrong, got {_line_headers(html)}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # AC-R2-06: an amendment-derived DELAY/ADVANCE row carries `was.delivery_date` #
 # and a bare-verb REMARK, never "DELAY - Was 2026-08-25".                     #
 # --------------------------------------------------------------------------- #
