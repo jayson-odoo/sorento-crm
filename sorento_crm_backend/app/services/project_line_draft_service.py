@@ -28,8 +28,10 @@ from sqlalchemy.orm import Session
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.project_so import (
+    DECISION_ACTIVE,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
     SOSupplyDecisionDraft,
 )
 from app.models.user import User
@@ -246,6 +248,15 @@ def save_draft(
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
+    if decision.get("verdict") != "amended" and _covered_by_active_decision(db, core_line):
+        raise AppException(
+            status_code=409,
+            message=(
+                "This line is already confirmed. Amend it to change the decision, "
+                "or undo the confirmation."
+            ),
+            code="board_line_already_confirmed",
+        )
     row = _row_for(db, str(core_line.id), company_id=core_line.company_id)
     if row is None:
         row = SOSupplyDecisionDraft(
@@ -394,6 +405,28 @@ def is_stale(
     current_qty = qty_text(open_qty)
     current_date = required_date.isoformat() if required_date else None
     return snapshot.get("open_qty") != current_qty or snapshot.get("required_date") != current_date
+
+
+def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
+    """R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
+    every line, and the drafts printed Saved over an already-Confirmed line. Covered = an
+    ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core line.
+    """
+    decisions = (
+        db.query(SOSupplyDecision)
+        .join(ProjectSalesOrder, ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id)
+        .filter(
+            ProjectSalesOrder.so_id == core_line.sales_order_id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .all()
+    )
+    core_line_id = str(core_line.id)
+    for decision in decisions:
+        for snapshot in decision.line_snapshots or []:
+            if (snapshot or {}).get("core_line_id") == core_line_id:
+                return True
+    return False
 
 
 def _row_for(

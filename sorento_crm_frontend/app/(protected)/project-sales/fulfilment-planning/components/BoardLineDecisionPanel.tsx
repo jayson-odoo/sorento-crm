@@ -39,6 +39,14 @@ import { BorrowAddDialog } from './BorrowAddDialog';
 import { ReserveAddDialog } from './ReserveAddDialog';
 
 /**
+ * R1's own 409 sentence (`project_line_draft_service.save_draft`), stated here before the
+ * round trip rather than after it (R2): a covered line refuses a plain Save or Reject, so
+ * the panel says so up front instead of sending a PUT the server would only refuse.
+ */
+const CONFIRMED_LINE_TITLE =
+  'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
+
+/**
  * The decision on one contributing line, taken IN THE ROW (PLAN section 3.C, ruling R7).
  *
  * It used to be a modal over a modal: the row carried Approve / Amend / Reject buttons, and
@@ -205,9 +213,27 @@ export function BoardLineDecisionPanel({
   // does not pass this and still refuses the mix (`SupplyLineCard`).
   const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
   const needsReason = amendNeedsReason(contribution, draft);
-  // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
-  // own composition is never blocked, because there is nothing about it to balance or justify.
+  /**
+   * Which verdict Save takes, and therefore what it may be pressed for: approving the
+   * engine's own composition is never blocked, because there is nothing about it to balance
+   * or justify. NEVER on a COVERED line, though (R1, `save()` below) - the server has
+   * refused an `approved` verdict there with a 409 since the SO314595 incident (17 Sep
+   * 2026), and the suspected-system-issue tick is part of what was decided, not a detail
+   * riding beside it, so it counts toward whether there is anything left to amend.
+   */
   const approving = matchesSuggestion(contribution, draft);
+  const covered = Boolean(contribution.covered);
+  const suspectedChanged =
+    suspected !== Boolean(contribution.decision?.suspected_system_issue);
+  /**
+   * R1/R2: on a covered line the server only accepts a real amendment, so the panel refuses
+   * BEFORE the round trip rather than after. `needsReason` is already "has the composition
+   * moved since the frozen decision" (`amendNeedsReason`'s own baseline, on a covered line,
+   * IS `contribution.decision`) - a draft that has not moved has nothing to amend. The tick
+   * is the other half: unticking (or ticking) it with the composition otherwise untouched is
+   * still a change to what was decided, so it alone must be enough to unlock Save.
+   */
+  const alreadyConfirmed = covered && !needsReason && !suspectedChanged;
   const canSave =
     blockers.length === 0 && (!needsReason || reason.trim().length > 0);
   const fromStockMinor =
@@ -339,10 +365,16 @@ export function BoardLineDecisionPanel({
    * (`decisionFromAmendDraft(suggestionDraftFrom(contribution), '')`), so this is the same
    * derivation one step earlier - a draft and its own confirmation cannot disagree about what
    * an approval actually composed.
+   *
+   * NEVER on a COVERED line (R1): the server refuses an `approved` verdict there outright,
+   * so a covered line always takes the ELSE branch below regardless of `approving` - an
+   * unlocked, re-typed suggestion on a confirmed line is still an amendment that happens to
+   * match the engine's numbers, not an approval.
    */
   const save = async () => {
     let ok: boolean | void;
-    if (approving) {
+    const approvingNow = approving && !covered;
+    if (approvingNow) {
       ok = await onDecide({
         ...decisionFromAmendDraft(suggestionDraftFrom(contribution), ''),
         verdict: 'approved',
@@ -369,7 +401,7 @@ export function BoardLineDecisionPanel({
     if (ok === false) return;
     setDirty(false);
     setLocked(false);
-    if (approving) {
+    if (approvingNow) {
       setDraft(suggestionDraftFrom(contribution));
       setReason('');
     }
@@ -822,7 +854,8 @@ export function BoardLineDecisionPanel({
                 size="sm"
                 // Disabled ON the saved state too (D4): there is nothing left to save, and a
                 // live button under the word "Saved" invites a second write of the same row.
-                disabled={saved || (!approving && !canSave)}
+                disabled={saved || alreadyConfirmed || (!approving && !canSave)}
+                title={alreadyConfirmed ? CONFIRMED_LINE_TITLE : undefined}
                 onClick={save}
               >
                 {saved ? (
@@ -841,11 +874,13 @@ export function BoardLineDecisionPanel({
                 type="button"
                 size="sm"
                 variant="outline"
-                disabled={reason.trim().length === 0}
+                disabled={covered || reason.trim().length === 0}
                 title={
-                  reason.trim().length === 0
-                    ? 'Say why this line is being refused first.'
-                    : undefined
+                  covered
+                    ? CONFIRMED_LINE_TITLE
+                    : reason.trim().length === 0
+                      ? 'Say why this line is being refused first.'
+                      : undefined
                 }
                 onClick={reject}
               >

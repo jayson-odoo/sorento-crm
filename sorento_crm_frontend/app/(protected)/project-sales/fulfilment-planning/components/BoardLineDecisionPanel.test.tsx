@@ -498,9 +498,10 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
     );
   });
 
-  it('unticking on a covered line clears the flag, in the draft AND on screen', () => {
-    // Frozen at the engine's own composition, so the untouched form IS the suggestion and the
-    // press is an approval: the flag is the only thing this decision changes.
+  it('unticking on a covered line is a change: it enables Save, amends (never approves), and clears the flag in the draft AND on screen', () => {
+    // Frozen at the engine's own composition, so the untouched FORM matches the suggestion -
+    // R1/R2 (captain, 17 Sep) still refuses the plain re-save, and only the flag itself is
+    // what this test changes.
     const frozen: BoardLineDecision = {
       revision_no: 1,
       confirmed_at: '2026-08-18T02:00:00',
@@ -517,15 +518,23 @@ describe('BoardLineDecisionPanel: the suspected-system-issue flag (C10)', () => 
 
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
     expect(checkbox()).toBeChecked();
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
     fireEvent.click(checkbox());
-    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+
+    // The tick alone is a change on a covered line (R1/R2): Save takes it with no reason typed.
+    expect(checkbox()).not.toBeChecked();
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
 
     // The BOOLEAN, not an absent key: `lineFor` posts `false`, so the pill must read `false`
-    // rather than falling through to the frozen `true` and contradicting the body.
-    // D11: the composition rides along too, even though only the flag changed.
+    // rather than falling through to the frozen `true` and contradicting the body. D11: the
+    // composition rides along too, even though only the flag changed - and on a covered line
+    // it is always Amended, never Approved (R1/R2): the server refuses `approved` outright.
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
-        verdict: 'approved',
+        verdict: 'amended',
         suspected_system_issue: false,
         reserve: expect.arrayContaining([
           expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
@@ -709,16 +718,18 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
   });
 
   /**
-   * An approval on an unlocked confirmed row is a REAL verdict, and it reaches the draft as
-   * one. It looked like it did - the inputs snapped back to the suggestion and the pill read
-   * Approved - while `confirmLinesFor` dropped every covered line the planner had not amended,
-   * so the press wrote nothing and the reload showed the old revision.
+   * A confirmed row is not silently un-decided by typing the engine's own numbers back into
+   * it. It looked like it was, once - the inputs snapped back to the suggestion and the pill
+   * read Approved - while `confirmLinesFor` dropped every covered line the planner had not
+   * amended, so the press wrote nothing and the reload showed the old revision.
    *
-   * The way there is the engine's own numbers: this row was confirmed at 8 from BRW-AM plus 16
-   * from the pool while the engine suggests 9 plus 15, so typing those back IS the approval.
-   * One button, and the comparison takes the verdict.
+   * R1/R2 (captain, 17 Sep 2026): on a CONFIRMED line every change is an amendment - the
+   * server refuses `approved` there outright, whatever the typed composition happens to
+   * match. This row was confirmed at 8 from BRW-AM plus 16 from the pool while the engine
+   * suggests 9 plus 15; typing the engine's own numbers back is still a change from what was
+   * frozen, so Save takes it as an amendment, and the pill still reads Saved either way.
    */
-  it('takes an approval once the engine’s numbers are typed back on the unlocked row, and the pill reads Saved (S4)', () => {
+  it('typing the engine’s numbers back on the unlocked row is still an amendment (never approved), and the pill reads Saved (S4)', () => {
     const contribution = contributionOf({
       covered: true,
       decision: {
@@ -752,10 +763,10 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
 
-    // D11: the composition rides along with the approval too.
+    // D11: the composition rides along with the amendment too.
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
-        verdict: 'approved',
+        verdict: 'amended',
         suspected_system_issue: false,
         reserve: expect.arrayContaining([
           expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '9' }),
@@ -779,12 +790,16 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
   });
 
   /**
-   * AMEND OPENS ON WHAT WAS DECIDED, not on the engine's numbers (C9), and saving that is an
-   * amendment: SO404352 line 22 was confirmed at 8 from BRW-AM plus 16 from the pool while the
-   * engine suggests 9 plus 15, so the two compositions are not the same answer and only the
-   * comparison says which verdict the press takes.
+   * AMEND OPENS ON WHAT WAS DECIDED, not on the engine's numbers (C9): SO404352 line 22 was
+   * confirmed at 8 from BRW-AM plus 16 from the pool while the engine suggests 9 plus 15, so
+   * the two compositions are not the same answer.
+   *
+   * R1/R2 (captain, 17 Sep): on a covered line the server accepts nothing but a real
+   * amendment - re-saving the FROZEN composition untouched is refused with the R1 sentence
+   * (AC-F1's own case), so this test now proves the OTHER half: once the composition actually
+   * moves, Save takes it, and it is always posted as Amended, never Approved.
    */
-  it('opens on the composition the revision froze, and Save on it amends rather than approves', () => {
+  it('opens on the composition the revision froze; Save is refused until it changes, then amends', () => {
     const { onDecide } = renderPanel({
       covered: true,
       decision: {
@@ -805,16 +820,35 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     expect(screen.getByLabelText('Reserve at BRW-AM')).toHaveValue(8);
     expect(screen.getByLabelText('Reserve at BRW')).toHaveValue(16);
 
-    // Re-saving what was already decided needs no reason - it overrides nothing - but it is
-    // still not the engine's composition, so the verdict is Amended.
-    fireEvent.click(screen.getByRole('button', { name: 'Save decision' }));
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    // Untouched, the draft still IS the frozen decision: refused, not a silent no-op re-save.
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute(
+      'title',
+      'This line is already confirmed. Amend it to change the decision, or undo the confirmation.',
+    );
+
+    // Still balances against the 24 outstanding (10 + 14), but neither number the revision
+    // froze (8 + 16) - a genuine amendment.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '10' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '14' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'BRW-AM actually had more free stock than recorded.' },
+    });
+
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
 
     expect(onDecide).toHaveBeenCalledWith(
       expect.objectContaining({
         verdict: 'amended',
         reserve: expect.arrayContaining([
-          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '8' }),
-          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '16' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW-AM', qty: '10' }),
+          expect.objectContaining({ warehouse_id: 'wh-BRW', qty: '14' }),
         ]),
       }),
     );
@@ -872,6 +906,22 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     });
 
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+  });
+
+  it('AC-F1b: the suspected-system-issue tick alone is a change too: ticking it enables Save', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    expect(save).toBeDisabled();
+
+    fireEvent.click(
+      screen.getByRole('checkbox', {
+        name: 'This might be a system problem, flag it for investigation',
+      }),
+    );
+
+    expect(save).toBeEnabled();
   });
 });
 
