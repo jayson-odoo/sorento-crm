@@ -777,6 +777,11 @@ class OrderInquiryWorklistService:
         # the key it groups on) rather than by whatever label happened to be printed.
         axis: Optional[str] = None,
         axis_key: Optional[str] = None,
+        # S5/AC-OH-52: the ONE caller that must see a `cancelled` row even with no
+        # explicit `state` - the State facet's own count, so the filter can offer
+        # "Cancelled (n)" to ask for it. Never set by a route param; `summary()`'s
+        # `by_state` grouping is the only caller that passes it.
+        include_cancelled: bool = False,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -845,6 +850,11 @@ class OrderInquiryWorklistService:
             base = base.filter(_RAISED_DAY == _as_day(raised_date))
         if state:
             base = base.filter(OrderInquiryRow.state == state)
+        elif not include_cancelled:
+            # S5/AC-OH-50..51 (R2): a `cancelled` row is a revision that called the line
+            # off - not owed, and not a row purchasing needs to see unless the State
+            # filter specifically asks for it.
+            base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
         if project_id:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
         if supplier_id:
@@ -1872,6 +1882,18 @@ class OrderInquiryWorklistService:
             by_state[state] = int(count)
             total_rows += int(count)
             total_qty += _dec(qty)
+        # S5/AC-OH-52: `visible` above already hides `cancelled` by default (AC-OH-50), so
+        # `by_state["cancelled"]` would otherwise read 0 the moment the State filter most
+        # needs to offer its real count. The State facet is the one reader that must see
+        # it regardless - a second grouped count, `total_rows`/`total_qty` untouched.
+        cancelled_count = (
+            self._base(**filters, include_cancelled=True)
+            .filter(OrderInquiryRow.state == INQUIRY_CANCELLED)
+            .with_entities(func.count(OrderInquiryRow.id))
+            .scalar()
+            or 0
+        )
+        by_state[INQUIRY_CANCELLED] = int(cancelled_count)
         by_state["total"] = total_rows
 
         return {
