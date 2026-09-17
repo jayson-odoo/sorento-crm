@@ -442,6 +442,12 @@ def test_reconstruct_undo_step_h_sends_reconstructed_headline_email(api, monkeyp
 
     undo_seed = _load_undo_seed_migration()
     _run_undo_upgrade(undo_seed, db)
+    # The base undo_0002 seed alone never carries the RECONSTRUCTED distinction -
+    # the coder's own follow-up migration (`oihr_0002_undone_headline`) is what
+    # teaches the template the word, and it has to run too before this render
+    # means anything (review round 1 fix round: this step was missing it).
+    headline_migration = _load_undone_headline_migration()
+    _run_upgrade(headline_migration, db)
     template = (
         db.query(EmailTemplate)
         .filter(EmailTemplate.code == "order_inquiry_undone_default")
@@ -505,6 +511,12 @@ def test_journal_undo_renders_without_the_reconstructed_word(api, monkeypatch):
 
     undo_seed = _load_undo_seed_migration()
     _run_undo_upgrade(undo_seed, db)
+    # Apply the headline migration TOO, or this render is only ever against the
+    # word-free r1 body and proves nothing about the migration's own conditional -
+    # the real guard is that the CONDITIONAL branch stays silent for a journal
+    # headline, not that the word is merely absent from an unrelated body.
+    headline_migration = _load_undone_headline_migration()
+    _run_upgrade(headline_migration, db)
     template = (
         db.query(EmailTemplate)
         .filter(EmailTemplate.code == "order_inquiry_undone_default")

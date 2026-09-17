@@ -1,6 +1,6 @@
 # PLAN: order inquiry handover email r2, depth-N undo, reconstructed undo
 
-Status: grilled 18 Sep 2026 (Q1 admin only, Q2 changed guard on, Q3 one settled line, Q4 confirm email includes still-raised amendment rows); next: tickets
+Status: building 18 Sep 2026; issues #996 #997 #998 #999; Phase 2 green on the lane, review in progress
 UAC: `documentation/plans/scm/scm-oi-handover-r2-undo-acceptance-criteria.md`
 Branch: `feat/oi-handover-r2-undo` from `origin/main` (after #993, head migration
 `undo_0003_journal_sql_null`). #992 is open on the same confirm seam; the pre-PR gate merges it in.
@@ -116,7 +116,8 @@ one company:
 
 1. Refusals: the existing `linked` / `actioned` time predicates against `decision.confirmed_at`.
 2. Rows raised by D: `order_inquiry_rows` with `supply_decision_id = D.id` and `created_at >
-   P.confirmed_at` (no P: `created_at > D.confirmed_at - 60 s`). Delete their links via
+   D.confirmed_at - 60 s` (uniform, with or without P: a row P itself raised seconds after P's own
+   confirm is a settled row, not one D raised; `_settle_row_in_place` never moves `created_at`). Delete their links via
    `_remove_links` (frees orphan claims), then the rows.
 3. Rows settled or repointed by D: the remaining `supply_decision_id = D.id` rows. If `changed_at`
    is within 60 s of `D.confirmed_at`: `qty = previous_qty`, `delivery_date =

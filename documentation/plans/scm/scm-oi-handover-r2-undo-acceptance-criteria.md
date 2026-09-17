@@ -1,6 +1,6 @@
 # UAC: order inquiry handover email r2, depth-N undo, reconstructed undo
 
-Status: grilled 18 Sep 2026; rulings Q1 admin only, Q2 changed guard on, Q3 one settled line, Q4 confirm email includes still-raised amendment rows; next: tickets
+Status: building 18 Sep 2026; issues #996 #997 #998 #999
 Plan: `documentation/plans/scm/PLAN-scm-oi-handover-r2-undo.md`
 Supersedes ruling R3 of the archived `PLAN-scm-oi-handover-email.md` (struck-through cell) and
 ruling 3 of `PLAN-board-undo-last-confirm.md` (one step, once).
@@ -159,8 +159,8 @@ reconstructed undo (the countdown is the confirmation). Everything else is deriv
   `supply_decision_id`), when a reconstructed or journaled undo runs, then those rows are untouched.
 - **AC-R2-31 [BE]** Given a reconstructed undo of decision D (previous P or none), when it
   commits, then:
-  a. every `order_inquiry_rows` row with `supply_decision_id = D.id` created after P's
-     `confirmed_at` (or within 60 s before D's `confirmed_at` when there is no P) is deleted with
+  a. every `order_inquiry_rows` row with `supply_decision_id = D.id` created within 60 s
+     before D's `confirmed_at` or later is deleted with
      its links; orphaned claims are freed;
   b. every remaining row with `supply_decision_id = D.id` is repointed to `P.id` (or NULL);
      when its `changed_at` is within 60 s of D's `confirmed_at` its `qty` and `delivery_date`
