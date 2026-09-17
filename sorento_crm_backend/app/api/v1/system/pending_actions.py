@@ -164,16 +164,12 @@ def _assert_undo_not_refused(
     is_journalled = decision is not None and _decision_is_journalled(decision)
 
     if mode == "reconstructed":
-        if is_journalled:
-            raise AppException(
-                status_code=status.HTTP_409_CONFLICT,
-                message="This confirm carries a journal; use the journal undo.",
-                code="mode_mismatch",
-            )
-        if decision is None:
-            # Nothing active at all - `no_journal` is the execute-time answer,
-            # same as today; there is no decision here to gate by role against.
-            return
+        # Review round 1: the role gate runs BEFORE the `decision is None` early
+        # return, not after - a non-admin hand-crafting this payload must always
+        # get the same 403 regardless of whether the order even has an active
+        # decision to reconstruct, never a 202 that only later 409s "no_journal"
+        # (which would leak "a decision exists here" to a caller who has no
+        # business asking).
         from app.services.user_service import UserPermissionService
 
         role_slugs = (
@@ -185,6 +181,16 @@ def _assert_undo_not_refused(
                 message="Only an admin can run a reconstructed undo.",
                 code="FORBIDDEN",
             )
+        if is_journalled:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                message="This confirm carries a journal; use the journal undo.",
+                code="mode_mismatch",
+            )
+        if decision is None:
+            # Nothing active at all - `no_journal` is the execute-time answer,
+            # same as today; there is no decision here to gate a refusal against.
+            return
         from app.services.project_supply_undo_reconstruct_service import (
             _REFUSAL_MESSAGES as _RECONSTRUCT_REFUSAL_MESSAGES,
             reconstruct_refusal,
@@ -208,12 +214,19 @@ def _assert_undo_not_refused(
         )
     refusal, refusal_detail = refusal_for_order_with_detail(db, str(order.id))
     if refusal:
-        message = _REFUSAL_MESSAGES[refusal]
+        # Review round 1 nit: the CLIENT message stays the generic sentence - a
+        # table name and a row's UUID are internal detail, not something to hand
+        # a browser. The detail is still there for whoever has to diagnose it,
+        # just in the log, not the response body.
         if refusal == "changed" and refusal_detail:
-            message = f"{message} ({refusal_detail['table']} pk={refusal_detail['pk']})"
+            logger.info(
+                "undo_confirm changed refusal: %s pk=%s",
+                refusal_detail.get("table"),
+                refusal_detail.get("pk"),
+            )
         raise AppException(
             status_code=status.HTTP_409_CONFLICT,
-            message=message,
+            message=_REFUSAL_MESSAGES[refusal],
             code=refusal,
         )
 

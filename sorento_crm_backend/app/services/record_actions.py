@@ -1688,6 +1688,15 @@ def _undo_confirm(db: Session, payload: dict):
     already refused a mismatch or a non-admin caller; this is the same guard run
     again at commit, the same belt-and-braces `undo_last_confirm`'s own `superseded`
     check already is for the journal path).
+
+    B2 (review round 1): EXECUTE re-runs BOTH checks the journal path's own
+    `undo_last_confirm` already runs at commit and the reconstructed path was
+    missing entirely - the role gate (a countdown can span a demotion) and
+    `_assert_actor_can_undo` (Confirm's own per-project authorisation, over every
+    order the reconstruct touches, donor included) - not only the park-time gate.
+    Park already refused a non-admin/wrong-role caller before a window ever
+    started, so this is belt-and-braces for the countdown itself, exactly the same
+    reasoning `undo_last_confirm`'s own re-checks already document.
     """
     from app.services.project_supply_service import ProjectSupplyService
     from app.services.project_supply_undo_service import _decision_is_journalled, undo_last_confirm
@@ -1699,6 +1708,22 @@ def _undo_confirm(db: Session, payload: dict):
         from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
         from app.services.error_handler import AppException
         from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
+        from app.services.project_supply_undo_service import (
+            _assert_actor_can_undo,
+            touched_project_sales_order_ids,
+        )
+        from app.services.user_service import UserPermissionService
+
+        actor_id = payload.get("requested_by_id")
+        role_slugs = (
+            UserPermissionService(db).get_user_role_slugs(actor_id) if actor_id else set()
+        )
+        if not (role_slugs & {"superadmin", "admin"}):
+            raise AppException(
+                status_code=403,
+                message="Only an admin can run a reconstructed undo.",
+                code="FORBIDDEN",
+            )
 
         decision = (
             db.query(SOSupplyDecision)
@@ -1721,9 +1746,10 @@ def _undo_confirm(db: Session, payload: dict):
                 message="A newer confirm has already replaced this one.",
                 code="superseded",
             )
-        return reconstruct_undo(
-            db, order, decision, actor_user_id=payload.get("requested_by_id")
+        _assert_actor_can_undo(
+            db, actor_id, touched_project_sales_order_ids(db, decision)
         )
+        return reconstruct_undo(db, order, decision, actor_user_id=actor_id)
 
     return undo_last_confirm(
         db,
