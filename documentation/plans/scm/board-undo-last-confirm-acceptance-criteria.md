@@ -44,8 +44,10 @@ sees the reason on the disabled menu entry.
 
 ## Rulings (owner, 17 Sep 2026)
 
-- R1 refusal: only a manual link (`auto=False`, written after the confirm) or a row marked
-  actioned after the confirm blocks undo. A sent email does not.
+- R1 refusal: only a link purchasing (or AutoCount) put on a row after the confirm, or a row
+  marked actioned after the confirm, blocks undo. A sent email, an acknowledgement or a note
+  edit does not. "After the confirm" is decided from the confirm's own journal, on every order
+  the journal touched.
 - R2 exact restore: the data is what it was before the Confirm click, drafts included.
 - R3 depth: one revision back, once. The reinstated revision is not undoable.
 - R4 batch fork: undo returns the planning-change batch to pending. No book rewind (ruled 17
@@ -60,9 +62,10 @@ sees the reason on the disabled menu entry.
   opens the gear menu, then it lists `Undo SO314595 confirm (rev 1)` below "Undo all".
 - AC-UC-02 [FE] Given the board holds three orders of which two are undoable, when the gear
   opens, then exactly two undo entries appear, one per undoable order, ordered as the board.
-- AC-UC-03 [FE] Given an order whose undo is refused (`refusal = "manual_link"` or
-  `"actioned"`), when the gear opens, then its entry is present, disabled, with `title`
-  "Purchasing linked a PO line" or "Purchasing marked a row actioned".
+- AC-UC-03 [FE] Given an order whose undo is refused (`refusal = "linked"` or
+  `"actioned"`), when the gear opens, then its entry is present, disabled, and the reason
+  "Purchasing linked a PO line" or "Purchasing marked a row actioned" is visible as muted
+  text inside the item (a `title` on a disabled item never renders).
 - AC-UC-04 [FE] Given no order on the board is undoable, when the gear opens, then no undo
   entry and no separator for it render.
 - AC-UC-05 [FE] Given the planner selects an undo entry, when the pending action is created,
@@ -74,6 +77,7 @@ sees the reason on the disabled menu entry.
   then the affected lines render undecided and the gear entry for that order is gone.
 - AC-UC-08 [FE] Given the board is opened at `?batch=<id>` and the batch was applied by the
   revision being undone, when the undo commits, then the batch shows pending again on reload.
+- AC-UC-09a [T] Vitest over a mocked board payload covers AC-UC-02, AC-UC-03 and AC-UC-04.
 - AC-UC-09 [UX] At 375px and 1280px the countdown fits the action bar without clipping; the
   gear entry text truncates with `title`. No new motion: the countdown reuses
   `DeferredCountdown`; the menu uses the existing dropdown preset.
@@ -100,7 +104,7 @@ Journal at confirm:
   when it commits, then that revision has NO journal (only the two board confirm routes
   journal).
 - AC-UC-15 [BE] Given a decision row, when the board payload is built, then each order carries
-  `undo: {decision_id, revision_no, confirmed_at, confirmed_by_name, refusal}` when its newest active
+  `undo: {decision_id, revision_no, confirmed_at, confirmed_by_name, refusal}` (refusal null, `linked` or `actioned`) when its newest active
   decision has a journal, else `undo: null`.
 
 Undo service:
@@ -115,6 +119,7 @@ Undo service:
   board reports the lines undecided.
 - AC-UC-18 [BE] Given the confirm deleted a link and freed its claim, when undo commits, then
   the link and the claim exist again with their original ids, `linked_at`, `auto`, `linked_by`.
+  A link the same confirm drafted and then removed does not come back.
 - AC-UC-19 [BE] Given a settled-in-place row whose `note` was appended and whose `previous_qty`
   was overwritten, when undo commits, then `note`, `previous_qty`, `previous_delivery_date`,
   `ack_state`, `acknowledged_by`, `acknowledged_at`, `changed_at`, `supply_decision_id` all
@@ -126,15 +131,17 @@ Undo service:
   batch's rows are `pending` again, `applied_at` / `applied_by` / `result_json` are back to
   their old values, and the SO book lines are NOT changed (R4).
 - AC-UC-22 [BE] Given revision 2 was undone and revision 1 is active again, when the board is
-  built, then `undo` is null for the order (revision 1's journal was cleared: R3).
-- AC-UC-23 [BE] Given purchasing wrote a link with `auto=False` and `linked_at` later than
-  `confirmed_at` on a row of the order, when undo is requested, then it is refused with 409
-  and `refusal = "manual_link"`, and nothing changed.
-- AC-UC-24 [BE] Given a row of the order has `state = actioned` with `actioned_at` later than
-  `confirmed_at`, when undo is requested, then 409 `refusal = "actioned"`, nothing changed.
-- AC-UC-25 [BE] Given the confirm's own step-3 borrow placement wrote an `auto=False` link
-  inside the confirm transaction, when undo is requested, then it is NOT refused (the link's
-  `linked_at` is not later than `confirmed_at`).
+  built, then `undo` is null for the order (revision 1's journal was cleared: R3). Given two
+  journaled confirms, then only the newest decision holds a journal.
+- AC-UC-23 [BE] Given a link this confirm did not write (auto or manual) with `linked_at`
+  later than `confirmed_at` exists on a row of any order the journal touched, when undo is
+  requested, then it is refused with 409 and `refusal = "linked"`, and nothing changed.
+- AC-UC-24 [BE] Given a row of a touched order became `actioned` after this confirm ran, when
+  undo is requested, then 409 `refusal = "actioned"`, nothing changed. A row already actioned
+  before the confirm, re-stamped by the confirm's own cascade or untouched, does not refuse.
+- AC-UC-25 [BE] Given the confirm's own step-3 borrow placement wrote a link (a REAL
+  placement, its id in the journal's insert set), when undo is requested, then it is NOT
+  refused.
 - AC-UC-26 [BE] Given the newest revision has no journal (pre-lane revision, or minted by
   `uncover_lines`), when undo is requested, then 409 `refusal = "no_journal"`.
 - AC-UC-27 [BE] Given the pending-actions engine, when `project_sales_order.undo_confirm` is
@@ -145,16 +152,20 @@ Undo service:
   window lapses, then the undo targets the revision named at creation and refuses with
   `refusal = "superseded"` if it is no longer the newest.
 - AC-UC-29 [BE] Given the undo commits, then one `audit_logs` row records the DELETE of the
-  undone decision with its old values (existing `SOSupplyDecision` audit tracking).
+  undone decision with its old values (existing `SOSupplyDecision` audit tracking), and no
+  `audit_logs` row anywhere carries `undo_journal`.
 - AC-UC-30 [BE] Given a user with `projects.projects.view` only, when they create the pending
-  action, then 403 and no row.
+  action, then 403 and no row. Given a user with `projects.projects.edit` who may not edit the
+  order's project (not owner, not approved collaborator), when the action executes, then the
+  same refusal Confirm gives and nothing changed. Given no `decision_id` in the payload, then
+  400.
 - AC-UC-31 [BE] Given a user of another company, when they request undo on this order, then
   404 (company scope), nothing changed.
 
 Email:
 
 - AC-UC-32 [BE] Given an undo commits, then `AutomationService.dispatch_event` is called once
-  with trigger `order_inquiry_undone`, context `{undo: {so_number, customer, project,
+  with trigger `order_inquiry_undone`, listing only rows of the undone order (never a donor's),, context `{undo: {so_number, customer, project,
   revision_no, lines: [{item_code, qty, delivery_date, outcome}], link}, actor, today}`, after
   the root transaction commits, on a fresh session.
 - AC-UC-33 [BE] Given the undo is refused or rolls back, then no dispatch happens.

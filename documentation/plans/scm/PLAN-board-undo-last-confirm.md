@@ -70,14 +70,23 @@ Board payload (`app/services/project_fulfilment_board_service.py`, order header)
 `undo: {decision_id, revision_no, confirmed_at, confirmed_by_name, refusal} | null` (`decision_id` is what the pending action pins):
 
 - null when the order has no active decision, or its active decision has `undo_journal` NULL.
-- `refusal` is null, `"manual_link"` or `"actioned"`, from one query over the order's OI rows
-  and links: any `order_inquiry_links` row with `auto = false AND linked_at > confirmed_at`
-  on a row of this order's inquiries, or any `order_inquiry_rows` with `state = 'actioned'
-  AND actioned_at > confirmed_at`. Time, not actor, separates purchasing's work from the
-  confirm's own step-3 borrow link (which is `auto=False` but `linked_at` inside the confirm
-  transaction, so not later than `confirmed_at`; Postgres `now()` is constant within a
-  transaction). The same predicate is the service's guard (one rule, one place: the board
-  reads it, the undo re-checks it at commit).
+- `refusal` is null, `"linked"` or `"actioned"`, decided from the decision's own journal, over
+  EVERY order the journal touched (donor orders included):
+  - `linked`: an `order_inquiry_links` row on one of those orders' rows whose `id` is not in
+    the journal's insert set and whose `linked_at > confirmed_at`. The `auto` flag is
+    irrelevant: a buyer's "Auto link all" and an AutoCount PO pairing are purchasing's
+    placements as much as a hand click.
+  - `actioned`: a row with `state = 'actioned'` that was not already actioned when the confirm
+    ran (journal old `state` for the row is not `actioned`; a row absent from the journal
+    counts only when `actioned_at > confirmed_at`).
+  The journal, not the clock, says what the confirm itself wrote. Review finding 17 Sep:
+  `confirmed_at` and `linked_at` are both `datetime.utcnow()` on separate statements, so the
+  confirm's own step-3 borrow link is microseconds LATER than `confirmed_at`; the first
+  draft's time-only predicate refused its own undo. The same predicate is the service's guard
+  (one rule, one place: the board reads it, the undo re-checks it at commit).
+- Authorisation: undo re-runs Confirm's own per-project check (`_assert_can_act_on`,
+  `assert_can_edit_project`) for the requesting user at execute time, on every touched order.
+  `projects.projects.edit` alone is the park-time gate, not the write gate.
 
 ### Replay
 
@@ -90,7 +99,8 @@ Board payload (`app/services/project_fulfilment_board_service.py`, order header)
    - deletes of `insert` entries, in reverse capture order (children before parents, since
      the unit of work inserted parents first);
    - re-insert of `delete` entries, in capture order reversed within each flush and flushes
-     reversed (parents before children: the unit of work deleted children first);
+     reversed (parents before children: the unit of work deleted children first), skipping a
+     pk the same confirm inserted (a link drafted and removed in one confirm stays gone);
    - restore of `update` entries in reverse capture order, skipping any pk that was in the
      `insert` set (already gone). A row deleted later in the confirm and updated earlier is
      re-inserted with its at-delete values first, then the earlier update restores the older
@@ -99,7 +109,12 @@ Board payload (`app/services/project_fulfilment_board_service.py`, order header)
    objects, so no listener (audit, embedding, handshake) re-fires on the way back except the
    `SOSupplyDecision` audit DELETE, which is wanted (AC-UC-29).
 3. Set `undo_journal = NULL` on the reinstated previous decision (R3: one step, once). Revision
-   1 has no previous decision; nothing to clear.
+   1 has no previous decision; nothing to clear. Attaching a journal also nulls the journal of
+   the decision it superseded, so at most one decision per order ever holds one.
+   Every replay write carries `company_id = decision.company_id` where the table has the
+   column (defence in depth; core SQL bypasses the ORM scope filter). The journal never
+   reaches `audit_logs`: the column is excluded from the decision's audit columns and stripped
+   from the undo's DELETE audit row.
 4. Record the undo email event (see below), flush, return `{revision_no, restored_to}`.
 
 Why core SQL and not ORM: the ORM would run `refresh_link_state`, handshake stamps and the
@@ -114,7 +129,7 @@ at Sorento; `linked_by` cannot tell them apart, `linked_at > confirmed_at` can.
 `FormAction(key="project_sales_order.undo_confirm", entity_types=("project_sales_order",),
 window=WINDOW_REVERSIBLE, permission="projects.projects.edit", execute=_undo_confirm)`.
 `payload = {decision_id}` captured at creation so a Confirm written during the countdown is
-detected (AC-UC-28). The shared routes `POST /pending-actions`, `/cancel`, `/current`
+detected (AC-UC-28); a request without it is refused at park time. The shared routes `POST /pending-actions`, `/cancel`, `/current`
 (`app/api/v1/system/pending_actions.py`) need nothing new. The scheduler sweep
 `form_action_commit` commits an undo nobody is watching.
 
@@ -166,6 +181,30 @@ company gets 404 before any check. Admin may cancel another user's countdown (ex
   the book where AutoCount put it; Reset planning keeps its rewind checkbox for UAT.
 - Q2 RULED 17 Sep: SO314595 on the dev copy is restored from the 15 Sep dump (pre-lane
   revisions have no journal; the plan does not backfill journals).
+
+## Review findings, 17 Sep, and the captain's rulings
+
+Reviewer (Opus) and security reviewer (Opus), once, in parallel, after S3.
+
+| finding | ruling |
+| --- | --- |
+| Undo skipped Confirm's per-project authorisation (`_assert_can_act_on`) | fix |
+| Refusal ignored auto links after the confirm; time-only predicate refused the confirm's own step-3 link (reproduced) | fix, journal-based rule above, code `linked` |
+| Donor orders replayed with no refusal or authorisation check on the donor | fix, every touched order |
+| Purchasing's post-confirm `ack_state` / note edits on journalled rows are reverted silently | NOT fixed: owner ruled only a link or an actioned mark blocks undo (R1) |
+| Whole journal copied into `audit_logs` on confirm and undo | fix |
+| Replay writes carry no company predicate; no table allowlist | company predicate added; allowlist declined (one writer of the column today, and the plan's seam is that the undo service names no table; trigger for an allowlist is a second writer) |
+| Pre-existing pending-actions hole: client `__company_scope` survives an UNSET requester scope | own lane, #982 |
+| Pass 2 re-inserted a row the same confirm inserted then deleted | fix |
+| Composite primary key replays as a silent no-op | raise at capture |
+| `expected_decision_id` optional | required at park time |
+| Journals retained on every superseded decision | nulled at attach |
+| `board_undo_map` N+1 and full JSONB pulled on every board read | fix: scalar columns, one grouped refusal query |
+| Disabled gear entry's reason never renders (`pointer-events-none` kills the tooltip) | fix: reason as visible muted text inside the item |
+| No vitest for AC-UC-01..09 | fix: one spec |
+| `UndoJournal.__exit__` flushes on the exception path | fix |
+| Undone email lists a donor's rows | fix: this order's rows only |
+| AC-UC-25 test fabricated the step-3 timestamp | rebuilt off a real step-3 placement |
 
 ## Not in this lane
 
