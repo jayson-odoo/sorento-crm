@@ -958,10 +958,13 @@ export function OrderInquiriesClient() {
   const filtersContent = (
     // AC-OH-70 (S7): the popover's own shared primitive
     // (`data-grid-list-toolbar.tsx`'s `DropdownMenuContent`) has no max-height prop of
-    // its own, so the bound lives here, on the content - `max-h-[60vh] overflow-y-auto`
-    // is the same convention `data-grid-column-visibility.tsx` and the board's popovers
-    // already use.
-    <div className="max-h-[60vh] space-y-3 overflow-y-auto">
+    // its own, so the bound lives here, on the content - the same convention
+    // `data-grid-column-visibility.tsx` and the board's popovers already use, except
+    // `dvh` rather than their `vh` (mobile-vh.inventory.test.ts's fixed-viewport-unit
+    // sweep: a NEW `vh` site is not grandfathered onto the follow-up #567 allowlist,
+    // `dvh` tracks the actual visible area on mobile Safari where `vh` sits under the
+    // address bar's chrome).
+    <div className="max-h-[60dvh] space-y-3 overflow-y-auto">
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Location</Label>
         <SearchableSelect
