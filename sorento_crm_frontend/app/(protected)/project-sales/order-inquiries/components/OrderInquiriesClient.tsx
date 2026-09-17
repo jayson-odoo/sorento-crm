@@ -109,7 +109,10 @@ import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldo
 import { OrderInquiryMonthStrip } from './OrderInquiryMonthStrip';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
-import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+import {
+  DEFAULT_HIDDEN_COLUMNS,
+  useOrderInquiryWorklistColumns,
+} from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -741,6 +744,14 @@ export function OrderInquiriesClient() {
     data: rows,
     columns,
     getRowId: (row) => row.id,
+    // S6 (AC-OH-01): the Order inquiry column starts hidden. `initialState` only, not
+    // `state` - a saved column preference (`useListingColumnPreferences`, driven by
+    // `listingKey` below) applies afterwards via `table.setColumnVisibility` and wins.
+    initialState: {
+      columnVisibility: Object.fromEntries(
+        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+      ),
+    },
     state: { pagination, sorting, rowSelection },
     // The PREDICATE lives on the table, which is where TanStack reads `getCanSelect` from -
     // a column-level `enableRowSelection` is silently ignored, and every row would tick
@@ -927,7 +938,12 @@ export function OrderInquiriesClient() {
   // Schedule toolbar (both mount the SAME `toolbarElement` below, never two copies of
   // this JSX) - one filter UI, whichever view happens to be on screen.
   const filtersContent = (
-    <div className="space-y-3">
+    // AC-OH-70 (S7): the popover's own shared primitive
+    // (`data-grid-list-toolbar.tsx`'s `DropdownMenuContent`) has no max-height prop of
+    // its own, so the bound lives here, on the content - `max-h-[60vh] overflow-y-auto`
+    // is the same convention `data-grid-column-visibility.tsx` and the board's popovers
+    // already use.
+    <div className="max-h-[60vh] space-y-3 overflow-y-auto">
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Location</Label>
         <SearchableSelect
