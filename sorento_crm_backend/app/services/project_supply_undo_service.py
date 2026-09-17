@@ -23,7 +23,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import Date, DateTime, Numeric, event, inspect
+from sqlalchemy import Date, DateTime, Numeric, and_, bindparam, event, func, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import get_history, set_committed_value
@@ -70,6 +70,33 @@ def _table_name(obj: Any) -> str:
 _DECISIONS_TABLE = "projects.so_supply_decisions"
 _OI_ROWS_TABLE = "projects.order_inquiry_rows"
 _OI_LINKS_TABLE = "projects.order_inquiry_links"
+
+
+def _journalled_decision_clause():
+    """The SQL predicate for "this decision carries a real, replayable journal"
+    (review round, follow-up): a non-null, NON-EMPTY `undo_journal` array, and a
+    real `confirmed_at` - a decision minted with no `confirmed_at` (a script, a
+    hand-built kill test) is not something the refusal predicate's own clock test
+    can reason about either, so it is not undoable.
+
+    `board_undo_map`'s own read filter uses this directly; `_decision_is_journalled`
+    below is the exact same three conditions, evaluated in Python for
+    `undo_last_confirm`'s already-loaded decision - one predicate, spelled once, so
+    a board read and the undo it links to can never disagree about what "undoable"
+    means at the edge (a NULL `confirmed_at`, or a journal that is present but
+    empty).
+    """
+    return and_(
+        SOSupplyDecision.undo_journal.isnot(None),
+        func.jsonb_array_length(SOSupplyDecision.undo_journal) > 0,
+        SOSupplyDecision.confirmed_at.isnot(None),
+    )
+
+
+def _decision_is_journalled(decision: Any) -> bool:
+    """`_journalled_decision_clause`'s own three conditions, read off a decision
+    already loaded in Python rather than issued as a fresh query."""
+    return bool(decision.undo_journal) and decision.confirmed_at is not None
 
 
 def _journalled(obj: Any) -> bool:
@@ -427,59 +454,26 @@ def _journal_entry_for_pk(journal, table: str, pk: str) -> Optional[Dict[str, An
     return None
 
 
-def touched_project_sales_order_ids(db: Session, decision: SOSupplyDecision) -> set:
-    """Every project sales order THIS decision's own journal names (review round,
+def _pso_ids_by_decision(db: Session, decisions: List[Any]) -> Dict[str, set]:
+    """Every project sales order EACH decision's own journal names (review round,
     "Undoable"): the order confirmed, plus any donor order a cross-project borrow
     re-issued in the same transaction. The journal, not the caller's own idea of
     "this order", says what the confirm actually touched - `undo_last_confirm`'s
     own authorisation check and the refusal predicate both read this same set, so a
     donor's row purchasing has since acted on is never missed (Contract B).
 
-    Falls back to the decision's own order when the journal carries no
+    ONE combined query resolves every decision pk any of the passed decisions'
+    journals reference, whether there is one decision to ask about or fifty -
+    `touched_project_sales_order_ids` (single decision) and `_grouped_refusals`
+    (a whole board) both read THIS, so the derivation exists in exactly one place
+    (review round, follow-up).
+
+    A decision falls back to its own order when its journal carries no
     `so_supply_decisions` entry naming one (should not happen for a real journal -
     the decision's own insert is always in it - but a hand-built one, as the
     "cascade restamp" kill test constructs, may name only the row it is about).
     """
-    journal = decision.undo_journal or []
-    pks = _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
-    if not pks:
-        return {decision.project_sales_order_id}
-    rows = (
-        db.query(SOSupplyDecision.id, SOSupplyDecision.project_sales_order_id)
-        .filter(SOSupplyDecision.id.in_(pks))
-        .all()
-    )
-    resolved = {pso_id for _id, pso_id in rows if pso_id}
-    return resolved or {decision.project_sales_order_id}
-
-
-def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[str]]:
-    """R1's refusal, computed for every decision passed at once (review round: the
-    N+1 finding) - a fixed small number of queries regardless of how many decisions
-    are asked about, rather than `_refusal_reason`'s own shape run once per decision.
-
-    `decisions` needs only `.id`, `.project_sales_order_id`, `.confirmed_at` and
-    `.undo_journal` - a real `SOSupplyDecision` or a lightweight stand-in both work.
-
-    `linked`: an `order_inquiry_links` row on one of the touched orders' rows whose
-    id is NOT in the journal's own insert set for that table, and whose `linked_at`
-    is after `confirmed_at`. `auto` is irrelevant (review round: an AutoCount pairing
-    is purchasing's placement as much as a hand click) - membership in the journal's
-    own insert set, not a raw flag, is what tells the confirm's OWN step-3 link
-    apart from one purchasing placed afterward (the clock-mismatch finding this
-    replaces: `confirmed_at` is a Python `datetime.utcnow()`, `linked_at` is
-    Postgres `now()` resolved microseconds later in the very same transaction).
-
-    `actioned`: a row currently `state = 'actioned'` that was not ALREADY actioned
-    when the confirm ran - read off the journal's own old value for that row's
-    `state` when the row is IN the journal (present but the key absent means the
-    column never changed, so the old value is the current one - still `actioned`,
-    not a fresh transition); a row the journal never touched counts only when its
-    own `actioned_at` is after `confirmed_at`.
-    """
     journal_by_decision = {d.id: (d.undo_journal or []) for d in decisions}
-    confirmed_at_by_decision = {d.id: d.confirmed_at for d in decisions}
-
     all_decision_pks: set = set()
     for journal in journal_by_decision.values():
         all_decision_pks |= _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
@@ -491,7 +485,7 @@ def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[s
             .all()
         )
 
-    pso_ids_by_decision: Dict[str, set] = {}
+    out: Dict[str, set] = {}
     for d in decisions:
         journal = journal_by_decision[d.id]
         touched = {
@@ -499,7 +493,49 @@ def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[s
             for pk in _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
             if pk in pso_by_decision_pk
         }
-        pso_ids_by_decision[d.id] = touched or {d.project_sales_order_id}
+        out[d.id] = touched or {d.project_sales_order_id}
+    return out
+
+
+def touched_project_sales_order_ids(db: Session, decision: SOSupplyDecision) -> set:
+    """`_pso_ids_by_decision`'s own rule, for a single decision - `undo_last_confirm`
+    and its own authorisation check ask about exactly one."""
+    return _pso_ids_by_decision(db, [decision])[decision.id]
+
+
+def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[str]]:
+    """R1's refusal, computed for every decision passed at once (review round: the
+    N+1 finding) - a fixed small number of queries regardless of how many decisions
+    are asked about, rather than `_refusal_reason`'s own shape run once per decision.
+
+    `decisions` needs only `.id`, `.project_sales_order_id`, `.confirmed_at` and
+    `.undo_journal` - a real `SOSupplyDecision` or a lightweight stand-in both work
+    (`board_undo_map` passes stand-ins carrying only the journal ENTRIES the
+    predicate below actually reads, not the whole journal - see its own docstring).
+
+    `linked`: an `order_inquiry_links` row on one of the touched orders' rows whose
+    id is NOT in the journal's own insert set for that table, and whose `linked_at`
+    is after `confirmed_at`. `auto` is irrelevant (review round: an AutoCount pairing
+    is purchasing's placement as much as a hand click) - membership in the journal's
+    own insert set, not a raw flag, is what tells the confirm's OWN step-3 link
+    apart from one purchasing placed afterward (the clock-mismatch finding this
+    replaces: `confirmed_at` is a Python `datetime.utcnow()`, `linked_at` is
+    Postgres `now()` resolved microseconds later in the very same transaction).
+
+    `actioned`: a row currently `state = 'actioned'` refuses UNLESS the journal
+    carries an entry for that row whose own captured `old` dict has a `state` key
+    equal to `"actioned"` - meaning the row was already actioned before this
+    confirm ran, and the confirm's own cascade merely re-touched it (a different
+    column, or a re-stamped `actioned_at`) without itself being the one that
+    actioned it. The clock fallback (`actioned_at` after `confirmed_at`) applies to
+    every OTHER case: the row absent from the journal entirely, present only for an
+    INSERT (a freshly-raised row has no `old` at all), or present with an `old`
+    that has no `state` key (some other column changed, `state` did not) - none of
+    those tell us the row's state before the confirm, so the clock is what is left.
+    """
+    journal_by_decision = {d.id: (d.undo_journal or []) for d in decisions}
+    confirmed_at_by_decision = {d.id: d.confirmed_at for d in decisions}
+    pso_ids_by_decision = _pso_ids_by_decision(db, decisions)
 
     all_pso_ids: set = set()
     for pso_ids in pso_ids_by_decision.values():
@@ -714,7 +750,15 @@ def _assert_actor_can_undo(db: Session, actor_user_id: Optional[str], pso_ids: s
         .all()
     )
     if not orders:
-        return
+        # `pso_ids` names real orders - `touched_project_sales_order_ids` only ever
+        # resolves ids off the journal's own `so_supply_decisions` entries (real rows
+        # that just existed) or the decision's own order. Finding NONE of them here
+        # is not "nothing to authorise", it is company scope or the journal itself
+        # disagreeing with reality - a silent `return` would let undo proceed as
+        # though it had already been authorised (review round, follow-up).
+        raise AssertionError(
+            f"undo authorisation found no ProjectSalesOrder rows for {sorted(pso_ids)!r}"
+        )
     from app.services.project_service import assert_can_edit_project, get_project_or_404
 
     slugs = _actor_permission_slugs(db, actor_user_id)
@@ -750,7 +794,7 @@ def undo_last_confirm(
         )
         .first()
     )
-    if decision is None or not decision.undo_journal:
+    if decision is None or not _decision_is_journalled(decision):
         raise AppException(
             status_code=409, message=_REFUSAL_MESSAGES["no_journal"], code="no_journal"
         )
@@ -827,6 +871,74 @@ def undo_last_confirm(
 # --------------------------------------------------------------------------- board
 
 
+class _JournalStandIn:
+    """The four attributes `_grouped_refusals` reads off a decision - `.id`,
+    `.project_sales_order_id`, `.confirmed_at`, `.undo_journal` - for a board read
+    that never loads the real ORM row (`board_undo_map` only ever needs scalar
+    columns plus a TRIMMED journal, never the mapped `SOSupplyDecision` itself)."""
+
+    __slots__ = ("id", "project_sales_order_id", "confirmed_at", "undo_journal")
+
+    def __init__(self, *, id, project_sales_order_id, confirmed_at, undo_journal):
+        self.id = id
+        self.project_sales_order_id = project_sales_order_id
+        self.confirmed_at = confirmed_at
+        self.undo_journal = undo_journal
+
+
+def _trimmed_journal_entries(db: Session, decision_ids: List[str]) -> Dict[str, list]:
+    """The ONLY three kinds of journal entry `_grouped_refusals` ever reads, pulled
+    straight out of Postgres's own copy of `undo_journal` via `jsonb_path_query_
+    array` (review round, follow-up: "board reads only the journal pk sets") -
+    `so_supply_decisions` inserts/updates (`_pso_ids_by_decision`'s own need),
+    every `order_inquiry_rows` entry (the actioned check needs each one's own `old`,
+    not just its pk), and `order_inquiry_links` INSERT entries (the linked check's
+    own exemption set). Everything else in the journal - `so_line_allocations`,
+    `stock_transfers`, drafts, claims, `planning_change_*` - never leaves Postgres.
+
+    Returns exactly the shape `_grouped_refusals` already reads off a real
+    `.undo_journal`: a flat list of `{"table", "op", "pk", "old"}` entries, so it
+    needs no change at all to consume this trimmed set instead of the whole thing.
+    """
+    if not decision_ids:
+        return {}
+    stmt = text(
+        f"""
+        SELECT id,
+               COALESCE(jsonb_path_query_array(
+                   undo_journal,
+                   '$[*] ? (@.table == "{_DECISIONS_TABLE}" '
+                   '&& (@.op == "insert" || @.op == "update"))'
+               ), '[]'::jsonb) AS decision_entries,
+               COALESCE(jsonb_path_query_array(
+                   undo_journal,
+                   '$[*] ? (@.table == "{_OI_ROWS_TABLE}")'
+               ), '[]'::jsonb) AS row_entries,
+               COALESCE(jsonb_path_query_array(
+                   undo_journal,
+                   '$[*] ? (@.table == "{_OI_LINKS_TABLE}" && @.op == "insert")'
+               ), '[]'::jsonb) AS link_insert_entries
+        FROM {_DECISIONS_TABLE}
+        WHERE id IN :ids
+        """
+    ).bindparams(bindparam("ids", expanding=True))
+    rows = db.execute(stmt, {"ids": decision_ids}).mappings().all()
+
+    out: Dict[str, list] = {}
+    for row in rows:
+        # `id` comes back as a native `uuid.UUID` here (a raw-SQL read of a real
+        # Postgres `uuid` column, never routed through the ORM's `UUID(as_uuid=
+        # False)` type) - stringified so it matches the plain `str` keys every
+        # other caller in this module uses (`scalar_rows`' own `.id`, every journal
+        # entry's own `pk`).
+        out[str(row["id"])] = (
+            list(row["decision_entries"] or [])
+            + list(row["row_entries"] or [])
+            + list(row["link_insert_entries"] or [])
+        )
+    return out
+
+
 def board_undo_map(
     db: Session, adopted_by_so: Dict[str, Optional[str]]
 ) -> Dict[str, Optional[Dict[str, Any]]]:
@@ -837,12 +949,14 @@ def board_undo_map(
     Review round (N+1 finding): the board's own per-order facts (revision, confirmed
     at/by) are read as SCALAR COLUMNS, never the `undo_journal` JSONB - a board of
     fifty orders has no reason to pull fifty replay scripts into Python to answer
-    "who confirmed this and when". The journal itself is fetched separately, scoped
-    to just the decisions that are actually undoable, and the refusal for every one
-    of them is computed in ONE pass by `_grouped_refusals` rather than once per order.
+    "who confirmed this and when". `_grouped_refusals` needs only THREE kinds of
+    entry out of a journal that can carry fifteen tables' worth of rows (`_pso_ids_
+    by_decision`'s own `so_supply_decisions` inserts/updates, `_OI_ROWS_TABLE`'s own
+    entries for the actioned check, `_OI_LINKS_TABLE`'s own insert set) - a follow-up
+    review round has Postgres extract exactly those three, via `jsonb_path_query_
+    array`, rather than deserialising the whole journal into Python only to filter
+    it there. `undo_last_confirm` still loads the full journal - it replays it.
     """
-    from types import SimpleNamespace
-
     from app.models.user import User
 
     pso_ids = {pso_id for pso_id in adopted_by_so.values() if pso_id}
@@ -860,7 +974,7 @@ def board_undo_map(
         .filter(
             SOSupplyDecision.project_sales_order_id.in_(pso_ids),
             SOSupplyDecision.state == DECISION_ACTIVE,
-            SOSupplyDecision.undo_journal.isnot(None),
+            _journalled_decision_clause(),
         )
         .all()
     )
@@ -868,17 +982,13 @@ def board_undo_map(
         return {so_id: None for so_id in adopted_by_so}
 
     decision_ids = [row.id for row in scalar_rows]
-    journals = dict(
-        db.query(SOSupplyDecision.id, SOSupplyDecision.undo_journal)
-        .filter(SOSupplyDecision.id.in_(decision_ids))
-        .all()
-    )
+    trimmed_journal_by_id = _trimmed_journal_entries(db, decision_ids)
     decision_stand_ins = [
-        SimpleNamespace(
+        _JournalStandIn(
             id=row.id,
             project_sales_order_id=row.project_sales_order_id,
             confirmed_at=row.confirmed_at,
-            undo_journal=journals.get(row.id) or [],
+            undo_journal=trimmed_journal_by_id.get(row.id, []),
         )
         for row in scalar_rows
     ]

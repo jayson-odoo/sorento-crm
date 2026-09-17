@@ -1479,7 +1479,11 @@ export function FulfilmentBoardPanel({
                             {label}
                           </span>
                           {reason ? (
-                            <span className="truncate text-xs text-muted-foreground">
+                            // `text-foreground/70`, not `text-muted-foreground`
+                            // (review round follow-up): the disabled item's own
+                            // reduced opacity stacks with a muted foreground and
+                            // drops this line below the contrast floor.
+                            <span className="truncate text-xs text-foreground/70">
                               {reason}
                             </span>
                           ) : null}

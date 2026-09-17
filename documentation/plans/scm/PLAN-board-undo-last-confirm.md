@@ -76,9 +76,13 @@ Board payload (`app/services/project_fulfilment_board_service.py`, order header)
     the journal's insert set and whose `linked_at > confirmed_at`. The `auto` flag is
     irrelevant: a buyer's "Auto link all" and an AutoCount PO pairing are purchasing's
     placements as much as a hand click.
-  - `actioned`: a row with `state = 'actioned'` that was not already actioned when the confirm
-    ran (journal old `state` for the row is not `actioned`; a row absent from the journal
-    counts only when `actioned_at > confirmed_at`).
+  - `actioned`: a row with `state = 'actioned'` refuses unless the journal carries an entry for
+    that row whose own `old` dict has `state = 'actioned'` (already actioned before the confirm
+    ran; the confirm's own cascade merely re-touched it). The clock fallback
+    (`actioned_at > confirmed_at`) applies to every other case: the row absent from the journal,
+    present only as an insert (no `old` at all), or present with an `old` that carries no
+    `state` key (some other column changed, `state` did not) - none of those say what the row's
+    state was before the confirm, so the clock is what is left.
   The journal, not the clock, says what the confirm itself wrote. Review finding 17 Sep:
   `confirmed_at` and `linked_at` are both `datetime.utcnow()` on separate statements, so the
   confirm's own step-3 borrow link is microseconds LATER than `confirmed_at`; the first
