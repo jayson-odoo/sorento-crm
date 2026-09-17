@@ -119,6 +119,15 @@ is the noise the owner complained about, one door over. `_attach_link_suggestion
 such a link (`suggestion = None`), reading claims in ONE batched query for the page's
 triggered PO lines and citations off the row it already holds.
 
+Review round 2 (F1): the first cut of S3 read `scm.order_link_claim.resolved_at IS NOT NULL`
+while the walk's `own_claim` (`_prime_claims` / `_dedication_for_target`, over
+`order_link_service._claim_rows`) ignores `resolved_at` and requires the claim's SO line to
+still have outstanding. Reproduced both ways (an unresolved live claim: link plus pill; a
+settled claim: walk refuses, pill silent). On the 0915 prod copy 85% of resolved claims
+with a target point at a settled SO line, so the divergence class grows as orders deliver.
+Ruling: the pill calls the walk's own claim reader, and `_claim_so_numbers_by_target` is
+deleted. Second exemption, same principle as the first: one reader, never a second spelling.
+
 ### S4 - the Link dialog's recommendation follows the walk [BE] (review round 1, S3 finding)
 
 `po_candidates_for_row`'s docstring promises `default_take` / `recommended` are "the

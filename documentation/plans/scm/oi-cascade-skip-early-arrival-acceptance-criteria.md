@@ -22,6 +22,8 @@ product's stated `standard_lead_time_days` unless the criterion says default.
 * AC-EA-12 `po_candidates_for_row` (Link dialog) still lists the early line with `recommended == False` and `default_take == 0` (S4); an inside-window line on the same row keeps `recommended == True`. `place_on_po_allocations` by hand still links the early line, and that link then shows the `reallocate` / `unlink` suggestion on the worklist (unclaimed, uncited).
 * AC-EA-14 A link a person wrote by hand on an early line that the row's own SO claims carries `suggestion is None` on the worklist; the same link with the claim removed carries `reallocate` / `unlink` (S3).
 * AC-EA-15 A link a person wrote by hand on an early line whose document the row cites carries `suggestion is None`; the same link with the citation removed carries `reallocate` / `unlink` (S3).
+* AC-EA-16 Claim liveness parity, settled: the row's own SO claims the early line but the claim's sales-order line is settled (outstanding 0). The cascade refuses (`placed_rows == 0`, G7) AND a hand-placed link on that line carries `reallocate` / `unlink` - the pill honours no dedication the walk itself no longer honours (review round 2, F1).
+* AC-EA-17 Claim liveness parity, unresolved: the claim row has `resolved_at IS NULL` and its SO line outstanding. The cascade links (`placed_rows == 1`) AND the worklist reads `suggestion is None` on that link. Both readers take "this row's own SO claims it" from the walk's one claim reader (`_prime_claims` / `_dedication_for_target`), never a second predicate.
 
 ## Browser (end of lane, agent-browser on the lane stack :3082/:8082)
 
