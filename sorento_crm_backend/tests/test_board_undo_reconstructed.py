@@ -1288,7 +1288,16 @@ def test_reconstructed_undo_of_a_batch_confirm_returns_the_batch_to_pending_and_
     real Confirm always writes BEFORE undoing - standing in for a revision confirmed
     before the journal existed (S5's own premise) - so `undo_confirm`'s `mode ==
     "reconstructed"` branch (AC-R2-34) runs `reconstruct_undo` instead of `undo_last_
-    confirm`. A plain (non-batch) revision is covered separately below."""
+    confirm`. A plain (non-batch) revision is covered separately below.
+
+    Mirrors prod (SO314594): `_form_three` confirms the order once (rev 1), then
+    `_apply_from_board` confirms it again carrying the batch (rev 2) - two revisions,
+    no journal on either. Undoing only rev 2 reinstates rev 1 as active, which still
+    covers the line; the board only reopens it once BOTH are reconstructed away, the
+    same as SO314594 needed both its own revisions undone before the pill let go. The
+    batch itself returns to `pending` on the FIRST undo (the one that undoes the
+    revision that actually applied it), independent of what remains active after -
+    asserted as a middle checkpoint before the second undo runs."""
     from app.models.base import company_scope
     from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
     from app.services import project_seed_service
@@ -1333,22 +1342,76 @@ def test_reconstructed_undo_of_a_batch_confirm_returns_the_batch_to_pending_and_
                 fixture = _form_three((client, world))
                 response = _apply_from_board(fixture)
                 assert response.status_code == 200, response.text
-
-                decision = (
-                    db.query(SOSupplyDecision)
-                    .filter(SOSupplyDecision.project_sales_order_id == fixture["order"].id)
-                    .order_by(SOSupplyDecision.revision_no.desc())
-                    .first()
-                )
-                assert decision is not None
                 batch_id = fixture["batch"].id
 
-                decision.undo_journal = None
+                rev2 = (
+                    db.query(SOSupplyDecision)
+                    .filter(
+                        SOSupplyDecision.project_sales_order_id == fixture["order"].id,
+                        SOSupplyDecision.revision_no == 2,
+                    )
+                    .one()
+                )
+                rev1 = (
+                    db.query(SOSupplyDecision)
+                    .filter(
+                        SOSupplyDecision.project_sales_order_id == fixture["order"].id,
+                        SOSupplyDecision.revision_no == 1,
+                    )
+                    .one()
+                )
+
+                # Neither revision carries a journal - the pre-lane shape both SO314594
+                # revisions actually had.
+                rev2.undo_journal = None
+                rev1.undo_journal = None
                 db.commit()
 
-                reconstruct_undo(db, fixture["order"], decision, actor_user_id=actor)
+                reconstruct_undo(db, fixture["order"], rev2, actor_user_id=actor)
                 db.commit()
                 db.expire_all()
+
+                # Middle checkpoint: rev 1 is reinstated active, and the batch is
+                # ALREADY back to pending - the return happens on undoing the revision
+                # that applied it, regardless of what remains active afterward.
+                active_after_first_undo = (
+                    db.query(SOSupplyDecision)
+                    .filter(
+                        SOSupplyDecision.project_sales_order_id == fixture["order"].id,
+                        SOSupplyDecision.state == "active",
+                    )
+                    .one()
+                )
+                assert active_after_first_undo.id == rev1.id, (
+                    "after undoing rev 2 alone, rev 1 must be the reinstated active "
+                    "decision"
+                )
+                batch_rows_mid = (
+                    db.query(PlanningChangeRow)
+                    .filter(PlanningChangeRow.batch_id == batch_id)
+                    .all()
+                )
+                assert batch_rows_mid, "the batch's own rows must still exist"
+                assert all(row.applied_state == "pending" for row in batch_rows_mid), (
+                    "AC-R2-19a: the batch must already be pending after undoing the "
+                    "revision that applied it, even though rev 1 is still active"
+                )
+
+                reconstruct_undo(db, fixture["order"], rev1, actor_user_id=actor)
+                db.commit()
+                db.expire_all()
+
+                no_active = (
+                    db.query(SOSupplyDecision)
+                    .filter(
+                        SOSupplyDecision.project_sales_order_id == fixture["order"].id,
+                        SOSupplyDecision.state == "active",
+                    )
+                    .first()
+                )
+                assert no_active is None, (
+                    "after undoing both revisions, no active decision may remain"
+                )
 
                 batch_rows = (
                     db.query(PlanningChangeRow)
@@ -1382,8 +1445,11 @@ def test_reconstructed_undo_of_a_batch_confirm_returns_the_batch_to_pending_and_
                     and c["line_id"] == str(core_line_1.id)
                 )
                 assert contribution["covered"] is False, (
-                    "AC-R2-19a: a reopened (reopened_by_change) line must not read "
-                    f"covered any more: {contribution}"
+                    "AC-R2-19a: with no active decision left and the batch pending, "
+                    f"the line must not read covered any more: {contribution}"
+                )
+                assert contribution["decision"] is None, (
+                    "AC-R2-19a: no active decision means no decision on the board either"
                 )
                 assert contribution["sources"], (
                     "AC-R2-19a: a reopened line must be proposed for again, not left blank"
