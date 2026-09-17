@@ -231,6 +231,15 @@ def picked_positions(pending: Pending, verdict: dict[str, Any]) -> tuple[list[in
     )
     broadens = broadens_the_roster(verdict, pending)
     if pending.kind in ESCALATION_OFFER_KINDS:
+        if pending.expects == "yes_no":
+            # Defect 4 (owner hand pass 6, 17 Sep 2026): a YES/NO offer (one team, no
+            # numbered menu - `compose._team_pick_question`'s single-team branch) is
+            # answered by a yes, never by a position. "how about SO?" carried
+            # `reference_positions: [1]` over exactly this shape and position 1
+            # escalated a business question about a document - the generic
+            # `is_affirmative`/`is_escalation_confirmation` arm further down in
+            # `decide()` is the only door a yes_no pending answers through.
+            return None
         # A handover is the most expensive thing the bot can do with a message, so it
         # takes an EXPLICIT signal and nothing weaker: ONE position the customer typed
         # (which is how a multi-team roster is answered at all, contract 108), or the
