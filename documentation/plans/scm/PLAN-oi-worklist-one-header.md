@@ -85,7 +85,51 @@ find or mint the same order's `amendment_id IS NULL` header (copy `company_id`,
 `UPDATE order_inquiry_rows SET order_inquiry_id = <target>`, delete the emptied header, then
 delete the synthetic amendment. Row ids, links, claims, handover records untouched. Runs in
 SQL, idempotent, downgrade is a documented no-op. Verified on `sorento_ai_automation_0915_1900`
-before the PR (OI-000737 on SO314595 is the known case there). AC-OH-30..35.
+before the PR (OI-000737 on SO314593 is the known case there - corrected from "SO314595"
+above, confirmed against the copy's own `sales_orders.so_number`).
+
+**Verified on real data, 17 Sep.** `sorento_ai_automation_0915_1900` was busy (another
+lane's own `:8082` backend, `sorento_crm-oi-cascade-early`) so the copy was taken via
+`pg_dump -Fc | pg_restore --no-owner --role=sorento_crm` into a new `sorento_oioh_stack`
+(dump needs no exclusive lock on the source, unlike `createdb -T`) - 26 restore errors, all
+`pg_stat_statements`/`vector` extension-creation permission denials and the three pgvector
+embedding tables that follow from them, none of them order-inquiry tables. Row counts
+matched the source exactly before touching anything:
+`projects.order_inquiry_rows` 11886, `projects.order_inquiries` 721,
+`projects.so_amendments` 7, `projects.order_inquiry_links` 6207, `users` 69.
+
+Before `alembic upgrade head` (`sorento_oioh_stack`, starting at `undo_0002_seed_undone`):
+2 `order_inquiries` headers whose amendment is `planning_change_batch` (OI-000737 on
+SO314593, 5 rows; OI-000738 on SO314594, 3 rows - both amendments published 16 Sep), out
+of 7 `planning_change_batch` amendments total (the other 5 predate this and never had a
+header of their own - nothing for the migration to touch, since it walks from the header,
+not the amendment). Both orders already had their own null-amendment header (OI-000477 on
+SO314593 with 14 rows, OI-000539 on SO314594 with 13 rows).
+
+`alembic upgrade head` ran in 1.77s wall (`time`, one Python/SQLAlchemy session per the
+migration's own `Session(bind=op.get_bind())`), logging `oioh_0001: folded 2
+planning_change_batch header(s)`.
+
+After: 0 headers left on a `planning_change_batch` amendment; the amendment count dropped
+7 -> 5 (only the two WITH a header got deleted, matching "delete the synthetic amendment"
+only when its header actually existed to fold). OI-000737 and OI-000738 no longer exist.
+OI-000477 now carries 19 rows (14 + 5), OI-000539 carries 16 (13 + 3) - `raised_by` and
+`raised_at` on BOTH unchanged byte-for-byte against the pre-migration source (same
+`9993276c-...` actor, same timestamps to the microsecond). Global row/link/claim counts
+untouched: `order_inquiry_rows` still 11886, `order_inquiry_links` still 6207,
+`scm.order_link_claim` still 63200. Spot-checked five of OI-000477's links (SPO documents)
+- `row_id` unchanged, still pointing at the same row, now under the new
+`order_inquiry_id`.
+
+`sorento_oioh_stack` is left in place as the browser-verification DB (Phase 3). Its two
+`email_outbox` rows in `pending` (both real prod addresses, `purchase02@mocha.com.my`,
+subjects naming SO314595 - a different, unrelated SO on the same copy) were set to
+`status = 'cancelled', cancel_reason = 'lane copy, never send'`. One further row was
+already sitting in `sending` from 7 Sep (a `ticket_comment_mention` to a real Gmail
+address, unrelated to this lane) - cancelled the same way as a precaution, since a stack
+DB a browser pass will run a live backend against is exactly where a stuck `sending` row
+could get picked up and actually sent; flagged to the captain as a judgment call beyond
+the literal "pending" instruction, not silently done. AC-OH-30..35.
 
 ### S4 - Was/Now on the fresh row after a redirect [BE]
 
