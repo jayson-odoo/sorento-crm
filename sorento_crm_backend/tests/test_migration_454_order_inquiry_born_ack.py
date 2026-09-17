@@ -111,9 +111,16 @@ def test_a_rejected_row_is_left_exactly_as_it_is(api):
 
 
 def test_an_already_acknowledged_row_is_untouched(api):
+    """This migration's own scope is `ack_state = 'awaiting'` - what this fixture forces
+    is the pre-existing acknowledged case its WHERE clause has to leave alone, not a claim
+    about how a fresh raise reads today (`PLAN-oi-confirm-per-so.md` S1 makes that
+    `awaiting` again)."""
     _client, world = api
     row = _raise_one_row(api)["row"]
-    assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged already"
+    row.ack_state = ACK_ACKNOWLEDGED
+    row.acknowledged_by = world.buyer
+    row.acknowledged_at = datetime.utcnow() - timedelta(days=3)
+    world.db.commit()
     stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
 
     _run_upgrade(world.db)
@@ -171,7 +178,10 @@ def test_a_legacy_confirmed_rows_links_are_frozen_manual_before_the_backfill(api
     assert all(link.auto for link in links), "cascade links start auto=True"
 
     # Simulate a genuine PRE-S1 human Confirm press: acknowledged by a real actor, before
-    # this migration ever ran (the shape `acknowledged_by IS NOT NULL` identifies).
+    # this migration ever ran (the shape `acknowledged_by IS NOT NULL` identifies). A
+    # fresh raise is born `awaiting` again (`PLAN-oi-confirm-per-so.md` S1), so `ack_state`
+    # is forced here too - this migration's own WHERE clause reads it literally.
+    row.ack_state = ACK_ACKNOWLEDGED
     row.acknowledged_by = world.buyer
     row.acknowledged_at = datetime.utcnow() - timedelta(days=3)
     world.db.commit()

@@ -3145,9 +3145,11 @@ def _pool_row_for(
     That refusal used to leave an unlinked raised row at the pool, which reads as NEW
     demand, while the quantity it was supposed to carry sat unclaimed.
 
-    Born acknowledged and company-stamped, the same way `_borrow_shortfalls` raises the
-    donor's order-back: this row is the plan's own work, not something purchasing has to
-    say yes to.
+    Born acknowledged and company-stamped, UNLIKE the S1 flip in `PLAN-oi-confirm-per-so.md`:
+    this row carries no `supply_decision_id` (it never sits on the board awaiting a decision -
+    it is placed straight onto PO allocations in this same call), so it is not board-origin
+    in the sense that rule cares about. It is the reallocation itself, already placed by the
+    time the row exists, not something purchasing still has to say yes to.
     """
     qty = sum((_dec(share["qty"]) for share in taken), _ZERO)
     pool_code = _pool_code_for_core_line(db, row.core_line_id, pool_cache)
