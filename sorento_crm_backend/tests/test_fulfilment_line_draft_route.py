@@ -996,3 +996,156 @@ def test_a_draft_on_a_cancelled_line_is_still_refused(api):
 
     assert response.status_code == 422, response.text
     assert response.json()["code"] == "board_contribution_line_not_found"
+
+
+# --------------------------------------------------------------------------- #
+# R1 (`PLAN-board-draft-on-confirmed-line.md`): a covered line refuses a plain #
+# save. Covered means an ACTIVE `SOSupplyDecision` on the mirror order whose   #
+# `line_snapshots[].core_line_id` names this core line - the only draft such a #
+# line still accepts is an amendment. TEST-FIRST: `save_draft` carries no gate #
+# yet, so every 409 below is a 200 today.                                     #
+# --------------------------------------------------------------------------- #
+
+
+def _confirm_full_qty(client, world, order, line, qty="10"):
+    """Confirms `line` whole, off the pool, so an ACTIVE decision covers it (R1)."""
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": qty}]
+                )
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response
+
+
+def _approval_body():
+    return {
+        "verdict": "approved",
+        "reserve_qty": "10",
+        "reserve": [{"location": "ZZT-BRW", "qty": "10"}],
+        "borrow": [],
+        "buy_qty": "0",
+    }
+
+
+def test_a_plain_approval_on_a_confirmed_line_is_refused(api):
+    """AC-B1: an ACTIVE decision already covers the line, so a plain approve is refused with
+    409 `board_line_already_confirmed`, and nothing is written."""
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "board_line_already_confirmed"
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 0
+    )
+
+
+def test_a_plain_rejection_on_a_confirmed_line_is_refused(api):
+    """AC-B2: the other verdict R1 refuses outright on a covered line."""
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    response = _save(client, key, decision={"verdict": "rejected", "reason": "local"})
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "board_line_already_confirmed"
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 0
+    )
+
+
+def test_an_amendment_on_a_confirmed_line_still_saves(api):
+    """AC-B3: the amend path is untouched by R1 - it is the one verdict a covered line still
+    takes."""
+    from app.models.project_so import SOSupplyDecisionDraft
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    response = _save(client, key, decision=DECISION)
+
+    assert response.status_code == 200, response.text
+    assert (
+        db.query(SOSupplyDecisionDraft)
+        .filter(SOSupplyDecisionDraft.core_line_id == str(core_line.id))
+        .count()
+        == 1
+    )
+
+
+def test_an_approval_on_an_uncovered_line_still_saves(api):
+    """AC-B4: regression guard, NOT a red test - no confirm at all, so the line is not
+    covered and the ordinary save keeps answering 200, exactly as it does today. This pins
+    R1's gate as a NEW refusal on a COVERED line, never a change to the save every other test
+    in this file already relies on."""
+    client, world, core_so, core_line, order, line = _world(api)
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 200, response.text
+
+
+def test_a_line_whose_only_decision_is_superseded_is_not_covered(api):
+    """AC-B5: covered means an ACTIVE decision, never a superseded one. The ONLY decision on
+    this line is downgraded to superseded directly (rather than reached by reconfirming, which
+    is `test_reconfirming_supersedes_the_active_decision_and_increments_the_revision`'s own
+    case), leaving the line with no active decision at all - exactly the case R1 must not
+    catch."""
+    from app.models.project_so import DECISION_SUPERSEDED, SOSupplyDecision
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    decision.state = DECISION_SUPERSEDED
+    db.commit()
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 200, response.text
+
+
+def test_the_confirmed_line_refusal_states_the_exact_sentence(api):
+    """AC-B6: the message a planner reads when R1 refuses their save."""
+    client, world, core_so, core_line, order, line = _world(api)
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 409, response.text
+    assert response.json()["message"] == (
+        "This line is already confirmed. Amend it to change the decision, "
+        "or undo the confirmation."
+    )

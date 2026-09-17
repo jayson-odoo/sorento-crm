@@ -822,6 +822,60 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
 });
 
 /**
+ * R1/R2 (`PLAN-board-draft-on-confirmed-line.md`, AC-B1/AC-B2/AC-B6): the server refuses a
+ * plain Save or Reject on a covered line with a 409, and the panel says so before the round
+ * trip rather than sending a PUT the server would refuse anyway. TEST-FIRST: neither Save nor
+ * Reject carries this gate yet, so both are red against current code.
+ */
+describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2)', () => {
+  const REFUSAL =
+    'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
+  const frozen: BoardLineDecision = {
+    revision_no: 1,
+    confirmed_at: '2026-08-18T02:00:00',
+    timely_spo_qty: '0',
+    reserve: [
+      { warehouse_id: 'wh-BRW-AM', location: 'BRW-AM', qty: '8' },
+      { warehouse_id: 'wh-BRW', location: 'BRW', qty: '16' },
+    ],
+    borrow: [],
+    buy_qty: '0',
+  };
+
+  it('AC-F1: disables Save and Reject, both with the R1 sentence, while the draft still matches the frozen composition', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    const save = screen.getByRole('button', { name: 'Save decision' });
+    const reject = screen.getByRole('button', { name: 'Reject' });
+
+    expect(save).toBeDisabled();
+    expect(save).toHaveAttribute('title', REFUSAL);
+    expect(reject).toBeDisabled();
+    expect(reject).toHaveAttribute('title', REFUSAL);
+  });
+
+  it('AC-F2: enables Save once the draft differs from the frozen composition and a reason is typed', () => {
+    renderPanel({ covered: true, decision: frozen });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
+
+    // Still balances against the 24 outstanding (6 + 18), but neither number the revision
+    // froze (8 + 16) nor the engine's own suggestion (9 + 15) - a genuine amendment.
+    fireEvent.change(screen.getByLabelText('Reserve at BRW-AM'), {
+      target: { value: '6' },
+    });
+    fireEvent.change(screen.getByLabelText('Reserve at BRW'), {
+      target: { value: '18' },
+    });
+    fireEvent.change(screen.getByLabelText(/^Why this differs/), {
+      target: { value: 'The BRW-AM count looked short on the floor.' },
+    });
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeEnabled();
+  });
+});
+
+/**
  * The saved amendment overlays the engine's suggestion on reopen: collapsing an amended row
  * and opening it again must not show the engine's numbers under a pill reading Amended.
  */
