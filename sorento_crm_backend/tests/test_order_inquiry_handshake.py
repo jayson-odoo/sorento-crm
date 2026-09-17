@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import io
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -1482,7 +1482,11 @@ def test_an_explicit_no_horizon_links_a_row_the_plan_does_not_reach(api):
     """
     _client, world = api
     _plan_until(world, HORIZON)
-    _open_po_line(world, qty=100)
+    # AC-EA-3: the default lead time is 90 days, and FAR is 2030-01-01 - the PO line's
+    # default 2026-08-10 promise is a lead time or more BEFORE FAR, so the cascade's own
+    # window would refuse it. Promised inside FAR's window so this test still measures
+    # the horizon override, not the (unrelated) early-arrival refusal.
+    _open_po_line(world, qty=100, expected_date=FAR - timedelta(days=30))
     far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
 
     with _as_purchasing(world) as buyer:
@@ -1525,7 +1529,9 @@ def test_link_selected_carries_the_explicit_no_horizon_too(api):
     box as Acknowledge does."""
     _client, world = api
     _plan_until(world, HORIZON)
-    _open_po_line(world, qty=100)
+    # AC-EA-3: promised inside FAR's default 90-day window - see the sibling
+    # no-horizon test above for why.
+    _open_po_line(world, qty=100, expected_date=FAR - timedelta(days=30))
     far = _due(world, _raise_one_row(api, qty="10")["row"], FAR)
 
     with _as_purchasing(world) as buyer:

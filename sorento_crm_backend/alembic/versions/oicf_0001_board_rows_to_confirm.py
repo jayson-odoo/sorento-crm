@@ -1,7 +1,7 @@
 """Board-raised order inquiry rows go back to To confirm at deploy
 
 Revision ID: oicf_0001_board_rows_to_confirm
-Revises: undo_0002_seed_undone
+Revises: undo_0003_journal_sql_null
 Create Date: 2026-09-17 00:00:00.000000
 
 `PLAN-oi-confirm-per-so.md` S1 / R1 (owner ruling 17 Sep 2026). G4
@@ -33,7 +33,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "oicf_0001_board_rows_to_confirm"
-down_revision = "undo_0002_seed_undone"
+down_revision = "undo_0003_journal_sql_null"
 branch_labels = None
 depends_on = None
 
