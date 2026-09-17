@@ -296,9 +296,10 @@ describe('OrderInquiriesClient: reading the page', () => {
       .map((cell) => cell.textContent ?? '');
     const order = [
       // The Excel's own column order (Phase 2 round 2): SO date through PO/SPO reads
-      // the way the purchasing team already reads their sheet - Order inquiry (a
-      // number the sheet never carried) moves to the end, beside the rest of the
-      // system's own columns rather than in front of Item code.
+      // the way the purchasing team already reads their sheet. Order inquiry is NOT in
+      // this list any more (R5/AC-OH-01, one-header lane): it is hidden by default, so
+      // it renders no `columnheader` cell at all until a reader ticks it back on -
+      // asserted separately below, via the Columns menu.
       'SO date',
       'S/O no',
       'Item code',
@@ -313,7 +314,6 @@ describe('OrderInquiriesClient: reading the page', () => {
       'SPO',
       'Agent',
       'Location',
-      'Order inquiry',
       'Taken by PO/SPO',
       'Remaining',
       'Instruction',
@@ -334,6 +334,17 @@ describe('OrderInquiriesClient: reading the page', () => {
     // AC-1.5) - there is no manual confirm left to report on.
     expect(headers.some((text) => /^actions$/i.test(text))).toBe(false);
     expect(headers.some((text) => text === 'Confirmed')).toBe(false);
+
+    // R5/AC-OH-01: Order inquiry is offered in the Columns menu, unticked - present, not
+    // removed, so a reader who wants the number back can tick it on.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^columns$/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const orderInquiryToggle = await screen.findByRole('menuitemcheckbox', {
+      name: 'Order inquiry',
+    });
+    expect(orderInquiryToggle).toHaveAttribute('aria-checked', 'false');
   });
 
   it('says nothing has been raised yet, and offers the screen that raises it', async () => {
@@ -1079,5 +1090,139 @@ describe('AC-F1: the five S1 filters travel in the URL', () => {
       'Every agent',
     )) as HTMLSelectElement;
     expect(select.value).toBe('agent-1');
+  });
+});
+
+describe('AC-OH-70: the Filters popover scrolls (`oi-worklist-one-header-acceptance-criteria.md` S7)', () => {
+  /**
+   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` is a plain
+   * `<div className="space-y-3">` with no height bound at all, so this fails on a null
+   * scroll-container ancestor until the coder wraps it (or the `DropdownMenuContent` it
+   * renders into) with `overflow-y-auto` + a `max-h-` class - "a class on the content",
+   * per the plan, since the shared `data-grid-list-toolbar.tsx` primitive has no
+   * max-height prop of its own.
+   *
+   * Selector asserted on: the nearest ancestor of the "Confirmed" label (the popover's
+   * OWN last field, AC-OH-70's own wording) whose class list contains
+   * `overflow-y-auto`, found via `closest('[class*="overflow-y-auto"]')` - and that
+   * same element's className also matching `/max-h-/`. Reported to the captain as the
+   * exact contract this test pins; the coder may add the classes to a new wrapper div
+   * or to an existing one, as long as some ancestor between "Confirmed" and the popover
+   * carries both.
+   */
+  it('bounds the Filters content to the viewport and scrolls it, so Confirmed is reachable', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    // "Confirmed" also names the toolbar's own active-filter chip once one is set
+    // (`activeSummary`, e.g. "Confirmed: Rejected") - the popover's own FIELD label is
+    // the plain `<label>` element among the matches.
+    const confirmedLabel = (await screen.findAllByText('Confirmed')).find(
+      (node) => node.tagName === 'LABEL',
+    );
+    expect(confirmedLabel).toBeDefined();
+
+    const scrollContainer = confirmedLabel!.closest('[class*="overflow-y-auto"]');
+    expect(scrollContainer).not.toBeNull();
+    expect(scrollContainer?.className ?? '').toMatch(/max-h-/);
+  });
+});
+
+describe('AC-OH-61: a State filter in the Filters popover (`oi-worklist-one-header-acceptance-criteria.md` R2/S5)', () => {
+  /**
+   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` has no State field at
+   * all - the backend already accepts `state=` and returns `by_state` on the summary
+   * (AC-OH-51/52; `OrderInquiryWorklistSummary.by_state` is already typed), the frontend
+   * never wires either. This fails until the coder adds, in `filtersContent`, a
+   * `<Label>State</Label>` next to a clearable `SearchableSelect` (placeholder
+   * "Every state", so `getByLabelText('Every state')` resolves it - same convention as
+   * "Every location"/"Every agent"/"Every month"), options built from
+   * `summary.data?.by_state` (`raised`/`partly_linked`/`actioned`/`cancelled`/`placed` -
+   * `total` is a count, not a filterable state, and must not appear as an option),
+   * labelled with the SAME words `OrderInquiryStatePill`'s own `STATE_LABEL` map already
+   * uses elsewhere (`_shared/components/OrderInquiryVerbPill.tsx`: Raised / Partly linked
+   * / Actioned / Cancelled / Linked for `placed`), each suffixed `(${count})` the same way
+   * Location/Agent/Confirmed already are, and a `state` entry threaded into both the
+   * `filters` memo (so it reaches `listOrderInquiryWorklist`) and the URL-sync effect
+   * (alongside `location`/`agent`/`so_month`/...), cleared meaning the param is dropped.
+   *
+   * Selectors asserted on: the `<label>` element reading exactly "State" (found the same
+   * way the AC-OH-70 block above disambiguates "Confirmed" the label from "Confirmed" the
+   * chip text - `tagName === 'LABEL'`); the `<select aria-label="Every state">` the
+   * `SearchableSelect` mock renders for it; and `listOrderInquiryWorklist`'s own call
+   * arguments for the `state` key. The coder may name the internal state variable and its
+   * setter anything - only the label text, the placeholder, the option labels/counts and
+   * the `state` key in the worklist call are pinned.
+   */
+  it('renders a State label and a select offering every by_state key with its existing label and count', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    const stateLabel = (await screen.findAllByText('State')).find(
+      (node) => node.tagName === 'LABEL',
+    );
+    expect(stateLabel).toBeDefined();
+
+    const select = (await screen.findByLabelText(
+      'Every state',
+    )) as HTMLSelectElement;
+    const optionTexts = Array.from(select.options).map(
+      (option) => option.textContent,
+    );
+    expect(optionTexts).toEqual(
+      expect.arrayContaining([
+        'Raised (2)',
+        'Partly linked (2)',
+        'Actioned (1)',
+        'Cancelled (1)',
+        'Linked (1)',
+      ]),
+    );
+    // `total` is a count, not a state a row can be filtered to.
+    expect(optionTexts.some((text) => /total/i.test(text ?? ''))).toBe(false);
+  });
+
+  it('choosing Cancelled sends state=cancelled to the worklist call', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    const select = await screen.findByLabelText('Every state');
+    fireEvent.change(select, { target: { value: 'cancelled' } });
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'cancelled' }),
+      ),
+    );
+  });
+
+  it('a URL carrying state=cancelled seeds the select, and clearing it drops state from the worklist call', async () => {
+    currentSearchParams = new URLSearchParams('state=cancelled');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'cancelled' }),
+      ),
+    );
+
+    openFilters();
+    const select = (await screen.findByLabelText(
+      'Every state',
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('cancelled');
+
+    fireEvent.change(select, { target: { value: '' } });
+
+    await waitFor(() => {
+      const last = listOrderInquiryWorklist.mock.calls.at(-1)?.[0] as
+        | Record<string, unknown>
+        | undefined;
+      expect(last?.state).toBeUndefined();
+    });
   });
 });

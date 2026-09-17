@@ -37,6 +37,10 @@ with **REMARK** reading **CANCEL BALANCE 280 NOS** - the same figure either way,
 separate cancel-then-order pair. A plain new line prints **QTY** only, both **CHANGE TO**
 columns blank, **REMARK ORDER**.
 
+A line whose confirm restates the line itself - a fresh row raised in its place, with its own
+Was/Now - never raises its own DELAY or ADVANCE line in the mail; only a line the confirm leaves
+in place still gets one.
+
 **How an item swap reads.** Swapping the product on a line prints as two lines in the table: a
 CANCEL BALANCE line for the old item and an ORDER line for the new one, not a single combined
 row.

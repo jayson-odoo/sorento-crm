@@ -92,7 +92,14 @@ that has rows, with the row count in brackets, **All** first. Click a tab to nar
 
 Click **Filters** to open the popover: **Location**, **Agent**, **SO month**, **PO number**,
 **SPO number**, **Linked**, **Confirmed**, **Supplier**, **Project**, **Raised by**, **Raised on**.
-**Clear filters** resets every one of them.
+**Clear filters** resets every one of them. On a short screen the popover's own content scrolls,
+so every field stays reachable even when there isn't room to show them all at once.
+
+A cancelled row no longer shows on the list by default. Filters > State = Cancelled shows them.
+
+**Raised by** names whoever raised that particular row - not simply whoever most recently pressed
+Confirm on the sales order. A row raised well before the order's last confirm still names its own
+original raiser.
 
 The search box uses multi-word narrowing: typing several words splits them on spaces and finds
 rows matching ALL of them. For example, typing `SO366990 SRTWT6801` finds only rows on sales order
@@ -105,8 +112,10 @@ agent.
 
 The default column order mirrors the Excel order book: **SO date**, **S/O no**, **Item code**,
 **Qty**, **Delivery date**, **Project / customer**, **Supplier**, **PO**, **SPO**, **Agent**,
-**Location**, **Order inquiry**, then the rest. If you have already personalised your own column
-order, yours is kept.
+**Location**, **Order inquiry**, then the rest. Every row of one sales order now sits under one
+order inquiry number, so the **Order inquiry** column is hidden by default - open **Columns** in
+the toolbar and tick it to show it. If you have already personalised your own column order or
+visibility, yours is kept.
 
 ### The PO and SPO columns
 
@@ -143,7 +152,10 @@ earlier orders. Purchasing sees this on Order Inquiries as two rows for the same
   unchanged, and its Qty cell carries the word **used**. Click **used** to read why - which
   document, when it was received, and which location it landed in.
 * **A new row is raised for the full quantity, with no documents.** It shows in the **Buy**
-  card and is what purchasing actually buys against.
+  card and is what purchasing actually buys against. Its Qty cell carries the same (i) as any
+  changed row, showing **Was** the old quantity and date; the (i) beside its **Instruction**
+  names the document that was received, when, and which location it landed in - so purchasing
+  reads the whole story off the one new row. No separate delay row is raised for that line.
 
 Nothing needs deciding on either row - the old one is just kept for the record, and the new one
 reads as a plain buy. See [Sales order changes after planning](sales-order-changes.md) for how
