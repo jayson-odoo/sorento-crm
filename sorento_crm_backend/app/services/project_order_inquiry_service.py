@@ -852,6 +852,30 @@ class ProjectOrderInquiryService:
                 and self._cascade_only(drafted_links.get(str(row.id), []))
                 and not row.redirected_to_pool
             ]
+            # S2 (`PLAN-scm-oi-handover-r2-undo.md`, AC-R2-10/11): a NAMED line (not
+            # carried, not a planning-change settle) whose only live row is a plain
+            # `raised` ORDER/ORDER_BACK row, no links at all, not redirected, and whose
+            # verb equals the verb THIS confirm would raise - `target_verb` below - reads
+            # as the same instruction restated, not a fresh one. Widened alongside
+            # `drafted` above rather than folded into it: a placed/partly-linked row
+            # earned its slot by carrying only the cascade's OWN links (still a "draft"
+            # nobody has manually touched), where a raised row earns it by carrying NO
+            # links whatsoever - two different reasons to trust the same settle-in-place
+            # call. `_settle_row_in_place` itself still declines two live rows or a verb
+            # mismatch (its own `live` filter, `len(live) != 1`), so AC-R2-12's two shapes
+            # (two live rows, a verb switch) fall through unchanged to the supersede path
+            # below.
+            target_verb = IV_ORDER_BACK if order_back else IV_ORDER
+            named_raised = [
+                row
+                for row in rows
+                if row.verb == target_verb
+                and row.state == INQUIRY_RAISED
+                and not row.redirected_to_pool
+                and not drafted_links.get(str(row.id))
+            ]
+            if not drafted and len(named_raised) == 1:
+                drafted = named_raised
             asked_to_settle = str(line.id) in settle_in_place
             if (asked_to_settle or drafted) and self._settle_row_in_place(
                 inquiry, entry, rows, need, decision, actor_user_id=actor_user_id
@@ -884,10 +908,12 @@ class ProjectOrderInquiryService:
                     if row.verb in (IV_ORDER, IV_ORDER_BACK) and cancelled_owned_row is None:
                         cancelled_owned_row = row
                     if not carried:
-                        # AC-H23: a NAMED line superseded at a qty/date the settle
-                        # above declined to absorb in place is a genuine drop of the
-                        # old instruction, not the carry's silent cancel-and-re-raise -
-                        # purchasing has to be told the old row is gone, same as H19.
+                        # AC-H23, narrowed by AC-R2-12 (S2): a single-raised-row same-
+                        # verb line is caught by `named_raised` above now, so what
+                        # reaches here is only a genuine supersede - two still-owed
+                        # rows, or a verb switch the settle above will not absorb -
+                        # and purchasing has to be told the old row is gone, same as
+                        # H19.
                         self._record_handover(
                             row,
                             kind="cancelled",
