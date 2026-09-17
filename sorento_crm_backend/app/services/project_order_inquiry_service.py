@@ -5340,6 +5340,10 @@ class ProjectOrderInquiryService:
             "unit_cost": unit_cost,
             "currency": currency,
             "cited": is_cited,
+            # The G7 fact itself, not just its fold into `cascadable` above - S2
+            # (`PLAN-oi-cascade-skip-early-arrival.md`) reads this to let an early
+            # candidate through the lead-time window when THIS row's own SO claims it.
+            "own_so_claim": own_so_claim,
             # G7's dedication label: the SO another claim names, when this row's own SO
             # is not the one holding it. None on the ordinary, unclaimed line.
             "dedicated_to": dedicated_to,
@@ -6339,6 +6343,17 @@ class ProjectOrderInquiryService:
         # `_only_cascade_links` pair into a doubled N+1 across every row it walked.
         # Only when there is a re-deal to measure; an ordinary pass never touches drafts.
         redeal_links = self._links_by_row([str(row.id) for row in rows]) if redeal_drafts else {}
+        # S2 (`PLAN-oi-cascade-skip-early-arrival.md`): the SAME two lead-time sources and
+        # the SAME default the worklist's reallocate/unlink pill reads
+        # (`order_inquiry_worklist_service._attach_link_suggestions`), fetched once for the
+        # whole pass rather than per row - `ProjectSupplyService` is imported locally
+        # because the supply service imports this module.
+        from app.services.project_supply_service import ProjectSupplyService
+        from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
+
+        pass_product_ids = {self._resolve_product_id(row) for row in rows}
+        pass_product_ids.discard(None)
+        lead_times = ProjectSupplyService(self.db).lead_times(pass_product_ids)
 
         placed_rows = 0
         allocation_count = 0
@@ -6368,6 +6383,26 @@ class ProjectOrderInquiryService:
                 after_horizon += 1
                 continue
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
+            if not candidates:
+                continue
+            # S2: a candidate promised a full lead time (or more) before this row's own
+            # delivery date is REMOVED from the walk, not marked non-cascadable - it must
+            # not count toward `_cascade_take`'s full-cover total either, or a row would
+            # read as unfillable because of stock it was never going to take. This row's
+            # own SO claim, or a document CS cited, outranks the window exactly as it
+            # already outranks every ordering rule in `_candidate`'s sort key.
+            lead_days = lead_times.get(product_id)
+            if lead_days is None:
+                lead_days = DEFAULT_LEAD_TIME_DAYS
+            candidates = [
+                candidate
+                for candidate in candidates
+                if candidate.get("own_so_claim")
+                or candidate.get("cited")
+                or not arrives_outside_window(
+                    candidate.get("expected_date"), row.delivery_date, lead_days
+                )
+            ]
             if not candidates:
                 continue
             takes = self._cascade_take(candidates, need)

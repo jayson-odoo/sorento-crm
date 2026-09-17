@@ -1,6 +1,6 @@
 # PLAN - Order inquiries: the auto-link cascade skips a document arriving outside the row's lead-time window
 
-Status: planned (owner go 17 Sep 2026: "if it links and suggest to reallocate at the same time, don't link")
+Status: implemented (pending review) (owner go 17 Sep 2026: "if it links and suggest to reallocate at the same time, don't link")
 UAC: `oi-cascade-skip-early-arrival-acceptance-criteria.md` (AC-EA-xx)
 Branch: `feat/oi-cascade-skip-early-arrival` from `origin/main` (792ba8f04)
 Worktree: `../sorento_crm-oi-cascade-early`, DB `sorento_oice_ci` (copy of `sorento_sodl_ci`, stamped `undo_0002_seed_undone`)
