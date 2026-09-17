@@ -772,9 +772,14 @@ class ProjectOrderInquiryService:
                 if order_back
                 else (IV_ORDER, IV_CANCEL_BALANCE)
             )
-            # This sales order's OWN inquiry only. An amendment raises its exception verbs
-            # under its own inquiry (`amendment_id`), and cancelling those here would
-            # delete an instruction purchasing is still working from.
+            # This sales order's OWN inquiry only. An OCN amendment (`derive_for_amendment`)
+            # still raises its exception verbs under its OWN separate inquiry, and
+            # cancelling those here would delete an instruction purchasing is still
+            # working from. A BOOK-CHANGE reaction is different since S3: it now sits on
+            # this SAME `inquiry` (the order's one `amendment_id IS NULL` header), so a
+            # `CANCEL_BALANCE` row a book-change wrote for a qty decrease is correctly
+            # picked up and retired here too, exactly like one this confirm raised itself
+            # - one header, one supersede rule, no second inquiry to leave stale.
             rows = (
                 self.db.query(OrderInquiryRow)
                 .filter(
@@ -914,7 +919,16 @@ class ProjectOrderInquiryService:
                     # netting loop instead. The same rule applies at the same seam: a
                     # fully received link is not carried through a replan, whichever path
                     # found the row.
-                    if self._redirect_row_if_received(
+                    #
+                    # BLOCKER B1 (Opus review round 1): gated on `asked_to_settle` - a
+                    # PLANNING CHANGE naming this line - the same gate `_settle_row_in_place`
+                    # itself sits behind above. Ungated, this ran on every ordinary confirm
+                    # of a line with two still-owed rows, redirecting a row purchasing had
+                    # placed by hand (a MANUAL link, `_cascade_only` false) the moment its
+                    # document happened to arrive - not a replan, nobody asked this line to
+                    # be restated, and the buyer's own placement should not silently become
+                    # history under them.
+                    if asked_to_settle and self._redirect_row_if_received(
                         row, drafted_links.get(str(row.id), []), decision
                     ):
                         continue
@@ -948,15 +962,6 @@ class ProjectOrderInquiryService:
                 ),
                 key=lambda row: (row.delivery_date or date.max, str(row.id)),
             )
-            if redirected_this_call and asked_to_settle:
-                # R4 revised: a line the confirm restated - here, by releasing what it had
-                # into stock and buying fresh - is not one the planning change should ALSO
-                # raise a DELAY/ADVANCE row for. `_settle_row_in_place`'s own decline never
-                # ran this line through the append at line ~847 above (it returned False),
-                # so it is joined here instead - the one list `_oi_demand_rows` already
-                # reads to suppress that reaction, no new flag.
-                settled_in_place.append(str(line.id))
-
             # Did purchasing already take this line's instruction on, and is this
             # confirmation actually changing it?
             #
@@ -1029,6 +1034,16 @@ class ProjectOrderInquiryService:
                         [f"Replaces {_qty_str(raised_row.previous_qty)} used"]
                         + fragments
                     )
+                    if asked_to_settle:
+                        # S2 (Opus review round 1): joined HERE, where the fresh row that
+                        # actually carries the Was/Now is written - not earlier, on the
+                        # bare fact that something redirected. A line that redirects but
+                        # then raises NOTHING (`outstanding <= 0`, its need fully met some
+                        # other way) never reaches this block, and R4 revised only ever
+                        # meant to suppress the DELAY/ADVANCE row for a line the confirm
+                        # actually restated with a fresh ORDER row - one still owed, its
+                        # own DELAY row stands.
+                        settled_in_place.append(str(line.id))
                 self.db.add(raised_row)
                 if carried:
                     # AC-H20/AC-H22: the carry site cancels-and-re-raises even when
@@ -1129,7 +1144,8 @@ class ProjectOrderInquiryService:
         # all written now, so any companion this inquiry carries can be derived against
         # its host(s)' fresh state.
         self.derive_bundles(inquiry.id)
-        if raised and self.task_for(inquiry.id) is None:
+        # S1: the one-task-per-header guard is `_hand_to_purchasing`'s own now.
+        if raised:
             self._hand_to_purchasing(order, inquiry, raised)
         return {
             "inquiry": inquiry,
@@ -1398,7 +1414,7 @@ class ProjectOrderInquiryService:
         row: OrderInquiryRow,
         links: Sequence[OrderInquiryLink],
         decision: Any,
-    ) -> bool:
+    ) -> Optional[List[OrderInquiryLink]]:
         """AC-RL-10 to AC-RL-12 (`PLAN-oi-replan-received-links.md`, S2): the rule that
         makes `_settle_row_in_place` decline a row whose coverage has already shipped.
 
@@ -1410,48 +1426,68 @@ class ProjectOrderInquiryService:
         `_remove_links`, so the raise-time cascade below may draft it onto the fresh row
         this decline sends the caller to raise instead.
 
-        Returns False, changing nothing, when no link on the row is received - the
+        Returns `None`, changing nothing, when no link on the row is received - the
         ordinary case, which leaves `_settle_row_in_place` to run its usual settle.
+        Otherwise returns the received links themselves (every one, not just the first
+        named in this row's own note) - Opus review round 1: `_release_fragment` reuses
+        this list (cached on the row) rather than re-deriving it with a second,
+        identical query.
         """
-        received = self._received_documents_for(links)
-        received_links = [link for link in links if str(link.id) in received]
-        if not received_links:
-            return False
-        open_links = [link for link in links if str(link.id) not in received]
-        if open_links:
-            self._remove_links(row, open_links)
-        first = received_links[0]
-        document = first.document or "the document"
-        arrived = received[str(first.id)]
-        when = arrived.strftime("%d %b %Y") if arrived else "in full"
-        location = f", goods are {row.stock_location} stock" if row.stock_location else ""
-        fragment = (
-            f"{document} received {when}{location}, "
-            f"released at revision {decision.revision_no}"
-        )
-        row.note = f"{row.note}; {fragment}" if row.note else fragment
-        row.redirected_to_pool = True
-        self.db.flush()
-        return True
-
-    def _release_fragment(self, row: OrderInquiryRow) -> Optional[str]:
-        """S4/AC-OH-40..42: what the FRESH row's own note says about a row `this` just
-        released - `<document> received <date|in full> into <location>`, read off the
-        received link `_redirect_row_if_received` left standing on `row` rather than
-        parsed back out of its note (which reads differently - "released at revision N",
-        for a person looking at the OLD row's own history, not the new row's Was/Now).
-        """
-        links = self._links_of(row.id)
         received = self._received_documents_for(links)
         received_links = [link for link in links if str(link.id) in received]
         if not received_links:
             return None
-        first = received_links[0]
-        document = first.document or "the document"
-        arrived = received[str(first.id)]
-        when = arrived.strftime("%d %b %Y") if arrived else "in full"
+        open_links = [link for link in links if str(link.id) not in received]
+        if open_links:
+            self._remove_links(row, open_links)
+        fragments = []
+        for link in received_links:
+            document = link.document or "the document"
+            arrived = received[str(link.id)]
+            when = arrived.strftime("%d %b %Y") if arrived else "in full"
+            fragments.append(f"{document} received {when}")
+        location = f", goods are {row.stock_location} stock" if row.stock_location else ""
+        fragment = (
+            f"{'; '.join(fragments)}{location}, released at revision {decision.revision_no}"
+        )
+        row.note = f"{row.note}; {fragment}" if row.note else fragment
+        row.redirected_to_pool = True
+        # Cached for `_release_fragment` (an ad-hoc attribute, not a mapped column) -
+        # the fresh row's own Was/Now note reuses exactly what this call already found
+        # (the links AND their receipt dates) rather than re-querying either.
+        row.received_links_for_release = [
+            (link, received[str(link.id)]) for link in received_links
+        ]
+        self.db.flush()
+        return received_links
+
+    def _release_fragment(self, row: OrderInquiryRow) -> Optional[str]:
+        """S4/AC-OH-40..42: what the FRESH row's own note says about a row `this` just
+        released - `<document> received <date|in full> into <location>` per document,
+        naming EVERY received link on the row, not only the first. Reuses the
+        `(link, receipt date)` pairs `_redirect_row_if_received` already found (cached
+        on `row`) when they are there; falls back to a fresh query only when they are
+        not (defensive - every row this is actually called for went through that method
+        in the same call).
+        """
+        cached = getattr(row, "received_links_for_release", None)
+        if cached is None:
+            links = self._links_of(row.id)
+            received = self._received_documents_for(links)
+            cached = [
+                (link, received[str(link.id)])
+                for link in links
+                if str(link.id) in received
+            ]
+        if not cached:
+            return None
         location = f" into {row.stock_location}" if row.stock_location else ""
-        return f"{document} received {when}{location}"
+        fragments = [
+            f"{link.document or 'the document'} received "
+            f"{arrived.strftime('%d %b %Y') if arrived else 'in full'}"
+            for link, arrived in cached
+        ]
+        return f"{'; '.join(fragments)}{location}"
 
     def _received_documents_for(
         self, links: Sequence[OrderInquiryLink]
@@ -2586,15 +2622,17 @@ class ProjectOrderInquiryService:
     ) -> OrderInquiry:
         """Get this order's standard-demand header (`amendment_id IS NULL`), minting it.
 
-        Two callers: `refresh_for_decision`'s own gate, once it has decided a header is
-        actually needed, and `project_supply_service._place_supply_borrows`'s fallback -
-        a step-3 supply borrow's asker-side ORDER_BACK row needs a header to hang off
-        even on a confirmation whose Buy residual and donor holes were both empty (the
-        line was fully covered by borrowing somebody else's already-placed document),
-        which is a case `refresh_for_decision`'s gate cannot see because it never
-        receives the borrow composition, only the confirmed Buy and the donor holes.
-        Callers must not call this unless they are about to write at least one row: an
-        empty header is exactly the defect this method's sibling gate exists to avoid.
+        Three callers: `refresh_for_decision`'s own gate, once it has decided a header is
+        actually needed; `project_supply_service._place_supply_borrows`'s fallback - a
+        step-3 supply borrow's asker-side ORDER_BACK row needs a header to hang off even
+        on a confirmation whose Buy residual and donor holes were both empty (the line
+        was fully covered by borrowing somebody else's already-placed document), which is
+        a case `refresh_for_decision`'s gate cannot see because it never receives the
+        borrow composition, only the confirmed Buy and the donor holes; and (S3,
+        `PLAN-oi-worklist-one-header.md`) `derive_for_book_change`, which reuses this SAME
+        header for a planning-change reaction rather than minting its own. Callers must
+        not call this unless they are about to write at least one row: an empty header is
+        exactly the defect this method's sibling gate exists to avoid.
         """
         existing = self._existing(order.id, None)
         if existing is not None:
@@ -2827,7 +2865,19 @@ class ProjectOrderInquiryService:
         without one would leave that transaction aborted, and the caller's commit would
         then fail for an operation that had already succeeded (the post-commit
         side-effect lesson in CLAUDE.md, applied pre-commit).
+
+        S1 (Opus review round 1, AC-OH-35): the ONE-TASK-PER-HEADER guard lives HERE,
+        not at each caller. S3's one-header-per-SO means `refresh_for_decision`'s own
+        raise and `derive_for_book_change`'s reaction can now write onto the SAME
+        `inquiry` inside the SAME apply, and a caller-side `if self.task_for(inquiry.id)
+        is None` was only ever checked before the FIRST caller of the pair created one -
+        `_write` (the ONLY caller `derive_for_book_change`/`derive_for_amendment` reach
+        this through) called this unconditionally, so a batch that both confirmed and
+        reacted minted a second `ProjectTask` and a second notification for one header.
+        A caller that already holds a task for this inquiry gets nothing more.
         """
+        if self.task_for(inquiry.id) is not None:
+            return
         try:
             with self.db.begin_nested():
                 project = (
@@ -7295,69 +7345,6 @@ class ProjectOrderInquiryService:
             return ""
         row = self.db.query(Product.product_code).filter(Product.id == product_id).first()
         return row[0] if row else ""
-
-
-def fold_planning_change_batch_headers(db: Session) -> int:
-    """S3 migration helper (AC-OH-34, `PLAN-oi-worklist-one-header.md`): moves every row
-    off a `planning_change_batch` header (the synthetic per-apply header
-    `derive_for_book_change` used to mint, before this lane) onto its order's OWN
-    `amendment_id IS NULL` header, minting one when the order somehow has none, then
-    deletes the emptied header and its synthetic amendment.
-
-    Row ids, links, claims and handover records are all untouched - only
-    `order_inquiry_rows.order_inquiry_id` moves. A null header that already exists keeps
-    its own `raised_by`/`raised_at`/`state` exactly as they were; one minted here copies
-    them off the OLDEST batch header being folded onto it, so an order with several batch
-    headers accumulated over time (each apply used to mint its own) settles onto the
-    first one's identity rather than the last. Idempotent: a company with no
-    `planning_change_batch` header left does nothing. Runs in the caller's own
-    transaction - the caller commits (the Alembic migration's `upgrade()`, or a test).
-    """
-    batch_headers = (
-        db.query(OrderInquiry)
-        .join(SOAmendment, SOAmendment.id == OrderInquiry.amendment_id)
-        .filter(SOAmendment.from_version_kind == "planning_change_batch")
-        .order_by(OrderInquiry.raised_at.asc().nulls_last(), OrderInquiry.id.asc())
-        .all()
-    )
-    folded = 0
-    for header in batch_headers:
-        amendment_id = header.amendment_id
-        target = (
-            db.query(OrderInquiry)
-            .filter(
-                OrderInquiry.project_sales_order_id == header.project_sales_order_id,
-                OrderInquiry.amendment_id.is_(None),
-            )
-            .first()
-        )
-        if target is None:
-            target = OrderInquiry(
-                company_id=header.company_id,
-                project_sales_order_id=header.project_sales_order_id,
-                amendment_id=None,
-                state=header.state,
-                raised_by=header.raised_by,
-                raised_at=header.raised_at,
-            )
-            db.add(target)
-            db.flush()
-        db.query(OrderInquiryRow).filter(
-            OrderInquiryRow.order_inquiry_id == header.id
-        ).update({OrderInquiryRow.order_inquiry_id: target.id}, synchronize_session=False)
-        db.flush()
-        db.delete(header)
-        db.flush()
-        amendment = (
-            db.query(SOAmendment).filter(SOAmendment.id == amendment_id).first()
-            if amendment_id
-            else None
-        )
-        if amendment is not None:
-            db.delete(amendment)
-        db.flush()
-        folded += 1
-    return folded
 
 
 def confirmed_unplaced_buy_rows(
