@@ -4114,6 +4114,11 @@ class ProjectSupplyService:
                 code="supply_order_not_published",
             )
 
+        # No self-heal here (issue #969, B2 owner ruling 17 Sep 2026): the heal moved to the
+        # board read (`FulfilmentBoardService.build`), the one place the FE derives
+        # `no_mirror` from and the read confirm-all's own multi-order build comes from.
+        # Confirm stays a pure write - AC-PR8 pins that confirming with no prior board read
+        # mirrors nothing.
         lines = self.lines_of(str(order.id))
         by_id = {str(line.id): line for line in lines}
         payload_lines = list(getattr(payload, "lines", []) or [])

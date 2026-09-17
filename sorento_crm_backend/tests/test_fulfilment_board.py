@@ -2017,16 +2017,23 @@ def test_a_reserve_source_carries_the_warehouse_by_id_and_the_pool_names_the_poo
         assert all(s["warehouse_id"] is None for s in buy_only)
 
 
-def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addressable():
-    """The one state where the two ids disagree, and the frontend has to handle it.
+def test_a_core_line_added_since_adoption_is_mirrored_on_the_board_read_and_addressable():
+    """Issue #969, owner ruling B2 (17 Sep 2026): the board READ self-heals the mirror.
 
     Adoption mirrors the order's open lines at the time it runs; next week's upload can add a
-    core line that has no mirror yet. Its order is still confirmable, so
-    `orders[].project_sales_order_id` is set - but that LINE cannot be named to the confirm
-    endpoint, so its `project_line_id` is null and it must be left out of the body. Re-sync on
-    the sheet is what fixes it; inventing an id here would post a line the service would refuse
-    with "That line is not on this sales order any more."
+    core line that has no mirror yet. This used to be the one state where the two ids
+    disagreed: `orders[].project_sales_order_id` was set but that LINE's `project_line_id`
+    came back null, the frontend derived `no_mirror` from it and left the line out of the
+    confirm body, and a manual Re-sync on the sheet was the only fix. Now `build` runs
+    `ProjectSOAdoptionService.mirror_missing_lines` for each adopted, unauthored record
+    (`status = 'adopted'`, `project_id IS NULL`) before it collects contributions, so the
+    late line comes back with a real mirror id and the first Confirm posts every line.
+
+    `_adopt` is the real `ProjectSOAdoptionService.adopt`, which leaves `project_id` NULL,
+    so the seeded order already sits inside the heal's gate.
     """
+    from app.models.project_so import ProjectSalesOrderLine
+
     with blank_session() as db:
         product_a = _product(db, f"ZZT-{_uid()[:6]}")
         product_b = _product(db, f"ZZT-{_uid()[:6]}")
@@ -2035,7 +2042,9 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
         _line(db, order, product_a, qty="4", required_date=date(2026, 9, 3), warehouse=warehouse)
         pso_id = _adopt(db, str(order.id))
         # The upload lands, and it carries a line adoption never saw.
-        _line(db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse)
+        late = _line(
+            db, order, product_b, qty="6", required_date=date(2026, 9, 3), warehouse=warehouse
+        )
 
         board = _service(db).build([order.so_number], granularity="week", as_of=TODAY)
 
@@ -2046,7 +2055,20 @@ def test_a_core_line_added_since_adoption_is_named_null_while_its_order_is_addre
             for contribution in cell["contributions"]
         }
         assert named[product_a.product_code] is not None
-        assert named[product_b.product_code] is None
+        mirror_id = named[product_b.product_code]
+        assert mirror_id is not None, "the board read must mirror the late line (#969)"
+
+        mirrors = (
+            db.query(ProjectSalesOrderLine)
+            .filter(
+                ProjectSalesOrderLine.project_sales_order_id == pso_id,
+                ProjectSalesOrderLine.core_sales_order_line_id == str(late.id),
+            )
+            .all()
+        )
+        assert [m.id for m in mirrors] == [mirror_id], (
+            "exactly one mirror row for the late core line, and it is the id the board named"
+        )
 
 
 # --------------------------------------------------------------------------- #

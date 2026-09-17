@@ -649,11 +649,43 @@ class FulfilmentBoardService:
         # instead - and BEFORE the demand rows, because the third value decides which of
         # them an inquiry still counts as deciding.
         adopted_by_so, pending_by_so, pending_core_lines = self._order_plan_status(numbers)
+        # Self-heal (issue #969, B2 owner ruling 17 Sep 2026): the board read is the one
+        # place the FE derives `no_mirror` from (`fulfilmentBoard.ts`) and the read
+        # confirm-all's own multi-order build comes from, so this is the seam that heals a
+        # core line that arrived after adoption - confirm stays a pure write (AC-PR8). Run
+        # BEFORE `_demand_rows` below, which is what resolves each line's `project_line_id`
+        # off the mirror this creates (`_mirror_addressing`) - a heal after it would leave
+        # this same response's late line addressed to nothing. Gated on an adopted,
+        # unauthored mirror (`status = 'adopted'`, `project_id IS NULL`), the same gate
+        # every other seam uses. `adopted_by_so` above already answers whether ANY selected
+        # order has a `ProjectSalesOrder` row at all - empty means none of them can need
+        # healing, so an ordinary (never-adopted) board build costs no extra statement
+        # (`test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`).
+        if adopted_by_so:
+            from app.models.project_so import SO_STATUS_ADOPTED
+            from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+            heal_targets = (
+                self.db.query(ProjectSalesOrder)
+                .join(SalesOrder, SalesOrder.id == ProjectSalesOrder.so_id)
+                .filter(
+                    SalesOrder.so_number.in_(numbers),
+                    ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                    ProjectSalesOrder.project_id.is_(None),
+                )
+                .all()
+            )
+            if heal_targets:
+                adoption = ProjectSOAdoptionService(self.db)
+                for order in heal_targets:
+                    adoption.mirror_missing_lines(order)
         # S1 (#978): one `undo` per selected order, keyed the same way `adopted_by_so`
         # is. A separate read rather than folded into `_order_plan_status`'s own query -
         # that one is a query-count guard over the LINE-scaling `PlanningChangeRow` join;
         # this is bounded by the (<=50) order count regardless of how many lines a board
-        # holds, so it does not carry the same guard.
+        # holds, so it does not carry the same guard. Runs AFTER the self-heal above so a
+        # newly-healed order's own decision (none yet, but a future re-confirm's) is read
+        # off the mirror the heal just completed, not a stale one.
         from app.services.project_supply_undo_service import board_undo_map
 
         undo_by_so = board_undo_map(self.db, adopted_by_so)
@@ -4805,8 +4837,8 @@ class FulfilmentBoardService:
             #: lines - and every covered or unplannable one, which was not planned here.
             "unit_qty": qty_text(row.qty if row.unit_qty is None else row.unit_qty),
             "unit_line_count": row.unit_line_count,
-            #: What the engine proposes to meet it with. The three add up to the outstanding
-            #: quantity, which is the balance invariant the per-order sheet also keeps.
+            #: What the engine proposes to meet it with. The three add up to the plan
+            #: quantity (`qty`), which is the balance invariant the per-order sheet also keeps.
             "qty_proposed_reserve": qty_text(row.proposed.get(RESERVE, _ZERO)),
             "qty_proposed_incoming": qty_text(row.proposed.get(TIMELY_SPO, _ZERO)),
             "qty_proposed_buy": qty_text(row.proposed.get(BUY, _ZERO)),

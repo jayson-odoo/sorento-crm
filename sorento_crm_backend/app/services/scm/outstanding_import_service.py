@@ -2847,6 +2847,34 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 _write_change(db, bind, order_ids, resolved, read, outcome, applied,
                              applied_line_ids, settled_line_ids, closed_candidates,
                              lines_by_id, money_differs_by_c, c)
+            # Self-heal (issue #969): the book upload writes its ADDED lines straight in
+            # `_write_change` (`db.add(bind.line(**fields))`), bypassing `_upsert_lines`'s
+            # own self-heal, which only sees the manual FE edit. Per order rather than per
+            # row - the tightest spot after this order's own line-create pass, before its
+            # batch commits. Same gate as the ESB heal: an adopted, unauthored mirror only.
+            # Also gated on this document having ADDED a line at all (review round 2, S1),
+            # the same way `closed_candidates` above is: without it every document in the
+            # batch paid for the `ProjectSalesOrder` lookup even when nothing was added -
+            # measured about 3,800 extra statements on a full book upload.
+            if doc_type == SO and any(
+                c.kind == ADDED for c in changes_by_doc.get(number, ())
+            ):
+                from app.models.project_so import SO_STATUS_ADOPTED, ProjectSalesOrder
+                from app.services.project_so_adoption_service import (
+                    ProjectSOAdoptionService,
+                )
+
+                project_so = (
+                    db.query(ProjectSalesOrder)
+                    .filter(
+                        ProjectSalesOrder.so_id == order_ids[number],
+                        ProjectSalesOrder.status == SO_STATUS_ADOPTED,
+                        ProjectSalesOrder.project_id.is_(None),
+                    )
+                    .first()
+                )
+                if project_so is not None:
+                    ProjectSOAdoptionService(db).mirror_missing_lines(project_so)
 
         # CRM<->AutoCount supersession (captain, 21 Aug) and the placement relink, PER
         # BATCH and inside that batch's own transaction, before its commit (S5 review round

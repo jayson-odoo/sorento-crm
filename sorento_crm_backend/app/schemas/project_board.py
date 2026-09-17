@@ -625,7 +625,7 @@ class BoardContribution(BaseModel):
     unit_line_count: int = 1
     #: What the engine proposes to meet it with, from the SAME ladder the per-order sheet runs
     #: (own location, then the shared pool under the hot-selling rules, then timely incoming,
-    #: then Buy). The three add up to `qty_outstanding`.
+    #: then Buy). The three add up to the plan quantity (`qty`).
     qty_proposed_reserve: str = "0"
     qty_proposed_incoming: str = "0"
     qty_proposed_buy: str = "0"

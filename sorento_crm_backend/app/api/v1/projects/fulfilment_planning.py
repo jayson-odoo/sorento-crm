@@ -318,9 +318,16 @@ def get_planning_board(
 ):
     """Several sales orders at once: dates across, products down, one pile per location.
 
-    A pure read (PLAN 13.4). The board writes no decision object of its own - the decision
-    stays per sales order, atomic across the lines that order is committing - so opening it
-    claims no stock and there is no board write endpoint to pair with this.
+    The board writes no decision object of its own - the decision stays per sales order,
+    atomic across the lines that order is committing - so opening it claims no stock and
+    there is no board write endpoint to pair with this.
+
+    It writes at most one thing, and only ever the same thing (issue #969, B2 owner ruling
+    17 Sep 2026): a core line that arrived after an order was adopted gets its planning-
+    record mirror here, the one seam the confirm write no longer runs on its own
+    (`ProjectSupplyService.confirm`, AC-PR8). Committed on the way out for that reason - a
+    fresh per-request session otherwise rolls the flush back on close, and the confirm the
+    FE fires right after reading this board is a SEPARATE request.
 
     Plain ``def`` so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over a
     selection of up to fifty orders, and on the event loop it would hold up every other
@@ -328,14 +335,17 @@ def get_planning_board(
     """
     try:
         numbers = [part.strip() for part in (orders or "").split(",") if part.strip()]
-        return FulfilmentBoardService(db).build(
+        body = FulfilmentBoardService(db).build(
             numbers,
             granularity=granularity,
             as_of=as_of,
             day_window_start=day_window,
             preview_policy=preview_policy,
         )
+        db.commit()
+        return body
     except Exception as exc:
+        db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
 
