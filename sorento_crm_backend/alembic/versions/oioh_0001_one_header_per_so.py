@@ -12,15 +12,21 @@ SO314593, the origin case this lane fixes). As of this revision `derive_for_book
 appends straight onto the order's own null-amendment header, so this migration is a
 one-time cleanup of what the OLD code path already wrote.
 
-Runs entirely through `project_order_inquiry_service.fold_planning_change_batch_headers`,
-so the ORM's own row-move-and-cleanup logic is not duplicated here in raw SQL: for every
-`order_inquiries` row whose amendment is `planning_change_batch`, its rows move onto the
-order's own null header (minted when the order somehow has none, copying company_id,
-project_sales_order_id, state, raised_by and raised_at off the oldest header being
-folded), then the emptied header and its synthetic amendment are deleted. Row ids, links,
-claims and handover records are all untouched - only `order_inquiry_rows.order_inquiry_id`
-moves. Idempotent: a second run finds no `planning_change_batch` header left and does
-nothing.
+S3 (Opus review round 1): `_fold` below is PLAIN SQL, not a call into the live service -
+a migration that imports `app.services.*` couples a permanent, replayable artifact to
+code that will keep changing long after this revision ships, and a later refactor of
+`project_order_inquiry_service.py` (a rename, a signature change, an import it now pulls
+in) would silently break `alembic upgrade head` on a fresh database. For every
+`order_inquiries` row whose amendment is `planning_change_batch`: find or mint the
+order's own null header (minted copies `company_id`/`state`/`raised_by`/`raised_at` off
+the oldest header being folded, and mints its own `inquiry_no` the same way
+`next_inquiry_no`/`_stamp_inquiry_no` do - highest already issued for the company, plus
+one), move its rows onto that header, re-point any `projects.tasks` row still naming the
+old header (reviewer S4 - `_hand_to_purchasing`'s own `ProjectTask.linked_entity_id`),
+then delete the emptied header and its synthetic amendment. Row ids, links, claims and
+handover records are all untouched - only `order_inquiry_rows.order_inquiry_id` and a
+task's own `linked_entity_id` move. Idempotent: a second run finds no
+`planning_change_batch` header left and does nothing.
 
 Downgrade is a no-op: recreating the synthetic per-apply headers this revision folds away
 would mean inventing which rows belonged to which now-deleted batch header, which nothing
@@ -34,8 +40,8 @@ from __future__ import annotations
 
 import logging
 
+import sqlalchemy as sa
 from alembic import op
-from sqlalchemy.orm import Session
 
 logger = logging.getLogger("alembic.oioh_0001")
 
@@ -44,22 +50,122 @@ down_revision = "undo_0002_seed_undone"
 branch_labels = None
 depends_on = None
 
+_INQUIRY_NO_PREFIX = "OI-"
+_INQUIRY_NO_DIGITS = 6
+
+
+def _fold(connection) -> int:
+    """The one-time cleanup itself. `connection` is any SQLAlchemy `Connection` - the
+    migration's own bind, or a test's. Returns the number of headers folded.
+    """
+    batch_headers = connection.execute(
+        sa.text(
+            """
+            SELECT oi.id, oi.company_id, oi.project_sales_order_id, oi.amendment_id,
+                   oi.state, oi.raised_by, oi.raised_at
+            FROM projects.order_inquiries oi
+            JOIN projects.so_amendments a ON a.id = oi.amendment_id
+            WHERE a.from_version_kind = 'planning_change_batch'
+            ORDER BY oi.raised_at ASC NULLS LAST, oi.id ASC
+            """
+        )
+    ).fetchall()
+
+    folded = 0
+    for header in batch_headers:
+        target_id = connection.execute(
+            sa.text(
+                """
+                SELECT id FROM projects.order_inquiries
+                WHERE project_sales_order_id = :pso_id AND amendment_id IS NULL
+                """
+            ),
+            {"pso_id": header.project_sales_order_id},
+        ).scalar()
+
+        if target_id is None:
+            # Mint one, the same way `_stamp_inquiry_no`/`next_inquiry_no` do: highest
+            # `OI-######` already issued for the company, plus one. Copies
+            # company_id/state/raised_by/raised_at off the header being folded (the
+            # oldest, per the ORDER BY above) rather than leaving them at whatever an
+            # empty header would default to.
+            latest = connection.execute(
+                sa.text(
+                    """
+                    SELECT inquiry_no FROM projects.order_inquiries
+                    WHERE company_id = :company_id AND inquiry_no LIKE :prefix
+                    ORDER BY length(inquiry_no) DESC, inquiry_no DESC
+                    LIMIT 1
+                    """
+                ),
+                {"company_id": header.company_id, "prefix": f"{_INQUIRY_NO_PREFIX}%"},
+            ).scalar()
+            tail = (latest or "")[len(_INQUIRY_NO_PREFIX):]
+            highest = int(tail) if tail.isdigit() else 0
+            inquiry_no = f"{_INQUIRY_NO_PREFIX}{highest + 1:0{_INQUIRY_NO_DIGITS}d}"
+            target_id = connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO projects.order_inquiries
+                        (id, company_id, inquiry_no, project_sales_order_id,
+                         amendment_id, state, raised_by, raised_at)
+                    VALUES
+                        (gen_random_uuid(), :company_id, :inquiry_no, :pso_id, NULL,
+                         :state, :raised_by, :raised_at)
+                    RETURNING id
+                    """
+                ),
+                {
+                    "company_id": header.company_id,
+                    "inquiry_no": inquiry_no,
+                    "pso_id": header.project_sales_order_id,
+                    "state": header.state,
+                    "raised_by": header.raised_by,
+                    "raised_at": header.raised_at,
+                },
+            ).scalar()
+
+        connection.execute(
+            sa.text(
+                """
+                UPDATE projects.order_inquiry_rows
+                SET order_inquiry_id = :target
+                WHERE order_inquiry_id = :old
+                """
+            ),
+            {"target": target_id, "old": header.id},
+        )
+        # Reviewer S4: a purchasing task raised off the folded header (`_hand_to_
+        # purchasing`'s `ProjectTask.linked_entity_type='order_inquiry'`) still names it
+        # by id - re-point it, or the task's own "Open in Order Inquiries" link would
+        # 404 the moment the header underneath it is deleted below.
+        connection.execute(
+            sa.text(
+                """
+                UPDATE projects.tasks
+                SET linked_entity_id = :target
+                WHERE linked_entity_type = 'order_inquiry' AND linked_entity_id = :old
+                """
+            ),
+            {"target": target_id, "old": header.id},
+        )
+        connection.execute(
+            sa.text("DELETE FROM projects.order_inquiries WHERE id = :old"),
+            {"old": header.id},
+        )
+        if header.amendment_id:
+            connection.execute(
+                sa.text("DELETE FROM projects.so_amendments WHERE id = :aid"),
+                {"aid": header.amendment_id},
+            )
+        folded += 1
+    return folded
+
 
 def upgrade() -> None:
-    from app.services.project_order_inquiry_service import (
-        fold_planning_change_batch_headers,
-    )
-
-    session = Session(bind=op.get_bind())
-    try:
-        folded = fold_planning_change_batch_headers(session)
-        session.commit()
-        logger.info("oioh_0001: folded %d planning_change_batch header(s)", folded)
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
+    connection = op.get_bind()
+    folded = _fold(connection)
+    logger.info("oioh_0001: folded %d planning_change_batch header(s)", folded)
 
 
 def downgrade() -> None:
