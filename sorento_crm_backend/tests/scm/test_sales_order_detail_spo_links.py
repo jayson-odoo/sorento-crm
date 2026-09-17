@@ -269,6 +269,9 @@ def test_the_route_carries_the_spo_link(scm_app):
         "expected_date": None,
         "late": False,
         "late_days": None,
+        # Declared on `SalesOrderLineLink` since the 17 Sep derived-SPO fix; False on a
+        # stored link.
+        "derived": False,
     }]
 
 
