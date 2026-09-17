@@ -74,7 +74,6 @@ from app.models.project_so import (
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
-from app.models.scm import OrderLinkClaim
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
@@ -1194,16 +1193,26 @@ class OrderInquiryWorklistService:
 
         S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
         automatic pass was TOLD to honour regardless of the window earns no pill
-        either - a link THIS row's own SO claims in `scm.order_link_claim`, or one
-        whose document the row cites (`ProjectOrderInquiryService._cited_documents`,
-        the same reader the walk uses). Flagging what the pass was just instructed to
-        keep is the same noise the owner complained about ("kinda redundant"), one
-        door over; it holds for a HAND-placed link exactly as for an automatic one
-        (AC-EA-14/15) - the exemption is the evidence, not who pressed the button.
+        either - a link THIS row's own SO claims live, or one whose document the row
+        cites (`ProjectOrderInquiryService._cited_documents`, the same reader the walk
+        uses). Flagging what the pass was just instructed to keep is the same noise the
+        owner complained about ("kinda redundant"), one door over; it holds for a
+        HAND-placed link exactly as for an automatic one (AC-EA-14/15) - the exemption
+        is the evidence, not who pressed the button.
 
-        ONE grouped query for the whole page's candidates (AC-RL-23), and ONE more for
-        the page's triggered claims (S3) - never one per link: every triggered link's
-        product, and every triggered link's target, is collected first.
+        Review round 2 (F1): "claims live" is read through the WALK's own claim reader
+        (`ProjectOrderInquiryService._prime_claims` / `_dedication_for_target`), not a
+        second predicate - a first cut here filtered `scm.order_link_claim.resolved_at
+        IS NOT NULL`, which is neither necessary (the walk links an unresolved but live
+        claim regardless, AC-EA-17) nor sufficient (the walk refuses a RESOLVED claim
+        whose sales-order line has since SETTLED, AC-EA-16 - `resolved_at` says the
+        pairing was found, not that the order still wants it). One reader, never a
+        second spelling of "this row's own SO claims it".
+
+        ONE grouped query for the whole page's candidates (AC-RL-23), and ONE priming
+        read for the page's triggered claims (S3/F1, `_prime_claims`) - never one per
+        link: every triggered link's product, and every triggered link's target, is
+        collected first.
         """
         delivery_by_row = {row.id: row.delivery_date for row in rows}
         so_line_by_row = {row.id: row.so_line_id for row in rows}
@@ -1240,8 +1249,10 @@ class OrderInquiryWorklistService:
             for _row_id, link, _product_id in triggered
             if link.get("po_line_id") or link.get("spo_allocation_id")
         }
-        claim_so_numbers_by_target = self._claim_so_numbers_by_target(target_ids)
         inquiry_service = ProjectOrderInquiryService(self.db)
+        # F1: the walk's OWN claim cache, primed for the page's triggered targets - not
+        # a second query with a second predicate.
+        inquiry_service._prime_claims(list(target_ids))
         triggered = [
             (row_id, link, product_id)
             for row_id, link, product_id in triggered
@@ -1249,7 +1260,6 @@ class OrderInquiryWorklistService:
                 link,
                 row=row_by_id.get(row_id),
                 own_so_number=so_number_by_row.get(row_id),
-                claim_so_numbers_by_target=claim_so_numbers_by_target,
                 inquiry_service=inquiry_service,
             )
         ]
@@ -1292,48 +1302,33 @@ class OrderInquiryWorklistService:
         *,
         row: Optional[Any],
         own_so_number: Optional[str],
-        claim_so_numbers_by_target: Dict[str, set],
         inquiry_service: ProjectOrderInquiryService,
     ) -> bool:
-        """S3's two exemptions - the same two `auto_place_for_products` reads (S2): a
-        target THIS row's own SO claims, or a document the row cites. Either is a
-        person's or the book's word, and the window does not overrule it, on the
-        pass or on the pill."""
+        """S3's two exemptions - the SAME two `auto_place_for_products` reads (S2): a
+        target THIS row's own SO still claims LIVE, or a document the row cites. Either
+        is a person's or the book's word, and the window does not overrule it, on the
+        pass or on the pill.
+
+        F1 (review round 2): "claims live" is `_dedication_for_target`'s own `own_claim`
+        element (index 2 of its `(reserved, dedicated_to, own_claim)` return) - the
+        SAME reader `_candidates_for_row` builds `own_so_claim` from. That is a claim
+        whose SO LINE still has outstanding, never `resolved_at`: a claim written before
+        the purchase side is named is unresolved and still live (AC-EA-17); a resolved
+        claim whose sales order has since settled is no longer live (AC-EA-16). Caller
+        must have already primed `inquiry_service._prime_claims` for `target_id`, or
+        this falls back to priming it alone (`_claims_of`'s own guard).
+        """
         target_id = link.get("po_line_id") or link.get("spo_allocation_id")
         if target_id and own_so_number is not None:
-            if own_so_number in claim_so_numbers_by_target.get(target_id, ()):
+            _reserved, _dedicated_to, own_claim = inquiry_service._dedication_for_target(
+                target_id, own_so_number
+            )
+            if own_claim:
                 return True
         document = str(link.get("document") or "").strip().upper()
         if row is not None and document:
             return document in inquiry_service._cited_documents(row)
         return False
-
-    def _claim_so_numbers_by_target(self, target_ids: set) -> Dict[str, set]:
-        """Every RESOLVED claim's SO number, grouped by the purchase-order line or SPO
-        allocation it names (S3) - existence only, in ONE query for the page's
-        triggered targets. Not the fuller dedication arithmetic
-        (`ProjectOrderInquiryService._dedication_for_target`), which rations a line
-        SHARED between several claimants - a question about how much a candidate may
-        give the cascade, not about whether the pill should trust what the cascade
-        was just told to honour."""
-        if not target_ids:
-            return {}
-        rows = self.db.query(
-            OrderLinkClaim.po_line_id,
-            OrderLinkClaim.spo_allocation_id,
-            OrderLinkClaim.so_number,
-        ).filter(
-            OrderLinkClaim.resolved_at.isnot(None),
-            or_(
-                OrderLinkClaim.po_line_id.in_(target_ids),
-                OrderLinkClaim.spo_allocation_id.in_(target_ids),
-            ),
-        )
-        out: Dict[str, set] = {}
-        for po_line_id, spo_allocation_id, so_number in rows:
-            target_id = str(po_line_id) if po_line_id else str(spo_allocation_id)
-            out.setdefault(target_id, set()).add(so_number)
-        return out
 
     def _repoint_candidates_by_product(
         self, product_ids: set
