@@ -33,7 +33,13 @@ the released 182 row instead of the live 220 row.
   keep their own header (no evidence today; trigger noted in the plan).
 - R2 The list hides `cancelled` rows unless the State filter asks for them.
 - R3 The fresh ORDER row raised after a received row is released to stock carries Was/Now.
-- R4 DELAY rows stay.
+- R4 (revised on the plan page, 17 Sep: 'i just need the order row') No DELAY / ADVANCE row
+  for a line whose confirm restated the line itself: a fresh ORDER row with Was/Now after a
+  redirect, or a row settled in place. The ORDER row's (i) carries the date change. A line the
+  confirm did NOT restate (open placed supply, no fresh row) still gets its DELAY row.
+- R7 The Filters popover must scroll (today it clips below the viewport).
+- R8 The worklist page is slow on prod (`?ack=all&link_up_to=2027-10-31`); measure on the
+  0915_1900 copy before changing anything, then fix the measured hot spot.
 - R5 Order inquiry column hidden by default; the number stays on the header, the email and
   the URL.
 - R6 Two defects: the auto-link cascade must skip `redirected_to_pool` rows; Raised by reads
@@ -104,6 +110,13 @@ the released 182 row instead of the live 220 row.
   that released it).
 - AC-OH-42 [BE] Given two released rows on the line in one decision, then `previous_qty` is
   their sum and the note names each document.
+- AC-OH-44 [BE] Given a planning-change apply whose confirm released a received row and raised
+  a fresh ORDER row with Was/Now for the line, then NO DELAY / ADVANCE row is written for that
+  line (the apply's `settled_in_place` list, which already suppresses the DELAY row for a
+  settled line, includes the redirected line).
+- AC-OH-45 [BE] Given a planning-change apply on a line the confirm did not restate (two
+  still-owed rows, or a lone placed row with no link), then the DELAY row is still written
+  (unchanged).
 - AC-OH-43 [BE] The handover record for the fresh row (`_record_handover`, kind `raised`) is
   written as today; no new record kind.
 
@@ -118,6 +131,22 @@ the released 182 row instead of the live 220 row.
   exclude `_NOT_OWED_STATES`).
 - AC-OH-54 [BE] The schedule matrix and month strip are unchanged (they never counted
   cancelled).
+
+### Filters popover scrolls
+
+- AC-OH-70 [FE] Given the worklist Filters popover open at a 700px tall viewport, then its
+  content scrolls inside the popover (max height bounded by the viewport, `overflow-y: auto`)
+  and the last field (Confirmed) is reachable; nothing clips. Verified at 375px and 1280px.
+
+### Worklist speed
+
+- AC-OH-80 [BE] Measured on `sorento_ai_automation_0915_1900` with the prod query string
+  (`ack=all&link_up_to=2027-10-31`, page 1, default sort): the time of each request the page
+  makes on load (list, facets, month strip, cards, matrix if fetched) is recorded in the plan
+  before any change. The slowest request is named with its EXPLAIN ANALYZE hot spot.
+- AC-OH-81 [BE] After the fix, the same measurement shows the page's slowest request under
+  1.5 s on the copy, and the list response is unchanged in shape (existing worklist tests
+  green).
 
 ## Phase 3 - end to end
 

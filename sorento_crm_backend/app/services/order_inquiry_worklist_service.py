@@ -1973,21 +1973,57 @@ class OrderInquiryWorklistService:
         reason it exists: a cell and the card above it are two GROUP BYs over the same
         per-row arithmetic rather than two copies of the formula, so the Schedule view
         cannot answer differently from the strip over it (AC-X6).
+
+        S8 (AC-OH-80..81, measured on `sorento_ai_automation_0915_1900`): `_kinds`, which
+        reads this over the WHOLE matching row set unpaginated, was the page's slowest
+        request by a wide margin (~1.2s of summary()'s ~1.5s). `EXPLAIN ANALYZE` on the
+        old shape showed why - `_purchased_qty()` called `_incoming_qty()` fresh inside
+        its own formula, so the correlated subqueries under `_incoming_qty` (SPO-linked,
+        PO-linked, the derived-cover EXISTS+scalar-subquery) were embedded TWICE in the
+        generated SQL, and `_UNLINKED_QTY` added a third, separate `_linked_qty()`
+        correlated subquery on top - up to nine correlated-subquery evaluations per row.
+        Fixed at this one seam, not by touching `_incoming_qty`/`_purchased_qty`
+        themselves (S4's `kind=po` filter still calls `_purchased_qty()` alone, over a
+        WHERE clause rather than a company-wide aggregate, where the duplication never
+        showed up): an INNER subquery computes each correlated piece exactly ONCE per
+        row, and the three stage columns are then plain arithmetic over those already-
+        materialized inner columns.
         """
-        return (
+        inner = (
             self._base(**filters)
             .with_entities(
                 OrderInquiryRow.id.label("row_id"),
                 OrderInquiryRow.qty.label("qty"),
-                self._incoming_qty().label("incoming"),
-                self._purchased_qty().label("purchased"),
-                _UNLINKED_QTY.label("buy"),
+                OrderInquiryRow.bundled_qty.label("bundled_qty"),
+                _SPO_LINKED_QTY.label("spo_linked"),
+                _PO_LINKED_QTY.label("po_linked"),
+                self._derived_cover_qty().label("derived_cover"),
+                _linked_qty().label("linked_any"),
+                _CAPPED_QTY.label("capped_qty"),
                 *extra_columns,
             )
             .filter(*extra_filters)
             .order_by(None)
-            .subquery()
+            .cte("order_inquiry_stage_rows")
+            .prefix_with("MATERIALIZED")
         )
+        capped_derived_cover = func.least(inner.c.po_linked, inner.c.derived_cover)
+        incoming = func.least(inner.c.qty, inner.c.spo_linked + capped_derived_cover)
+        purchased = func.least(
+            inner.c.qty - incoming,
+            func.greatest(0, inner.c.po_linked - capped_derived_cover),
+        )
+        buy = func.greatest(
+            inner.c.capped_qty - inner.c.linked_any - inner.c.bundled_qty, 0
+        )
+        return select(
+            inner.c.row_id,
+            inner.c.qty,
+            incoming.label("incoming"),
+            purchased.label("purchased"),
+            buy.label("buy"),
+            *[getattr(inner.c, column.name) for column in extra_columns],
+        ).subquery()
 
     def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:
         """Quantity per STAGE over every matching row (AC-I11, S5/R-F): incoming (on an

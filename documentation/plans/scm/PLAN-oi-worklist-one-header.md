@@ -98,11 +98,86 @@ method returns the fragment it wrote, or the caller reads `row.note`). When it b
 released in an earlier decision are not re-stamped. The existing FE (i) then shows it.
 AC-OH-40..43.
 
+No DELAY row for that line (R4 revised): `refresh_for_decision` already returns
+`settled_in_place` and `planning_change_service.apply` passes it to `_oi_demand_rows` to skip
+the DELAY / ADVANCE reaction for a settled line. The redirected line ids join that same list.
+One seam, no new flag. AC-OH-44..45.
+
 ### S5 - hide cancelled by default [BE]
 
 In `list(...)` and the totals it feeds: when `state` is None, add
 `OrderInquiryRow.state != INQUIRY_CANCELLED`. `state='cancelled'` still returns only
 cancelled. Facets unchanged. Matrix, month strip and cards untouched. AC-OH-50..54.
+
+### S7 - Filters popover scrolls [FE]
+
+The Filters popover content in `OrderInquiriesClient.tsx` gets a viewport-bounded max height
+and `overflow-y: auto` (the shared popover primitive's own prop if it has one; otherwise a
+class on the content). No layout change. AC-OH-70. Phase 1.
+
+### S8 - Worklist speed, measured first [BE]
+
+Before touching code: boot the lane backend on `sorento_ai_automation_0915_1900`, replay the
+page's load requests with the prod query string, record each request's time in this plan,
+EXPLAIN ANALYZE the slowest. Likely candidates (unverified): the facets query (`by_state`,
+`raised_by`, `locations`, `agents`, `kinds` over the full row set), the month strip's
+`_RAISED_DAY` timezone cast per row, or `_quantity_flow_by_so_line` lateral joins. Fix the
+measured hot spot only (an index, a narrowed facet, or one fewer round trip). AC-OH-80..81.
+
+**Measured (17 Sep, `sorento_ai_automation_0915_1900`).** No local test API key exists on
+this copy (the standing "prod-copy lane DB lacks local test API key" gotcha - inserting one
+is owner-only) and guessing a real user's password is not something to attempt, so the two
+requests `OrderInquiriesClient.tsx` actually fires on load (traced through the component:
+`ack=all` clears the ack filter client-side and `link_up_to` is stored for the Auto-link-all
+action only, never sent on a GET - the page's real load is `list_rows` + `summary`, no
+matrix on the List view) were timed by calling `OrderInquiryWorklistService.list_rows` /
+`.summary` directly against a session scoped to the Sorento company - same SQL, same
+company scope the HTTP routes apply, minus the auth hop:
+
+| Request (page 1, limit 25, sort `delivery_date` asc, no filters) | Before (cold / warm) |
+| --- | --- |
+| `list_rows` | 1408.8 ms / 493.8 ms |
+| `summary` | 1532.0 ms / 1308.1 ms |
+
+`summary`'s own facets, broken down (warm): `state_rows` 12.5 ms, `_by_month` 10.3 ms,
+`_suppliers` 213.7 ms, `_projects` 8.8 ms, `_raised_by` 11.1 ms, `_locations` 60.1 ms,
+`_agents` 11.3 ms, `_acks` 14.5 ms, `plan_link_horizon` 0.8 ms - and **`_kinds` 912.6 ms**,
+by far the widest margin over everything else combined. `EXPLAIN (ANALYZE, BUFFERS)` on
+`_kinds`'s own query named the hot spot: `_stage_rows` built `incoming`/`purchased`/`buy`
+by calling `_incoming_qty()` (itself built from two correlated subqueries plus
+`_derived_cover_qty()`, an EXISTS + a `spo_allocations` scalar subquery) TWICE - once for
+the `incoming` column, once again inlined inside `_purchased_qty()`'s own
+`qty - incoming_qty()` - and `_UNLINKED_QTY` added a third, independent `_linked_qty()`
+subquery on top. Worse, restructuring the three into a plain (non-materialized) inner
+subquery changed nothing: Postgres pulled the subquery up and re-evaluated
+`_derived_cover_qty()`'s `ix_spo_allocations_spo_product_warehouse` scan (cost ~581,
+~554 buffer reads) three times regardless (three `SubPlan`s, each `spo_allocations`/
+`spo_allocations_1`/`spo_allocations_2`, ~296k-320k buffer hits apiece) - the fix had to
+stop the planner from flattening it back, not just stop the Python code from asking twice.
+
+**Fix:** `_stage_rows`'s inner query is now a `WITH ... AS MATERIALIZED` CTE
+(`.cte().prefix_with("MATERIALIZED")`), an explicit optimizer fence Postgres 12+ honours -
+each correlated subquery (SPO-linked, PO-linked, derived-cover, any-linked) computes
+exactly ONCE per row, and `incoming`/`purchased`/`buy` are plain arithmetic over the
+already-materialized columns. `EXPLAIN` after: one `CTE Scan`, one derived-cover
+`SubPlan`, not three. `_incoming_qty()`/`_purchased_qty()` themselves are untouched - the
+other caller (`kind=po`'s row-level filter, S4/S5 unaffected) never showed the
+duplication, since it runs the formula once over a `WHERE`, not company-wide.
+
+| Request | After (cold / warm, 3 runs) |
+| --- | --- |
+| `list_rows` | 620-962 ms / 476-742 ms |
+| `summary` | 717-1073 ms / 675-870 ms |
+| `_kinds` alone (warm) | 348-567 ms (was 912.6-1516.4 ms) |
+
+Both requests now sit consistently under 1.5 s, cold or warm (AC-OH-81). `list_rows`'s own
+cold-run number was already a cache-warming artifact rather than an algorithmic cost (its
+warm number was fine before AND after) - not touched, since S8 fixes the MEASURED hot spot
+only. Guard suites re-run clean: `test_order_inquiry_kinds.py`,
+`test_order_inquiry_matrix.py`, `test_order_inquiry_derived_spo.py`,
+`test_order_inquiry_bundles.py`, `test_order_inquiry_worklist.py` - 142 passed, 1
+pre-existing failure unrelated to S8 (see the coder's report: an S5 side effect on a test
+outside this lane's named scope, reported separately, not fixed here).
 
 ### S6 - Order inquiry column hidden by default [FE]
 
@@ -129,7 +204,7 @@ Nothing animates. No new component, no new state.
 
 ## Slices and order
 
-Phase 1: S6. Phase 2 (tester reds first, one coder): S1, S2, S5, S4, S3 (+ migration).
+Phase 1: S6, S7. Phase 2 (tester reds first, one coder): S1, S2, S5, S4 (+ R4), S3 (+ migration), S8 (measure, then fix).
 Phase 3: reviewer (Opus) with kill tests on AC-OH-10, AC-OH-21, AC-OH-40; browser
 verification; guide-writer. No security-reviewer (no auth, ingest, upload or scoping change).
 
