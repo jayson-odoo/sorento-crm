@@ -1584,8 +1584,9 @@ def test_settle_redirects_row_when_every_link_is_received(api):
 
 
 def test_settle_raises_fresh_order_row_for_full_need(api):
-    """AC-RL-11: a fresh ORDER row carries the full replanned need, linkless and with
-    no previous value - it is a new instruction, not an amendment of the old one."""
+    """AC-RL-11, Was/Now added by R3 (PLAN-oi-worklist-one-header.md, AC-OH-40): a
+    fresh ORDER row carries the full replanned need, linkless, and now names what
+    old supply it replaces rather than carrying no previous value."""
     _client, world = api
     fixture = _redirected_fixture(api)
     new_row = fixture["new_row"]
@@ -1595,8 +1596,8 @@ def test_settle_raises_fresh_order_row_for_full_need(api):
     assert new_row.delivery_date == REPLAN_DATE
     assert new_row.state == INQUIRY_RAISED
     assert _links_of(world, new_row) == []
-    assert new_row.previous_qty is None
-    assert new_row.previous_delivery_date is None
+    assert Decimal(str(new_row.previous_qty)) == Decimal("182")
+    assert new_row.previous_delivery_date == WAS
 
 
 def test_settle_mixed_links_frees_open_link(api):

@@ -329,11 +329,18 @@ def test_mixed_order_raises_only_overseas():
 
 
 # --------------------------------------------------------------------------- #
-# AC-2.17: a row raised before this lane, on a line now local, is left untouched
+# AC-2.17, SUPERSEDED 17 Sep 2026 by R9 (`PLAN-oi-worklist-one-header.md` S9,
+# `oi-worklist-one-header-acceptance-criteria.md` AC-OH-90): a row raised before this
+# lane, on a line now local, is no longer left untouched. Found via the owner's hand
+# test on `sorento_oioh_stack` (SO314595/TPE-9204): a local buy is not purchasing's
+# job, so leaving the old row alive read as "purchasing must still buy this" at the
+# OLD, pre-local quantity - the worklist's own reader, not the SO detail this file's
+# other tests exercise. The row is retired (cancelled) exactly like any other decided
+# line's, not carried forward silently.
 # --------------------------------------------------------------------------- #
 
 
-def test_prior_raised_row_on_now_local_line_untouched():
+def test_prior_raised_row_on_now_local_line_is_superseded_AC_OH_90():
     with blank_session() as db:
         company_id, owner, project, product = _world(db)
         from tests.scm.test_project_supply_service_ladder import _group_sites
@@ -350,22 +357,23 @@ def test_prior_raised_row_on_now_local_line_untouched():
         assert first["created"] == 1
         first_row = _raised_rows(db, line.id)[0]
         first_row_id = first_row.id
-        first_state = first_row.state
-        first_verb = first_row.verb
 
-        # Revision 2: same product, now resolved local. The old row must be untouched:
-        # not re-raised (no second row), not cancelled (state/verb unchanged).
+        # Revision 2: same product, now resolved local. R9: the old row is superseded
+        # (cancelled, "Superseded by revision 2"), no fresh row is raised, and the line
+        # joins settled_in_place so the reaction pass raises no DELAY/ADVANCE for it.
         second = _confirm(db, order, actor_user_id=owner, origin_by_line={str(line.id): "local"})
 
         assert second["created"] == 0
+        assert str(line.id) in second["settled_in_place"]
         rows = (
             db.query(OrderInquiryRow)
             .filter(OrderInquiryRow.so_line_id == line.id)
             .all()
         )
-        assert [r.id for r in rows] == [first_row_id]
-        assert rows[0].state == first_state
-        assert rows[0].verb == first_verb
+        assert [r.id for r in rows] == [first_row_id], "the row is retired, not recreated"
+        db.refresh(first_row)
+        assert first_row.state == INQUIRY_CANCELLED
+        assert first_row.note == "Superseded by revision 2"
 
 
 # --------------------------------------------------------------------------- #

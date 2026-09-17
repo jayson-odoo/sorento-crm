@@ -61,6 +61,7 @@ import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
 import { BulkRejectOrderInquiryDialog } from '../../_shared/components/BulkRejectOrderInquiryDialog';
 import { LinkDocumentDialog } from '../../_shared/components/LinkDocumentDialog';
+import { STATE_LABEL } from '../../_shared/components/OrderInquiryVerbPill';
 import { UnlinkAllOrderInquiryDialog } from '../../_shared/components/UnlinkAllOrderInquiryDialog';
 import { OutstandingUploadDialog } from '../../../scm/reorder/components/OutstandingUploadDialog';
 import {
@@ -108,7 +109,10 @@ import { OrderInquiryMatrixCellDrilldown } from './OrderInquiryMatrixCellDrilldo
 import { OrderInquiryMonthStrip } from './OrderInquiryMonthStrip';
 import { OrderInquiryScheduleMatrix } from './OrderInquiryScheduleMatrix';
 import { OrderInquiryStrip } from './OrderInquiryStrip';
-import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+import {
+  DEFAULT_HIDDEN_COLUMNS,
+  useOrderInquiryWorklistColumns,
+} from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -389,6 +393,13 @@ export function OrderInquiriesClient() {
   const [soMonthFilter, setSoMonthFilter] = React.useState(
     () => searchParams.get('so_month') ?? '',
   );
+  // AC-OH-61 (R2): the row's own state (raised / partly_linked / actioned / cancelled /
+  // placed) - a different question from `ack`/`linked`/`kind` above, and the one field
+  // that can actually reach `state=cancelled`, since the list hides cancelled by
+  // default otherwise (S5). URL-seeded and synced the same way as its siblings.
+  const [stateFilter, setStateFilter] = React.useState(
+    () => searchParams.get('state') ?? '',
+  );
   const {
     value: poNumberInput,
     setValue: setPoNumberInput,
@@ -520,15 +531,17 @@ export function OrderInquiriesClient() {
     // or a shared link opens on the same tab the buyer pressed.
     if (month) next.set('delivery_month', month);
     else next.delete('delivery_month');
-    // S1, R-K (AC-F1): the five Filters-popover values travel too, so a reload keeps them
-    // and a shared link opens on the same narrowed list. Cleared means the parameter
-    // goes, which is what "Clear filters" then says in the address bar.
+    // S1, R-K (AC-F1): the Filters-popover values travel too, so a reload keeps them and
+    // a shared link opens on the same narrowed list. Cleared means the parameter goes,
+    // which is what "Clear filters" then says in the address bar.
     for (const [key, value] of [
       ['location', locationFilter],
       ['agent', agentFilter],
       ['so_month', soMonthFilter],
       ['po_number', poNumberFilter],
       ['spo_number', spoNumberFilter],
+      // AC-OH-61.
+      ['state', stateFilter],
     ] as const) {
       if (value) next.set(key, value);
       else next.delete(key);
@@ -564,6 +577,7 @@ export function OrderInquiriesClient() {
     soMonthFilter,
     poNumberFilter,
     spoNumberFilter,
+    stateFilter,
     linkUpTo,
     horizonCleared,
     pathname,
@@ -597,6 +611,7 @@ export function OrderInquiriesClient() {
     soMonthFilter,
     poNumberFilter,
     spoNumberFilter,
+    stateFilter,
   ]);
 
   // S6 (AC-CF-20): once, when the remembered view has resolved, every filter the URL did
@@ -720,6 +735,9 @@ export function OrderInquiriesClient() {
       so_month: soMonthFilter || undefined,
       po_number: poNumberFilter || undefined,
       spo_number: spoNumberFilter || undefined,
+      // AC-OH-61: the row's own state - the one field that can ask for `cancelled`
+      // even though the list hides it by default otherwise (S5).
+      state: stateFilter || undefined,
     }),
     [
       debounced,
@@ -735,6 +753,7 @@ export function OrderInquiriesClient() {
       soMonthFilter,
       poNumberFilter,
       spoNumberFilter,
+      stateFilter,
     ],
   );
 
@@ -852,7 +871,8 @@ export function OrderInquiriesClient() {
     agentFilter ||
     soMonthFilter ||
     poNumberFilter ||
-    spoNumberFilter,
+    spoNumberFilter ||
+    stateFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -922,6 +942,14 @@ export function OrderInquiriesClient() {
     data: rows,
     columns,
     getRowId: (row) => row.id,
+    // S6 (AC-OH-01): the Order inquiry column starts hidden. `initialState` only, not
+    // `state` - a saved column preference (`useListingColumnPreferences`, driven by
+    // `listingKey` below) applies afterwards via `table.setColumnVisibility` and wins.
+    initialState: {
+      columnVisibility: Object.fromEntries(
+        DEFAULT_HIDDEN_COLUMNS.map((id) => [id, false]),
+      ),
+    },
     state: { pagination, sorting, rowSelection },
     // The PREDICATE lives on the table, which is where TanStack reads `getCanSelect` from -
     // a column-level `enableRowSelection` is silently ignored, and every row would tick
@@ -1098,7 +1126,8 @@ export function OrderInquiriesClient() {
     (agentFilter ? 1 : 0) +
     (soMonthFilter ? 1 : 0) +
     (poNumberFilter ? 1 : 0) +
-    (spoNumberFilter ? 1 : 0);
+    (spoNumberFilter ? 1 : 0) +
+    (stateFilter ? 1 : 0);
 
   // S3: the cell already carries its own axis label; only the bucket's granularity-aware
   // reading (`buildOrderInquiryMatrix`'s own label) still has to be looked up.
@@ -1143,7 +1172,15 @@ export function OrderInquiriesClient() {
   // Schedule toolbar (both mount the SAME `toolbarElement` below, never two copies of
   // this JSX) - one filter UI, whichever view happens to be on screen.
   const filtersContent = (
-    <div className="space-y-3">
+    // AC-OH-70 (S7): the popover's own shared primitive
+    // (`data-grid-list-toolbar.tsx`'s `DropdownMenuContent`) has no max-height prop of
+    // its own, so the bound lives here, on the content - the same convention
+    // `data-grid-column-visibility.tsx` and the board's popovers already use, except
+    // `dvh` rather than their `vh` (mobile-vh.inventory.test.ts's fixed-viewport-unit
+    // sweep: a NEW `vh` site is not grandfathered onto the follow-up #567 allowlist,
+    // `dvh` tracks the actual visible area on mobile Safari where `vh` sits under the
+    // address bar's chrome).
+    <div className="max-h-[60dvh] space-y-3 overflow-y-auto">
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Location</Label>
         <SearchableSelect
@@ -1231,6 +1268,25 @@ export function OrderInquiriesClient() {
         />
       </div>
       <div className="space-y-1.5">
+        {/* AC-OH-61: the row's OWN state - Raised / Partly linked / Actioned /
+            Cancelled / Linked, off `summary.by_state` (`total` is a count, not an
+            option). The one field that can ask for `state=cancelled`, since the list
+            hides cancelled by default otherwise (S5). */}
+        <Label className="text-xs text-muted-foreground">State</Label>
+        <SearchableSelect
+          value={stateFilter}
+          onChange={setStateFilter}
+          clearable
+          options={Object.entries(summary.data?.by_state ?? {})
+            .filter(([key]) => key !== 'total')
+            .map(([key, count]) => ({
+              value: key,
+              label: `${STATE_LABEL[key] ?? key} (${count})`,
+            }))}
+          placeholder="Every state"
+        />
+      </div>
+      <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Supplier</Label>
         <SearchableSelect
           value={supplierFilter}
@@ -1301,6 +1357,7 @@ export function OrderInquiriesClient() {
             setSoMonthFilter('');
             setPoNumberInput('');
             setSpoNumberInput('');
+            setStateFilter('');
             // Counted above, so it is cleared here: "Clear filters" that
             // left a card pressed would leave the screen still narrowed.
             setKindFilter(null);

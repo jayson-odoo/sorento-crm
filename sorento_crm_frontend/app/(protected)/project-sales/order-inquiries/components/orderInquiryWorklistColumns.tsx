@@ -39,6 +39,13 @@ function Muted({ children }: { children: React.ReactNode }) {
 }
 
 /**
+ * S6 (AC-OH-01): columns hidden on first load, before a saved column preference (if any)
+ * applies and wins. The order inquiry number stays on the header, the email and the URL -
+ * purchasing does not need it as a worklist column any more.
+ */
+export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no'];
+
+/**
  * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
  * `received`, `reallocate`/`unlink`, `used`, `note` - shared ONE pill from here on,
  * rather than four hand-rolled spellings of `text-2xs text-muted-foreground` (one of
