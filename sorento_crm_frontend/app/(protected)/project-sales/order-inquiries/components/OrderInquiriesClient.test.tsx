@@ -1081,3 +1081,39 @@ describe('AC-F1: the five S1 filters travel in the URL', () => {
     expect(select.value).toBe('agent-1');
   });
 });
+
+describe('AC-OH-70: the Filters popover scrolls (`oi-worklist-one-header-acceptance-criteria.md` S7)', () => {
+  /**
+   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` is a plain
+   * `<div className="space-y-3">` with no height bound at all, so this fails on a null
+   * scroll-container ancestor until the coder wraps it (or the `DropdownMenuContent` it
+   * renders into) with `overflow-y-auto` + a `max-h-` class - "a class on the content",
+   * per the plan, since the shared `data-grid-list-toolbar.tsx` primitive has no
+   * max-height prop of its own.
+   *
+   * Selector asserted on: the nearest ancestor of the "Confirmed" label (the popover's
+   * OWN last field, AC-OH-70's own wording) whose class list contains
+   * `overflow-y-auto`, found via `closest('[class*="overflow-y-auto"]')` - and that
+   * same element's className also matching `/max-h-/`. Reported to the captain as the
+   * exact contract this test pins; the coder may add the classes to a new wrapper div
+   * or to an existing one, as long as some ancestor between "Confirmed" and the popover
+   * carries both.
+   */
+  it('bounds the Filters content to the viewport and scrolls it, so Confirmed is reachable', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    // "Confirmed" also names the toolbar's own active-filter chip once one is set
+    // (`activeSummary`, e.g. "Confirmed: Rejected") - the popover's own FIELD label is
+    // the plain `<label>` element among the matches.
+    const confirmedLabel = (await screen.findAllByText('Confirmed')).find(
+      (node) => node.tagName === 'LABEL',
+    );
+    expect(confirmedLabel).toBeDefined();
+
+    const scrollContainer = confirmedLabel!.closest('[class*="overflow-y-auto"]');
+    expect(scrollContainer).not.toBeNull();
+    expect(scrollContainer?.className ?? '').toMatch(/max-h-/);
+  });
+});
