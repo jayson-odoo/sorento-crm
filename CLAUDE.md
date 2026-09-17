@@ -307,7 +307,7 @@ spawn a build "for handoff" on your own initiative.
 
 ## Lessons learned
 
-**Full log: `LESSONS-LEARNT.md` (111 entries).** Read it when a bug's cause is not obvious, before
+**Full log: `LESSONS-LEARNT.md` (113 entries).** Read it when a bug's cause is not obvious, before
 touching the worker, migrations, tests-in-CI, or anything Respond.io / Outline / storage related.
 When a lesson's cause is fixed in code, retire the entry rather than leaving it to accumulate.
 

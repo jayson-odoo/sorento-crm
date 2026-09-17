@@ -115,6 +115,34 @@ def test_undo_clears_reinstated_journal_to_sql_null(api):
     assert jtype is None, f"jsonb_typeof must read NULL, not {jtype!r}"
 
 
+def test_orm_none_assignment_writes_sql_null(api):
+    """Pins the column option itself (`JSONB(none_as_null=True)`,
+    `app/models/project_so.py`), not just the two `null()` call sites the fix also
+    carries: a bare Python `None` written through the ORM (attribute assignment +
+    flush, not the Core `.values(...)` this module's own writers use) must ALSO
+    land as a real SQL NULL. Without `none_as_null=True` on the column this is the
+    exact same bug by a different path - an ORM assignment serialises `None` to the
+    JSON literal `null` too."""
+    # decision2, not decision1: by the time `_confirm_linked_world` returns, rev1
+    # (decision1) has ALREADY had its own journal cleared to SQL NULL (the supersede
+    # site this fix repairs) - decision2 (the active revision) is the one that still
+    # carries a real journal to null out here.
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    decision2 = fixture["decision2"]
+    assert decision2.undo_journal, "setup: rev2 must carry a real journal first"
+
+    decision2.undo_journal = None
+    db.flush()
+
+    is_sql_null, jtype = _raw_journal_state(db, decision2.id)
+    assert is_sql_null is True, (
+        f"an ORM attribute assignment of None must write a real SQL NULL, not a "
+        f"JSON literal (jsonb_typeof={jtype!r})"
+    )
+    assert jtype is None, f"jsonb_typeof must read NULL, not {jtype!r}"
+
+
 def test_board_read_survives_a_json_null_journal(api):
     """A legacy row (`undo_journal = 'null'::jsonb`, exactly what the bug writes and what
     a pre-fix prod row already carries) must not crash the fulfilment planning board read

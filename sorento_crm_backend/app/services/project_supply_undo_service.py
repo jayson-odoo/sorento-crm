@@ -129,8 +129,19 @@ def _journalled_decision_clause():
 
 def _decision_is_journalled(decision: Any) -> bool:
     """`_journalled_decision_clause`'s own three conditions, read off a decision
-    already loaded in Python rather than issued as a fresh query."""
-    return bool(decision.undo_journal) and decision.confirmed_at is not None
+    already loaded in Python rather than issued as a fresh query.
+
+    `isinstance(journal, list) and len(journal) > 0` (hotfix, undo_0003
+    follow-up), not a bare `bool(decision.undo_journal)`, to match the SQL
+    clause's own shape test (`jsonb_typeof(...) == 'array'` before the length
+    check): the ORM deserialises a JSON `null` back to Python `None` either way,
+    so `bool(...)` already agreed there, but spelling the same shape test on both
+    sides keeps this predicate from silently drifting from the SQL one if the
+    journal is ever something other than a list/None (a dict, a scalar) - `bool`
+    on a non-empty dict or `1` would read journalled where the SQL side would not.
+    """
+    journal = decision.undo_journal
+    return isinstance(journal, list) and len(journal) > 0 and decision.confirmed_at is not None
 
 
 def _journalled(obj: Any) -> bool:

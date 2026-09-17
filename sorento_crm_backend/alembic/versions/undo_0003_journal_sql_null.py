@@ -36,13 +36,14 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    bind.execute(
+    result = bind.execute(
         sa.text(
             "UPDATE projects.so_supply_decisions "
             "SET undo_journal = NULL "
             "WHERE jsonb_typeof(undo_journal) = 'null'"
         )
     )
+    print(f"undo_0003: repaired {result.rowcount or 0} journal(s)")
 
 
 def downgrade() -> None:
