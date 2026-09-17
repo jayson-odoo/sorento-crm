@@ -21,12 +21,17 @@ in) would silently break `alembic upgrade head` on a fresh database. For every
 order's own null header (minted copies `company_id`/`state`/`raised_by`/`raised_at` off
 the oldest header being folded, and mints its own `inquiry_no` the same way
 `next_inquiry_no`/`_stamp_inquiry_no` do - highest already issued for the company, plus
-one), move its rows onto that header, re-point any `projects.tasks` row still naming the
-old header (reviewer S4 - `_hand_to_purchasing`'s own `ProjectTask.linked_entity_id`),
-then delete the emptied header and its synthetic amendment. Row ids, links, claims and
-handover records are all untouched - only `order_inquiry_rows.order_inquiry_id` and a
-task's own `linked_entity_id` move. Idempotent: a second run finds no
+one), move its rows onto that header, then delete the emptied header and its synthetic
+amendment. Row ids, links, claims and handover records are all untouched - only
+`order_inquiry_rows.order_inquiry_id` moves. Idempotent: a second run finds no
 `planning_change_batch` header left and does nothing.
+
+Reviewer round 1 S4 / round 2 item 2: a purchasing task `_hand_to_purchasing` raised off
+the folded header (`projects.tasks.linked_entity_id`) is RE-POINTED at the survivor when
+the survivor holds none of its own, or DELETED when the survivor already has one - a
+header that reused an existing null header (the ordinary case) already got its own task
+from `confirm()`'s own raise, and re-pointing the batch header's task on top would leave
+the survivor carrying two.
 
 Downgrade is a no-op: recreating the synthetic per-apply headers this revision folds away
 would mean inventing which rows belonged to which now-deleted batch header, which nothing
@@ -135,20 +140,48 @@ def _fold(connection) -> int:
             ),
             {"target": target_id, "old": header.id},
         )
-        # Reviewer S4: a purchasing task raised off the folded header (`_hand_to_
-        # purchasing`'s `ProjectTask.linked_entity_type='order_inquiry'`) still names it
-        # by id - re-point it, or the task's own "Open in Order Inquiries" link would
-        # 404 the moment the header underneath it is deleted below.
-        connection.execute(
-            sa.text(
-                """
-                UPDATE projects.tasks
-                SET linked_entity_id = :target
-                WHERE linked_entity_type = 'order_inquiry' AND linked_entity_id = :old
-                """
-            ),
-            {"target": target_id, "old": header.id},
+        # Reviewer S4 / round 2 item 2: a purchasing task raised off the folded header
+        # (`_hand_to_purchasing`'s `ProjectTask.linked_entity_type='order_inquiry'`)
+        # still names it by id - re-point it, or its "Open in Order Inquiries" link
+        # would 404 the moment the header underneath it is deleted below. But when the
+        # SURVIVOR already carries its own task (the ordinary case - it existed before
+        # this fold and `confirm()`'s own raise already handed one off for it),
+        # re-pointing would give the survivor two - the folded header's task is deleted
+        # instead, since the survivor's own task already says everything it said.
+        target_has_task = (
+            connection.execute(
+                sa.text(
+                    """
+                    SELECT 1 FROM projects.tasks
+                    WHERE linked_entity_type = 'order_inquiry' AND linked_entity_id = :target
+                    LIMIT 1
+                    """
+                ),
+                {"target": target_id},
+            ).first()
+            is not None
         )
+        if target_has_task:
+            connection.execute(
+                sa.text(
+                    """
+                    DELETE FROM projects.tasks
+                    WHERE linked_entity_type = 'order_inquiry' AND linked_entity_id = :old
+                    """
+                ),
+                {"old": header.id},
+            )
+        else:
+            connection.execute(
+                sa.text(
+                    """
+                    UPDATE projects.tasks
+                    SET linked_entity_id = :target
+                    WHERE linked_entity_type = 'order_inquiry' AND linked_entity_id = :old
+                    """
+                ),
+                {"target": target_id, "old": header.id},
+            )
         connection.execute(
             sa.text("DELETE FROM projects.order_inquiries WHERE id = :old"),
             {"old": header.id},
