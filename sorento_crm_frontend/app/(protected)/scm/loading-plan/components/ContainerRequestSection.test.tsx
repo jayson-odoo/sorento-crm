@@ -873,7 +873,7 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     const dialog = openFigure('Open project sales orders');
 
     expect(dialog).toHaveTextContent('Project · ITEM-1');
-    for (const header of ['Sales order', 'Customer', 'Project', 'Agent', 'Price', 'Qty', 'Required']) {
+    for (const header of ['Sales order', 'Customer', 'Project', 'Agent', 'Price', 'Open', 'Balance', 'Required']) {
       expect(within(dialog).getByText(header)).toBeInTheDocument();
     }
     expect(within(dialog).getByText('SO-PROJ')).toBeInTheDocument();

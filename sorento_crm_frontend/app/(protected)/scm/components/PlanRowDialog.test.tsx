@@ -316,11 +316,21 @@ describe('ProjectRetailTabs', () => {
   });
 
   it('renders both the open figure and the balance figure on a partly SPO-placed line (AC-F3)', () => {
-    const split: PlanDemandLineRow[] = [{ ...LINES[0], open_qty: 234, qty: 134 }];
+    // Two lines, and neither Balance alone equals the footer total (634), so the row cell
+    // and the footer cell are never the same text - a single-line fixture here would let a
+    // row's own Balance collide with the footer that foots to it.
+    const split: PlanDemandLineRow[] = [
+      { ...LINES[0], open_qty: 234, qty: 134 },
+      { ...LINES[1], open_qty: 500, qty: 500 },
+    ];
     renderWithClient(<ProjectRetailTabs channel="project" lines={split} history={[]} />);
 
-    expect(screen.getByText('234')).toBeTruthy();
-    expect(screen.getByText('134')).toBeTruthy();
+    const row = screen.getByText('SO404118').closest('tr') as HTMLElement;
+    expect(within(row).getByText('234')).toBeTruthy();
+    expect(within(row).getByText('134')).toBeTruthy();
+    expect(screen.getAllByText('500').length).toBeGreaterThan(0);
+    const footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('634')).toBeTruthy();
   });
 
   it('foots Balance to the tab total and leaves the Open footer blank (AC-F2)', () => {

@@ -792,7 +792,8 @@ export interface ContainerRequestPoLine {
  *  can bucket them into a schedule matrix or answer "which order does this cover" without a
  *  second fetch. `sum(qty per product) === that row's open_so_need`: since R15 both channels
  *  are the sales-order BOOK, told apart by `demand_class`, and a project line is listed at the
- *  remainder left after what CS already placed on a PO or an SPO. */
+ *  remainder left after what CS already placed on a shipping order (R1, `PLAN-loading-plan-
+ *  project-spo-only.md`: a PO placement does not net it). */
 export interface ContainerRequestSoLine {
   product_id: string;
   item_code: string | null;
@@ -810,6 +811,9 @@ export interface ContainerRequestSoLine {
   demand_class: string | null;
   order_date: string | null;
   required_date: string | null;
+  /** Gross open qty before SPO netting; `qty` is the balance still to ship. Equal to `qty` on
+   *  a retail line, which has no placements to be netted by. */
+  open_qty: number;
   qty: number;
 }
 

@@ -436,16 +436,21 @@ _OPEN_QTY_SQL = (
     "       - COALESCE(sol.qty_delivered, 0), 0)"
 )
 
-#: What CS has already placed against a core sales-order LINE - a purchase order or an SPO,
-#: which is the same thing to this screen: supply somebody has already committed to.
+#: What CS has already placed on a SHIPPING ORDER against a core sales-order LINE - the only
+#: placement the loading plan may subtract (R1, owner 18 Sep 2026, `PLAN-loading-plan-project-
+#: spo-only.md`). A PO link is NOT supply to this screen: it tells the supplier what was
+#: bought, not what is on its way to be shipped, so a PO-placed line is still open demand
+#: here. `demand.py` / `scm.committed_v` / the fulfilment board are untouched (R2) - they keep
+#: netting both kinds of link; only this module narrows to SPO alone.
 #:
 #: The walk is core line -> its project mirror (`projects.sales_order_lines`, unique on
 #: `core_sales_order_line_id`) -> the Order Inquiry rows CS raised against that mirror line ->
 #: their `projects.order_inquiry_links`. The link IS the placement (`order_inquiry_links.qty`,
 #: one row per document), so a half-placed requirement nets by half, exactly as
-#: `scm.committed_v` nets its own project legs. Never matched on a document number or an item
-#: code.
-_PLACED_ON_LINE_SQL = """
+#: `scm.committed_v` nets its own project legs - except a link only counts here when it
+#: targets an SPO allocation (`spo_allocation_id IS NOT NULL`). Never matched on a document
+#: number or an item code.
+_SPO_PLACED_ON_LINE_SQL = """
     LEFT JOIN LATERAL (
         SELECT COALESCE(SUM(l.qty), 0) AS placed
         FROM projects.order_inquiry_links l
@@ -458,6 +463,10 @@ _PLACED_ON_LINE_SQL = """
           -- down, the same exclusion `demand.py`'s `NOT_REDIRECTED_SQL` applies to
           -- every other placement-netting leg.
           AND oir.redirected_to_pool = FALSE
+          -- R1 (owner, 18 Sep 2026): only a shipping-order placement is supply the loading
+          -- plan may subtract. A PO link stays in the sum `demand.py` / `scm.committed_v`
+          -- compute (R2) but is excluded here.
+          AND l.spo_allocation_id IS NOT NULL
     ) lk ON TRUE
 """
 
@@ -473,8 +482,11 @@ def _project_open_need(
     it (P3) - but on the dev copy 22,238 open project sales-order lines carry no inquiry row
     at all, so purchasing opened the loading plan and was shown nothing to ask for. So the
     loading plan reads the ONE book that has the requirement in it, the same book the retail
-    leg reads, and nets each line by the placements against it (`_PLACED_ON_LINE_SQL`) so a
-    requirement already on a PO or an SPO is not asked for twice.
+    leg reads, and nets each line by the SPO placements against it
+    (`_SPO_PLACED_ON_LINE_SQL`) so a requirement already on a shipping order is not asked for
+    twice. A PO placement does NOT net here (R1, owner 18 Sep 2026): it tells the supplier
+    what was bought, not what is on its way to be shipped, so a PO-placed line is still open
+    demand.
 
     `demand.py`, `scm.committed_v` and the fulfilment board are untouched: they keep P3, where
     CS confirms per inquiry row. The two screens answer different questions - "what is still
@@ -502,7 +514,7 @@ def _project_open_need(
                    GREATEST({_OPEN_QTY_SQL} - COALESCE(lk.placed, 0), 0) AS qty
             FROM sales_order_lines sol
             JOIN sales_orders so ON so.id = sol.sales_order_id
-            {_PLACED_ON_LINE_SQL}
+            {_SPO_PLACED_ON_LINE_SQL}
             WHERE sol.product_id::text = ANY(:pids)
               AND so.demand_class = 'project'
               AND so.status = 'open'
@@ -841,6 +853,7 @@ def _open_lines(
                    pj.title AS project_title,
                    COALESCE(NULLIF(sa.person_label, ''), NULLIF(sa.sales_agent, '')) AS agent_label,
                    sol.unit_price AS unit_price,
+                   {qty} AS open_qty,
                    CASE WHEN so.demand_class = 'project'
                         THEN GREATEST({qty} - COALESCE(lk.placed, 0), 0)
                         ELSE {qty} END AS qty
@@ -859,7 +872,7 @@ def _open_lines(
             LEFT JOIN projects.sales_orders pso
                    ON pso.so_id = so.id AND pso.company_id = so.company_id
             LEFT JOIN projects.projects pj ON pj.id = pso.project_id
-            {_PLACED_ON_LINE_SQL}
+            {_SPO_PLACED_ON_LINE_SQL}
             WHERE sol.product_id::text = ANY(:pids)
               AND so.status = 'open'
               AND sol.line_status = 'open'
@@ -900,6 +913,10 @@ def _open_lines(
             "demand_class": r["demand_class"],
             "order_date": r["order_date"].isoformat() if r["order_date"] else None,
             "required_date": r["required_date"].isoformat() if r["required_date"] else None,
+            # The gross open qty before SPO netting (R3, `PLAN-loading-plan-project-spo-
+            # only.md`) - a retail line has no placements to be netted by, so `open_qty`
+            # equals `qty` there. `qty` stays the balance: what is still to ship.
+            "open_qty": float(r["open_qty"] or 0),
             "qty": float(r["qty"] or 0),
         }
         for r in rows
@@ -979,13 +996,16 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
       line, whose demand `open_so_need` counts and whose bin stock the old rule dropped. This
       REVERSES the F2/26-Aug rule below, which excluded project-segment warehouses from the
       total.
-    * NOT an exact fix, and the accepted residue of it (S5, captain 8 Sep 2026): `project_qty`
-      (`_project_open_need`) is ALREADY NET of what CS has placed on a PO or an SPO
-      (`_PLACED_ON_LINE_SQL`, R15) - a project line placed in full leaves NOTHING in
-      `open_so_need` for it. The widening above does not ask what a bin's stock is FOR: once
-      that placement lands as received stock in the project's own bin, `on_hand` counts it
-      anyway. The result: stock whose matching demand has already left `open_so_need` nets
-      instead against whatever OTHER (retail) demand for the SAME product is still open -
+    * NOT an exact fix, and the accepted residue of it (S5, captain 8 Sep 2026, narrowed to
+      SPO-only by R1, owner 18 Sep 2026): `project_qty` (`_project_open_need`) is ALREADY NET
+      of what CS has placed on a SHIPPING ORDER (`_SPO_PLACED_ON_LINE_SQL`, R15/R1) - a
+      project line placed in full on an SPO leaves NOTHING in `open_so_need` for it. A PO
+      placement does not net it (R1), so a PO-placed line's stock has not yet landed in the
+      project's own bin the way an SPO's has. The widening above does not ask what a bin's
+      stock is FOR: once an SPO placement lands as received stock in the project's own bin,
+      `on_hand` counts it anyway. The result: stock whose matching demand has already left
+      `open_so_need` nets instead against whatever OTHER (retail) demand for the SAME product
+      is still open -
       supply counted, its own demand already gone. `test_container_request.
       py::test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand` pins the
       exact number this produces; it is a known, accepted asymmetry under R7, not a bug this

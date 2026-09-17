@@ -787,13 +787,14 @@ def test_the_horizon_narrows_project_need_the_same_way_it_narrows_retail():
 
 
 def test_the_project_need_by_date_is_the_earliest_line_the_plan_counts():
-    # Quantity and date come off the SAME lines: a requirement already bought must not make
-    # the product rank as urgent on a date nobody is still waiting on.
+    # Quantity and date come off the SAME lines: a requirement already SHIPPED must not make
+    # the product rank as urgent on a date nobody is still waiting on. An SPO placement is the
+    # one that nets (R1) - a PO placement would leave this line open too.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
         placed = _project_need(db, w, "A", 7, required=date(2026, 1, 5))
-        _place(db, w, placed, 7)
+        _place_spo(db, w, placed, 7)
         _project_need(db, w, "A", 10, required=date(2026, 9, 4))
 
         row = _row(_build(db, w), w, "A")
@@ -803,15 +804,16 @@ def test_the_project_need_by_date_is_the_earliest_line_the_plan_counts():
 
 
 def test_the_open_so_lines_foot_to_the_whole_need():
-    # The invariant `build` states, back where it was before R1: project lines ARE sales-order
-    # lines again, so every unit of `open_so_need` has a line behind it - and a placed project
-    # line is listed at its remainder, the same figure the column shows.
+    # The invariant `build` states, back where it was before R15: project lines ARE sales-order
+    # lines again, so every unit of `open_so_need` has a line behind it - and an SPO-placed
+    # project line is listed at its remainder, the same figure the column shows (an SPO is the
+    # only placement that nets, R1 of `PLAN-loading-plan-project-spo-only.md`).
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
         _retail_need(db, w, "A", 40)
         line = _project_need(db, w, "A", 100)
-        _place(db, w, line, 30)
+        _place_spo(db, w, line, 30)
 
         out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
 
