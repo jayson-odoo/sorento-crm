@@ -146,8 +146,10 @@ any change to `supplier_code_matcher.py`.
   Supplier select + uppercase token input on the form, supplier badge in the list; Open fix in
   `AttachmentPreviewModal.tsx` (security round 1: only PDF, PNG, JPEG, GIF, WebP and plain text
   open inline, anything else is re-typed as octet-stream so an uploaded HTML or SVG cannot run
-  in the app origin; the window opens synchronously with `noopener`, the blob URL is revoked,
-  the button shows a busy state).
+  in the app origin; the tab is opened synchronously with `window.open('', '_blank')` and its
+  `opener` nulled afterwards, never with a `noopener` feature string, which makes `window.open`
+  return null by spec; a non-inline type such as xlsx closes the blank tab and downloads with one
+  toast; the blob URL is revoked; the button shows a busy state).
   Supplier codes tab (`SupplierCodesTab.tsx`): a `Stock list words` link (icon button with
   label, `PageHeader`-adjacent toolbar) to `/system-management/import-field-aliases?doc_type=supplier_inventory_word`,
   the page honouring that query param as its initial doc type.

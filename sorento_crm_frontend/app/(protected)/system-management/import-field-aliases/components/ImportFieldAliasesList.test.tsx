@@ -59,13 +59,6 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
-// AC-F1: the Supplier select the form dialog grows for the word doc type - not under test
-// here, but left unmocked it would fire a real (unmocked) fetch from every render of this
-// list, whose own dialog mounts even while closed.
-vi.mock('../../../procurement-management/suppliers/hooks/useSupplierSelectQuery', () => ({
-  useSupplierSelectQuery: () => ({ data: [] }),
-}));
-
 const listImportFieldAliases = vi.fn();
 const listImportFieldAliasFields = vi.fn();
 const createImportFieldAlias = vi.fn();

@@ -145,6 +145,11 @@ _PARSE_SPEC_CASES = [
     # A run of more than 3 digits is never a trap size at all (`_size_of` only accepts
     # exactly 3) and nothing claims it - abort.
     ("8613", None),
+    # Review round 2, item 7: pins the separator rule from the OTHER side - neither digit
+    # run either side of `横排` is 3 digits long, so neither is ever claimed as a size, and
+    # the leftover-digit guard aborts. Without the separator these would fuse into `180`
+    # (a valid size) and this case would wrongly resolve instead of aborting.
+    ("1横排80", None),
 ]
 
 

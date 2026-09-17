@@ -13,7 +13,7 @@ import uuid as _uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -50,6 +50,26 @@ class ImportFieldAliasCreate(BaseModel):
     # `supplier_inventory_word`; a caller may still send it for another doc type and the row
     # simply carries a supplier it will never be looked up by.
     supplier_id: Optional[str] = None
+
+    @field_validator("supplier_id")
+    @classmethod
+    def _blank_supplier_id_is_none(cls, value: Optional[str]) -> Optional[str]:
+        """A cleared `SearchableSelect` posts `""`, not the field's absence (review round 2,
+        item 3) - `""` is not a uuid, so `_assert_supplier_exists`'s `is_uuid` guard would
+        reject it as 422 rather than reading it as "no supplier chosen" the way `None` does.
+        Normalised here, once, rather than every caller re-deriving "falsy means None"."""
+        return value or None
+
+
+def _label_for(doc_type: str, field: str) -> str:
+    """The screen's own label for a field - `field_access.field_label`'s title-case fallback
+    for everything else, but the field VERBATIM for a word token (review round 1, item 2):
+    `field_label`'s `.capitalize()` fallback turned `SRT` into `Srt` and `HP` into `Hp`,
+    which is not a spelling anyone chose - the word list's whole vocabulary is exactly what
+    was typed on the form (`WORD_TOKEN_RE`), so nothing here should reshape it."""
+    if doc_type == WORD_DOC_TYPE:
+        return field
+    return field_label(field)
 
 
 def _assert_known_field(doc_type: str, field: str) -> None:
@@ -92,8 +112,13 @@ def _assert_supplier_exists(db: Session, supplier_id: Optional[str]) -> None:
     A value that is not a uuid at all (review round 1, item 6) is rejected the same way as
     an unknown id, rather than reaching the uuid column comparison - which raises
     `InvalidTextRepresentation`, not an `AppException`, and leaves the session aborted.
+
+    `is None`, not a truthiness check (review round 2, item 3): the Pydantic model already
+    normalises a posted `""` to `None`, and an explicit check here means a FUTURE caller
+    that skips that normalisation gets the 422 `is_uuid` would have given it anyway, rather
+    than a falsy-string silently reading as "no supplier chosen".
     """
-    if not supplier_id:
+    if supplier_id is None:
         return
     from app.models.procurement import Supplier
     from app.services.scm.supplier_scope import is_uuid
@@ -157,7 +182,8 @@ def list_import_field_aliases(
     grouped = _grouped_aliases(db, doc_type)
     fields = sorted(set(canonical_fields(doc_type)) | set(grouped))
     return [
-        {"field": f, "label": field_label(f), "aliases": grouped.get(f, [])} for f in fields
+        {"field": f, "label": _label_for(doc_type, f), "aliases": grouped.get(f, [])}
+        for f in fields
     ]
 
 
@@ -167,7 +193,7 @@ def list_import_field_alias_fields(
     _user: dict = Depends(_VIEW),
 ):
     """The canonical field names this document type's own reader asks for."""
-    return [{"field": f, "label": field_label(f)} for f in canonical_fields(doc_type)]
+    return [{"field": f, "label": _label_for(doc_type, f)} for f in canonical_fields(doc_type)]
 
 
 @router.post("/import-field-aliases", status_code=status.HTTP_201_CREATED)
@@ -198,7 +224,8 @@ def create_import_field_alias(
         raise AppException(
             status.HTTP_409_CONFLICT,
             f"Header {payload.alias} is already mapped to "
-            f"{field_label(field_value)} for {_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}.",
+            f"{_label_for(payload.doc_type, field_value)} for "
+            f"{_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}.",
             code="duplicate_alias",
         )
     row = ImportFieldAlias(
@@ -220,7 +247,7 @@ def create_import_field_alias(
     names = _supplier_names(db, siblings)
     return {
         "field": field_value,
-        "label": field_label(field_value),
+        "label": _label_for(payload.doc_type, field_value),
         "aliases": [_serialize_alias(r, names) for r in siblings],
     }
 

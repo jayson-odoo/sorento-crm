@@ -409,12 +409,16 @@ describe('AttachmentPreviewModal', () => {
   // sends no auth header, so the stock-list attachment's Open button 401ed with a raw JSON
   // page. Same fetch as Download, then a new tab - no backend change.
   //
-  // Fix round 1 (security blocker, review round 1): a blob url inherits the app's own
-  // origin and carries no `Content-Disposition`, so an uploaded HTML/SVG attachment opened
-  // inline would run as the staff user. These assertions were rewritten for the resulting
-  // contract change - noted per test below - rather than the original "opens `window.open`
-  // with the blob url directly" shape, which the fix replaces with a synchronously-opened
-  // blank window later navigated via `location.href`, and a mime-type gate before that.
+  // Fix round 1 (security blocker): a blob url inherits the app's own origin and carries no
+  // `Content-Disposition`, so an uploaded HTML/SVG attachment opened inline would run as the
+  // staff user. Fix round 2 (blocker): `window.open('', '_blank', 'noopener')` returns
+  // `null` by spec whenever `noopener` is passed as a window FEATURE - so every click was
+  // taking the "popup blocked" branch in a real browser, even though every test here passed
+  // (the mocks below program their own return value and never exercised that spec quirk).
+  // `noopener` dropped from the call; `opener` is nulled on the returned handle by hand
+  // instead. A non-inline mime type (an `xlsx`, `text/html`, ...) now closes the blank tab
+  // and runs the same download the Download button uses, rather than handing the tab a
+  // mime type it cannot show.
   describe('Open (AC-F2/AC-F3/AC-F4, D10)', () => {
     const noCdnUrlItem: AttachmentPreviewItem = {
       id: 'z',
@@ -424,7 +428,7 @@ describe('AttachmentPreviewModal', () => {
     };
 
     function stubWindow() {
-      return { location: { href: '' }, close: vi.fn() } as unknown as Window;
+      return { location: { href: '' }, close: vi.fn(), opener: {} } as unknown as Window;
     }
 
     afterEach(() => {
@@ -434,7 +438,7 @@ describe('AttachmentPreviewModal', () => {
     // Rewritten (was: asserts `window.open(blobUrl, '_blank')` directly). The fix opens a
     // BLANK window synchronously in the click handler - so a popup blocker sees it as part
     // of the user gesture - and only navigates it to the blob url once the fetch resolves.
-    it('AC-F2: opens a blank window synchronously, then navigates it to the fetched blob', async () => {
+    it('AC-F2: opens a blank window synchronously (no `noopener` argument) and nulls its opener by hand, then navigates it to the fetched blob', async () => {
       const customFetchBytes = vi.fn().mockResolvedValue({
         ok: true,
         blob: async () => new Blob(['x'], { type: 'application/pdf' }),
@@ -457,8 +461,11 @@ describe('AttachmentPreviewModal', () => {
 
       fireEvent.click(screen.getByRole('button', { name: /open/i }));
 
-      // Opened blank, synchronously, before the fetch has even started.
-      expect(openSpy).toHaveBeenCalledWith('', '_blank', 'noopener');
+      // Opened blank, synchronously, before the fetch has even started - and with no third
+      // ('noopener') argument, which is what made every real click take the blocked branch.
+      expect(openSpy).toHaveBeenCalledWith('', '_blank');
+      expect(openSpy).not.toHaveBeenCalledWith('', '_blank', 'noopener');
+      expect(target.opener).toBeNull();
       await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(noCdnUrlItem));
       await waitFor(() => expect(target.location.href).toBe('blob:mock-open-url'));
       // No same-origin anchor to the download route for this item - that anchor is
@@ -468,16 +475,20 @@ describe('AttachmentPreviewModal', () => {
       ).toBeNull();
     });
 
-    // New (security blocker): a mime type outside the inline allow-list must never reach
-    // the new tab as itself - an uploaded `text/html` or `image/svg+xml` attachment would
-    // otherwise execute as this staff user on the app's own origin.
-    it('re-wraps a non-inline mime type (e.g. text/html) as an opaque download before opening it', async () => {
+    // Kept from round 1 (security blocker): a mime type outside the inline allow-list must
+    // never reach the new tab as itself - an uploaded `text/html` attachment would otherwise
+    // execute as this staff user on the app's own origin. Rewritten for round 2's contract:
+    // the fix now CLOSES the blank tab and downloads instead of re-wrapping the same bytes
+    // into the tab as an opaque blob (a blank tab offering a download is a dead end).
+    it('closes the tab and downloads instead when the fetched blob is a non-inline type (e.g. text/html)', async () => {
       const customFetchBytes = vi.fn().mockResolvedValue({
         ok: true,
         blob: async () => new Blob(['<script>alert(1)</script>'], { type: 'text/html' }),
       });
-      vi.spyOn(window, 'open').mockImplementation(() => stubWindow());
-      const createObjectURL = vi.fn().mockReturnValue('blob:mock-open-url');
+      const target = stubWindow();
+      vi.spyOn(window, 'open').mockImplementation(() => target);
+      const successSpy = vi.spyOn(toast, 'success');
+      const createObjectURL = vi.fn().mockReturnValue('blob:mock-download-url');
       (URL as unknown as { createObjectURL: unknown }).createObjectURL = createObjectURL;
       (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
 
@@ -492,9 +503,55 @@ describe('AttachmentPreviewModal', () => {
 
       fireEvent.click(screen.getByRole('button', { name: /open/i }));
 
-      await waitFor(() => expect(createObjectURL).toHaveBeenCalled());
-      const openedBlob = createObjectURL.mock.calls[0][0] as Blob;
-      expect(openedBlob.type).toBe('application/octet-stream');
+      await waitFor(() => expect(target.close).toHaveBeenCalledTimes(1));
+      // Downloaded (the same `saveBlob` path Download uses) from the bytes Open already
+      // fetched, not a second fetch through `openItem` itself - `noCdnUrlItem` is an xlsx,
+      // so its OWN co-mounted `ExcelSlide` preview also calls `fetchBytes` once, on mount,
+      // which is why this asserts `createObjectURL`'s count (Open's own download call)
+      // rather than `fetchBytes`'s.
+      expect(createObjectURL).toHaveBeenCalledTimes(1);
+      expect(customFetchBytes).toHaveBeenCalledWith(noCdnUrlItem);
+      expect(successSpy).toHaveBeenCalledTimes(1);
+      // Never navigated - the tab was closed instead.
+      expect(target.location.href).toBe('');
+    });
+
+    // New (fix round 2): the fetch-time check is what actually decides this, not the file
+    // name - an `.xlsx` item closes the blank tab and downloads once its response's own
+    // content type comes back as a spreadsheet, the same branch `text/html` takes above.
+    it('closes the tab and downloads instead for an xlsx response', async () => {
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () =>
+          new Blob(['PK'], {
+            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          }),
+      });
+      const target = stubWindow();
+      vi.spyOn(window, 'open').mockImplementation(() => target);
+      const successSpy = vi.spyOn(toast, 'success');
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
+        .fn()
+        .mockReturnValue('blob:mock-download-url');
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+      await waitFor(() => expect(target.close).toHaveBeenCalledTimes(1));
+      // `noCdnUrlItem` is an xlsx, so its own co-mounted `ExcelSlide` preview also calls
+      // `fetchBytes` once on mount - asserting `.toHaveBeenCalledWith`, not a call count.
+      expect(customFetchBytes).toHaveBeenCalledWith(noCdnUrlItem);
+      expect(successSpy).toHaveBeenCalledTimes(1);
+      expect(target.location.href).toBe('');
     });
 
     // New: an inline-safe type (already allow-listed) is opened unchanged.

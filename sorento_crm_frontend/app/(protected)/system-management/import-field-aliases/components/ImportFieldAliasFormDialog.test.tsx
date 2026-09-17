@@ -17,6 +17,12 @@
  *     type's "System field" is a plain uppercase text input, not a `SearchableSelect` - the
  *     two submit tests in the second `describe` block now type into it instead of picking
  *     an option.
+ *
+ * Fix round 2, item 6: the dialog now imports the paged supplier lookup from
+ * `services/supplierSelectService.ts` (a thin re-export of `getFulfilmentSuppliers`, beside
+ * `userSelectService.ts`'s own pattern) rather than reaching into `scm`'s own service module
+ * directly - the mock below moved to that path. Item 7 added the "never called for another
+ * doc type" assertion in the third test of the first `describe` block.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -56,19 +62,20 @@ vi.mock('../hooks/useImportFieldAliases', () => ({
   useCreateImportFieldAlias: () => ({ mutateAsync: createMutateAsync, isPending: false }),
 }));
 
-// Fix round 1, item 5: the server-searched, paged supplier lookup - `SearchableSelect`'s own
-// `fetchOptions(query, pageIndex)` contract, so the mock returns option shape directly
-// rather than raw supplier rows.
-const getFulfilmentSuppliersMock = vi.fn().mockResolvedValue([{ value: 'sup-1', label: 'DAFUYUAN' }]);
-vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
-  getFulfilmentSuppliers: (...args: unknown[]) => getFulfilmentSuppliersMock(...args),
+// Fix round 1, item 5 / fix round 2, item 6: the server-searched, paged supplier lookup -
+// `SearchableSelect`'s own `fetchOptions(query, pageIndex)` contract, so the mock returns
+// option shape directly rather than raw supplier rows. Mocked at `supplierSelectService`
+// (the shared re-export the dialog now imports), not `scm`'s own `fulfilmentService`.
+const getSuppliersSelectMock = vi.fn().mockResolvedValue([{ value: 'sup-1', label: 'DAFUYUAN' }]);
+vi.mock('@/services/supplierSelectService', () => ({
+  getSuppliersSelect: (...args: unknown[]) => getSuppliersSelectMock(...args),
 }));
 
 import { ImportFieldAliasFormDialog } from './ImportFieldAliasFormDialog';
 
 beforeEach(() => {
   createMutateAsync.mockReset().mockResolvedValue({ field: 'SRT', label: 'SRT', aliases: [] });
-  getFulfilmentSuppliersMock.mockReset().mockResolvedValue([{ value: 'sup-1', label: 'DAFUYUAN' }]);
+  getSuppliersSelectMock.mockReset().mockResolvedValue([{ value: 'sup-1', label: 'DAFUYUAN' }]);
 });
 
 describe('ImportFieldAliasFormDialog - Supplier select (AC-F1)', () => {
@@ -100,7 +107,7 @@ describe('ImportFieldAliasFormDialog - Supplier select (AC-F1)', () => {
     expect(screen.getByRole('button', { name: /clear selection/i })).toBeInTheDocument();
   });
 
-  it('hides the Supplier select for every other doc type', () => {
+  it('hides the Supplier select for every other doc type, and never calls the supplier lookup', () => {
     render(
       <ImportFieldAliasFormDialog
         open
@@ -110,6 +117,9 @@ describe('ImportFieldAliasFormDialog - Supplier select (AC-F1)', () => {
     );
 
     expect(screen.queryByLabelText('Supplier')).not.toBeInTheDocument();
+    // Item 7 (review round 2): a non-word doc type must never reach the procurement route
+    // at all, not merely render no select for it.
+    expect(getSuppliersSelectMock).not.toHaveBeenCalled();
   });
 });
 

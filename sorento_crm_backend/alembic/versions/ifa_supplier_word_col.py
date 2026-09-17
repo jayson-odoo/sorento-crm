@@ -121,6 +121,12 @@ def downgrade() -> None:
     bind.execute(
         sa.text("DELETE FROM import_field_alias WHERE doc_type = :d"), {"d": DOC_TYPE}
     )
+    # `supplier_id` is a column on the WHOLE table, not scoped to this doc type - review
+    # round 2, item 5. Any OTHER doc type's row that ended up carrying one (nothing seeds
+    # this today, but the column does not forbid it) is about to lose the column that scopes
+    # it; restoring the old (doc_type, field, alias) triple next could then collide two rows
+    # that used to be distinct only by supplier. Deleted rather than silently unscoped.
+    bind.execute(sa.text("DELETE FROM import_field_alias WHERE supplier_id IS NOT NULL"))
 
     op.drop_index("uq_import_field_alias_scoped", table_name="import_field_alias")
     op.drop_index("uq_import_field_alias_shared", table_name="import_field_alias")

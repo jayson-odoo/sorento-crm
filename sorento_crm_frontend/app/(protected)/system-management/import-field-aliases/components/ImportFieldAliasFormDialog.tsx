@@ -14,7 +14,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { getFulfilmentSuppliers } from '@/app/(protected)/scm/services/fulfilmentService';
+import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useCreateImportFieldAlias, useImportFieldAliasFields } from '../hooks/useImportFieldAliases';
 import type { ImportFieldAliasDocType } from '../types/importFieldAlias.types';
 
@@ -30,15 +30,16 @@ const WORD_TOKEN_INPUT_RE = /[^A-Z0-9]/g;
 /**
  * Server-searched, paged supplier lookup for the word doc type's Supplier field (review
  * round 1, item 5) - the bare `/select` endpoint caps at 100 of the 743 live suppliers.
- * `getFulfilmentSuppliers` already matches `SearchableSelect`'s own `fetchOptions(query,
- * pageIndex)` contract; wrapped in a hook so this dialog can gate it off `enabled` (`false`
- * outside the word doc type resolves to no options with no request - other doc types must
- * never call the procurement route at all).
+ * `getSuppliersSelect` (`services/supplierSelectService.ts`, review round 2, item 6) already
+ * matches `SearchableSelect`'s own `fetchOptions(query, pageIndex)` contract; wrapped in a
+ * hook so this dialog can gate it off `enabled` (`false` outside the word doc type resolves
+ * to no options with no request - other doc types must never call the procurement route
+ * at all).
  */
 function useSupplierWordFetchOptions(enabled: boolean) {
   return useCallback(
     (query: string, pageIndex: number): Promise<SearchableSelectOption[]> =>
-      enabled ? getFulfilmentSuppliers(query, pageIndex) : Promise.resolve([]),
+      enabled ? getSuppliersSelect(query, pageIndex) : Promise.resolve([]),
     [enabled],
   );
 }

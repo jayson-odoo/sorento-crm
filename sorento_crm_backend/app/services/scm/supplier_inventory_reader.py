@@ -210,16 +210,6 @@ def read_workbook(
                 result.problems.append(RowProblem(offset, "no model number on a row with stock"))
             continue
 
-        result.total_rows += 1
-        packed = _number(values.get("qty_packed")) or 0.0
-        unfinished = _number(values.get("qty_unfinished")) or 0.0
-        per_unit = _number(values.get("cbm_per_unit"))
-        if per_unit is None:
-            total = _number(values.get("cbm_total"))
-            basis = packed + unfinished
-            if total is not None and basis > 0:
-                per_unit = round(total / basis, 6)
-
         product_name = _text(values.get("product_name"))
         brand = _text(values.get("brand"))
         spec = _text(values.get("spec"))
@@ -237,12 +227,24 @@ def read_workbook(
             # A composed or raw-joined key this long is not a code any rung would ever bind
             # - review round 1, item 7. Skipped as a problem row rather than stored: a
             # `product_code`/`supplier_product_code_alias.supplier_code` column this long
-            # would 500 the insert instead of just failing to match.
+            # would 500 the insert instead of just failing to match. Checked BEFORE
+            # `total_rows` counts this row (review round 2, item 4) - a row this method
+            # never parses into `result.rows` must not count as one it did.
             if len(item_code) > MAX_KEY_LENGTH:
                 result.problems.append(RowProblem(offset, "supplier code too long"))
                 continue
         else:
             item_code = code
+
+        result.total_rows += 1
+        packed = _number(values.get("qty_packed")) or 0.0
+        unfinished = _number(values.get("qty_unfinished")) or 0.0
+        per_unit = _number(values.get("cbm_per_unit"))
+        if per_unit is None:
+            total = _number(values.get("cbm_total"))
+            basis = packed + unfinished
+            if total is not None and basis > 0:
+                per_unit = round(total / basis, 6)
 
         result.rows.append(
             InventoryRow(
