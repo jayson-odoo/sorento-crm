@@ -347,6 +347,35 @@ entry and exit presets apply; nothing else animates.
 - A multi-domain ask with one ungranted domain answers the granted domain and refuses the
   other in the same reply (owner, 17 Sep 2026); contract 58 stays one TURN, not one domain.
 
+### Hand pass 6 rulings (17 Sep 2026)
+
+- R-a. Re-roster on a domain switch ONLY where the domain must narrow to one
+  (`must_narrow_one`, `narrow_by_tier`). A settled multi-code carry (every candidate has a
+  uuid) into a `narrow_to_code` domain (incoming, purchase_order, purchase_cost) runs for
+  ALL codes. Retires the 16 Sep browser-pass-2 ruling encoded in `turn/narrow.py` ~line 369
+  (`len(_distinct_codes(candidates)) > 1` -> roster). Make it the same `settled_carry` rule
+  `must_narrow_one` already applies. Roster still when candidates lack uuids (an ambiguous
+  token this message named, via `resolved_candidates`).
+- R-b. Anaphora wins. Parser already emits `anaphora.backward_reference: true` on "did
+  golden win deliver these?" (turn 13:54:43, engine fired `new_ask_drops_product` and
+  dropped the ten products) and on "any outstanding quantity for this customer" (13:56:51,
+  parser ALSO emitted `{"raw": "this customer", "hint": "customer"}` which the resolver
+  fuzzed into 8 unrelated customers). Engine rule at the decide/apply seam:
+  backward_reference true keeps the carried subject on every kind (the domain_in_message
+  NEW_ASK row must not drop it). Prompt: a pronoun phrase ("this customer", "these", "the
+  previous product") is a reference, never an entity. Owner's words: the engine must not
+  get more robot-like; one general rule, no per-word lists.
+- R-c. Entity miss offers did-you-mean. "check stock srttwc286" / "stock for strwc286"
+  replied "*stock* for srttwc286: No matching results found. Nothing on incoming stock or
+  outstanding purchase orders either. I could not find srttwc286. Would you like me to
+  escalate?". The resolver (`app/services/entity_resolver.py`) already computes trigram
+  `alternatives` on a token with no match (`_trgm_lookup`, `similarity()`), and
+  `lanes/business/answer.py` has the D2 "alternatives" arm (~line 4294) but it only runs on
+  a DATA miss. Wire the ENTITY-miss path to the same arm: neighbours -> roster (or silent
+  resolve when one family dominates); live similarity on the clone: srttwc286 ->
+  SRTWC286-SH 0.62, strwc286 -> SRTWC286-SH 0.33, so the floor must be 0.3. Also collapse
+  the triple negative into one line when it still applies.
+
 ## Appendix A - Compatibility contract (129 lines, signed 15 Sep 2026)
 
 Source: architecture page section 9. `main` = live on prod today; `lane` = on
