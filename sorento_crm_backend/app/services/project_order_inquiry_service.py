@@ -3365,9 +3365,19 @@ class ProjectOrderInquiryService:
                     "kind": "spo",
                     "derived": True,
                     "document": spo_number,
+                    # 17 Sep prod 500: `sales_order_service._line_links` hard-indexes
+                    # `line_label`/`late`/`late_days` on EVERY entry `links_for_rows`
+                    # returns, and reads `purchase_order_id` via `.get`. A synthetic
+                    # entry carries the same shape as a real one - one reader, one
+                    # contract - rather than making every consumer know an entry might
+                    # be missing keys because it is derived.
+                    "line_label": None,
+                    "purchase_order_id": None,
                     "qty": _qty_str(open_qty),
                     "location": warehouse_code or location_code,
                     "expected_date": expected_date,
+                    "late": False,
+                    "late_days": None,
                 }
             )
         for row_id, row_pairs in po_pairs_by_row.items():
