@@ -23,8 +23,10 @@ seeding helper - never `LIMIT 1` off a shared table.
 """
 from __future__ import annotations
 
+import importlib.util
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -37,6 +39,7 @@ from app.models.project_so import (
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ADVANCE,
+    IV_CANCEL_BALANCE,
     IV_DELAY,
     IV_ORDER,
     OrderInquiry,
@@ -45,10 +48,10 @@ from app.models.project_so import (
     SOAmendment,
     SOSupplyDecision,
 )
+from app.models.projects import TASK_LINK_ORDER_INQUIRY, TASK_PHASE_DELIVERY, ProjectTask
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
-from app.services import project_order_inquiry_service as poi_service
 from app.services.planning_change_service import _oi_demand_rows
-from app.services.project_order_inquiry_engine import CHANGE_DATE_LATER
+from app.services.project_order_inquiry_engine import CHANGE_DATE_LATER, CHANGE_QTY_DECREASE
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.project_supply_service import ProjectSupplyService
 
@@ -67,6 +70,7 @@ from .test_order_inquiry_handshake import (
     _confirm,
     _core_line,
     _core_so,
+    _line_payload,
     _links_of,
     _open_po_line,
     _project_line,
@@ -88,6 +92,25 @@ from .test_order_inquiry_worklist import (
     _seed as _wl_seed,
     _sorento as _wl_sorento,
 )
+
+
+def _load_oioh_migration():
+    """S3 (Opus review round 1): the migration is plain SQL now, not a call into the
+    live service - loaded here by path, the same way `test_board_undo_email.py` loads
+    the seed migration it exercises, so `_fold` is exercised as the artifact that
+    actually ships rather than a reimplementation of it in the test."""
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "alembic"
+        / "versions"
+        / "oioh_0001_one_header_per_so.py"
+    )
+    assert path.exists(), f"migration not found at {path}"
+    spec = importlib.util.spec_from_file_location("zzt_oioh_0001_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
 
@@ -452,17 +475,17 @@ class TestOneHeaderPerSO:
         assert synthetic == 0
 
     def test_migration_folds_planning_change_batch_headers_AC_OH_34(self, api):
-        """AC-OH-34: the data migration (exercised here through the service-level helper
-        the plan names, `fold_planning_change_batch_headers(db)` - the migration itself
-        calls it, per the plan's own S3 design) moves a `planning_change_batch` header's
-        rows onto the order's null header, keeps link `row_id`s untouched, deletes the
-        emptied header and its synthetic amendment, and leaves the null header's own
-        `raised_by` alone since it already existed.
-
-        TEST-FIRST: `fold_planning_change_batch_headers` does not exist on
-        `project_order_inquiry_service` yet, so this fails on `AttributeError` until the
-        coder adds it - a real missing-function failure, not a fixture bug.
+        """AC-OH-34: the data migration - loaded by path and exercised as `_fold`, the
+        artifact that actually ships (Opus review round 1, S3: the migration must not
+        import live service code) - moves a `planning_change_batch` header's rows onto
+        the order's null header, re-points a `ProjectTask` still naming the folded
+        header (reviewer S4), keeps link `row_id`s untouched, deletes the emptied
+        header and its synthetic amendment, and leaves the null header's own
+        `raised_by` alone since it already existed. Re-run a second time to prove
+        idempotence (`sorento_oioh_ci`, real data verification is a separate pass on a
+        copy - see the plan's own S3 section).
         """
+        migration = _load_oioh_migration()
         _client, world = api
         db = world.db
         fixture = _raise_one_row(api, qty="40")
@@ -545,15 +568,33 @@ class TestOneHeaderPerSO:
         )
         db.add(link)
         db.flush()
+
+        # Reviewer S4: a purchasing task `_hand_to_purchasing` raised off the batch
+        # header, before this migration ever runs - it must survive the fold pointing
+        # at the SURVIVING header, not a deleted id.
+        task = ProjectTask(
+            id=_uid(),
+            company_id=order.company_id,
+            project_id=world.project.id,
+            name="Order inquiry ZZT-BATCH",
+            task_phase=TASK_PHASE_DELIVERY,
+            category="Purchasing",
+            linked_entity_type=TASK_LINK_ORDER_INQUIRY,
+            linked_entity_id=batch_header.id,
+        )
+        db.add(task)
+        db.flush()
         db.commit()
 
         link_id_before = link.id
         row1_id_before = row1.id
         batch_header_id = batch_header.id
         amendment_id = amendment.id
+        task_id = task.id
 
-        poi_service.fold_planning_change_batch_headers(db)
+        folded = migration._fold(db.connection())
         db.commit()
+        assert folded == 1
 
         db.refresh(row1)
         db.refresh(row2)
@@ -572,6 +613,122 @@ class TestOneHeaderPerSO:
         assert str(null_header.raised_by) == str(original_raised_by), (
             "the null header already existed, so its own raised_by must not be overwritten"
         )
+
+        db.refresh(task)
+        assert str(task.linked_entity_id) == str(null_header.id), (
+            "a task still naming the folded header must be re-pointed at the survivor"
+        )
+        assert str(task.id) == str(task_id), "the task itself is not recreated, only re-pointed"
+
+        # Idempotence (S3): re-run against the SAME connection - a second pass finds no
+        # planning_change_batch header left and changes nothing.
+        row1_inquiry_after_first = row1.order_inquiry_id
+        row2_inquiry_after_first = row2.order_inquiry_id
+        task_target_after_first = task.linked_entity_id
+        refolded = migration._fold(db.connection())
+        db.commit()
+        assert refolded == 0
+        db.refresh(row1)
+        db.refresh(row2)
+        db.refresh(task)
+        assert row1.order_inquiry_id == row1_inquiry_after_first
+        assert row2.order_inquiry_id == row2_inquiry_after_first
+        assert task.linked_entity_id == task_target_after_first
+
+    def test_one_task_and_one_notification_per_shared_header_AC_OH_35(self, api):
+        """S1 (Opus review round 1, AC-OH-35): a batch that both confirms (raising an
+        ORDER row) and reacts (a DELAY, via `derive_for_book_change`) writes onto the
+        SAME header now (S3) - `_hand_to_purchasing` must not mint a second
+        `ProjectTask` for the second writer. Exercised directly (confirm's own raise,
+        then a book-change reaction on the same order) rather than through a full
+        `planning_change_service.apply` fixture, per the captain's fallback."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="50")
+        order = fixture["order"]
+        line = fixture["line"]
+        inquiry_id = fixture["row"].order_inquiry_id
+
+        tasks_after_confirm = (
+            world.db.query(ProjectTask)
+            .filter(
+                ProjectTask.linked_entity_type == TASK_LINK_ORDER_INQUIRY,
+                ProjectTask.linked_entity_id == inquiry_id,
+            )
+            .count()
+        )
+        assert tasks_after_confirm == 1, "fixture sanity: confirm's own raise hands off once"
+
+        service = ProjectOrderInquiryService(world.db)
+        rows = [
+            _book_change_row(line, world.product, qty="10", delivery_date=date(2027, 1, 1))
+        ]
+        inquiry = service.derive_for_book_change(
+            order, rows, batch_id=_uid(), actor_user_id=world.cs_user
+        )
+        world.db.commit()
+
+        assert str(inquiry.id) == str(inquiry_id), "AC-OH-32: both writers share one header"
+
+        tasks_after_reaction = (
+            world.db.query(ProjectTask)
+            .filter(
+                ProjectTask.linked_entity_type == TASK_LINK_ORDER_INQUIRY,
+                ProjectTask.linked_entity_id == inquiry_id,
+            )
+            .count()
+        )
+        assert tasks_after_reaction == 1, (
+            "the reaction's own _hand_to_purchasing must find the confirm's task and "
+            "mint nothing more"
+        )
+
+    def test_book_change_cancel_balance_row_superseded_by_next_confirm_S5(self, api):
+        """S5 (Opus review round 1): a `CANCEL_BALANCE` row `derive_for_book_change`
+        writes for a qty decrease now sits on the SAME header `confirm()` owns (S3), so
+        the next ordinary confirm's own supersede loop retires it exactly like a row it
+        raised itself - never left stale under a since-removed second header, which is
+        what the pre-S3 comment at this seam still described."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="50")
+        order = fixture["order"]
+        line = fixture["line"]
+        existing_header_id = fixture["row"].order_inquiry_id
+
+        service = ProjectOrderInquiryService(world.db)
+        rows = [
+            {
+                "line_id": str(line.id),
+                "product_id": str(world.product.id),
+                "item_code": world.product.product_code,
+                "qty": "10",
+                "delivery_date": None,
+                "stock_location": None,
+                "change": CHANGE_QTY_DECREASE,
+                "note": "Was 50",
+            }
+        ]
+        service.derive_for_book_change(
+            order, rows, batch_id=_uid(), actor_user_id=world.cs_user
+        )
+        world.db.commit()
+
+        cancel_balance_row = (
+            world.db.query(OrderInquiryRow)
+            .filter(
+                OrderInquiryRow.order_inquiry_id == existing_header_id,
+                OrderInquiryRow.verb == IV_CANCEL_BALANCE,
+            )
+            .one()
+        )
+        assert cancel_balance_row.state == INQUIRY_RAISED, "fixture sanity"
+
+        response = _confirm(_client, order.id, [_line_payload(line.id, buy_qty="50")])
+        assert response.status_code == 200, response.text
+        world.db.commit()
+
+        world.db.refresh(cancel_balance_row)
+        assert cancel_balance_row.state == INQUIRY_CANCELLED
+        assert cancel_balance_row.note.startswith("Superseded by revision ")
 
 
 # =============================================================================
@@ -807,6 +964,128 @@ class TestNoDelayRowWhenLineRestated:
         assert demand_rows[0]["change"] == CHANGE_DATE_LATER
         assert counts.get("DELAY") == 1
 
+    def test_delay_row_still_written_when_redirect_raises_nothing_S2(self, api):
+        """S2 (Opus review round 1): `settled_in_place` must join only where the fresh
+        row that actually carries Was/Now gets written, not on the bare fact that some
+        row on the line redirected. Here another already-PLACED row covers the whole
+        replanned need on its own, so once the redirected row's own quantity drops out
+        of the netting nothing is left to raise - the line's DELAY row must still be
+        written, exactly like AC-OH-45's guard."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="100")
+        placed_row = fixture["row"]
+        line = fixture["line"]
+        placed_row.state = INQUIRY_PLACED
+        world.db.flush()
+
+        redirect_row = OrderInquiryRow(
+            id=_uid(),
+            company_id=world.company_id,
+            order_inquiry_id=placed_row.order_inquiry_id,
+            so_line_id=line.id,
+            item_code=placed_row.item_code,
+            qty=Decimal("60"),
+            delivery_date=placed_row.delivery_date,
+            verb=IV_ORDER,
+            state=INQUIRY_RAISED,
+            ack_state=ACK_ACKNOWLEDGED,
+            acknowledged_by=world.cs_user,
+            acknowledged_at=datetime.utcnow(),
+        )
+        world.db.add(redirect_row)
+        world.db.flush()
+        allocation = _received_spo(world, qty="50")
+        _link_row_to(
+            world, redirect_row, qty="50", document=allocation.spo_number,
+            allocation=allocation,
+        )
+        world.db.refresh(redirect_row)
+        assert redirect_row.state == INQUIRY_PARTLY_LINKED, "fixture sanity"
+        world.db.commit()
+
+        result = _settle_capturing_result(
+            world, fixture, qty="100", required_date=date(2027, 5, 1)
+        )
+        settled_in_place = list(result.get("settled_in_place") or [])
+        assert str(line.id) not in settled_in_place, (
+            "the redirect raised nothing on this line - the DELAY reaction must not "
+            "be suppressed"
+        )
+
+        world.db.refresh(redirect_row)
+        assert redirect_row.redirected_to_pool is True, "fixture sanity: it did redirect"
+        assert len(_rows_for_line(world, line)) == 2, "no fresh row was raised"
+
+        live_rows = [
+            SimpleNamespace(
+                kind="delayed",
+                project_line_id=str(line.id),
+                core_line_id=str(fixture["core_line"].id),
+                item_code=world.product.product_code,
+                from_json={"required_date": WAS.isoformat()},
+                to_json={"required_date": "2027-05-01", "qty": "100"},
+                held_json={},
+            )
+        ]
+        demand_rows, counts = _oi_demand_rows(
+            world.db, live_rows, fixture["core_so"].so_number, settled_in_place
+        )
+        assert len(demand_rows) == 1
+        assert counts.get("DELAY") == 1
+
+
+# =============================================================================
+# BLOCKER B1 (Opus review round 1): the netting loop's redirect must not run on
+# an ordinary confirm - only a planning change (`asked_to_settle`) asks for it.
+# =============================================================================
+
+
+class TestPlainConfirmNeverRedirectsAManualLink:
+    def test_plain_confirm_keeps_a_manually_linked_received_row_placed_B1(self, api):
+        """BLOCKER B1: a PLAIN confirm - `_confirm`, the HTTP path every ordinary CS
+        confirm takes, which never sets `settle_in_place_line_ids` - must not run the
+        netting loop's received-document redirect at all. Before the gate, a line whose
+        `partly_linked` row held a MANUAL link (`auto=False`, a person's own placement)
+        to a document that had since been received got silently redirected the moment
+        ANY reconfirm of that line ran, whether or not a planning change asked for it.
+        origin/main's own behaviour is what this pins: the manually-placed 158 stays
+        placed (netted, not redirected), the remaining 24 raises as an ordinary fresh
+        row with no Was/Now, and nothing is marked `redirected_to_pool`.
+        """
+        _client, world = api
+        fixture = _raise_one_row(api, qty="182")
+        row = fixture["row"]
+        line = fixture["line"]
+        allocation = _received_spo(world, qty="158")
+        link = _link_row_to(
+            world, row, qty="158", document=allocation.spo_number, allocation=allocation
+        )
+        assert link.auto is False, "fixture sanity: a manual link, never the cascade's own"
+        world.db.refresh(row)
+        assert row.state == INQUIRY_PARTLY_LINKED, "fixture sanity"
+
+        response = _confirm(
+            _client, fixture["order"].id, [_line_payload(line.id, buy_qty="182")]
+        )
+        assert response.status_code == 200, response.text
+        world.db.commit()
+
+        world.db.refresh(row)
+        assert row.redirected_to_pool is False, (
+            "an ordinary confirm must never redirect a row nothing asked to settle"
+        )
+        assert Decimal(str(row.qty)) == Decimal("158"), "netted to its own linked qty"
+        assert row.state == INQUIRY_PLACED, (
+            "netted to exactly its linked qty, refresh_link_state reads it fully "
+            "covered - origin/main's own answer, untouched by the redirect gate"
+        )
+
+        new_row = next(
+            r for r in _rows_for_line(world, line) if str(r.id) != str(row.id)
+        )
+        assert Decimal(str(new_row.qty)) == Decimal("24")
+        assert new_row.previous_qty is None, "no Was/Now - this line was never redirected"
+
 
 # =============================================================================
 # S5 (AC-OH-50..52): hide cancelled by default
@@ -873,3 +1152,20 @@ class TestHideCancelledByDefault:
 
         summary = client.get(f"{WL_LIST}/summary").json()
         assert summary["by_state"]["cancelled"] == 1
+
+    def test_by_month_excludes_cancelled_S6(self, oi_api):
+        """S6 (Opus review round 1, AC-OH-54 revised): the month strip's own `_by_month`
+        never had a filter of its own - it inherits `_base`'s default exclusion (S5)
+        the same way `list()` and `total_rows` do, so a month nothing but a cancelled
+        row falls due in must not appear on the strip at all."""
+        client, db, company_id, seeded = oi_api
+        inquiry = _authored_inquiry(db, seeded)
+        _wl_row(
+            db, company_id, inquiry, item_code=f"{WL_MARKER}-cancelled-month-row",
+            qty="4", state=INQUIRY_CANCELLED, delivery_date=date(2031, 1, 15),
+        )
+        db.commit()
+
+        summary = client.get(f"{WL_LIST}/summary").json()
+        months = {entry["month"] for entry in summary["by_month"]}
+        assert "2031-01" not in months, "a cancelled-only month must not appear"
