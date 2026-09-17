@@ -1128,3 +1128,101 @@ describe('AC-OH-70: the Filters popover scrolls (`oi-worklist-one-header-accepta
     expect(scrollContainer?.className ?? '').toMatch(/max-h-/);
   });
 });
+
+describe('AC-OH-61: a State filter in the Filters popover (`oi-worklist-one-header-acceptance-criteria.md` R2/S5)', () => {
+  /**
+   * TEST-FIRST: today `filtersContent` in `OrderInquiriesClient.tsx` has no State field at
+   * all - the backend already accepts `state=` and returns `by_state` on the summary
+   * (AC-OH-51/52; `OrderInquiryWorklistSummary.by_state` is already typed), the frontend
+   * never wires either. This fails until the coder adds, in `filtersContent`, a
+   * `<Label>State</Label>` next to a clearable `SearchableSelect` (placeholder
+   * "Every state", so `getByLabelText('Every state')` resolves it - same convention as
+   * "Every location"/"Every agent"/"Every month"), options built from
+   * `summary.data?.by_state` (`raised`/`partly_linked`/`actioned`/`cancelled`/`placed` -
+   * `total` is a count, not a filterable state, and must not appear as an option),
+   * labelled with the SAME words `OrderInquiryStatePill`'s own `STATE_LABEL` map already
+   * uses elsewhere (`_shared/components/OrderInquiryVerbPill.tsx`: Raised / Partly linked
+   * / Actioned / Cancelled / Linked for `placed`), each suffixed `(${count})` the same way
+   * Location/Agent/Confirmed already are, and a `state` entry threaded into both the
+   * `filters` memo (so it reaches `listOrderInquiryWorklist`) and the URL-sync effect
+   * (alongside `location`/`agent`/`so_month`/...), cleared meaning the param is dropped.
+   *
+   * Selectors asserted on: the `<label>` element reading exactly "State" (found the same
+   * way the AC-OH-70 block above disambiguates "Confirmed" the label from "Confirmed" the
+   * chip text - `tagName === 'LABEL'`); the `<select aria-label="Every state">` the
+   * `SearchableSelect` mock renders for it; and `listOrderInquiryWorklist`'s own call
+   * arguments for the `state` key. The coder may name the internal state variable and its
+   * setter anything - only the label text, the placeholder, the option labels/counts and
+   * the `state` key in the worklist call are pinned.
+   */
+  it('renders a State label and a select offering every by_state key with its existing label and count', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    const stateLabel = (await screen.findAllByText('State')).find(
+      (node) => node.tagName === 'LABEL',
+    );
+    expect(stateLabel).toBeDefined();
+
+    const select = (await screen.findByLabelText(
+      'Every state',
+    )) as HTMLSelectElement;
+    const optionTexts = Array.from(select.options).map(
+      (option) => option.textContent,
+    );
+    expect(optionTexts).toEqual(
+      expect.arrayContaining([
+        'Raised (2)',
+        'Partly linked (2)',
+        'Actioned (1)',
+        'Cancelled (1)',
+        'Linked (1)',
+      ]),
+    );
+    // `total` is a count, not a state a row can be filtered to.
+    expect(optionTexts.some((text) => /total/i.test(text ?? ''))).toBe(false);
+  });
+
+  it('choosing Cancelled sends state=cancelled to the worklist call', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+
+    openFilters();
+    const select = await screen.findByLabelText('Every state');
+    fireEvent.change(select, { target: { value: 'cancelled' } });
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'cancelled' }),
+      ),
+    );
+  });
+
+  it('a URL carrying state=cancelled seeds the select, and clearing it drops state from the worklist call', async () => {
+    currentSearchParams = new URLSearchParams('state=cancelled');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ state: 'cancelled' }),
+      ),
+    );
+
+    openFilters();
+    const select = (await screen.findByLabelText(
+      'Every state',
+    )) as HTMLSelectElement;
+    expect(select.value).toBe('cancelled');
+
+    fireEvent.change(select, { target: { value: '' } });
+
+    await waitFor(() => {
+      const last = listOrderInquiryWorklist.mock.calls.at(-1)?.[0] as
+        | Record<string, unknown>
+        | undefined;
+      expect(last?.state).toBeUndefined();
+    });
+  });
+});
