@@ -46,6 +46,12 @@ from app.services.audit_service import (
     log_audit,
 )
 from app.services.error_handler import AppException
+from app.services.project_order_inquiry_service import (
+    ProjectOrderInquiryService,
+    _dec as _oi_dec,
+    _handover_fmt_date,
+    _qty_str,
+)
 
 # --------------------------------------------------------------------------- capture
 
@@ -377,6 +383,66 @@ def _refusal_reason(db: Session, pso_id: str, decision: SOSupplyDecision) -> Opt
     return None
 
 
+# --------------------------------------------------------------------------- email
+
+
+def _undo_email_lines(db: Session, journal: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One `{item_code, qty, delivery_date, outcome}` per order inquiry row the
+    journal touched (plan "The email"): a row this confirm INSERTED is `removed`
+    (undo deletes it); a row it UPDATED goes `back to <qty> on <dd/mm/yyyy>`, from
+    the journal's own restored (old) values.
+
+    Reads the rows BEFORE `_replay` runs - by the time replay has deleted or
+    overwritten them, this information is gone.
+    """
+    oi_table = _table_name(OrderInquiryRow)
+    pks = [
+        entry["pk"]
+        for entry in journal
+        if entry["table"] == oi_table and entry["op"] in ("insert", "update")
+    ]
+    if not pks:
+        return []
+    rows_by_pk = {
+        row.id: row
+        for row in db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(pks)).all()
+    }
+
+    lines: List[Dict[str, Any]] = []
+    for entry in journal:
+        if entry["table"] != oi_table or entry["op"] not in ("insert", "update"):
+            continue
+        row = rows_by_pk.get(entry["pk"])
+        if row is None:
+            continue
+        if entry["op"] == "insert":
+            lines.append(
+                {
+                    "item_code": row.item_code,
+                    "qty": _qty_str(row.qty),
+                    "delivery_date": _handover_fmt_date(row.delivery_date),
+                    "outcome": "removed",
+                }
+            )
+            continue
+        old = entry["old"] or {}
+        qty = _oi_dec(old.get("qty", row.qty))
+        delivery_date = old.get("delivery_date", row.delivery_date)
+        if isinstance(delivery_date, str):
+            delivery_date = date.fromisoformat(delivery_date)
+        qty_str = _qty_str(qty)
+        date_str = _handover_fmt_date(delivery_date)
+        lines.append(
+            {
+                "item_code": row.item_code,
+                "qty": qty_str,
+                "delivery_date": date_str,
+                "outcome": f"back to {qty_str} on {date_str}",
+            }
+        )
+    return lines
+
+
 # --------------------------------------------------------------------------- undo
 
 
@@ -421,6 +487,10 @@ def undo_last_confirm(
     decision_id = decision.id
     company_id = decision.company_id
     journal = decision.undo_journal
+    pso_id = order.id
+
+    # Read BEFORE replay: `_replay` below deletes or overwrites these very rows.
+    undo_lines = _undo_email_lines(db, journal)
 
     restored_to: Optional[int] = None
     if prior_id:
@@ -452,6 +522,14 @@ def undo_last_confirm(
         # copy if this session had loaded it earlier.
         table = Base.metadata.tables["projects.so_supply_decisions"]
         db.execute(table.update().where(table.c.id == prior_id).values(undo_journal=None))
+
+    ProjectOrderInquiryService(db)._record_undo(
+        pso_id=str(pso_id) if pso_id else None,
+        decision_id=str(decision_id),
+        revision_no=revision_no,
+        lines=undo_lines,
+        actor_user_id=actor_user_id,
+    )
 
     db.flush()
     return {"revision_no": revision_no, "restored_to": restored_to}
