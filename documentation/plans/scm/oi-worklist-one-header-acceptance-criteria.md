@@ -114,9 +114,8 @@ the released 182 row instead of the live 220 row.
   a fresh ORDER row with Was/Now for the line, then NO DELAY / ADVANCE row is written for that
   line (the apply's `settled_in_place` list, which already suppresses the DELAY row for a
   settled line, includes the redirected line).
-- AC-OH-45 [BE] Given a planning-change apply on a line the confirm did not restate (two
-  still-owed rows, or a lone placed row with no link), then the DELAY row is still written
-  (unchanged).
+- AC-OH-45 [BE] Given a planning-change apply on a line the confirm did not restate (a
+  lone placed row with no link), then the DELAY row is still written (unchanged).
 - AC-OH-43 [BE] The handover record for the fresh row (`_record_handover`, kind `raised`) is
   written as today; no new record kind.
 
@@ -129,8 +128,10 @@ the released 182 row instead of the live 220 row.
   the value.
 - AC-OH-53 [BE] The three cards (Buy / Purchased / Incoming) are unchanged (they already
   exclude `_NOT_OWED_STATES`).
-- AC-OH-54 [BE] The schedule matrix and month strip are unchanged (they never counted
-  cancelled).
+- AC-OH-54 [BE] The three cards and the schedule matrix are unchanged (they never
+  counted cancelled). The month strip's own `_by_month` DOES now exclude cancelled - it
+  never had a filter of its own, so it inherits the same default `_base` exclusion the
+  list and `total_rows` do (S5, S6 revised) - and so matches what the list itself shows.
 
 ### Filters popover scrolls
 
@@ -153,9 +154,10 @@ the released 182 row instead of the live 220 row.
 - AC-OH-60 [E2E] On the lane stack against a copy of SO314593's shape (one sheet row linked
   158 to a received SPO, one open SPO for the product, mirror stale on qty and date): apply
   the planning change, press Confirm. The worklist for that SO shows, for B2154-NL: one
-  ORDER 220 with (i) Was 182, one DELAY 220, one 182 `used` greyed. No cancelled row. One
-  order inquiry number. Raised by on the migrated row is the migrator. The open SPO is
-  linked to the 220 row, not the used one.
+  ORDER 220 with (i) Was 182, one 182 `used` greyed, NO DELAY row (R4 revised - the ORDER
+  row's own (i) already carries the date change). No cancelled row. One order inquiry
+  number. Raised by on the migrated row is the migrator. The open SPO is linked to the
+  220 row, not the used one.
 - AC-OH-61 [E2E] Filters > State = Cancelled shows the cancelled rows for that SO.
 - AC-OH-62 [E2E] Columns menu shows Order inquiry unticked; ticking it shows the column.
 - AC-OH-63 [E2E] 375px and 1280px: the list is usable and nothing clips.
