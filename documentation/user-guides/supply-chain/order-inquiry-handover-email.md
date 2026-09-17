@@ -29,7 +29,9 @@ location: `OI: SO397450 , SO397460`.
 struck through in the same cell, with the new value beside it - for example the **DELIVERY
 DATE** cell shows ~~03/08/2026~~ 21/07/2026, and **REMARK** reads ADVANCE. A cancelled quantity
 reads **CANCEL BALANCE 30 NOS** with the old quantity struck through. A dated verb reads
-ADVANCE when the new date is earlier, DELAY when it's later.
+ADVANCE when the new date is earlier, DELAY when it's later. A line whose confirm restates the
+line itself - a fresh row raised in its place, with its own Was/Now - never raises its own
+DELAY or ADVANCE line in the mail; only a line the confirm leaves in place still gets one.
 
 **How an item swap reads.** Swapping the product on a line prints as two lines in the table: a
 CANCEL BALANCE line for the old item and an ORDER line for the new one, not a single combined

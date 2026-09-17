@@ -436,14 +436,28 @@ _RAISED_DAY = cast(
 # `supply_decision_id` -> `so_supply_decisions.confirmed_by`, the same person the header
 # stamps at that moment (PLAN section 3.H).
 #
-# An amendment-born row (`ProjectOrderInquiryService._write`) carries NO decision at all -
-# it is raised off the amendment, not off a supply revision - so it falls back to its
-# header's `raised_by`, which for that inquiry is the person who published the amendment
-# and is never re-stamped (an amendment raises its OWN inquiry).
+# S2 (AC-OH-20..23, `PLAN-oi-worklist-one-header.md`): a row with no decision at all is
+# NOT necessarily the header's own answer either. Every row born since G4 is born
+# acknowledged by its raiser - a confirm's own raise, `_write`'s amendment path, the
+# importer's migration - so `OrderInquiryRow.acknowledged_by` is that row's own person,
+# read before the header falls back to whoever last re-stamped it. Only a row with
+# NEITHER a decision NOR an acknowledger (there is none once G4 shipped, but the column
+# is nullable) reaches the header's `raised_by`.
+#
+# Accepted edge case (Opus review round 1): `acknowledge_rows` stamps `acknowledged_by`
+# with the ACKNOWLEDGER, not the raiser, on a row it finds still `awaiting` -
+# reachable today only by a pre-G4 row nobody has taken on yet (there is no FE press
+# onto that route any more). Once acknowledged, this column reads as "raised by" the
+# person who took it on rather than whoever actually raised it. Narrow and one-way
+# (a born-acknowledged row never reaches that branch), so left as a known quirk of the
+# handful of legacy rows still in that state rather than a reason to add a second
+# column to tell the two apart.
 #
 # The id never leaves the service: a screen printing a UUID at a buyer is a screen they
 # cannot use, so the filter takes an id and every read gives a name.
-_RAISED_BY_ID = func.coalesce(SOSupplyDecision.confirmed_by, OrderInquiry.raised_by)
+_RAISED_BY_ID = func.coalesce(
+    SOSupplyDecision.confirmed_by, OrderInquiryRow.acknowledged_by, OrderInquiry.raised_by
+)
 _RAISED_BY_NAME = User.name
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
@@ -778,6 +792,11 @@ class OrderInquiryWorklistService:
         # the key it groups on) rather than by whatever label happened to be printed.
         axis: Optional[str] = None,
         axis_key: Optional[str] = None,
+        # S5/AC-OH-52: the ONE caller that must see a `cancelled` row even with no
+        # explicit `state` - the State facet's own count, so the filter can offer
+        # "Cancelled (n)" to ask for it. Never set by a route param; `summary()`'s
+        # `by_state` grouping is the only caller that passes it.
+        include_cancelled: bool = False,
     ):
         """Every inquiry row in the company, with everything a column needs beside it.
 
@@ -846,6 +865,11 @@ class OrderInquiryWorklistService:
             base = base.filter(_RAISED_DAY == _as_day(raised_date))
         if state:
             base = base.filter(OrderInquiryRow.state == state)
+        elif not include_cancelled:
+            # S5/AC-OH-50..51 (R2): a `cancelled` row is a revision that called the line
+            # off - not owed, and not a row purchasing needs to see unless the State
+            # filter specifically asks for it.
+            base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
         if project_id:
             base = base.filter(ProjectSalesOrder.project_id == project_id)
         if supplier_id:
@@ -1957,6 +1981,18 @@ class OrderInquiryWorklistService:
             by_state[state] = int(count)
             total_rows += int(count)
             total_qty += _dec(qty)
+        # S5/AC-OH-52: `visible` above already hides `cancelled` by default (AC-OH-50), so
+        # `by_state["cancelled"]` would otherwise read 0 the moment the State filter most
+        # needs to offer its real count. The State facet is the one reader that must see
+        # it regardless - a second grouped count, `total_rows`/`total_qty` untouched.
+        cancelled_count = (
+            self._base(**filters, include_cancelled=True)
+            .filter(OrderInquiryRow.state == INQUIRY_CANCELLED)
+            .with_entities(func.count(OrderInquiryRow.id))
+            .scalar()
+            or 0
+        )
+        by_state[INQUIRY_CANCELLED] = int(cancelled_count)
         by_state["total"] = total_rows
 
         return {
@@ -2036,21 +2072,57 @@ class OrderInquiryWorklistService:
         reason it exists: a cell and the card above it are two GROUP BYs over the same
         per-row arithmetic rather than two copies of the formula, so the Schedule view
         cannot answer differently from the strip over it (AC-X6).
+
+        S8 (AC-OH-80..81, measured on `sorento_ai_automation_0915_1900`): `_kinds`, which
+        reads this over the WHOLE matching row set unpaginated, was the page's slowest
+        request by a wide margin (~1.2s of summary()'s ~1.5s). `EXPLAIN ANALYZE` on the
+        old shape showed why - `_purchased_qty()` called `_incoming_qty()` fresh inside
+        its own formula, so the correlated subqueries under `_incoming_qty` (SPO-linked,
+        PO-linked, the derived-cover EXISTS+scalar-subquery) were embedded TWICE in the
+        generated SQL, and `_UNLINKED_QTY` added a third, separate `_linked_qty()`
+        correlated subquery on top - up to nine correlated-subquery evaluations per row.
+        Fixed at this one seam, not by touching `_incoming_qty`/`_purchased_qty`
+        themselves (S4's `kind=po` filter still calls `_purchased_qty()` alone, over a
+        WHERE clause rather than a company-wide aggregate, where the duplication never
+        showed up): an INNER subquery computes each correlated piece exactly ONCE per
+        row, and the three stage columns are then plain arithmetic over those already-
+        materialized inner columns.
         """
-        return (
+        inner = (
             self._base(**filters)
             .with_entities(
                 OrderInquiryRow.id.label("row_id"),
                 OrderInquiryRow.qty.label("qty"),
-                self._incoming_qty().label("incoming"),
-                self._purchased_qty().label("purchased"),
-                _UNLINKED_QTY.label("buy"),
+                OrderInquiryRow.bundled_qty.label("bundled_qty"),
+                _SPO_LINKED_QTY.label("spo_linked"),
+                _PO_LINKED_QTY.label("po_linked"),
+                self._derived_cover_qty().label("derived_cover"),
+                _linked_qty().label("linked_any"),
+                _CAPPED_QTY.label("capped_qty"),
                 *extra_columns,
             )
             .filter(*extra_filters)
             .order_by(None)
-            .subquery()
+            .cte("order_inquiry_stage_rows")
+            .prefix_with("MATERIALIZED")
         )
+        capped_derived_cover = func.least(inner.c.po_linked, inner.c.derived_cover)
+        incoming = func.least(inner.c.qty, inner.c.spo_linked + capped_derived_cover)
+        purchased = func.least(
+            inner.c.qty - incoming,
+            func.greatest(0, inner.c.po_linked - capped_derived_cover),
+        )
+        buy = func.greatest(
+            inner.c.capped_qty - inner.c.linked_any - inner.c.bundled_qty, 0
+        )
+        return select(
+            inner.c.row_id,
+            inner.c.qty,
+            incoming.label("incoming"),
+            purchased.label("purchased"),
+            buy.label("buy"),
+            *[getattr(inner.c, column.name) for column in extra_columns],
+        ).subquery()
 
     def _kinds(self, filters: Dict[str, Any]) -> Dict[str, str]:
         """Quantity per STAGE over every matching row (AC-I11, S5/R-F): incoming (on an

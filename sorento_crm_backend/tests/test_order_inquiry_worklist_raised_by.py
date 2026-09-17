@@ -536,17 +536,37 @@ def test_a_reconfirm_by_somebody_else_leaves_the_earlier_rows_attributed_to_who_
     response = client.get(LIST, params={"query": inquiry.inquiry_no})
     assert response.status_code == 200, response.text
     by_item = {row["item_code"]: row for row in response.json()["data"]}
-    # A's row still says A, however many times somebody else has confirmed since.
-    assert by_item[seeded["cindy_product"].product_code]["raised_by_name"] == (
+    # B's revision raised B's row, and it is still open (`raised`) - visible by default.
+    assert by_item[second_product.product_code]["raised_by_name"] == seeded["johnson"].name
+
+    # A's line was NOT named in revision 2, so _retire_uncovered_rows superseded A's own
+    # row (a line the new revision does not cover, unrelated to this test's own point) -
+    # a fact of this fixture, not of raised_by. R2 (`PLAN-oi-worklist-one-header.md`, 17
+    # Sep) hides a cancelled row from the default list, so reading A's row back now
+    # needs `state=cancelled`; its own raised_by still says A regardless of how many
+    # times somebody else has confirmed since.
+    cancelled_response = client.get(
+        LIST, params={"query": inquiry.inquiry_no, "state": "cancelled"}
+    )
+    assert cancelled_response.status_code == 200, cancelled_response.text
+    cancelled_by_item = {
+        row["item_code"]: row for row in cancelled_response.json()["data"]
+    }
+    assert cancelled_by_item[seeded["cindy_product"].product_code]["raised_by_name"] == (
         seeded["cindy"].name
     )
-    # B's revision raised B's row.
-    assert by_item[second_product.product_code]["raised_by_name"] == seeded["johnson"].name
 
 
 def test_the_filter_follows_the_row_rather_than_the_re_stamped_header(api):
     """The same split, through the filter: asking for A's rows returns the row A raised,
-    not everything on an inquiry whose header B has since re-stamped."""
+    not everything on an inquiry whose header B has since re-stamped.
+
+    Revision 2 NAMES A's own line again (unlike the sibling test above), so A's original
+    row is superseded-and-cancelled and a fresh row is raised in its place, attributed to
+    B (the actor of THIS confirm) - A's OWN answer to `raised_by` is now this historical,
+    cancelled row. R2 (`PLAN-oi-worklist-one-header.md`, 17 Sep) hides a cancelled row
+    from the default list, so finding it back needs `state=cancelled`.
+    """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     client, db, company_id, seeded = api
@@ -577,7 +597,9 @@ def test_the_filter_follows_the_row_rather_than_the_re_stamped_header(api):
     )
     db.commit()
 
-    response = client.get(LIST, params={"raised_by": seeded["cindy"].id})
+    response = client.get(
+        LIST, params={"raised_by": seeded["cindy"].id, "state": "cancelled"}
+    )
 
     assert response.status_code == 200, response.text
     ids = {row["id"] for row in response.json()["data"]}
