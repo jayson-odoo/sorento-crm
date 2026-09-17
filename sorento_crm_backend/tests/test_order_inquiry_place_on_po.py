@@ -1394,9 +1394,12 @@ def test_auto_place_ranks_by_the_active_policys_need_by_date_over_the_old_delive
     the SOONER delivery date wins even though its own document is the newer one."""
     client, db, world, user_id = api
     _policy(db, {"need_by_date": 1.0}, {"project": 1.0})
+    # AC-EA-3: same edge as the document_age test above - `older`'s 90-day window edge
+    # is 2026-09-02, so the line's promise has to land after it or the cascade drops it
+    # as a candidate before need_by_date gets to decide anything.
     _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"],
-        qty_ordered="10", expected_date=date(2026, 9, 1),
+        qty_ordered="10", expected_date=date(2026, 9, 3),
     )
     older = _competing_row(
         db, world["company_id"], world["project"],
