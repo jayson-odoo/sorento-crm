@@ -6,7 +6,7 @@
  * `useCreateImportFieldAlias`) and the real `DataGrid` run.
  */
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -46,12 +46,24 @@ vi.mock('@/services/pendingActionService', () => ({
   getCurrentPendingAction: vi.fn().mockResolvedValue({ pending: null, last_outcome: null }),
 }));
 
+// AC-F5: the page opens on `?doc_type=` when present. `nav.search` is mutated per-test
+// rather than re-mocking the module, since `vi.mock` factories are hoisted above any
+// per-test local.
+const nav = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/system-management/import-field-aliases',
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+// AC-F1: the Supplier select the form dialog grows for the word doc type - not under test
+// here, but left unmocked it would fire a real (unmocked) fetch from every render of this
+// list, whose own dialog mounts even while closed.
+vi.mock('../../../procurement-management/suppliers/hooks/useSupplierSelectQuery', () => ({
+  useSupplierSelectQuery: () => ({ data: [] }),
 }));
 
 const listImportFieldAliases = vi.fn();
@@ -157,5 +169,81 @@ describe('ImportFieldAliasesList - Add mapping (AC-E3)', () => {
 
     fireEvent.change(screen.getByLabelText('Header'), { target: { value: '箱数' } });
     expect(submit).toBeDisabled(); // no field chosen yet
+  });
+});
+
+// S4 (`PLAN-stock-list-bare-model-codes.md`).
+describe('ImportFieldAliasesList - Stock list words doc type (AC-F1)', () => {
+  it('offers "Stock list words" in the document type select', async () => {
+    renderList();
+    await screen.findByText('Item code');
+
+    fireEvent.click(screen.getByLabelText('Document type'));
+
+    expect(await screen.findByRole('option', { name: 'Stock list words' })).toBeInTheDocument();
+  });
+
+  it('shows the supplier name beside a supplier-scoped word, and blank for a shared one', async () => {
+    listImportFieldAliases.mockReset().mockImplementation((docType: string) => {
+      if (docType === 'supplier_inventory_word') {
+        return Promise.resolve([
+          {
+            field: 'SH',
+            label: 'SH',
+            aliases: [
+              {
+                id: 'w-1',
+                alias: '对冲',
+                locale: null,
+                created_at: '2026-09-17T00:00:00',
+                supplier_id: 'sup-1',
+                supplier_name: 'DAFUYUAN',
+              },
+              {
+                id: 'w-2',
+                alias: 'SORENTO',
+                locale: null,
+                created_at: '2026-09-17T00:00:00',
+                supplier_id: null,
+                supplier_name: null,
+              },
+            ],
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    renderList();
+    await screen.findByLabelText('Document type');
+
+    fireEvent.click(screen.getByLabelText('Document type'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Stock list words' }));
+
+    await screen.findByText('对冲');
+    // The supplier-scoped row carries the supplier's NAME (never a UUID) somewhere on
+    // screen; the shared row carries none.
+    expect(screen.getByText('DAFUYUAN')).toBeInTheDocument();
+    expect(screen.queryByText('sup-1')).not.toBeInTheDocument();
+  });
+});
+
+describe('ImportFieldAliasesList - initial doc type from the URL (AC-F5)', () => {
+  afterEach(() => {
+    nav.search = '';
+  });
+
+  it('opens on the ?doc_type= query param when present', async () => {
+    nav.search = 'doc_type=supplier_inventory_word';
+    renderList();
+
+    await waitFor(() =>
+      expect(listImportFieldAliases).toHaveBeenCalledWith('supplier_inventory_word'),
+    );
+  });
+
+  it('opens on the default doc type when the query param is absent', async () => {
+    renderList();
+
+    await waitFor(() => expect(listImportFieldAliases).toHaveBeenCalledWith('proforma_invoice'));
   });
 });

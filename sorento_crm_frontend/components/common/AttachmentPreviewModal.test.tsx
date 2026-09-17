@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from './AttachmentPreviewModal';
+import { toast } from '@/lib/toast';
 
 // apiFetch is only used by the Excel branch (same-origin byte fetch).
 const apiFetchMock = vi.fn();
@@ -401,6 +402,82 @@ describe('AttachmentPreviewModal', () => {
       expect((screen.getByPlaceholderText('Search in sheet') as HTMLInputElement).value).toBe(
         'only-on-two',
       );
+    });
+  });
+
+  // D10 (`PLAN-stock-list-bare-model-codes.md`): a plain `<a href=/download target=_blank>`
+  // sends no auth header, so the stock-list attachment's Open button 401ed with a raw JSON
+  // page. Same fetch as Download, then a new tab - no backend change.
+  describe('Open (AC-F2/AC-F3/AC-F4, D10)', () => {
+    const noCdnUrlItem: AttachmentPreviewItem = {
+      id: 'z',
+      name: 'stock_list.xlsx',
+      url: '',
+      downloadUrl: '/api/v1/scm/supplier-inventory/attachments/z/download',
+    };
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('AC-F2: with no CDN url, Open fetches bytes and opens a blob url in a new tab', async () => {
+      const customFetchBytes = vi.fn().mockResolvedValue({
+        ok: true,
+        blob: async () => new Blob(['x']),
+      });
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+      (URL as unknown as { createObjectURL: unknown }).createObjectURL = vi
+        .fn()
+        .mockReturnValue('blob:mock-open-url');
+      (URL as unknown as { revokeObjectURL: unknown }).revokeObjectURL = vi.fn();
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={customFetchBytes}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+      await waitFor(() => expect(customFetchBytes).toHaveBeenCalledWith(noCdnUrlItem));
+      await waitFor(() =>
+        expect(openSpy).toHaveBeenCalledWith('blob:mock-open-url', '_blank'),
+      );
+      // No same-origin anchor to the download route for this item - that anchor is
+      // exactly what sent no Bearer token and 401ed.
+      expect(
+        document.querySelector(`a[href="${noCdnUrlItem.downloadUrl}"]`),
+      ).toBeNull();
+    });
+
+    it('AC-F3: an http CDN url keeps Open as a plain anchor to that url, unchanged', () => {
+      render(<AttachmentPreviewModal open onOpenChange={() => {}} items={[img]} />);
+
+      const link = screen.getByRole('link', { name: /open/i });
+      expect(link).toHaveAttribute('href', img.url);
+    });
+
+    it('AC-F4: a fetch failure on Open shows one error toast and never navigates', async () => {
+      const failingFetchBytes = vi.fn().mockRejectedValue(new Error('network down'));
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+      const errorSpy = vi.spyOn(toast, 'error');
+
+      render(
+        <AttachmentPreviewModal
+          open
+          onOpenChange={() => {}}
+          items={[noCdnUrlItem]}
+          fetchBytes={failingFetchBytes}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /open/i }));
+
+      await waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
+      expect(openSpy).not.toHaveBeenCalled();
     });
   });
 });
