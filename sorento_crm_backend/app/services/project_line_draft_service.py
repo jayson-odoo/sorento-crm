@@ -26,7 +26,7 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
-from app.models.planning_change import PlanningChangeRow
+from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.product import Product
 from app.models.project_so import (
     DECISION_ACTIVE,
@@ -37,7 +37,6 @@ from app.models.project_so import (
 )
 from app.models.user import User
 from app.services.error_handler import AppException
-from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
 from app.services.project_supply_service import plan_qty_of
 from app.services.scm.demand import is_undecided_demand
 from app.services.scm.front_planning_engine import qty_text
@@ -413,7 +412,8 @@ def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
     """R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
     every line, and the drafts printed Saved over an already-Confirmed line. Covered = an
     ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core line,
-    UNLESS a `PlanningChangeRow` on it is still pending (AC-B8, review round 1).
+    UNLESS the line sits in a planning-change batch nobody has applied yet (AC-B8/B9/B10/B11,
+    review round 2).
     """
     decisions = (
         db.query(SOSupplyDecision)
@@ -428,21 +428,27 @@ def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
     for decision in decisions:
         for snapshot in decision.line_snapshots or []:
             if (snapshot or {}).get("core_line_id") == core_line_id:
-                return not _has_pending_planning_change(db, core_line_id)
+                return not _in_open_planning_change(
+                    db, core_line_id, decision.project_sales_order_id
+                )
     return False
 
 
-def _has_pending_planning_change(db: Session, core_line_id: str) -> bool:
-    """A line a `PlanningChangeRow` still names PENDING is mid-replan, not the "leave it
-    alone" case R1 exists for: the batch board already shows it as uncovered so the planner
-    can approve the batch's own re-run proposal, and that approval is a real change against
-    the frozen decision, never a stale re-save of it.
+def _in_open_planning_change(
+    db: Session, core_line_id: str, project_sales_order_id: str
+) -> bool:
+    """The BATCH is the unit the client uncovers a line on - `FulfilmentBoardPanel` picks
+    its surviving batch on `!batch.applied_at` - so the exemption keys on the same fact.
+    A row's own state (superseded, failed) is terminal on its own account and must never
+    carry the exemption once the batch it sits in is done.
     """
     return (
         db.query(PlanningChangeRow.id)
+        .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
         .filter(
             PlanningChangeRow.core_line_id == core_line_id,
-            PlanningChangeRow.applied_state != PLANNING_CHANGE_STATE_APPLIED,
+            PlanningChangeRow.project_sales_order_id == project_sales_order_id,
+            PlanningChangeBatch.applied_at.is_(None),
         )
         .first()
         is not None

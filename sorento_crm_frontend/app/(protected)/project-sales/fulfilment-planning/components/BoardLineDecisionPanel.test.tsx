@@ -799,7 +799,7 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
    * (AC-F1's own case), so this test now proves the OTHER half: once the composition actually
    * moves, Save takes it, and it is always posted as Amended, never Approved.
    */
-  it('opens on the composition the revision froze; Save is refused until it changes, then amends', () => {
+  it('opens on the composition the revision froze; Save is refused until it changes, then amends', async () => {
     const { onDecide } = renderPanel({
       covered: true,
       decision: {
@@ -823,8 +823,10 @@ describe('BoardLineDecisionPanel: a covered row opens locked with Amend (C11)', 
     const save = screen.getByRole('button', { name: 'Save decision' });
     // Untouched, the draft still IS the frozen decision: refused, not a silent no-op re-save.
     expect(save).toBeDisabled();
-    expect(save).toHaveAttribute(
-      'title',
+    // A `title` on a disabled button never reaches a real browser's hover (AC-F1's own
+    // reason): the sentence lives in a Radix Tooltip on a wrapper around the button instead.
+    fireEvent.focus(screen.getByTestId(`save-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(
       'This line is already confirmed. Amend it to change the decision, or undo the confirmation.',
     );
 

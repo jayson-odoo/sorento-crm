@@ -374,14 +374,27 @@ export function FulfilmentBoardPanel({
         : null,
     [bySoNumber],
   );
+  /**
+   * The UNCOVER step's own input, review round 2 (AC-F6): an APPLIED batch is history - the
+   * line's decision already carries what Apply did to it - and uncovering it would offer a
+   * Save the server refuses outright (R1). Filtered out here only: `appliedSoNumbers`, the
+   * Confirm-blocked banner and the change-icon annotations still read `changeBatchData` above
+   * unfiltered, because a deep link to an applied batch still has to SAY what it applied.
+   */
+  const openChangeBatchData: Pick<PlanningChangeBatch, 'orders'> | null = React.useMemo(() => {
+    const orders = Array.from(bySoNumber.values())
+      .filter((entry) => !entry.batch.applied_at)
+      .map((entry) => entry.order);
+    return orders.length > 0 ? { orders } : null;
+  }, [bySoNumber]);
   const board = React.useMemo(
     () => ({
       ...rawBoard,
       data: rawBoard.data
-        ? uncoverChangedLines(rawBoard.data, changeBatchData)
+        ? uncoverChangedLines(rawBoard.data, openChangeBatchData)
         : rawBoard.data,
     }),
-    [rawBoard, changeBatchData],
+    [rawBoard, openChangeBatchData],
   );
 
   /**

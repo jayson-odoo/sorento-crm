@@ -553,3 +553,63 @@ describe('the pre-marked decision, and Confirm', () => {
     expect(screen.getByTestId('board-confirm')).toBeDisabled();
   });
 });
+
+/**
+ * R3 (`PLAN-board-draft-on-confirmed-line.md`, review round 3, captain ruling): the client's
+ * own uncover rule has to match the server's (AC-B10/AC-B11) - a batch keeps its own lines
+ * covered once it has been applied, whatever those lines' rows say, exactly the way an applied
+ * batch already refuses a second Confirm above. TEST-FIRST: `uncoverChangedLines` (fed by
+ * `changeBatchData`, built off `bySoNumber` in `FulfilmentBoardPanel.tsx`) runs off every
+ * loaded batch's rows with no `applied_at` gate at all, so this line is uncovered today
+ * whichever way the batch itself has been applied.
+ */
+describe('a covered line stays covered once the batch has been applied (R3, review round 3)', () => {
+  it('AC-F6: the pill still reads Confirmed, and Save stays disabled once Amend is pressed', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand({
+            decision: {
+              revision_no: 1,
+              confirmed_at: '2026-08-18T02:00:00',
+              timely_spo_qty: '0',
+              reserve: [{ warehouse_id: 'wh-BRW-IB', location: 'BRW-IB', qty: '25' }],
+              borrow: [],
+              buy_qty: '0',
+            },
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    getPlanningChangeBatch.mockResolvedValue({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      applied_at: '2026-08-19T10:00:00Z',
+      applied_by_name: 'Cyndi Tee',
+    });
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+
+    const key = 'so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17';
+    await waitFor(() => {
+      expect(screen.getByTestId(`decision-pill-${key}`)).toHaveTextContent('Confirmed');
+    });
+
+    fireEvent.click(screen.getByText('SO381895'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Amend' }));
+
+    expect(screen.getByRole('button', { name: 'Save decision' })).toBeDisabled();
+  });
+});

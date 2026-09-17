@@ -886,11 +886,6 @@ export function BoardLineDecisionPanel({
                         type="button"
                         size="sm"
                         disabled={saved || alreadyConfirmed || (!approving && !canSave)}
-                        // Belt and braces beside the Tooltip below: a `title` on a disabled
-                        // button never reaches a real hover (`disabled:pointer-events-none`),
-                        // but it still reaches anything that reads the DOM attribute directly
-                        // rather than a real pointer - keep both rather than pick one.
-                        title={alreadyConfirmed ? CONFIRMED_LINE_TITLE : undefined}
                         onClick={save}
                       >
                         {saveButtonLabel}
@@ -898,7 +893,16 @@ export function BoardLineDecisionPanel({
                     </span>
                   </TooltipTrigger>
                   {alreadyConfirmed && (
-                    <TooltipContent>{CONFIRMED_LINE_TITLE}</TooltipContent>
+                    // 375px (review round 2): the sentence alone is wider than the viewport,
+                    // so it needs its own max-width and Radix's own collision padding rather
+                    // than the primitive's ordinary width - every OTHER tooltip on the board
+                    // stays at that default.
+                    <TooltipContent
+                      className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                      collisionPadding={16}
+                    >
+                      {CONFIRMED_LINE_TITLE}
+                    </TooltipContent>
                   )}
                 </Tooltip>
               ) : (
@@ -927,7 +931,6 @@ export function BoardLineDecisionPanel({
                         size="sm"
                         variant="outline"
                         disabled
-                        title={CONFIRMED_LINE_TITLE}
                         onClick={reject}
                       >
                         <X className="size-4" aria-hidden />
@@ -935,7 +938,12 @@ export function BoardLineDecisionPanel({
                       </Button>
                     </span>
                   </TooltipTrigger>
-                  <TooltipContent>{CONFIRMED_LINE_TITLE}</TooltipContent>
+                  <TooltipContent
+                    className="max-w-[min(20rem,calc(100vw-2rem))] text-pretty"
+                    collisionPadding={16}
+                  >
+                    {CONFIRMED_LINE_TITLE}
+                  </TooltipContent>
                 </Tooltip>
               ) : (
                 <Button

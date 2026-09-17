@@ -22,7 +22,7 @@ core sales order, mirror and stock on top.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -1198,11 +1198,20 @@ def test_confirming_one_line_does_not_cover_a_sibling_line_of_the_same_order(api
     assert response.status_code == 200, response.text
 
 
-def _planning_change_row(db, *, order, line, core_line, product, applied_state):
-    """One `PlanningChangeRow` on `line`, in its own fresh batch (the FK the row needs)."""
+def _planning_change_row(db, *, order, line, core_line, product, applied_state, batch_applied_at=None):
+    """One `PlanningChangeRow` on `line`, in its own fresh batch (the FK the row needs).
+
+    `batch_applied_at` (review round 3, captain ruling): the exemption keys on the BATCH, not
+    the row's own state - `None` is a batch still open, a timestamp is one Apply has already
+    run, and the caller sets it independently of `applied_state` so a test can build the
+    "superseded row in an applied batch" case the row's own state alone cannot express.
+    """
     from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 
-    batch = PlanningChangeBatch(id=str(uuid.uuid4()), source_kind="so_manual_edit")
+    batch = PlanningChangeBatch(
+        id=str(uuid.uuid4()), source_kind="so_manual_edit",
+        applied_at=batch_applied_at,
+    )
     db.add(batch)
     db.flush()
     row = PlanningChangeRow(
@@ -1219,14 +1228,15 @@ def _planning_change_row(db, *, order, line, core_line, product, applied_state):
     )
     db.add(row)
     db.flush()
-    return row
+    return row, batch
 
 
-def test_a_pending_planning_change_on_a_confirmed_line_exempts_it_from_the_gate(api):
-    """AC-B8: a line mid-replan - a re-uploaded book row not yet applied - is not the
-    "confirmed, leave it alone" case R1 exists for; the planner is being asked to redecide it,
-    so a plain Save must still land. TEST-FIRST: `_covered_by_active_decision` carries no
-    planning-change awareness yet, so this is refused with 409 today."""
+def test_a_pending_planning_change_in_an_open_batch_exempts_the_line(api):
+    """AC-B8: a line mid-replan - a re-uploaded book row not yet applied, in a batch nobody
+    has applied yet - is not the "confirmed, leave it alone" case R1 exists for; the planner
+    is being asked to redecide it, so a plain Save must still land. TEST-FIRST:
+    `_covered_by_active_decision` carries no planning-change awareness yet, so this is
+    refused with 409 today."""
     from app.models.project_so import SOSupplyDecisionDraft
     from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
 
@@ -1236,7 +1246,7 @@ def test_a_pending_planning_change_on_a_confirmed_line_exempts_it_from_the_gate(
     _confirm_full_qty(client, world, order, line)
     _planning_change_row(
         db, order=order, line=line, core_line=core_line, product=world.product,
-        applied_state=PLANNING_CHANGE_STATE_PENDING,
+        applied_state=PLANNING_CHANGE_STATE_PENDING, batch_applied_at=None,
     )
 
     response = _save(client, key, decision=_approval_body())
@@ -1250,10 +1260,11 @@ def test_a_pending_planning_change_on_a_confirmed_line_exempts_it_from_the_gate(
     )
 
 
-def test_an_applied_planning_change_on_a_confirmed_line_does_not_exempt_it(api):
-    """AC-B8, the other half: once the planning change has been APPLIED, the ordinary R1
-    gate still holds - only a row genuinely still PENDING (a live redecide) exempts a line.
-    PASSES TODAY: identical to the ordinary covered case for the gate as it stands."""
+def test_an_applied_batchs_row_does_not_exempt_the_line(api):
+    """AC-B8, the other half: once the BATCH has been applied, the ordinary R1 gate holds
+    again - the row's own state does not matter once Apply has run. PASSES TODAY: identical
+    to the ordinary covered case for the gate as it stands (the row is `applied` too, so even
+    the old row-only predicate already refuses)."""
     from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
 
     client, world, core_so, core_line, order, line = _world(api)
@@ -1263,6 +1274,77 @@ def test_an_applied_planning_change_on_a_confirmed_line_does_not_exempt_it(api):
     _planning_change_row(
         db, order=order, line=line, core_line=core_line, product=world.product,
         applied_state=PLANNING_CHANGE_STATE_APPLIED,
+        batch_applied_at=datetime(2026, 9, 17, 9, 0, 0),
+    )
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "board_line_already_confirmed"
+
+
+def test_a_superseded_row_in_an_open_batch_still_exempts_the_line(api):
+    """AC-B9: the row itself is superseded (an earlier re-run this batch has since redone),
+    but the BATCH is still open - the client still shows the line uncovered against this
+    batch, so the server must not refuse a plain Save either. PASSES TODAY: the row's state
+    is not `applied`, so the old row-only predicate already exempts it, and that answer
+    happens to be right here regardless of which rule produced it."""
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_SUPERSEDED
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+    _planning_change_row(
+        db, order=order, line=line, core_line=core_line, product=world.product,
+        applied_state=PLANNING_CHANGE_STATE_SUPERSEDED, batch_applied_at=None,
+    )
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 200, response.text
+
+
+def test_a_pending_row_in_an_applied_batch_does_not_exempt_the_line(api):
+    """AC-B10: the row still reads `pending` (nobody wrote it back after Apply ran, or Apply
+    itself left it that way), but the BATCH's own `applied_at` says Apply has already run -
+    an applied batch exempts nothing, whatever its rows say. TEST-FIRST: the current
+    predicate reads only `applied_state != applied` and never looks at the batch at all, so
+    a pending row exempts the line here today regardless of the batch."""
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_PENDING
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+    _planning_change_row(
+        db, order=order, line=line, core_line=core_line, product=world.product,
+        applied_state=PLANNING_CHANGE_STATE_PENDING,
+        batch_applied_at=datetime(2026, 9, 17, 9, 0, 0),
+    )
+
+    response = _save(client, key, decision=_approval_body())
+
+    assert response.status_code == 409, response.text
+    assert response.json()["code"] == "board_line_already_confirmed"
+
+
+def test_a_superseded_row_in_an_applied_batch_does_not_exempt_the_line(api):
+    """AC-B11: the permanent-hole case the reviewer found - a superseded row (never
+    `applied` itself) sitting in a batch that HAS been applied. The row's own state never
+    becomes `applied`, so a predicate reading only the row would exempt this line for ever,
+    on a batch that is long since done. TEST-FIRST: refused only once the predicate reads the
+    batch's `applied_at`, which it does not yet."""
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_SUPERSEDED
+
+    client, world, core_so, core_line, order, line = _world(api)
+    db = world.db
+    key = _contribution(_board(client, core_so), core_so.so_number)["key"]
+    _confirm_full_qty(client, world, order, line)
+    _planning_change_row(
+        db, order=order, line=line, core_line=core_line, product=world.product,
+        applied_state=PLANNING_CHANGE_STATE_SUPERSEDED,
+        batch_applied_at=datetime(2026, 9, 17, 9, 0, 0),
     )
 
     response = _save(client, key, decision=_approval_body())
