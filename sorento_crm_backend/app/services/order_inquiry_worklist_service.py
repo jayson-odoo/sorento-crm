@@ -435,14 +435,19 @@ _RAISED_DAY = cast(
 # `supply_decision_id` -> `so_supply_decisions.confirmed_by`, the same person the header
 # stamps at that moment (PLAN section 3.H).
 #
-# An amendment-born row (`ProjectOrderInquiryService._write`) carries NO decision at all -
-# it is raised off the amendment, not off a supply revision - so it falls back to its
-# header's `raised_by`, which for that inquiry is the person who published the amendment
-# and is never re-stamped (an amendment raises its OWN inquiry).
+# S2 (AC-OH-20..23, `PLAN-oi-worklist-one-header.md`): a row with no decision at all is
+# NOT necessarily the header's own answer either. Every row born since G4 is born
+# acknowledged by its raiser - a confirm's own raise, `_write`'s amendment path, the
+# importer's migration - so `OrderInquiryRow.acknowledged_by` is that row's own person,
+# read before the header falls back to whoever last re-stamped it. Only a row with
+# NEITHER a decision NOR an acknowledger (there is none once G4 shipped, but the column
+# is nullable) reaches the header's `raised_by`.
 #
 # The id never leaves the service: a screen printing a UUID at a buyer is a screen they
 # cannot use, so the filter takes an id and every read gives a name.
-_RAISED_BY_ID = func.coalesce(SOSupplyDecision.confirmed_by, OrderInquiry.raised_by)
+_RAISED_BY_ID = func.coalesce(
+    SOSupplyDecision.confirmed_by, OrderInquiryRow.acknowledged_by, OrderInquiry.raised_by
+)
 _RAISED_BY_NAME = User.name
 # Where the PO gets placed for, not where the item is bought TO. `stock_location` on the
 # row is stamped once, at raise time: the DONOR the take left oversold for an order-back
