@@ -1,6 +1,6 @@
 # PLAN - Order inquiries: the auto-link cascade skips a document arriving outside the row's lead-time window
 
-Status: implemented (pending review) (owner go 17 Sep 2026: "if it links and suggest to reallocate at the same time, don't link")
+Status: in review (round 1 findings being folded, 17 Sep) (owner go 17 Sep 2026: "if it links and suggest to reallocate at the same time, don't link")
 UAC: `oi-cascade-skip-early-arrival-acceptance-criteria.md` (AC-EA-xx)
 Branch: `feat/oi-cascade-skip-early-arrival` from `origin/main` (792ba8f04)
 Worktree: `../sorento_crm-oi-cascade-early`, DB `sorento_oice_ci` (copy of `sorento_sodl_ci`, stamped `undo_0002_seed_undone`)
@@ -106,6 +106,45 @@ candidates = [
   FE toast's `skipped` arithmetic already includes it. The link horizon keeps its own place
   as the absolute date ceiling, checked first, exactly as today.
 
+### S3 - the pill honours the same two exemptions [BE] (review round 1, S1 finding)
+
+Measured by the reviewer: on AC-EA-7's seed the cascade links the cited early line AND the
+next worklist read puts `suggestion = unlink` on that same link; same for an own-SO-claimed
+line. So the invariant "never link what the pill flags" was still broken for exactly the two
+documents the walk is told to honour. Captain's ruling: the pill learns the same exemptions.
+A line the supply writer raised FOR this SO (`scm.order_link_claim` naming the row's own SO
+and that PO line) or a document CS named on the form (`_cited_documents(row)`, the same
+reader the walk uses) is a person's or the book's word; a pill telling the buyer to undo it
+is the noise the owner complained about, one door over. `_attach_link_suggestions` skips
+such a link (`suggestion = None`), reading claims in ONE batched query for the page's
+triggered PO lines and citations off the row it already holds.
+
+### S4 - the Link dialog's recommendation follows the walk [BE] (review round 1, S3 finding)
+
+`po_candidates_for_row`'s docstring promises `default_take` / `recommended` are "the
+cascade's own preview computed by the SAME walk", and after S2 that was false: the dialog
+pre-recommended the very line the pass refuses. The early line stays LISTED (AC-EA-12, a
+buyer may take it by hand) but `recommended` is False and `default_take` is `0` for it - the
+preview runs the same window filter the pass runs, through one helper both call. Docstring
+corrected to say so.
+
+### Review round 1 nits folded
+
+- `_cascade_take` already sums only cascadable `remaining`, so the "removed, not
+  `cascadable=False`" comment gives the wrong reason; the real reason is that
+  `po_candidates_for_row` reads `cascadable` to grey a line, and an early line is not
+  greyed - it is listed as takeable by hand. Comment corrected.
+- The pass resolved product ids three times per row set (`_netting`, the lead-time set, the
+  loop). One `product_ids` list hoisted and reused.
+- `DEFAULT_LEAD_TIME_DAYS` imports at module level (no cycle); the `ProjectSupplyService`
+  local import stays, by the convention at the existing local import, not for a cycle.
+- Backticked identifier no longer split across lines in the docstring.
+- AC-EA-3 also asserts the worklist row carries no `suggestion`.
+
+Deliberately left alone (reviewer check 1): `follow_book_repairing` re-points an existing
+link where the AutoCount book moved a reference; it repeats what the book said rather than
+choosing, so it does not consult the window. A link it lands early earns the pill, correctly.
+
 ### Phases
 
 Phase 1 (FE mock): none - no FE surface changes. Phase 2: tester writes the reds below, coder
@@ -138,6 +177,11 @@ Nothing to run. The OI-000739 links already written stay, each with its pill; ow
 or unlinks from the lightbox. New ingests stop producing them.
 
 ## Backlog
+
+- `lead_days == 0` would make every document promised on or before delivery "early".
+  Measured on the 0915 prod copy: `product_suppliers.standard_lead_time_days` is 90 on all
+  14,274 rows and `scm.supplier_performance` is empty, so not live. Clamp to a floor only if
+  a zero lead time is ever stated.
 
 - If a fixed "never link more than N days early" tolerance is ever wanted independent of lead
   time, that is one integer on `system_settings` read by `arrives_outside_window`'s callers.
