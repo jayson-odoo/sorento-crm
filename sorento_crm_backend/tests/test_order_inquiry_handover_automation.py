@@ -51,6 +51,7 @@ from app.models.project_so import (
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
     IV_CHANGE_SO,
+    IV_DELAY,
     IV_ORDER,
     IV_ORDER_BACK,
     IV_PRE_ORDERED,
@@ -2486,3 +2487,168 @@ def test_so314594_shape_full_reconfirm_prints_two_lines(api, monkeypatch):
             "full re-confirm"
         )
         assert row.state == INQUIRY_RAISED
+
+
+# =============================================================================== #
+# Review round 1 (`documentation/plans/scm/PLAN-scm-oi-handover-r2-undo.md`)       #
+# S1 legacy ISO note, S4 silent reconfirm queues no amendment rows, and the        #
+# "0 | 214" template cell nit.                                                    #
+# =============================================================================== #
+
+
+def test_amendment_delay_row_with_legacy_iso_note_prints_parsed_date_and_bare_verb(
+    api, monkeypatch
+):
+    """S1 (review round 1): a PRE-LANE amendment row - `previous_delivery_date` NULL,
+    note in the OLD ISO shape `_change_note` wrote before AC-R2-07's dd/mm/yyyy fix
+    (`Was 2026-09-01`) - must still have its delivery-date move recognised when it
+    rides along on the next Confirm's own email (AC-R2-16). `_amendment_row_was`'s own
+    regex (`Was (\\d{2})/(\\d{2})/(\\d{4})`) only matches the NEW dd/mm/yyyy shape, so a
+    legacy note falls through to `was = None` today, and `handover_remark` prints the
+    whole legacy sentence back onto REMARK instead (`DELAY - Was 2026-09-01`)."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    fixture = _raise_one_row(api, qty="10")
+    db.commit()
+
+    core_line_b = _core_line(
+        db, fixture["core_so"], world.product, world.warehouse,
+        qty_ordered="6", required_date=WAS,
+    )
+    line_b = _project_line(
+        db, fixture["order"], line_no=2, product=world.product, core_line=core_line_b
+    )
+    db.commit()
+
+    amendment = SOAmendment(
+        company_id=world.company_id, project_sales_order_id=fixture["order"].id,
+        from_version_kind="schedule", status=AMENDMENT_PUBLISHED,
+    )
+    db.add(amendment)
+    db.flush()
+    inquiry = OrderInquiry(
+        company_id=world.company_id, project_sales_order_id=fixture["order"].id,
+        amendment_id=amendment.id, state=INQUIRY_RAISED, raised_by=world.cs_user,
+    )
+    db.add(inquiry)
+    db.flush()
+    legacy_row = OrderInquiryRow(
+        company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=fixture["line"].id, item_code=world.product.product_code,
+        qty=Decimal("10"), verb=IV_DELAY, state=INQUIRY_RAISED,
+        # PRE-LANE shape: no `previous_delivery_date` write, and the note in the
+        # ISO format the OLD `_change_note` wrote, before AC-R2-07 landed.
+        note="Was 2026-09-01",
+    )
+    db.add(legacy_row)
+    db.commit()
+    calls.clear()
+
+    response = _confirm(client, fixture["order"].id, [_line_payload(line_b.id, buy_qty="6")])
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "the confirm must dispatch its own handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    delay_lines = [l for l in lines if l["remark"] == "DELAY"]
+    assert delay_lines, (
+        f"S1: expected a bare DELAY line even for a legacy ISO note, got {lines}"
+    )
+    assert delay_lines[0]["was"] == {"delivery_date": "01/09/2026"}, (
+        f"S1: a legacy ISO note must still parse to dd/mm/yyyy, got "
+        f"{delay_lines[0]['was']!r}"
+    )
+
+
+def test_silent_reconfirm_queues_no_amendment_rows_and_no_email(api, monkeypatch):
+    """S4 (captain ruling, review round 1): a re-confirm that settles every named
+    line silently (AC-R2-10 shape - no line of its OWN reaches the handover queue)
+    must not append the order's still-raised amendment rows either, and must
+    dispatch NO handover email at all. Today `_append_still_raised_amendment_rows`
+    runs unconditionally at the end of `refresh_for_decision`, so a still-raised
+    amendment row rides along on a confirm that otherwise said nothing of its own -
+    purchasing gets an email whose only line is one they already saw on the
+    amendment's own publish email.
+
+    The companion half of this ruling ("a confirm with one own line still appends
+    them") is already pinned by `test_confirm_email_appends_still_raised_amendment_
+    rows_once` above - not duplicated here.
+    """
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    fixture = _raise_one_row(api, qty="10")
+    db.commit()
+
+    amendment = SOAmendment(
+        company_id=world.company_id, project_sales_order_id=fixture["order"].id,
+        from_version_kind="schedule", status=AMENDMENT_PUBLISHED,
+        delta_json={
+            "rows": [
+                {
+                    "row_key": "0", "verb": "DELAY", "so_line_id": str(fixture["line"].id),
+                    "product_id": str(world.product.id),
+                    "product_code": world.product.product_code,
+                    "qty": "10", "from_value": "2026-09-01", "to_value": "2026-10-01",
+                }
+            ]
+        },
+    )
+    db.add(amendment)
+    db.flush()
+    ProjectOrderInquiryService(db).derive_for_amendment(amendment, actor_user_id=world.cs_user)
+    db.commit()
+    calls.clear()
+
+    # Silent re-confirm: the SAME line, the SAME qty - AC-R2-10's widened gate settles
+    # it with no handover line of its own.
+    response = _confirm(
+        client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
+    )
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    assert _handover_calls(calls) == [], (
+        "S4: a confirm with no line of its own must dispatch no handover email, "
+        "even when the order carries a still-raised amendment row"
+    )
+
+
+def test_handover_r2_template_cell_was_qty_zero_prints_0_and_change_to():
+    """Nit (review round 1): `was.qty == "0"` (a row previously at zero, now raised)
+    must print `QTY = 0`, `QTY CHANGE TO = 214` - the string `"0"` is non-empty and
+    therefore truthy in Jinja, so this is a defence against a future regression
+    (`_qty_str`/the template's own `{% if line.was.qty %}` check), not a currently
+    broken seam."""
+    from app.services.email_template_service import EmailTemplateService
+
+    with blank_session() as db:
+        template = _r2_template(db)
+        line_ctx = {
+            "so_date": "01/09/2026", "so_number": "SO314594", "item_code": "CB9999",
+            "qty": "214", "delivery_date": "01/09/2026", "remark": "ORDER 214",
+            "was": {"qty": "0"},
+        }
+        context = {
+            "handover": {
+                "subject_scope": "SO314594", "verbs": ["ORDER"], "headline": "ORDER",
+                "orders": [{"so_number": "SO314594", "customer": "BUIMACO", "project": "TUJU"}],
+                "lines": [line_ctx], "line_count": 1,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO314594",
+            },
+            "actor": {"name": "Eling", "email": "eling@sorento.com.my"},
+            "today": "18/09/2026",
+        }
+        rendered = EmailTemplateService(db).render(template, context)
+        rows = _table_rows(rendered["body_html"])
+        line_row = rows[-1]
+        assert line_row == [
+            "01/09/2026", "SO314594", "CB9999", "0", "214",
+            "01/09/2026", "", "ORDER 214",
+        ], f"nit: was.qty='0' must print '0 | 214', got {line_row}"

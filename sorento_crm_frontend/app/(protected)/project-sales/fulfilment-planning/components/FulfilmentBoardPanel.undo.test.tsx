@@ -355,3 +355,39 @@ describe('AC-R2-F04 (payload half): mode travels with decision_id in the parked 
     });
   });
 });
+
+// --------------------------------------------------------------------------- //
+// Review round 1, item 10: the reconstructed label must never be visually
+// elided at a desktop viewport - the menu's own width cap (`sm:max-w-80`,
+// 20rem) is narrower than "Undo SO000001 confirm (rev 3), reconstructed" plus
+// its own second line needs, so the coder must widen it (`sm:max-w-md` or
+// wider). Checked at the CSS-class level, since jsdom has no layout engine to
+// measure actual visual truncation against.
+// --------------------------------------------------------------------------- //
+
+describe('review round: the reconstructed entry is not clipped at desktop width', () => {
+  it('does not carry the old sm:max-w-80 cap on the menu content', async () => {
+    const board = buildBoard(
+      [demand({ sales_order_id: 'so-1', so_number: 'SO000001', project_line_id: 'pl-1-1' })],
+      { today: TODAY, freeStock: {}, granularity: 'week' },
+    );
+    getPlanningBoard.mockResolvedValue(
+      withUndo(board, {
+        'so-1': { revision_no: 3, refusal: null, decision_id: 'dec-1', mode: 'reconstructed' },
+      }),
+    );
+
+    renderPanel(['SO000001']);
+    const menu = await openBoardActions();
+
+    expect(
+      within(menu).getByText('Undo SO000001 confirm (rev 3), reconstructed'),
+    ).toBeInTheDocument();
+    // `DropdownMenuContent` splits its own passed className onto an INNER
+    // `motion.div` (components/ui/dropdown-menu.tsx) - the Radix Content node
+    // `role="menu"` resolves to only ever carries the hardcoded `z-50`, so the
+    // width cap under test lives on the menu's own first child.
+    const contentDiv = menu.firstElementChild as HTMLElement;
+    expect(contentDiv.className).not.toMatch(/\bsm:max-w-80\b/);
+  });
+});
