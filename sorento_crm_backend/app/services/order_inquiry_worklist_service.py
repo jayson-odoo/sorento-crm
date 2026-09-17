@@ -1105,9 +1105,20 @@ class OrderInquiryWorklistService:
         always confirms exactly the scope the worklist itself is filtered to, never a
         client-rebuilt copy of it. Eligible is `ack_state` awaiting or changed and
         `state` not cancelled - the same gate `acknowledge_rows` already enforces one row
-        at a time; everything else the filter matched (rejected, already acknowledged,
-        cancelled) is reported back as `skipped`, never silently dropped and never
-        silently taken on.
+        at a time; everything else the filter matched (rejected, already acknowledged)
+        is reported back as `skipped`, never silently dropped and never silently taken
+        on.
+
+        #992 (one-header-per-SO) taught `_base` to hide a `cancelled` row from every
+        filter that does not explicitly ask `state=cancelled` (S5/AC-OH-50..51) -
+        because THIS reads `_base` too, a query that used to match a cancelled row no
+        longer does, so that row is absent from `matched` entirely rather than present
+        and then subtracted into `skipped`. That is the honest rule (review round,
+        S8): `skipped` counts what the filter actually surfaced and a row's own state
+        then refused, never a row the filter never showed the buyer - the dialog's
+        "Skipped N" and the toast have to agree with what was on screen. A filter that
+        DOES ask for `state=cancelled` still counts a cancelled row as skipped, same
+        as any other ineligible state the filter surfaced.
         """
         matched = [str(row_id) for (row_id,) in self._base(**filters).all()]
         if not matched:

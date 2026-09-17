@@ -364,18 +364,30 @@ def test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so(api):
     assert elsewhere["row"].ack_state == ACK_AWAITING, "a different SO is untouched"
 
 
-def test_ac_cf_8b2_skipped_counts_every_rejected_and_cancelled_row_matched(api):
-    """AC-CF-8b (review round). `skipped` (the contract's own field) was written by
-    the server but asserted by no test: a caller had no way to know it actually
-    reports the rejected-and-cancelled count a filter matched rather than, say, 0 or
-    the WHOLE matched count. Isolated from `test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so`
-    on purpose: that fixture's `reject` press cascades a whole-order re-confirm that
-    cancels-and-carries every OTHER covered line too (its own docstring explains why),
-    so its own `skipped` counts those superseded rows as well as the two this test
-    means to isolate - not a clean "rejected + cancelled seeded" arithmetic. Here the
-    rejected and cancelled states are forced directly on freshly raised rows, the same
-    way AC-CF-11 forces `changed` - no endpoint cascade, so `skipped` is exactly the
-    two rows this test seeded."""
+def test_ac_cf_8b2_skipped_counts_every_rejected_row_matched_not_a_hidden_cancelled_one(api):
+    """AC-CF-8b (review round), corrected for #992 (one-header-per-SO). `skipped`
+    (the contract's own field) was written by the server but asserted by no test: a
+    caller had no way to know it actually reports the rejected count a filter matched
+    rather than, say, 0 or the whole matched count. Isolated from
+    `test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so` on purpose: that fixture's
+    `reject` press cascades a whole-order re-confirm that cancels-and-carries every
+    OTHER covered line too (its own docstring explains why), so its own `skipped`
+    counts those superseded rows as well as the two this test means to isolate - not
+    a clean "rejected + cancelled seeded" arithmetic. Here the rejected and cancelled
+    states are forced directly on freshly raised rows, the same way AC-CF-11 forces
+    `changed` - no endpoint cascade.
+
+    #992's own `_base` change (S5/AC-OH-50..51, R2) hides a `cancelled` row from
+    every filter that does not explicitly ask `state=cancelled` - "not owed, and not
+    a row purchasing needs to see". `acknowledge_scope` is built off that SAME
+    `_base` (its own docstring: "Select all N matching" must confirm exactly the
+    scope the worklist itself is filtered to), so a query-by-SO-number press no
+    longer MATCHES the cancelled row at all - it is not merely left alone, it was
+    never counted as a candidate in the first place. The honest rule (captain's
+    ruling, review round): `skipped` reports what the FILTER matched and the row's
+    own state then refused, never a row the filter itself never surfaced to the
+    buyer - the dialog's "Skipped N" and the toast must agree with what was on
+    screen. So `skipped` here is 1 (the rejected row only), not 2."""
     _client, world = api
     here = _raise_n_rows_one_so(api, ["4", "6", "3"])
     eligible_row, to_reject_row, to_cancel_row = here["rows"]
@@ -391,7 +403,7 @@ def test_ac_cf_8b2_skipped_counts_every_rejected_and_cancelled_row_matched(api):
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["acknowledged"] == 1
-    assert body["skipped"] == 2, body
+    assert body["skipped"] == 1, body
 
     world.db.refresh(eligible_row)
     assert eligible_row.ack_state == ACK_ACKNOWLEDGED
