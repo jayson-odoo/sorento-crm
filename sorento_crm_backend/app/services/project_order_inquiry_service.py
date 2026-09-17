@@ -3305,6 +3305,11 @@ class ProjectOrderInquiryService:
                 {
                     "id": link.id,
                     "kind": "spo" if is_spo else "po",
+                    # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the target itself,
+                    # so a reader deciding whether THIS row's own SO claims the line
+                    # (`scm.order_link_claim`) can ask without a second query per link.
+                    "po_line_id": link.po_line_id,
+                    "spo_allocation_id": link.spo_allocation_id,
                     # The link's own copy first: the document it was made against, even
                     # when the line it named has since been deleted out from under it.
                     "document": link.document or spo_number or po_number,

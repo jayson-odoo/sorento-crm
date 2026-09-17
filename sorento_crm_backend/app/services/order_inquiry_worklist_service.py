@@ -74,6 +74,7 @@ from app.models.project_so import (
 )
 from app.models.projects import Project, ProjectParty, ProjectPurchaseOrder
 from app.models.sales_agent import SalesAgent
+from app.models.scm import OrderLinkClaim
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
@@ -494,6 +495,11 @@ _COLUMNS = (
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
     OrderInquiryRow.cited_document.label("cited_document"),
+    # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the last of the three fields
+    # `ProjectOrderInquiryService._cited_documents` reads, so `_attach_link_
+    # suggestions` can call that SAME reader on the row it already holds rather than
+    # re-deriving what "cited" means a second time.
+    OrderInquiryRow.spo_ref.label("spo_ref"),
     # PLAN-scm-supplied-with-companions.md S5.
     OrderInquiryRow.bundled_qty.label("bundled_qty"),
     OrderInquiryRow.bundled_with_row_id.label("bundled_with_row_id"),
@@ -1183,14 +1189,26 @@ class OrderInquiryWorklistService:
         open need (never a row on the SAME SO line), delivery date ascending then open
         need descending - the first candidate is the suggested target (ruling 17 Sep:
         list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
-        on a received link or one still inside the window.
+        on a received link, one still inside the window, or one of the two S3
+        exemptions below.
 
-        ONE grouped query for the whole page's candidates (AC-RL-23), never one per
-        link: every triggered link's product is collected first, and `_repoint_
-        candidates_by_product` answers all of them together.
+        S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
+        automatic pass was TOLD to honour regardless of the window earns no pill
+        either - a link THIS row's own SO claims in `scm.order_link_claim`, or one
+        whose document the row cites (`ProjectOrderInquiryService._cited_documents`,
+        the same reader the walk uses). Flagging what the pass was just instructed to
+        keep is the same noise the owner complained about ("kinda redundant"), one
+        door over; it holds for a HAND-placed link exactly as for an automatic one
+        (AC-EA-14/15) - the exemption is the evidence, not who pressed the button.
+
+        ONE grouped query for the whole page's candidates (AC-RL-23), and ONE more for
+        the page's triggered claims (S3) - never one per link: every triggered link's
+        product, and every triggered link's target, is collected first.
         """
         delivery_by_row = {row.id: row.delivery_date for row in rows}
         so_line_by_row = {row.id: row.so_line_id for row in rows}
+        so_number_by_row = {row.id: row.so_number for row in rows}
+        row_by_id = {row.id: row for row in rows}
         product_ids = {pid for pid in product_by_row.values() if pid}
         lead_times = (
             ProjectSupplyService(self.db).lead_times(product_ids) if product_ids else {}
@@ -1214,6 +1232,27 @@ class OrderInquiryWorklistService:
                     continue
                 triggered.append((row_id, link, product_id))
 
+        if not triggered:
+            return
+
+        target_ids = {
+            link.get("po_line_id") or link.get("spo_allocation_id")
+            for _row_id, link, _product_id in triggered
+            if link.get("po_line_id") or link.get("spo_allocation_id")
+        }
+        claim_so_numbers_by_target = self._claim_so_numbers_by_target(target_ids)
+        inquiry_service = ProjectOrderInquiryService(self.db)
+        triggered = [
+            (row_id, link, product_id)
+            for row_id, link, product_id in triggered
+            if not self._exempt_from_window(
+                link,
+                row=row_by_id.get(row_id),
+                own_so_number=so_number_by_row.get(row_id),
+                claim_so_numbers_by_target=claim_so_numbers_by_target,
+                inquiry_service=inquiry_service,
+            )
+        ]
         if not triggered:
             return
         candidates_by_product = self._repoint_candidates_by_product(
@@ -1246,6 +1285,55 @@ class OrderInquiryWorklistService:
                 }
             else:
                 link["suggestion"] = {"kind": "unlink"}
+
+    @staticmethod
+    def _exempt_from_window(
+        link: Dict[str, Any],
+        *,
+        row: Optional[Any],
+        own_so_number: Optional[str],
+        claim_so_numbers_by_target: Dict[str, set],
+        inquiry_service: ProjectOrderInquiryService,
+    ) -> bool:
+        """S3's two exemptions - the same two `auto_place_for_products` reads (S2): a
+        target THIS row's own SO claims, or a document the row cites. Either is a
+        person's or the book's word, and the window does not overrule it, on the
+        pass or on the pill."""
+        target_id = link.get("po_line_id") or link.get("spo_allocation_id")
+        if target_id and own_so_number is not None:
+            if own_so_number in claim_so_numbers_by_target.get(target_id, ()):
+                return True
+        document = str(link.get("document") or "").strip().upper()
+        if row is not None and document:
+            return document in inquiry_service._cited_documents(row)
+        return False
+
+    def _claim_so_numbers_by_target(self, target_ids: set) -> Dict[str, set]:
+        """Every RESOLVED claim's SO number, grouped by the purchase-order line or SPO
+        allocation it names (S3) - existence only, in ONE query for the page's
+        triggered targets. Not the fuller dedication arithmetic
+        (`ProjectOrderInquiryService._dedication_for_target`), which rations a line
+        SHARED between several claimants - a question about how much a candidate may
+        give the cascade, not about whether the pill should trust what the cascade
+        was just told to honour."""
+        if not target_ids:
+            return {}
+        rows = self.db.query(
+            OrderLinkClaim.po_line_id,
+            OrderLinkClaim.spo_allocation_id,
+            OrderLinkClaim.so_number,
+        ).filter(
+            OrderLinkClaim.resolved_at.isnot(None),
+            or_(
+                OrderLinkClaim.po_line_id.in_(target_ids),
+                OrderLinkClaim.spo_allocation_id.in_(target_ids),
+            ),
+        )
+        out: Dict[str, set] = {}
+        for po_line_id, spo_allocation_id, so_number in rows:
+            target_id = str(po_line_id) if po_line_id else str(spo_allocation_id)
+            out.setdefault(target_id, set()).add(so_number)
+        return out
 
     def _repoint_candidates_by_product(
         self, product_ids: set
