@@ -260,15 +260,24 @@ def test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so(api):
     (`row_ids: List[str] = Field(..., min_length=1)`) - a body naming only `filter` is
     refused for a MISSING `row_ids`, a 422 for the whole unbuilt feature rather than the
     scoping this test is really about (which SO's rows a filter reaches, and that a
-    cancelled or rejected row in the same SO is skipped)."""
+    cancelled or rejected row in the same SO is skipped).
+
+    The reject rewrites the WHOLE order's revision (`reject_row` ->
+    `_uncover_rejected_line` -> `ProjectSupplyService.uncover_lines`, a plain re-confirm
+    naming no lines, so every OTHER covered line of the order is CARRIED): the eligible
+    and to-cancel lines' rows this fixture first raised are cancelled and replaced by
+    fresh ones the instant that press lands, so the ROW OBJECTS captured before it go
+    stale - `eligible_row` in particular would sit at `awaiting` forever, never the row
+    the filter-scoped press actually touches. The live row per line is re-read by
+    `_order_row` AFTER the reject, and only then is one of them forced cancelled -
+    forcing it BEFORE would just be undone by the same carry, since nothing but the row
+    itself says the line is cancelled (`_live_handshake` skips it, so the carry raises a
+    brand new `awaiting` row for that line exactly as it does for a line nobody touched).
+    """
     client, world = api
     here = _raise_n_rows_one_so(api, ["4", "6", "3"])
-    eligible_row, to_cancel_row, to_reject_row = here["rows"]
-    eligible_row.ack_state = ACK_AWAITING
-    eligible_row.acknowledged_by = None
-    eligible_row.acknowledged_at = None
-    to_cancel_row.state = INQUIRY_CANCELLED
-    world.db.commit()
+    eligible_line, to_cancel_line, to_reject_line = here["lines"]
+    to_reject_row = here["rows"][2]
 
     with _as_purchasing(world) as buyer:
         assert (
@@ -279,11 +288,13 @@ def test_ac_cf_8b_acknowledge_by_filter_scopes_to_one_so(api):
         )
     world.db.commit()
 
-    elsewhere = _raise_one_row(api, qty="9")
-    elsewhere["row"].ack_state = ACK_AWAITING
-    elsewhere["row"].acknowledged_by = None
-    elsewhere["row"].acknowledged_at = None
+    eligible_row = _order_row(world, eligible_line)
+    assert eligible_row.ack_state == ACK_AWAITING, "carried, still to confirm"
+    to_cancel_row = _order_row(world, to_cancel_line)
+    to_cancel_row.state = INQUIRY_CANCELLED
     world.db.commit()
+
+    elsewhere = _raise_one_row(api, qty="9")
 
     with _as_purchasing(world) as buyer:
         response = buyer.post(ACK_URL, json={"filter": {"query": here["so_number"]}})
@@ -354,11 +365,22 @@ def test_ac_cf_11_no_ack_param_lists_everything_to_confirm_narrows(api):
     changed = _raise_one_row(api, qty="1")
     acknowledged = _raise_one_row(api, qty="1")
 
-    awaiting["row"].ack_state = ACK_AWAITING
-    awaiting["row"].acknowledged_by = None
-    awaiting["row"].acknowledged_at = None
+    # `awaiting` needs no forcing under S1 - a fresh raise is born awaiting already.
+    # `changed` still has to be forced directly: nothing short of a real settle-in-place
+    # produces `changed`, and that is a different seam from this test's subject.
+    # `acknowledged` has to be taken on for REAL, through the route - under S1 a raise
+    # alone leaves it `awaiting` exactly like the other two, so without this press it is
+    # indistinguishable from `awaiting` and the whole point of the third fixture is lost.
     changed["row"].ack_state = ACK_CHANGED
     changed["row"].changed_at = datetime.utcnow()
+    world.db.commit()
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(
+                ACK_URL, json={"row_ids": [str(acknowledged["row"].id)]}
+            ).status_code
+            == 200
+        )
     world.db.commit()
 
     every = client.get(LIST, params={"limit": 200}).json()
@@ -478,17 +500,32 @@ def test_ac_cf_16_migration_flips_open_board_rows_only(api):
     `454_order_inquiry_born_ack.py` uses for its own backfill)."""
     _client, world = api
 
+    # Every fixture below is stamped ACKNOWLEDGED directly, simulating deploy day: under
+    # G4 (this migration's whole reason to exist) EVERY pre-existing row already reads
+    # `acknowledged`, whatever raised it. A fresh raise under S1 is born `awaiting`
+    # instead, so without this stamp none of these four would meet the migration's own
+    # `WHERE ack_state = 'acknowledged'` and the test would pass without the UPDATE ever
+    # touching a row - proving nothing about the migration at all.
+    def _stamp_acknowledged(row):
+        row.ack_state = ACK_ACKNOWLEDGED
+        row.acknowledged_by = world.buyer
+        row.acknowledged_at = datetime.utcnow()
+
     board = _raise_one_row(api, qty="4")["row"]
     assert board.supply_decision_id is not None, "raised from the board, so it has one"
+    _stamp_acknowledged(board)
 
     sheet = _raise_one_row(api, qty="6")["row"]
     sheet.supply_decision_id = None  # what the Excel importer's own row looks like
+    _stamp_acknowledged(sheet)
 
     cancelled = _raise_one_row(api, qty="3")["row"]
     cancelled.state = INQUIRY_CANCELLED
+    _stamp_acknowledged(cancelled)
 
     actioned = _raise_one_row(api, qty="5")["row"]
     actioned.state = INQUIRY_ACTIONED
+    _stamp_acknowledged(actioned)
 
     world.db.commit()
     stamped_sheet_by = sheet.acknowledged_by

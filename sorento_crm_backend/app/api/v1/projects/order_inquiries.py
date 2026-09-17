@@ -524,26 +524,50 @@ async def acknowledge_order_inquiry_rows(
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
 ):
-    """Purchasing takes these instructions on, one row or a batch (AC-H2).
+    """Purchasing's own Confirm press (AC-H2, AC-CF-5 to AC-CF-8 `PLAN-oi-confirm-per-so.md`
+    S1/S2) - one row, a batch by id, or every row a `filter` matches ("Select all N
+    matching").
 
     One press does two things because they are one decision: the rows become purchasing's
     work, stamped with who and when, and the cascade runs for EXACTLY these rows, so the
-    open documents that can cover them are linked at that moment. Nothing linked before
-    this - a row CS raised is one they are still free to change.
+    open documents that can cover them are linked at that moment - though most of them are
+    linked already, since linking never waits for this press (AC-CF-4).
 
     `link_up_to` is how far out the linking half reaches (AC-LH1): every named row is taken
     on, and one due after that date is left Not linked and counted on `after_horizon`.
     Omitted, it is the reorder plan's own horizon; `link_horizon: "none"` is how a caller
-    asks for no horizon at all (S1)."""
+    asks for no horizon at all (S1).
+
+    `row_ids` and `filter` are mutually exclusive (AC-CF-8c, refused at the schema when
+    both or neither is named). A `filter` press resolves through the SAME predicate the
+    list route reads (`OrderInquiryWorklistService._base` via `acknowledge_scope`), then
+    confirms only what it matched that is actually eligible (`awaiting`/`changed`, not
+    cancelled) - everything else it matched is reported on `skipped`, never silently
+    taken on and never silently dropped (AC-CF-8b)."""
     try:
-        for row_id in payload.row_ids:
-            validate_uuid_path(row_id, resource="Order inquiry row")
-        body = ProjectOrderInquiryService(db).acknowledge_rows(
-            payload.row_ids,
-            actor_user_id=current_user["id"],
-            link_up_to=payload.link_up_to,
-            link_horizon=payload.link_horizon,
-        )
+        if payload.row_ids:
+            for row_id in payload.row_ids:
+                validate_uuid_path(row_id, resource="Order inquiry row")
+            body = ProjectOrderInquiryService(db).acknowledge_rows(
+                payload.row_ids,
+                actor_user_id=current_user["id"],
+                link_up_to=payload.link_up_to,
+                link_horizon=payload.link_horizon,
+            )
+        else:
+            filter_kwargs = (
+                payload.filter.model_dump(exclude_none=True) if payload.filter else {}
+            )
+            eligible_ids, skipped = OrderInquiryWorklistService(db).acknowledge_scope(
+                **filter_kwargs
+            )
+            body = ProjectOrderInquiryService(db).acknowledge_eligible_rows(
+                eligible_ids,
+                actor_user_id=current_user["id"],
+                link_up_to=payload.link_up_to,
+                link_horizon=payload.link_horizon,
+            )
+            body["skipped"] = skipped
         db.commit()
         return body
     except Exception as exc:

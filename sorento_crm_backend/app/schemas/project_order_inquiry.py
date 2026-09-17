@@ -486,14 +486,52 @@ class OrderInquiryWorklistSummary(BaseModel):
     link_up_to_default: Optional[date] = None
 
 
-class AcknowledgeRowsRequest(BaseModel):
-    """Purchasing takes on one row or a batch of them (AC-H2).
-
-    Ids only: what an acknowledgement means is fixed - the rows become purchasing's work
-    and the cascade runs for exactly them - so there is nothing else to say about it.
+class AcknowledgeFilter(BaseModel):
+    """The SAME shape `GET /order-inquiries` filters on, minus paging and sort (AC-CF-8,
+    S2 `PLAN-oi-confirm-per-so.md`, `oi-confirm-per-so-contract.md`): "Select all N
+    matching" resolves against exactly the scope the worklist itself is filtered to,
+    never a client-rebuilt copy of it. Every field is optional; an absent one means "not
+    filtered on that axis", exactly as the list reads it
+    (`OrderInquiryWorklistService._base`, which is where every value here is validated -
+    a bad `ack`/`state`/`linked`/`kind` is refused there the same way the list route
+    refuses it).
     """
 
-    row_ids: List[str] = Field(..., min_length=1)
+    query: Optional[str] = None
+    delivery_month: Optional[str] = None
+    raised_date: Optional[str] = None
+    state: Optional[str] = None
+    project_id: Optional[str] = None
+    supplier_id: Optional[str] = None
+    raised_by: Optional[str] = None
+    linked: Optional[str] = None
+    kind: Optional[str] = None
+    ack: Optional[str] = None
+    location: Optional[str] = None
+    agent: Optional[str] = None
+    so_month: Optional[str] = None
+    po_number: Optional[str] = None
+    spo_number: Optional[str] = None
+    delivery_from: Optional[str] = None
+    delivery_to: Optional[str] = None
+    axis: Optional[str] = None
+    axis_key: Optional[str] = None
+
+
+class AcknowledgeRowsRequest(BaseModel):
+    """Purchasing takes on one row, a batch of them, or every row a `filter` matches
+    (AC-H2, AC-CF-8 `PLAN-oi-confirm-per-so.md` S2).
+
+    Exactly one of `row_ids` / `filter` is named - both, or neither, is refused
+    (AC-CF-8c). What an acknowledgement means is fixed either way: the rows become
+    purchasing's work and the cascade runs for exactly them.
+    """
+
+    row_ids: Optional[List[str]] = None
+    #: "Select all N matching" (S2): resolved server-side against the SAME filters the
+    #: worklist's own list/summary read, so the scope is never a stale or hand-rebuilt
+    #: copy of what the buyer is looking at.
+    filter: Optional[AcknowledgeFilter] = None
     #: The LINK HORIZON (`PLAN-scm-oi-handshake.md` section 11): rows due AFTER this date
     #: are still TAKEN ON, but they are left Not linked, so a 2030 order stops eating a
     #: purchase order a nearer one needed. Omitted means the reorder plan's own horizon,
@@ -505,6 +543,14 @@ class AcknowledgeRowsRequest(BaseModel):
     #: own; `"date"` requires `link_up_to`. OMITTED is inferred - the date when one is
     #: given, the plan when it is not - so every existing caller means what it always did.
     link_horizon: Optional[Literal["date", "plan", "none"]] = None
+
+    @model_validator(mode="after")
+    def _exactly_one_scope(self) -> "AcknowledgeRowsRequest":
+        if bool(self.row_ids) == bool(self.filter):
+            raise ValueError(
+                "Name row_ids or filter - never both, and never neither (AC-CF-8c)."
+            )
+        return self
 
 
 class AcknowledgeResult(BaseModel):
@@ -527,6 +573,10 @@ class AcknowledgeResult(BaseModel):
     #: WHETHER a horizon was in force, so a null `link_up_to` is never read two ways: `"none"`
     #: is "nothing was held back for a date", `"date"` names the one above (S1).
     link_horizon: Literal["date", "none"] = "none"
+    #: Rows the `filter` matched but left untouched - rejected, already acknowledged, or
+    #: cancelled (AC-CF-8, S2 `PLAN-oi-confirm-per-so.md`). Always 0 on a `row_ids` press,
+    #: which still refuses such a row outright rather than quietly skipping it.
+    skipped: int = 0
 
 
 class RejectRowRequest(BaseModel):

@@ -1,0 +1,647 @@
+/**
+ * PLAN-oi-confirm-per-so, `oi-confirm-per-so-acceptance-criteria.md` (AC-CF-*): the
+ * Phase 1 pieces committed at 15987331a - Confirm (N) as the primary press, "Select all
+ * N matching", the To confirm tile/default, and the remembered sort + filters through
+ * `useListingViewPreferences`.
+ *
+ * A SEPARATE file from `OrderInquiriesClient.test.tsx` (not an addition to it) because
+ * the remembered-view assertions need the REAL `useListingViewPreferences` hook wired to
+ * a controllable, per-test `listColumnPreferencesService` mock - the existing file's
+ * fixed `{ config: null }` stub cannot express "a stored sort" or "gate the first fetch"
+ * at all, and `StockInquiriesList.viewMemory.test.tsx` is this pattern's precedent.
+ *
+ * One `it` per AC, named after the AC.
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  MOCK_WORKLIST_ROWS,
+  MOCK_WORKLIST_SUMMARY,
+} from '../../_shared/__mocks__/orderInquiryWorklist';
+import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+
+let granted = new Set([
+  'projects.order_inquiry.action',
+  'projects.order_inquiries.acknowledge',
+]);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.has(slug),
+  useHasAnyPermission: (slugs: string[]) =>
+    slugs.some((slug) => granted.has(slug)),
+  usePermissions: () => ({
+    permissions: [...granted],
+    permissionSet: granted,
+    isLoading: false,
+  }),
+}));
+
+const routerReplace = vi.fn();
+let currentSearchParams = new URLSearchParams('');
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: (...args: unknown[]) => routerReplace(...args),
+  }),
+  usePathname: () => '/project-sales/order-inquiries',
+  useSearchParams: () => currentSearchParams,
+}));
+
+// Column order/visibility/width - a DIFFERENT hook from the one this file is about.
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({
+    resetToDefaults: vi.fn(),
+    isLoading: false,
+  }),
+}));
+
+// The remembered SORT/FILTERS transport (S6): the REAL `useListingViewPreferences` runs
+// against this mock, per-test-configurable via `storedConfig()`, the same shape
+// `StockInquiriesList.viewMemory.test.tsx` uses for the same hook.
+const service = vi.hoisted(() => ({
+  getUserListColumnConfig: vi.fn(),
+  upsertUserListColumnConfig: vi.fn(),
+}));
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: (...args: unknown[]) =>
+    service.getUserListColumnConfig(...args),
+  upsertUserListColumnConfig: (...args: unknown[]) =>
+    service.upsertUserListColumnConfig(...args),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
+
+const LISTING_KEY = 'projects.projects.view::order-inquiry-worklist';
+
+/** Seeds what `getUserListColumnConfig` answers, and makes the PUT echo back. */
+function storedConfig(config: Record<string, unknown> | null) {
+  service.getUserListColumnConfig.mockResolvedValue({
+    listing_key: LISTING_KEY,
+    config,
+  });
+  service.upsertUserListColumnConfig.mockImplementation(
+    async (listingKey: string, payload: unknown) => ({
+      listing_key: listingKey,
+      config: payload,
+    }),
+  );
+}
+
+const listOrderInquiryWorklist = vi.fn();
+const getOrderInquiryWorklistSummary = vi.fn();
+const downloadOrderInquiryWorklistXlsx = vi.fn();
+const autoPlaceOrderInquiryRows = vi.fn();
+const getUnplaceAllPreview = vi.fn();
+const unplaceAllOrderInquiryRows = vi.fn();
+const acknowledgeOrderInquiryRows = vi.fn();
+const acknowledgeOrderInquiryRowsByFilter = vi.fn();
+const rejectOrderInquiryRows = vi.fn();
+const linkNowOrderInquiryRows = vi.fn();
+const getOrderInquiryPoCandidates = vi.fn();
+const getOrderInquiryUploadJob = vi.fn();
+const unplaceOrderInquiryRow = vi.fn();
+
+vi.mock('../../_shared/services/orderInquiryService', () => ({
+  listOrderInquiryWorklist: (...args: unknown[]) =>
+    listOrderInquiryWorklist(...args),
+  getOrderInquiryWorklistSummary: (...args: unknown[]) =>
+    getOrderInquiryWorklistSummary(...args),
+  downloadOrderInquiryWorklistXlsx: (...args: unknown[]) =>
+    downloadOrderInquiryWorklistXlsx(...args),
+  autoPlaceOrderInquiryRows: (...args: unknown[]) =>
+    autoPlaceOrderInquiryRows(...args),
+  getUnplaceAllPreview: (...args: unknown[]) => getUnplaceAllPreview(...args),
+  unplaceAllOrderInquiryRows: (...args: unknown[]) =>
+    unplaceAllOrderInquiryRows(...args),
+  acknowledgeOrderInquiryRows: (...args: unknown[]) =>
+    acknowledgeOrderInquiryRows(...args),
+  // PLAN-oi-confirm-per-so, AC-CF-7/8: "Select all N matching"'s own service call. Left
+  // out of the sibling file's mock (no test there reaches the filter path); required
+  // here or the real `useOrderInquiryHandshake` throws on an undefined import the
+  // instant `selectAllMatchingActive` is taken.
+  acknowledgeOrderInquiryRowsByFilter: (...args: unknown[]) =>
+    acknowledgeOrderInquiryRowsByFilter(...args),
+  rejectOrderInquiryRows: (...args: unknown[]) =>
+    rejectOrderInquiryRows(...args),
+  linkNowOrderInquiryRows: (...args: unknown[]) =>
+    linkNowOrderInquiryRows(...args),
+  getOrderInquiryPoCandidates: (...args: unknown[]) =>
+    getOrderInquiryPoCandidates(...args),
+  getOrderInquiryUploadJob: (...args: unknown[]) =>
+    getOrderInquiryUploadJob(...args),
+  unplaceOrderInquiryRow: (...args: unknown[]) =>
+    unplaceOrderInquiryRow(...args),
+}));
+
+const getOrderInquiryMatrix = vi.fn();
+vi.mock('../../_shared/services/orderInquiryMatrixService', () => ({
+  getOrderInquiryMatrix: (...args: unknown[]) => getOrderInquiryMatrix(...args),
+}));
+
+vi.mock('../../../scm/reorder/components/OutstandingUploadDialog', () => ({
+  OutstandingUploadDialog: ({
+    onQueued,
+  }: {
+    onQueued?: (queued: { job_id: string; id: string; message: string }) => void;
+  }) => (
+    <button
+      type="button"
+      onClick={() =>
+        onQueued?.({ job_id: 'job-1', id: 'job-row-1', message: 'queued' })
+      }
+    >
+      Upload (stub)
+    </button>
+  ),
+}));
+
+vi.mock('@/components/upload-activity/useUploadActivity', () => ({
+  useUploadActivity: () => ({
+    sessions: [],
+    badgeCount: 0,
+    hasInFlight: false,
+    refetch: vi.fn(),
+    isLoading: false,
+    dismissed: new Set<string>(),
+  }),
+}));
+
+const saveBlobAs = vi.fn();
+vi.mock('../../_shared/services/fileDownload', () => ({
+  saveBlobAs: (...args: unknown[]) => saveBlobAs(...args),
+  filenameFromContentDisposition: vi.fn(),
+}));
+
+vi.mock('@/lib/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() },
+}));
+
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    id,
+  }: {
+    value: string;
+    onChange: (next: string) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+    id?: string;
+  }) => (
+    <select
+      aria-label={id ?? placeholder ?? 'select'}
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+import { toast } from '@/lib/toast';
+import { OrderInquiriesClient } from './OrderInquiriesClient';
+
+function envelope(rows: OrderInquiryWorklistRow[], total?: number) {
+  return { data: rows, total: total ?? rows.length, page: 1, limit: 25 };
+}
+
+/** A row shaped for the handshake assertions: `MOCK_WORKLIST_ROWS[1]` (raised, unlinked,
+ * selectable) with `ack_state` explicit rather than left to `ackStateOf`'s default. */
+function ackRow(overrides: Partial<OrderInquiryWorklistRow>): OrderInquiryWorklistRow {
+  return {
+    ...MOCK_WORKLIST_ROWS[1],
+    ack_state: 'awaiting',
+    ...overrides,
+  };
+}
+
+function renderClient() {
+  const client = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false },
+    },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <OrderInquiriesClient />
+    </QueryClientProvider>,
+  );
+}
+
+function openActionsMenu() {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /^actions$/i }), {
+    button: 0,
+    ctrlKey: false,
+  });
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  window.localStorage.clear();
+  granted = new Set([
+    'projects.order_inquiry.action',
+    'projects.order_inquiries.acknowledge',
+  ]);
+  currentSearchParams = new URLSearchParams('');
+  storedConfig(null);
+  listOrderInquiryWorklist.mockResolvedValue(envelope(MOCK_WORKLIST_ROWS));
+  getOrderInquiryWorklistSummary.mockResolvedValue(MOCK_WORKLIST_SUMMARY);
+  downloadOrderInquiryWorklistXlsx.mockResolvedValue(new Blob(['x']));
+  getUnplaceAllPreview.mockResolvedValue({
+    count: 0,
+    product_code: null,
+    product_name: null,
+  });
+  getOrderInquiryPoCandidates.mockResolvedValue([]);
+  getOrderInquiryMatrix.mockResolvedValue({ data: [] });
+  getOrderInquiryUploadJob.mockResolvedValue({
+    job_id: 'job-1',
+    status: 'finished',
+    finished: true,
+    product_ids: [],
+    documents: [],
+    document_count: 0,
+  });
+  acknowledgeOrderInquiryRows.mockResolvedValue({
+    acknowledged: 0,
+    linked_rows: 0,
+    links: 0,
+    after_horizon: 0,
+  });
+  acknowledgeOrderInquiryRowsByFilter.mockResolvedValue({
+    acknowledged: 0,
+    linked_rows: 0,
+    links: 0,
+    after_horizon: 0,
+  });
+});
+
+describe('AC-CF-5: Confirm (N) is the primary press', () => {
+  it('disabled at 0 with a reason; two eligible + one cancelled ticked reads Confirm (2); the press confirms exactly those two and refetches', async () => {
+    const awaitingRow = ackRow({
+      id: 'row-await',
+      item_code: 'ZZT-AWAIT',
+      so_number: 'SO-AWAIT',
+      ack_state: 'awaiting',
+      state: 'raised',
+    });
+    const changedRow = ackRow({
+      id: 'row-changed',
+      item_code: 'ZZT-CHANGED',
+      so_number: 'SO-CHANGED',
+      ack_state: 'changed',
+      state: 'raised',
+    });
+    const cancelledRow = ackRow({
+      id: 'row-cancelled',
+      item_code: 'ZZT-CANCELLED',
+      so_number: 'SO-CANCELLED',
+      ack_state: 'awaiting',
+      state: 'cancelled',
+    });
+    listOrderInquiryWorklist.mockResolvedValue(
+      envelope([awaitingRow, changedRow, cancelledRow]),
+    );
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 2,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 0,
+    });
+    renderClient();
+    await screen.findByText('SO-AWAIT');
+
+    // Disabled at 0, with the reason as the title (D3).
+    const primary = screen.getByRole('button', { name: 'Confirm (0)' });
+    expect(primary).toBeDisabled();
+    expect(primary).toHaveAttribute(
+      'title',
+      'Tick rows still to confirm, or Select all matching.',
+    );
+
+    // "Upload purchase orders" is a menuitem in Actions, never a top-level button.
+    expect(
+      screen.queryByRole('button', { name: 'Upload purchase orders' }),
+    ).toBeNull();
+    openActionsMenu();
+    expect(
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+    ).toBeInTheDocument();
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
+
+    // A cancelled row does not tick at all.
+    expect(
+      screen.getByLabelText('Select ZZT-CANCELLED on SO-CANCELLED'),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-AWAIT on SO-AWAIT'));
+    fireEvent.click(screen.getByLabelText('Select ZZT-CHANGED on SO-CHANGED'));
+
+    const confirmButton = screen.getByRole('button', { name: 'Confirm (2)' });
+    expect(confirmButton).toBeEnabled();
+    fireEvent.click(confirmButton);
+
+    expect(await screen.findByText('Confirm 2 rows?')).toBeInTheDocument();
+    const listCallsBefore = listOrderInquiryWorklist.mock.calls.length;
+    const summaryCallsBefore = getOrderInquiryWorklistSummary.mock.calls.length;
+    const dialog = screen.getByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRows).toHaveBeenCalledWith(
+        ['row-await', 'row-changed'],
+        expect.anything(),
+      ),
+    );
+    expect(acknowledgeOrderInquiryRowsByFilter).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith('Confirmed 2 rows');
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist.mock.calls.length).toBeGreaterThan(
+        listCallsBefore,
+      ),
+    );
+    await waitFor(() =>
+      expect(getOrderInquiryWorklistSummary.mock.calls.length).toBeGreaterThan(
+        summaryCallsBefore,
+      ),
+    );
+  });
+});
+
+describe('AC-CF-7: Select all N matching posts filter, not row_ids', () => {
+  it('the banner appears at N > loaded, and Confirm sends the current query + ack as `filter`', async () => {
+    currentSearchParams = new URLSearchParams('query=SO123');
+    const rows = [
+      ackRow({ id: 'row-1', item_code: 'ZZT-1', so_number: 'SO-1' }),
+      ackRow({ id: 'row-2', item_code: 'ZZT-2', so_number: 'SO-2' }),
+    ];
+    listOrderInquiryWorklist.mockResolvedValue(envelope(rows, 40));
+    acknowledgeOrderInquiryRowsByFilter.mockResolvedValue({
+      acknowledged: 40,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 0,
+    });
+    renderClient();
+    await screen.findByText('SO-1');
+
+    fireEvent.click(screen.getByLabelText('Select all rows on this page'));
+
+    const banner = await screen.findByRole('button', {
+      name: 'Select all 40 records',
+    });
+    fireEvent.click(banner);
+
+    const confirmButton = await screen.findByRole('button', {
+      name: 'Confirm (40)',
+    });
+    fireEvent.click(confirmButton);
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() =>
+      expect(acknowledgeOrderInquiryRowsByFilter).toHaveBeenCalledWith(
+        expect.objectContaining({ query: 'SO123', ack: 'to_confirm' }),
+        expect.anything(),
+      ),
+    );
+    expect(acknowledgeOrderInquiryRows).not.toHaveBeenCalled();
+  });
+});
+
+describe('AC-CF-9: no acknowledge grant, no Confirm button', () => {
+  it('renders no Confirm button at all for a CS principal', async () => {
+    granted = new Set(['projects.order_inquiry.action']);
+    renderClient();
+    await screen.findByText('SO385126');
+
+    expect(screen.queryByRole('button', { name: /^Confirm \(/ })).toBeNull();
+  });
+});
+
+describe('AC-CF-10: confirmed rows leave the To confirm view', () => {
+  it('the list query refetches once the mutation resolves', async () => {
+    const rows = [ackRow({ id: 'row-only', item_code: 'ZZT-ONLY', so_number: 'SO-ONLY' })];
+    listOrderInquiryWorklist.mockResolvedValue(envelope(rows));
+    acknowledgeOrderInquiryRows.mockResolvedValue({
+      acknowledged: 1,
+      linked_rows: 0,
+      links: 0,
+      after_horizon: 0,
+    });
+    renderClient();
+    await screen.findByText('SO-ONLY');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-ONLY on SO-ONLY'));
+    const before = listOrderInquiryWorklist.mock.calls.length;
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm (1)' }));
+    const dialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(acknowledgeOrderInquiryRows).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist.mock.calls.length).toBeGreaterThan(before),
+    );
+  });
+});
+
+describe('AC-CF-12: the To confirm tile', () => {
+  it('reads summary.ack.to_confirm and clicking it sets ack=to_confirm', async () => {
+    currentSearchParams = new URLSearchParams('ack=rejected');
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      ack: { awaiting: 2, acknowledged: 1, changed: 1, rejected: 0, to_confirm: 3 },
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    expect(
+      screen.getByTestId('order-inquiry-strip-to-confirm-count'),
+    ).toHaveTextContent('3');
+
+    fireEvent.click(screen.getByTestId('order-inquiry-strip-to-confirm'));
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ ack: 'to_confirm' }),
+      ),
+    );
+  });
+});
+
+describe('AC-CF-17: the remembered sort drives the first list call, and a change PUTs it back', () => {
+  it('opens sorted the way the memory says, then a new column click persists', async () => {
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'so_number', desc: true }],
+      filters: null,
+      filtersVersion: 1,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'so_number', dir: 'desc' }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ sort: 'qty', dir: 'asc' }),
+      ),
+    );
+
+    // Found by CONTENT, not by `.at(-1)`: another test in this file may still have an
+    // 800ms real debounce timer in flight from an EARLIER render (`debounce()` uses a
+    // raw `setTimeout` RTL's `cleanup()` cannot cancel), which can land a stale call
+    // here after this test's own genuine one. Matching on the 'qty' sort this test is
+    // actually about is immune to that interleaving; asserting `.at(-1)` is not.
+    await waitFor(
+      () =>
+        expect(
+          service.upsertUserListColumnConfig.mock.calls.some(
+            ([, payload]) =>
+              JSON.stringify((payload as { sorting: unknown }).sorting) ===
+              JSON.stringify([{ id: 'qty', desc: false }]),
+          ),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+  });
+});
+
+describe('AC-CF-18: a remembered filter with no URL param seeds the first list call', () => {
+  it('an unnamed-in-URL `location` comes from the memory', async () => {
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'delivery_date', desc: false }],
+      filters: { location: 'SRT-HQ' },
+      filtersVersion: 1,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ location: 'SRT-HQ' }),
+      ),
+    );
+  });
+});
+
+describe('AC-CF-19: page and search never reach the remembered-view PUT payload', () => {
+  it('a sort change and a search box edit both leave the payload free of them', async () => {
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'delivery_date', desc: false }],
+      filters: null,
+      filtersVersion: 1,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Qty' }));
+    fireEvent.change(screen.getByLabelText('Search order inquiry rows'), {
+      target: { value: 'ZZT-SEARCH' },
+    });
+
+    // Found by CONTENT (see the AC-CF-17 test): the write THIS test's own qty click
+    // caused, not whatever a differently-timed call from another test happens to be
+    // last. Every recorded call is asserted, not only this one - the claim is that page
+    // and search NEVER reach the payload, from any of this file's writers.
+    await waitFor(
+      () =>
+        expect(
+          service.upsertUserListColumnConfig.mock.calls.some(
+            ([, payload]) =>
+              JSON.stringify((payload as { sorting: unknown }).sorting) ===
+              JSON.stringify([{ id: 'qty', desc: false }]),
+          ),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+    for (const [, payload] of service.upsertUserListColumnConfig.mock.calls as [
+      string,
+      Record<string, unknown>,
+    ][]) {
+      expect(payload).not.toHaveProperty('page');
+      expect(payload).not.toHaveProperty('pageIndex');
+      expect(payload).not.toHaveProperty('query');
+      expect(payload).not.toHaveProperty('search');
+      expect(
+        (payload.filters as Record<string, unknown> | null) ?? {},
+      ).not.toHaveProperty('query');
+    }
+  });
+});
+
+describe('AC-CF-20: a URL param wins for this visit, and is written back', () => {
+  it('an explicit `?location=` overrides the remembered one and gets persisted', async () => {
+    currentSearchParams = new URLSearchParams('location=OTHER-LOC');
+    storedConfig({
+      version: 1,
+      sorting: [{ id: 'delivery_date', desc: false }],
+      filters: { location: 'SRT-HQ' },
+      filtersVersion: 1,
+    });
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ location: 'OTHER-LOC' }),
+      ),
+    );
+
+    // Found by CONTENT (see the AC-CF-17 test for why `.at(-1)` is not safe here).
+    await waitFor(
+      () =>
+        expect(
+          service.upsertUserListColumnConfig.mock.calls.some(
+            ([, payload]) =>
+              ((payload as { filters?: Record<string, unknown> }).filters ?? {})
+                .location === 'OTHER-LOC',
+          ),
+        ).toBe(true),
+      { timeout: 3000 },
+    );
+  });
+});
+
+describe('AC-CF-21: the first fetch waits for the memory', () => {
+  it('no list call goes out while the preferences fetch is still pending', async () => {
+    let resolveConfig!: (value: unknown) => void;
+    service.getUserListColumnConfig.mockReturnValue(
+      new Promise((resolve) => {
+        resolveConfig = resolve;
+      }),
+    );
+    renderClient();
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(listOrderInquiryWorklist).not.toHaveBeenCalled();
+
+    resolveConfig({ listing_key: LISTING_KEY, config: null });
+
+    await waitFor(() => expect(listOrderInquiryWorklist).toHaveBeenCalled());
+  });
+});

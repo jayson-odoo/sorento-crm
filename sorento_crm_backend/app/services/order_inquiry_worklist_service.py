@@ -923,20 +923,21 @@ class OrderInquiryWorklistService:
                     code="invalid_ack_filter",
                 )
             if ack == ACK_TO_CONFIRM:
-                # The page's own former default (R3, retired by S1 - kept as a legal
-                # value for an old bookmark, never offered by the FE any more): awaiting
-                # AND changed, which is one question - "what has purchasing not answered
-                # yet" - asked of two stored states.
+                # The page's own default again (R3, `PLAN-oi-confirm-per-so.md` S3 -
+                # reversing G4/S1's retirement of it): awaiting AND changed, which is one
+                # question - "what has purchasing not confirmed yet" - asked of two
+                # stored states.
                 base = base.filter(
                     OrderInquiryRow.ack_state.in_(ACK_TO_CONFIRM_STATES)
                 )
-            elif ack == ACK_CHANGED:
-                # `changed_at IS NOT NULL`, not the literal `ack_state` (S3, review of
-                # PR #471): a settle auto-acknowledges the instant it stamps `changed_at`
-                # (G4), so a row is never LEFT reading `ack_state='changed'` the way one
-                # was before S1 - the Was/Now cell renders off the same column.
-                base = base.filter(OrderInquiryRow.changed_at.isnot(None))
             else:
+                # The literal `ack_state`, including `changed`: `_handshake_for_raise`
+                # and `_settle_row_in_place` (`PLAN-oi-confirm-per-so.md` S1) stamp
+                # `changed` and leave it there until purchasing genuinely re-confirms -
+                # there is no auto re-ack any more to make `changed_at IS NOT NULL` a
+                # truer read than the column itself, and a row later re-acknowledged
+                # keeps its old `changed_at` (history) while reading `acknowledged`
+                # again, which `changed_at IS NOT NULL` would have miscounted.
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
         # the Excel parity batch adds to the Filters popover.
@@ -1065,6 +1066,33 @@ class OrderInquiryWorklistService:
                     )
                 )
         return base
+
+    def acknowledge_scope(self, **filters) -> Tuple[List[str], int]:
+        """Every row `filter` matches, split into what a Confirm press may actually take
+        on and what it must leave alone (AC-CF-8b, S2 `PLAN-oi-confirm-per-so.md`).
+
+        Built off the SAME `_base` the list route reads, so "Select all N matching"
+        always confirms exactly the scope the worklist itself is filtered to, never a
+        client-rebuilt copy of it. Eligible is `ack_state` awaiting or changed and
+        `state` not cancelled - the same gate `acknowledge_rows` already enforces one row
+        at a time; everything else the filter matched (rejected, already acknowledged,
+        cancelled) is reported back as `skipped`, never silently dropped and never
+        silently taken on.
+        """
+        matched = [str(row_id) for (row_id,) in self._base(**filters).all()]
+        if not matched:
+            return [], 0
+        eligible = (
+            self.db.query(OrderInquiryRow.id)
+            .filter(
+                OrderInquiryRow.id.in_(matched),
+                OrderInquiryRow.ack_state.in_((ACK_AWAITING, ACK_CHANGED)),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .all()
+        )
+        eligible_ids = [str(row_id) for (row_id,) in eligible]
+        return eligible_ids, len(matched) - len(eligible_ids)
 
     def list_rows(
         self,
@@ -1914,17 +1942,12 @@ class OrderInquiryWorklistService:
         for state, count in rows:
             if state in counts:
                 counts[state] = int(count)
-        # `changed_at IS NOT NULL`, not the grouped `ack_state` above (S3, review of PR
-        # #471): a settle auto-acknowledges the instant it stamps `changed_at` (G4), so
-        # the group-by never finds a row still reading `ack_state='changed'` - the facet
-        # has to agree with the filter and the cell, both of which read this column.
-        counts[ACK_CHANGED] = int(
-            self._base(**filters)
-            .filter(OrderInquiryRow.changed_at.isnot(None))
-            .with_entities(func.count(OrderInquiryRow.id))
-            .scalar()
-            or 0
-        )
+        # The grouped `ack_state` above is trusted for `changed` too now
+        # (`PLAN-oi-confirm-per-so.md` S1): there is no auto re-ack left to leave a row
+        # reading `changed_at IS NOT NULL` while its `ack_state` says something else, and
+        # reading `changed_at` here would OVER-count a row genuinely re-acknowledged
+        # since (its `changed_at` stays as history; the facet, the filter and the cell
+        # all have to agree, and the filter and the cell both read `ack_state`).
         # The default view's own count (R3), summed from the two states rather than
         # queried again: a second query could disagree with the chip beside it.
         counts[ACK_TO_CONFIRM] = sum(

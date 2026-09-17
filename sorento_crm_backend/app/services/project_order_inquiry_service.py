@@ -821,11 +821,15 @@ class ProjectOrderInquiryService:
             # instruction (two still-owed rows, or a lone placed row carrying no link at
             # all), and those fall through to the netting below exactly as they always
             # did: the drafted rows stand and only the outstanding remainder is raised.
-            # `ack_state` is never a signal here any more (G4, S1) - every row is born
-            # acknowledged. `_cascade_only` is the fact that used to hide behind it: a
-            # row nobody has MANUALLY linked is still the cascade's own guess, and
-            # settling it in place costs nobody a decision they made. Batched (S6): one
-            # grouped load for this line's own rows rather than one query per row.
+            # `ack_state` is not the signal here, even though a row is born AWAITING
+            # again (`PLAN-oi-confirm-per-so.md` S1): linking never waits for confirm
+            # (raise, Link now and the worklist's own auto-place all cascade an awaiting
+            # row too), so an unread row can still hold a MANUAL link, and a confirmed
+            # one can still hold nothing but the cascade's own guess. `_cascade_only`
+            # reads the fact underneath that either way: a row nobody has manually linked
+            # is still the cascade's own guess, and settling it in place costs nobody a
+            # decision they made. Batched (S6): one grouped load for this line's own rows
+            # rather than one query per row.
             drafted_links = self._links_by_row([str(row.id) for row in rows])
             drafted = [
                 row
@@ -1020,11 +1024,13 @@ class ProjectOrderInquiryService:
                     note=message,
                     supply_decision_id=decision.id,
                     state=INQUIRY_RAISED,
-                    # Born acknowledged (G4): nobody manually confirms an exception
-                    # row any more than they confirm a Buy.
-                    ack_state=ACK_ACKNOWLEDGED,
-                    acknowledged_by=actor_user_id,
-                    acknowledged_at=datetime.utcnow(),
+                    # Born AWAITING (S1, `PLAN-oi-confirm-per-so.md`): an exception row
+                    # is still purchasing's to confirm like any other raised instruction -
+                    # the G4 exemption that let it skip the Confirm press is retired with
+                    # everything else G4 did.
+                    ack_state=ACK_AWAITING,
+                    acknowledged_by=None,
+                    acknowledged_at=None,
                 )
                 self.db.add(cancel_balance_row)
                 self._record_handover(
@@ -1102,17 +1108,26 @@ class ProjectOrderInquiryService:
     ) -> Tuple[str, Optional[str], Optional[datetime], Optional[datetime]]:
         """What the row about to be raised says about the handshake.
 
-        Three answers, and the middle one is the whole point: nobody had read this line
-        before, so it is born ACKNOWLEDGED - system-attributed, or the confirming actor's,
-        if there is one (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1); this confirmation
-        is only CARRYING the line, so its row says exactly what the row it replaces said;
-        this confirmation is CHANGING a line purchasing had read, so the replacement stamps
-        `changed` from today and is immediately re-acknowledged too - no manual confirm
-        exists anywhere any more.
+        G4 reversed (S1, `PLAN-oi-confirm-per-so.md`, owner ruling 17 Sep 2026): purchasing's
+        own Confirm press is back, so the manual step G4 retired a row never sits on any more.
+        Three answers: nobody had read this line before (`prior` is None - either no row
+        existed, or the live one purchasing was holding was never taken on), so it is born
+        AWAITING, with no acknowledgement stamp for a Confirm press to still take on; this
+        confirmation is only CARRYING the line, so its row says exactly what the row it
+        replaces said, whichever state that is; this confirmation is CHANGING a line
+        purchasing HAD acknowledged (`prior` can only be non-None and reach this branch when
+        it is, since `_live_handshake` only ever returns an ACKNOWLEDGED or CHANGED row), so
+        the replacement stamps `changed` from today - purchasing's prior stamp travels
+        UNTOUCHED, because R2 (the owner, 17 Sep) is a change coming back to them to confirm
+        again, never a second confirm nobody pressed.
+
+        `actor_user_id` is kept on the signature for callers, but no branch below attributes
+        anything to it any more: a born row has nobody's name on it yet, and a changed row
+        keeps the buyer's own prior stamp, never the CS actor who triggered the change.
         """
         now = datetime.utcnow()
         if prior is None:
-            return ACK_ACKNOWLEDGED, actor_user_id, now, None
+            return ACK_AWAITING, None, None, None
         if carried:
             return (
                 prior.ack_state,
@@ -1121,9 +1136,9 @@ class ProjectOrderInquiryService:
                 prior.changed_at,
             )
         return (
-            ACK_ACKNOWLEDGED,
-            actor_user_id,
-            now,
+            ACK_CHANGED,
+            prior.acknowledged_by,
+            prior.acknowledged_at,
             now,
         )
 
@@ -1266,11 +1281,11 @@ class ProjectOrderInquiryService:
 
         # Did the CONFIRMATION actually restate this line, or is it only riding along
         # because a different line in the same order was named (review of PR #471, B2)?
-        # Every row is born acknowledged now (G4), so `drafted` above reaches EVERY
-        # still-cascaded row of EVERY confirm, including a line nobody touched - and this
-        # function used to stamp `changed_at`/`previous_qty`/re-acknowledge and fire the
-        # automation on every one of them regardless, rendering a false "Was 10 -> Now
-        # 10" on a line that never moved. `required_date` is compared only when the
+        # `drafted` above reaches every still-cascaded row of every confirm, including a
+        # line nobody touched, whatever its handshake reads (S1, `PLAN-oi-confirm-per-so.md`)
+        # - so this still has to tell a genuine restatement from a carry, or it would stamp
+        # `changed_at`/`previous_qty` and fire the automation on a line that never moved,
+        # rendering a false "Was 10 -> Now 10". `required_date` is compared only when the
         # confirmation states one - an entry that names none is not proposing a date
         # change, whatever the row's own date already reads.
         required_date = entry.get("required_date")
@@ -1296,19 +1311,19 @@ class ProjectOrderInquiryService:
             row.previous_qty = previous_qty
             row.previous_delivery_date = previous_date
             # The handshake, if there is one to speak of (`PLAN-scm-oi-handshake.md`
-            # section 3, revised by G4). A row purchasing had already taken on has just
-            # been amended under them, so it stamps CHANGED - `changed_at` plus the
-            # previous_qty/date above ARE the audit the Was/Now table reads - and is
-            # immediately re-acknowledged: there is no manual confirm anywhere any more,
-            # so leaving it sitting on `changed` would invent a step nobody takes. A row
-            # still AWAITING is left alone and says nothing: CS is free to change what
-            # nobody has read, and marking it would ask purchasing to re-read something
-            # they never read.
+            # section 3, REVERSED again by `PLAN-oi-confirm-per-so.md` S1/R2, owner ruling
+            # 17 Sep 2026: "change is inevitable ... need to change that back to be To
+            # confirm"). A row purchasing had already taken on has just been amended under
+            # them, so it stamps CHANGED - `changed_at` plus the previous_qty/date above ARE
+            # the audit the Was/Now table reads - and goes BACK to To confirm rather than
+            # auto-acknowledging: purchasing's own PRIOR stamp (who, when) travels untouched,
+            # because this is the change coming back to them to confirm again, not a second
+            # confirm nobody pressed. A row still AWAITING is left alone and says nothing: CS
+            # is free to change what nobody has read, and marking it would ask purchasing to
+            # re-read something they never read.
             if row.ack_state in (ACK_ACKNOWLEDGED, ACK_CHANGED):
                 row.changed_at = datetime.utcnow()
-                row.ack_state = ACK_ACKNOWLEDGED
-                row.acknowledged_by = actor_user_id
-                row.acknowledged_at = row.changed_at
+                row.ack_state = ACK_CHANGED
         self._retire_settled_cancel_balance(rows, decision, actor_user_id=actor_user_id)
         self.refresh_link_state([row])
         self.db.flush()
@@ -2217,11 +2232,12 @@ class ProjectOrderInquiryService:
                 covered_by=None,
                 supply_decision_id=decision.id,
                 state=INQUIRY_RAISED,
-                # Born acknowledged (G4): the hole a borrow left is purchasing's work
-                # the moment it exists, not something somebody has to say yes to first.
-                ack_state=ACK_ACKNOWLEDGED,
-                acknowledged_by=actor_user_id,
-                acknowledged_at=datetime.utcnow(),
+                # Born AWAITING (S1, `PLAN-oi-confirm-per-so.md`): the hole a borrow left
+                # is purchasing's work the moment it exists, but it is still THEIRS to
+                # confirm - the G4 exemption that skipped the press is retired.
+                ack_state=ACK_AWAITING,
+                acknowledged_by=None,
+                acknowledged_at=None,
             )
             self.db.add(shortfall_row)
             self._record_handover(shortfall_row, kind="raised", actor_user_id=actor_user_id)
@@ -2250,8 +2266,11 @@ class ProjectOrderInquiryService:
         purchase-order quantity for an instruction that no longer exists. The links come
         down with the row, because they were drafts and the document is owed to whoever
         needs it next. A row a PERSON has manually linked is left exactly where it is:
-        purchasing bought it (`_only_cascade_links`, S1 - `ack_state` stopped being able to
-        say this the moment a row was born acknowledged).
+        purchasing bought it (`_only_cascade_links`, `PLAN-scm-oi-draft-links.md` S1 -
+        `ack_state` is never this proxy, born awaiting again or not
+        (`PLAN-oi-confirm-per-so.md` S1): linking never waits for confirm, so an unread
+        row can hold a manual link just as a confirmed one can hold only the cascade's
+        own guess).
         """
         covered = {str(entry["line"].id) for entry in buy_lines}
         stale = (
@@ -2449,7 +2468,6 @@ class ProjectOrderInquiryService:
         self.db.add(inquiry)
         self.db.flush()
 
-        now = datetime.utcnow()
         written: List[OrderInquiryRow] = []
         for plan in plans:
             plan_row = OrderInquiryRow(
@@ -2465,12 +2483,12 @@ class ProjectOrderInquiryService:
                 covered_by=plan.covered_by,
                 note=plan.note,
                 state=INQUIRY_RAISED,
-                # Born acknowledged (G4): an amendment's own instruction reads the
-                # same as any other - system-attributed, or the actor who published
-                # it, when there is one.
-                ack_state=ACK_ACKNOWLEDGED,
-                acknowledged_by=actor_user_id,
-                acknowledged_at=now,
+                # Born AWAITING (S1, `PLAN-oi-confirm-per-so.md`): an amendment's own
+                # instruction reads the same as any other raised row now - the G4
+                # exemption that read it in already acknowledged is retired.
+                ack_state=ACK_AWAITING,
+                acknowledged_by=None,
+                acknowledged_at=None,
             )
             self.db.add(plan_row)
             written.append(plan_row)
@@ -3665,25 +3683,26 @@ class ProjectOrderInquiryService:
         link_up_to: Optional[date] = None,
         link_horizon: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Purchasing takes these instructions on, and the cascade runs for exactly them.
+        """Purchasing's own Confirm press: takes these instructions on, and the cascade
+        runs for exactly them.
 
-        `PLAN-scm-oi-handshake.md` section 3 (captain, 27 Aug 2026). Two things happen in
-        one press and they are one decision: the row becomes purchasing's work, and the
-        documents that can cover it are tied to it. Before this the tie happened at CS's
-        confirm, which meant a buyer found their own purchase orders already dealt out to
-        instructions they had never read.
+        `PLAN-scm-oi-handshake.md` section 3 (captain, 27 Aug 2026), reinstated as the
+        page's own primary press by `PLAN-oi-confirm-per-so.md` S1/S2 (owner ruling 17 Sep
+        2026), which retires G4's "born acknowledged, no manual confirm anywhere" reading.
+        Two things happen in one press and they are one decision: the row becomes
+        purchasing's work, and the documents that can cover it are tied to it if they were
+        not already - most of them are, since raising and every other cascade door already
+        run `include_awaiting=True` and never waited for this press (AC-CF-4). What Confirm
+        adds is the handshake itself: the row leaves To confirm, is stamped with who and
+        when, and only a confirmed SO's demand counts for reorder planning (S5).
 
-        Kept as a route rather than removed once every row was born acknowledged (G4,
-        `PLAN-scm-reorder-oi-feedback-1sep.md` S1): there is no FE press onto it any more,
-        but a caller this build does not control (a script, a future integration) may still
-        reach for the one API that both takes a row on AND runs its cascade. The guard is
-        TOLERANT of that world rather than refusing it: an already-acknowledged row is left
-        exactly as it is - not re-stamped with a fresh time and name, because that would
-        move the record of who actually read it - and still joins the cascade below, so
-        calling this on a row purchasing (or the system) already acknowledged is a no-op on
-        the handshake and a real re-run of Link. Only a REJECTED row is refused: taking it
-        back is CS re-deciding the line, not purchasing changing its mind about a row that
-        no longer counts.
+        The guard stays TOLERANT of a row already acknowledged rather than refusing it: it
+        is left exactly as it is - not re-stamped with a fresh time and name, because that
+        would move the record of who actually confirmed it - and still joins the cascade
+        below, so a repeated press (a double click, two tabs, "Select all N matching"
+        catching a row somebody else just confirmed) is a no-op on the handshake and a real
+        re-run of Link. Only a REJECTED row is refused: taking it back is CS re-deciding the
+        line, not purchasing changing its mind about a row that no longer counts.
 
         The row's SUPPLY state is refused on too, and it is a different question from the
         handshake: a CANCELLED row was called off and an ACTIONED one was answered
@@ -3720,9 +3739,10 @@ class ProjectOrderInquiryService:
         now = datetime.utcnow()
         transitioned = 0
         for row in rows:
-            # Already acknowledged (the ordinary case, born-ack world): left untouched
-            # rather than re-stamped, so a re-run of this call cannot move who took the
-            # row on or when.
+            # Already acknowledged: left untouched rather than re-stamped, so a repeated
+            # press cannot move who took the row on or when. Both AWAITING (never
+            # confirmed) and CHANGED (confirmed once, since amended) transition here -
+            # Confirm is the one press that takes either kind of To-confirm row on.
             if row.ack_state == ACK_ACKNOWLEDGED:
                 continue
             row.ack_state = ACK_ACKNOWLEDGED
@@ -3743,9 +3763,9 @@ class ProjectOrderInquiryService:
         )
         return {
             # Rows actually TRANSITIONED (nit, review of PR #471), not every row named:
-            # the guard is tolerant of an already-acknowledged row now (G4), and counting
-            # it as "acknowledged" here would tell a caller it did something to a row
-            # this press left untouched.
+            # the guard is tolerant of an already-acknowledged row, and counting it as
+            # "acknowledged" here would tell a caller it did something to a row this
+            # press left untouched.
             "acknowledged": transitioned,
             "linked_rows": placed["placed_rows"],
             "links": placed["allocations"],
@@ -3753,6 +3773,49 @@ class ProjectOrderInquiryService:
             "link_up_to": placed["link_up_to"],
             "link_horizon": placed["link_horizon"],
         }
+
+    def acknowledge_eligible_rows(
+        self,
+        row_ids: Sequence[str],
+        *,
+        actor_user_id: str,
+        link_up_to: Optional[date] = None,
+        link_horizon: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Like `acknowledge_rows`, but tolerant of an EMPTY scope (AC-CF-8b, S2
+        `PLAN-oi-confirm-per-so.md`): `OrderInquiryWorklistService.acknowledge_scope`
+        already excludes every rejected, cancelled or already-acknowledged row a `filter`
+        matched before this is ever called, so what reaches here is never refused by
+        `acknowledge_rows`'s own guards - it can only be EMPTY, when a filter matched
+        nothing eligible at all. `acknowledge_rows` itself still refuses an empty list
+        (`_rows_or_404`'s "Name at least one row"), which is right for a caller naming
+        `row_ids` by hand but wrong for "Select all N matching" finding zero: the caller
+        still deserves the horizon this press would have run under, not a 422 for a list
+        it built itself out of rows already excluded.
+        """
+        if not row_ids:
+            placed = self.auto_place_for_products(
+                None,
+                actor_user_id=actor_user_id,
+                trigger="acknowledge",
+                row_ids=[],
+                link_up_to=link_up_to,
+                link_horizon=link_horizon,
+            )
+            return {
+                "acknowledged": 0,
+                "linked_rows": placed["placed_rows"],
+                "links": placed["allocations"],
+                "after_horizon": placed["after_horizon"],
+                "link_up_to": placed["link_up_to"],
+                "link_horizon": placed["link_horizon"],
+            }
+        return self.acknowledge_rows(
+            row_ids,
+            actor_user_id=actor_user_id,
+            link_up_to=link_up_to,
+            link_horizon=link_horizon,
+        )
 
     def reject_row(
         self, row_id: str, *, reason: str, actor_user_id: str
@@ -4420,11 +4483,13 @@ class ProjectOrderInquiryService:
         `ack_state` used to be this proxy (B2/B3, `PLAN-scm-oi-draft-links.md`): a row
         nobody had acknowledged held only links the system found on its own, so settling
         it in place or retiring it with a dropped line cost nobody a decision they had
-        made. Since a row is born acknowledged now (G4, `PLAN-scm-reorder-oi-feedback-
-        1sep.md` S1) that reading is gone - every row reads `acknowledged` whether or not
-        a person has ever looked at it - and `OrderInquiryLink.auto` is what was always
-        the TRUE fact underneath it: written by the cascade rather than by a person
-        clicking (its own column comment).
+        made. That reading broke the moment linking stopped waiting for confirm at all
+        (raise, Link now and the worklist's own auto-place cascade an awaiting row too,
+        `include_awaiting=True`) - a row still AWAITING today (`PLAN-oi-confirm-per-so.md`
+        S1 born it that way again) can hold a MANUAL link just as easily as a confirmed
+        one can hold only the cascade's own guess, so `ack_state` was never safe to read
+        either way. `OrderInquiryLink.auto` is the TRUE fact underneath it: written by
+        the cascade rather than by a person clicking (its own column comment).
 
         A LINKLESS row is NOT cascade-only (review of PR #471, S1): `all()` over an empty
         list is vacuously True, which read a row purchasing placed through a path that
@@ -6337,9 +6402,10 @@ class ProjectOrderInquiryService:
             # holding nothing (B1, review round 28 Aug). Held per ROW rather than over the
             # whole scope, because every guard below is a reason to leave a row exactly as
             # it is - and a scope-wide unplace had already taken the answer away by then.
-            # `_cascade_only`, not `ack_state` (S1): a row is born acknowledged now, so
-            # the stamp cannot tell a draft from a promise any more - whether a PERSON
-            # has ever manually linked the row is the fact underneath it that survives.
+            # `_cascade_only`, not `ack_state`: linking never waits for confirm, so a row
+            # born AWAITING (`PLAN-oi-confirm-per-so.md` S1) is no better a signal of a
+            # draft than a row born acknowledged used to be - whether a PERSON has ever
+            # manually linked the row is the fact underneath it that survives either way.
             row_links = redeal_links.get(str(row.id), [])
             drafts = row_links if redeal_drafts and self._cascade_only(row_links) else []
             need = _dec(row.qty) if drafts else self._unlinked_need(row)
@@ -6418,11 +6484,12 @@ class ProjectOrderInquiryService:
         """Take the DRAFT links off these rows so the walk can deal them again (R2).
 
         A draft is a link nobody has manually made - there is no state on the link itself
-        (R1) - so the test is `_only_cascade_links`, not the row's own `ack_state` (S1: a
-        row is born acknowledged, so that stamp stopped being able to tell a draft from a
-        promise). A row carrying so much as one MANUAL link is skipped whole: that link is
-        a promise purchasing made, and an automatic pass that moved it would move a
-        commitment nobody was asked about.
+        (R1) - so the test is `_only_cascade_links`, not the row's own `ack_state`: linking
+        never waits for confirm (`include_awaiting=True` on every cascade door), so
+        whichever way a row is born (`PLAN-oi-confirm-per-so.md` S1) that stamp still
+        cannot tell a draft from a promise. A row carrying so much as one MANUAL link is
+        skipped whole: that link is a promise purchasing made, and an automatic pass that
+        moved it would move a commitment nobody was asked about.
 
         WHY, on the row's note: `_remove_links` already writes "Unlinked from X", which
         says what happened and not why. The trigger says why, so a buyer reading a row that
