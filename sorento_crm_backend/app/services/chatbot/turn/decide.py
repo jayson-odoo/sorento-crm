@@ -380,6 +380,23 @@ def domain_in_message(verdict: dict[str, Any]) -> bool | None:
     return value if isinstance(value, bool) else None
 
 
+def backward_reference(verdict: dict[str, Any]) -> bool:
+    """Does THIS message point at something OUTSIDE it with a pronoun (R-b, owner hand
+    pass 6, 17 Sep 2026)?
+
+    The parser's own `anaphora.backward_reference` flag, read as-is - "did golden win
+    deliver these?" names a customer and points "these" at the products a customer
+    named on an earlier turn; "any outstanding quantity for this customer" points
+    "this customer" at one already carried. Neither pronoun is an entity (the prompt's
+    own PRONOUN REFERENCE rule), so the message's own `entities` never re-state what it
+    stands for - which is exactly why `_subject_reading`'s table cannot be trusted to
+    keep it on its own: a customer named beside a bare pronoun still reads as
+    `domain_in_message: true` with entities, the table's own NEW_ASK row.
+    """
+    anaphora = verdict.get("anaphora")
+    return isinstance(anaphora, dict) and anaphora.get("backward_reference") is True
+
+
 def _subject_reading(
     verdict: dict[str, Any],
     focus: Focus,
@@ -428,6 +445,22 @@ def _subject_reading(
     # rules below, unchanged, so the replay corpus still measures what it measured.
     in_message = domain_in_message(verdict)
     if in_message is True and entities:
+        if backward_reference(verdict):
+            # R-b (owner hand pass 6, 17 Sep 2026): a pronoun this message carries
+            # points at something the message itself never names, so the NEW_ASK
+            # row's own eviction (drop every kind this turn did not name) would drop
+            # exactly the thing the pronoun stands for. Read as a REFINE instead -
+            # combine across kinds, replace only the kind this message DID name -
+            # which keeps the carried subject on every other kind, the same as a
+            # message with `domain_in_message: false` would.
+            return Decision(
+                REFINE,
+                "domain_in_message_anaphora",
+                entities=named,
+                window=window,
+                scope=_stored_scope(pending),
+                **facts,
+            )
         return Decision(NEW_ASK, "domain_in_message", entities=named, window=window, **facts)
     if in_message is False and entities:
         return Decision(

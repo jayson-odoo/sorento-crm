@@ -1003,6 +1003,7 @@ def make_tool_runner(
             trace=turn_trace,
             db=db,
         )
+        envelope_unplaced = unplaced
         if _answered_unfiltered(fragment, entities, unplaced):
             # Every subject this fetch had is a token the resolver could not place, so
             # there was nothing to filter by - and a tool called with no filter answers
@@ -1024,10 +1025,23 @@ def make_tool_runner(
             # neighbour was already substituted above, before the call, and never
             # reaches here unfiltered) - offered as a roster instead of a flat miss.
             # "srttwc286" only ever had the one, so this is the AMBIGUOUS case R-c
-            # also names.
+            # also names. The roster's own text replaces the bare miss sentence (unlike
+            # outstanding/forms, whose own lane text is already a numbered list this
+            # fetch has none of), and the token comes OUT of this envelope's own
+            # `unplaced` - it is answered with a real roster now, not a word nobody
+            # could place (the "I could not find X" sentence is for the latter only).
             ask = _alternatives_ask(entities, alts_by_token)
             if ask is not None:
                 fragment["fetch"]["alternatives_ask"] = ask
+                fragment["fetch"]["response"] = _alternatives_ask_text(
+                    str(ask["kind"]).removesuffix("_pick"), ask["last_result_set"]
+                )
+                asked_codes = {
+                    _code_of(e) for e in entities if alts_by_token.get(_code_of(e))
+                }
+                envelope_unplaced = {
+                    k: v for k, v in unplaced.items() if k not in asked_codes
+                }
         return envelope_of(
             fragment,
             spec,
@@ -1042,7 +1056,7 @@ def make_tool_runner(
                 else None
             ),
             ran_with=lane_out,
-            unplaced=unplaced,
+            unplaced=envelope_unplaced,
         )
 
     return runner
@@ -1387,6 +1401,24 @@ def _alternatives_ask(
         ]
         return {"kind": f"{hint}_pick", "last_result_set": rows, "filters": {}}
     return None
+
+
+def _alternatives_ask_text(hint: str, rows: list[dict[str, Any]]) -> str:
+    """The roster's own printed text (R-c).
+
+    `outstanding_ask`/`forms_ask` never need this: their OWN lane already rendered a
+    numbered list as `response` (a report's detail lists, a forms browse), and
+    `_lane_question` only lifts the SAME rows into the structured pending. This fetch
+    has no such text - the response it is replacing is a flat miss - so the roster's
+    header and numbering are built here, the same wording `turn/compose.py`'s
+    `_ASK_HEADERS` uses for a `{kind}_pick`.
+    """
+    lines = [f"Which {hint} do you mean?"]
+    for row in rows:
+        label = row.get("label")
+        if label is not None:
+            lines.append(f"{row.get('idx')}. {label}")
+    return "\n".join(lines)
 
 
 def _answered_unfiltered(

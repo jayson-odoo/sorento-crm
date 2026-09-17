@@ -281,7 +281,27 @@ def decide(
                 None,
                 note="ambiguous_filter_asks",
             )
-        if policy_value in _ROSTER_POLICIES and kind != "tier":
+        # R-a (owner hand pass 6, 17 Sep 2026): a `narrow_to_code` domain re-rosters only
+        # for codes THIS resolve is not already fully settled on - `must_narrow_one` and
+        # `narrow_by_tier` keep re-rostering on any ambiguity regardless (unchanged).
+        # The parser echoes the carried subject back as its own `entities` every turn it
+        # continues the domain (`current_message: false` - the prompt's own "CONTINUE
+        # it" rule), so `resolved_candidates` comes back non-empty on a plain domain
+        # switch too, re-resolving the SAME already-settled family rather than naming a
+        # new one. `typed_now` (above) is NOT the right signal for this - it reads
+        # `current_message` off the FOCUS carry, and a low-confidence entity ("wc286")
+        # never reaches the focus at all (`_focus_rules` only writes confident ones), so
+        # gating on it silently dropped a genuinely fresh, ambiguous token's own roster.
+        # Comparing CODES instead: if every code the resolver just matched is already a
+        # settled (uuid'd) row on the carry, nothing new is on the table, and the fetch
+        # runs the settled family rather than asking about it again - "i want stock,
+        # incoming and PO" over a settled ten-variant carry rostered the same ten codes
+        # back at the customer who had already settled them.
+        settled_codes = {_code_of(c).casefold() for c in candidates if c.get("uuid")} - {""}
+        resolved_codes = {_code_of(c).casefold() for c in resolved_candidates} - {""}
+        already_settled = bool(resolved_codes) and resolved_codes <= settled_codes
+        reroster_on_switch = policy_value in ("must_narrow_one", "narrow_by_tier")
+        if policy_value in _ROSTER_POLICIES and kind != "tier" and (reroster_on_switch or not already_settled):
             if _choices(resolved_candidates, family_grouping) <= 1:
                 # A code that resolves to exactly one thing IS narrowed to a code -
                 # there is nothing left to ask. One FAMILY is one thing too (item 1):
@@ -292,7 +312,12 @@ def decide(
             return NarrowOutcome(
                 f"{kind}_pick", _options(resolved_candidates, kind, family_grouping), [], None
             )
-        candidates = list(resolved_candidates)
+        if policy_value not in _ROSTER_POLICIES or kind == "tier":
+            candidates = list(resolved_candidates)
+        # else: `narrow_to_code` and every resolved code is already settled on the
+        # carry - `candidates` stays the CARRIED focus rows assigned above, not the
+        # re-resolved echo, so the `settled_carry` tail below runs the fetch for the
+        # family already on the focus.
 
     if policy_value == "list_all":
         return NarrowOutcome(None, [], candidates, None)
