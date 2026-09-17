@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -83,6 +83,7 @@ from app.services.product_companion_service import (
 )
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
+    arrives_outside_window,
     derived_spo_open_clauses,
     project_customer_label,
 )
@@ -1209,7 +1210,7 @@ class OrderInquiryWorklistService:
                 lead_days = lead_times.get(product_id)
                 if lead_days is None:
                     lead_days = DEFAULT_LEAD_TIME_DAYS
-                if expected_date > delivery_date - timedelta(days=lead_days):
+                if not arrives_outside_window(expected_date, delivery_date, lead_days):
                     continue
                 triggered.append((row_id, link, product_id))
 

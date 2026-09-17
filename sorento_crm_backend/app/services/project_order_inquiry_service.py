@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -503,6 +503,22 @@ def _as_date(value: Any) -> Optional[date]:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def arrives_outside_window(
+    expected_date: Optional[date], delivery_date: Optional[date], lead_days: int
+) -> bool:
+    """True when a document's promised arrival is a full lead time (or more) BEFORE the
+    row's delivery date - the stock would sit for a whole buying cycle before this row
+    needs it, so a nearer row should have it. Either date missing -> False.
+
+    The ONE predicate both the worklist's reallocate/unlink pill (`_attach_link_
+    suggestions`) and the cascade (`auto_place_for_products`) read, so the two can never
+    drift apart by another route (`PLAN-oi-cascade-skip-early-arrival.md`).
+    """
+    if expected_date is None or delivery_date is None:
+        return False
+    return expected_date <= delivery_date - timedelta(days=lead_days)
 
 
 #: The location tiers a link candidate is ranked by (Q5, ruled 25 August 2026). NEVER a
