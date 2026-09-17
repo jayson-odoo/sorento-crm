@@ -1,6 +1,6 @@
 # PLAN: planning board refuses a plain Save or Reject on an already-confirmed line, and catches up after a lost Confirm
 
-Status: building (owner go 17 Sep 2026, "backend needs to be more strict")
+Status: implemented, PR #989 awaiting owner go
 Domain: scm / fulfilment planning board
 Branch: `fix/board-draft-on-confirmed-line` (worktree `sorento_crm-board-draft-covered`, test DB `sorento_sodl_ci`)
 UAC: `board-draft-on-confirmed-line-acceptance-criteria.md`

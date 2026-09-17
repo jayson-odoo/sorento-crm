@@ -612,4 +612,66 @@ describe('a covered line stays covered once the batch has been applied (R3, revi
 
     expect(screen.getByRole('button', { name: 'Save decision' })).toBeDisabled();
   });
+
+  /**
+   * AC-F7: the same case as AC-F6, but the batch resolves AFTER the board's own contributions
+   * are already on screen - `usePlanningChangeBatchesByIds` is its own query, so a real page
+   * almost always renders the board before the batch (a second, slower fetch) lands. The
+   * pre-mark effect must not seed a `Saved` verdict for a line that is COVERED once the batch
+   * finally arrives, whatever order the two reads settle in.
+   */
+  it('AC-F7: the pill still reads Confirmed when the batch resolves AFTER the board contributions are already on screen', async () => {
+    getPlanningBoard.mockResolvedValue(
+      buildBoard(
+        [
+          demand({
+            decision: {
+              revision_no: 1,
+              confirmed_at: '2026-08-18T02:00:00',
+              timely_spo_qty: '0',
+              reserve: [{ warehouse_id: 'wh-BRW-IB', location: 'BRW-IB', qty: '25' }],
+              borrow: [],
+              buy_qty: '0',
+            },
+          }),
+        ],
+        { today: TODAY, freeStock: {}, granularity: 'week' },
+      ),
+    );
+    let resolveBatch: (
+      value: typeof MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+    ) => void = () => {};
+    getPlanningChangeBatch.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveBatch = resolve;
+        }),
+    );
+
+    renderPanel();
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    // The board is on screen with no batch loaded yet; only now does the batch land.
+    resolveBatch({
+      ...MOCK_PLANNING_CHANGE_BATCH_SO_CHANGE,
+      applied_at: '2026-08-19T10:00:00Z',
+      applied_by_name: 'Cyndi Tee',
+    });
+
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /SRTWCX7405-RL-S-PJ, .* across 1 sales order/,
+      }),
+    );
+    const linesTab = await screen.findByRole('tab', {
+      name: /^Contributing lines/,
+    });
+    fireEvent.mouseDown(linesTab);
+    fireEvent.click(linesTab);
+
+    const key = 'so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17';
+    await waitFor(() => {
+      expect(screen.getByTestId(`decision-pill-${key}`)).toHaveTextContent('Confirmed');
+    });
+  });
 });
