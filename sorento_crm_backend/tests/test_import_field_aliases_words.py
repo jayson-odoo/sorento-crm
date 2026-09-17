@@ -14,7 +14,9 @@ already covers the single-head half.
 """
 from __future__ import annotations
 
+import importlib.util
 import uuid
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -32,6 +34,21 @@ VIEW_PERMISSION = "system.import_field_aliases.view"
 EDIT_PERMISSION = "system.import_field_aliases.edit"
 DOC_TYPE = "supplier_inventory_word"
 MARKER = "ZZIFAW"
+
+#: `sorento_crm_backend/alembic/versions/` - CI's database is built by `create_all` + stamp
+#: (`scripts/bootstrap_env.py`), which never runs a migration BODY, so the D7 seed rows this
+#: migration inserts in `upgrade()` do not exist there. Loading the migration module the way
+#: `tests/scm/test_packing_list_kailu.py`'s own `_load` helper does and calling its seed
+#: function directly runs the SAME insert path production/`bootstrap_env` uses, rather than
+#: retyping the 15 pairs a second time somewhere they can drift from the migration.
+_VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+
+
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(name, _VERSIONS / f"{name}.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _u() -> str:
@@ -209,6 +226,14 @@ def test_a_supplier_scoped_row_duplicating_a_shared_pair_is_409(scm_app):
 
 def test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared():
     with pg_session() as db:
+        # CI's database never runs a migration BODY (create_all + stamp), so the seed rows
+        # are not already on file there the way they are on a hand-migrated dev copy - seed
+        # them here, through the migration's own function, idempotent against a database
+        # where they already exist.
+        migration = _load("ifa_supplier_word_col")
+        migration.seed_supplier_word_rows(db.connection())
+        db.flush()
+
         rows = db.execute(
             text(
                 "SELECT field, alias FROM import_field_alias "

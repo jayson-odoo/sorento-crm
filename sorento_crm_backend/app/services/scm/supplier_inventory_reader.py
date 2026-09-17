@@ -194,12 +194,19 @@ def read_workbook(
                 anchor = merges.get((offset, pos + 1))
                 if anchor is not None:
                     anchor_row, anchor_col = anchor
+                    # A HORIZONTAL merge - the anchor sits in a different column - is a
+                    # label spanning columns (a totals row's "合计："), never a per-column
+                    # value: our own container-request export merges its total row's label
+                    # across every column, and without this guard that label got copied
+                    # into 型号 as if it were a model number repeated down a family.
+                    # Vertical only: the anchor stays in THIS column, further up the sheet.
+                    #
                     # An anchor sitting ON or ABOVE the header row is not a data value at
                     # all - it is the column's own caption (品名 merged over its own header
                     # cells, or a title row spanning the sheet). `header_idx` is 0-based into
                     # `all_rows`, so `header_idx + 1` is the header's 1-based sheet row; only
                     # an anchor BELOW that is a model's own text.
-                    if anchor_row > header_idx + 1:
+                    if anchor_col == pos + 1 and anchor_row > header_idx + 1:
                         values[f] = all_rows[anchor_row - 1][anchor_col - 1]
         code = _text(values.get("item_code"))
         if code is None:

@@ -257,3 +257,69 @@ def test_ac_m8_the_service_writes_the_filled_through_text_for_covered_rows():
         queue = {row["item_code"]: row for row in unmatched_for_supplier(db, supplier_id)}
         assert queue["MWB247"]["product_name"] == "盆小孔"
         assert queue["CGB247"]["product_name"] == "盆小孔"
+
+
+# AC-M9 (`PLAN-stock-list-bare-model-codes.md` D8/item_code fill-through regression, CI
+# red on #1000-adjacent): a container-request export's TOTAL row merges its `合计：` label
+# HORIZONTALLY - anchored in 序号 (unmapped), spanning into 型号 (and further, in the real
+# file, into 商标/品名) - with SUM totals sitting in the quantity cells. `item_code` joining
+# `_MERGE_FILL_FIELDS` (D8) made the reader copy that label sideways out of 序号 into 型号,
+# so a totals line was returned as a bogus stock row reading model number `合计：`. Every
+# existing AC-M1-M8 fixture merges VERTICALLY - one family sharing one column's text down
+# several rows - so none of them exercised a horizontal merge at all.
+def total_row_workbook() -> bytes:
+    rows = [
+        _TITLE,
+        _HEADER,
+        [1, "SRTWB247", "S", "SPEC-A", "盆小孔", 2, 2, 0.03, "REMARK-A"],
+        # The anchor (row 4, col A) carries the label; B/C/E (型号/商标/品名) are covered by
+        # the SAME horizontal merge and read blank from the sheet - only F/G (quantities)
+        # are the totals themselves, never merged at all (quantities are never merge-fill
+        # fields, D8).
+        ["合计：", None, None, None, None, 100, 50, None, None],
+    ]
+    merges = ["A4:E4"]
+    return merged_workbook(rows, merges)
+
+
+def test_ac_m9_a_horizontally_merged_total_label_does_not_become_a_row():
+    out = read_workbook(total_row_workbook(), resolver())
+
+    # Only the one real stock line (row 3) is a row; the total line is a blank model number
+    # carrying stock, which is the SAME "no model number on a row with stock" complaint an
+    # ordinary blank-model row already raises - never a row of its own reading `合计：`.
+    assert [r.item_code for r in out.rows] == ["SRTWB247"]
+    assert any("no model number" in p.reason for p in out.problems)
+
+
+def test_ac_m9_a_horizontally_merged_total_label_fills_no_field_from_another_column():
+    out = read_workbook(total_row_workbook(), resolver())
+
+    # Nothing on file anywhere reads the label text - not as an item_code (covered above),
+    # and not as a product_name or brand either (D8's guard is the same one for all three
+    # merge-fill text fields, not an item_code-only special case).
+    for row in out.rows:
+        assert row.item_code != "合计："
+        assert row.product_name != "合计："
+        assert row.brand != "合计："
+
+
+def vertical_model_merge_workbook() -> bytes:
+    """The AC-R1 case, restated in this file's own vocabulary: a VERTICAL merge - one
+    model's own 型号 shared down several rows - must keep filling exactly as before. The
+    same-column guard AC-M9 needs must accept this shape, not merely reject the horizontal
+    one."""
+    rows = [
+        _TITLE,
+        _HEADER,
+        [1, "SRTWB247", "S", "SPEC-A", "盆小孔", 2, 2, 0.03, "REMARK-A"],
+        [2, None, "M", None, None, 12, None, None, None],
+    ]
+    merges = ["B3:B4"]
+    return merged_workbook(rows, merges)
+
+
+def test_ac_m9_a_vertically_merged_model_still_fills_through():
+    out = read_workbook(vertical_model_merge_workbook(), resolver())
+
+    assert [r.item_code for r in out.rows] == ["SRTWB247", "SRTWB247"]

@@ -67,6 +67,34 @@ _SEED = [
 ]
 
 
+def seed_supplier_word_rows(bind) -> int:
+    """The D7 seed (shared word rows). Returns rows inserted.
+
+    Idempotent (`ON CONFLICT (doc_type, field, alias) DO NOTHING`, against the triple
+    migration 311 created - see the module docstring), and pulled out to its own function
+    so `upgrade()` and `scripts/bootstrap_env.py` run the SAME code rather than two copies
+    that drift, mirroring migration 311's own `seed_import_field_aliases`. A database built
+    by `create_all` + stamp (CI, `bootstrap_env`) never executes a migration body, so a seed
+    that lives only inside `upgrade()` is invisible there - exactly the gap 311's docstring
+    names, and the reason `test_ac_w2_the_migration_seeds_exactly_the_d7_rows_shared` was
+    red on a shard whose database was built that way.
+    """
+    inserted = 0
+    for field, alias in _SEED:
+        res = bind.execute(
+            sa.text(
+                """
+                INSERT INTO import_field_alias (doc_type, field, alias, supplier_id)
+                VALUES (:d, :f, :a, NULL)
+                ON CONFLICT (doc_type, field, alias) DO NOTHING
+                """
+            ),
+            {"d": DOC_TYPE, "f": field, "a": alias},
+        )
+        inserted += res.rowcount or 0
+    return inserted
+
+
 def upgrade() -> None:
     bind = op.get_bind()
 
@@ -85,17 +113,7 @@ def upgrade() -> None:
         ondelete="CASCADE",
     )
 
-    for field, alias in _SEED:
-        bind.execute(
-            sa.text(
-                """
-                INSERT INTO import_field_alias (doc_type, field, alias, supplier_id)
-                VALUES (:d, :f, :a, NULL)
-                ON CONFLICT (doc_type, field, alias) DO NOTHING
-                """
-            ),
-            {"d": DOC_TYPE, "f": field, "a": alias},
-        )
+    seed_supplier_word_rows(bind)
 
 
 def downgrade() -> None:

@@ -468,6 +468,18 @@ def seed_scm_module_data() -> None:
     module_483 = importlib.util.module_from_spec(spec_483)
     spec_483.loader.exec_module(module_483)
 
+    # `ifa_supplier_word_col` adds the `supplier_inventory_word` doc type: the D7 word list
+    # (`SORENTO` -> `SRT`, `连体马桶` -> `WC`, ...) a bare stock-list model number composes
+    # through. Same create_all gap as every alias migration above - without the replay a
+    # bootstrapped database resolves no words at all, so every bare 型号 falls back to the
+    # raw-join key and waits in the Supplier codes picker instead of binding on the first
+    # upload.
+    spec_ifa_word = importlib.util.spec_from_file_location(
+        "_scm_seed_ifa_word", versions / "ifa_supplier_word_col.py"
+    )
+    module_ifa_word = importlib.util.module_from_spec(spec_ifa_word)
+    spec_ifa_word.loader.exec_module(module_ifa_word)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -482,6 +494,7 @@ def seed_scm_module_data() -> None:
         aliases += module_436.seed(conn)
         aliases += module_459.seed(conn)
         aliases += module_483.seed(conn)
+        aliases += module_ifa_word.seed_supplier_word_rows(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(
