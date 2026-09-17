@@ -1,6 +1,6 @@
 # Order inquiries: one header per SO, hide cancelled, Was/Now after a redirect, cascade skips used rows, raised-by per row - acceptance criteria
 
-Status: draft (owner rulings 17 Sep 2026, in chat)
+Status: contract
 Plan: `PLAN-oi-worklist-one-header.md`
 
 ## Journey

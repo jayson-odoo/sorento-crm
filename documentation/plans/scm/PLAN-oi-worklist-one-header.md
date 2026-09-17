@@ -1,6 +1,6 @@
 # PLAN - Order inquiries: one header per SO, hide cancelled, Was/Now after a redirect, cascade skips used rows, raised-by per row
 
-Status: planned (owner go 17 Sep 2026)
+Status: in review
 UAC: `oi-worklist-one-header-acceptance-criteria.md`
 Branch: `feat/oi-worklist-one-header` from `origin/main`
 Worktree: `../sorento_crm-oi-one-header`
