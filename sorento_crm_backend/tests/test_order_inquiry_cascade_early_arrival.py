@@ -2,9 +2,13 @@
 lead-time window, and the worklist pill / the Link dialog's recommendation agree with it.
 
 `PLAN-oi-cascade-skip-early-arrival.md`, UAC `oi-cascade-skip-early-arrival-acceptance-
-criteria.md` AC-EA-1 to AC-EA-12, AC-EA-14, AC-EA-15 (AC-EA-13 is the browser one, not
+criteria.md` AC-EA-1 to AC-EA-12, AC-EA-14 to AC-EA-17 (AC-EA-13 is the browser one, not
 this file's). Review round 1 (S3/S4, "review round 1 nits folded") reworded AC-EA-3, 6,
-7, 9, 12 and added AC-EA-14/15; those tests below are the ones that changed shape.
+7, 9, 12 and added AC-EA-14/15. Round 3 added AC-EA-16/17: the pill's own-claim
+exemption (`_claim_so_numbers_by_target`, requires `resolved_at IS NOT NULL`) and the
+walk's own claim reader (`order_link_service._claim_rows`, ignores `resolved_at`, gates
+on the claiming line's live outstanding) disagree on a settled claim and on a live but
+unresolved one.
 
 `blank_session` throughout, not `pg_session`, for the same reason
 `test_order_inquiry_links.py` and `test_order_inquiry_dedication.py` give: the cascade this
@@ -903,3 +907,84 @@ def test_ac_ea_15_a_hand_placed_link_on_a_cited_early_line_loses_its_exemption_w
     suggestion = _worklist_suggestion(world, row.id)
     assert suggestion is not None
     assert suggestion["kind"] in ("reallocate", "unlink")
+
+
+def test_ac_ea_16_a_settled_claim_is_no_exemption_on_the_walk_or_the_pill(world):
+    """AC-EA-16 (round 3 parity finding): the row's own SO claims the early PO line, but
+    the claim's sales-order line is SETTLED (`_claim_rows` reports `outstanding == 0`
+    once `line_status != 'open'`, whatever `qty_delivered` says). The walk's own G7 rule
+    already reads live outstanding (`_dedication_for_target`), so `own_so_claim` is
+    False and the automatic pass refuses the early line exactly as an unclaimed one
+    would. The pill's own exemption (`_claim_so_numbers_by_target`) checks only
+    `resolved_at IS NOT NULL` and existence - never outstanding - so today it wrongly
+    reads a HAND-placed link on that same line as exempt (`suggestion is None`) rather
+    than flagging it. RED on the second half until the pill reads the same live fact the
+    walk does."""
+    world.lead_time(world.product, days=STATED_LEAD)
+    line = world.purchase_order(
+        "ZZT-EA16-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
+    )[0]
+    world.set_own_so_number("ZZT-EA16-OWN")
+    _, settled_core_line = world.claiming_so(
+        "ZZT-EA16-OWN", date(2026, 7, 1), qty=20, qty_delivered=20, line_status="closed",
+    )
+    world.claim(
+        so_number="ZZT-EA16-OWN", po_number="ZZT-EA16-PO", so_line_id=settled_core_line,
+        po_line_id=line,
+    )
+    row = world.row("ORDER", 20, location="BRW", delivery_date=DELIVERY)
+
+    result = world.svc.auto_place_for_products(
+        [world.product], actor_user_id=None, trigger="zzt"
+    )
+    world.db.refresh(row)
+
+    assert result["placed_rows"] == 0
+    assert row.state == "raised"
+    assert world.svc._links_of(row.id) == []
+
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": line, "qty": Decimal("20")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    suggestion = _worklist_suggestion(world, row.id)
+    assert suggestion is not None
+    assert suggestion["kind"] in ("reallocate", "unlink")
+
+
+def test_ac_ea_17_a_live_but_unresolved_claim_is_an_exemption_on_the_walk_and_the_pill(
+    world,
+):
+    """AC-EA-17 (round 3 parity finding): the same claim shape as AC-EA-6, but written
+    UNRESOLVED (`resolved_at = NULL`) - exactly what a claim written before the
+    purchase side is named looks like. `_claim_rows` (the walk's own reader) never
+    filters on `resolved_at`, so the claim's live outstanding still makes `own_so_claim`
+    True and the cascade links the early line regardless of the window. The pill's
+    `_claim_so_numbers_by_target` DOES filter `resolved_at IS NOT NULL`, so today it
+    cannot find this claim and flags the link the walk was just told to honour - the
+    same invariant break S3 exists to stop, on the one claim shape S3 missed. RED on
+    the second half until the pill stops filtering on `resolved_at`."""
+    world.lead_time(world.product, days=STATED_LEAD)
+    line = world.purchase_order(
+        "ZZT-EA17-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
+    )[0]
+    world.set_own_so_number("ZZT-EA17-OWN")
+    _, own_core_line = world.claiming_so("ZZT-EA17-OWN", date(2026, 7, 1), qty=20)
+    world.claim(
+        so_number="ZZT-EA17-OWN", po_number="ZZT-EA17-PO", so_line_id=own_core_line,
+        po_line_id=line, resolved=False,
+    )
+    row = world.row("ORDER", 20, location="BRW", delivery_date=DELIVERY)
+
+    result = world.svc.auto_place_for_products(
+        [world.product], actor_user_id=None, trigger="zzt"
+    )
+    world.db.refresh(row)
+
+    assert result["placed_rows"] == 1
+    assert row.state == "placed"
+    [link] = world.svc._links_of(row.id)
+    assert link.po_line_id == line
+
+    assert _worklist_suggestion(world, row.id) is None
