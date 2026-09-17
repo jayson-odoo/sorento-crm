@@ -41,20 +41,6 @@ def _code_of(candidate: dict[str, Any]) -> str:
     return str(candidate.get("canonical_code") or candidate.get("raw") or "").strip()
 
 
-def _distinct_codes(candidates: list[dict[str, Any]]) -> set[str]:
-    """How many different things the carry actually names.
-
-    A family (contract 103) is one code across several rows - `SRTWC286-SH-P` with two
-    ledgers is one choice, not two - so the count that decides whether there is still a
-    choice to make is the count of CODES, never of rows.
-    """
-    return {
-        str(c.get("canonical_code") or c.get("raw") or "").strip().casefold()
-        for c in candidates
-        if (c.get("canonical_code") or c.get("raw"))
-    }
-
-
 #: Words that name a company's LEGAL FORM, not the business (`gate._LEGAL_FORM` on main,
 #: spelled as words because this package may not use regular expressions).
 _LEGAL_FORM_WORDS = frozenset({"SDN", "BHD"})
@@ -369,14 +355,16 @@ def decide(
         # this branch is `narrow_to_code` only now.
         if candidates and not all(c.get("uuid") for c in candidates):
             return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
-        if len(_distinct_codes(candidates)) > 1:
-            # "narrow to a CODE" means one code. A settled carry of TEN codes (the ten
-            # variants an inventory answer just listed) is still ten codes, and the
-            # domain switch that keeps them - "incoming", with no product named - has to
-            # offer the same roster the customer would have got for "incoming srtwc286"
-            # (browser pass 2 turn 2, owner ruling 16 Sep 2026). One code carried by
-            # several ledger rows is still ONE code and is never re-asked (contract 103).
-            return NarrowOutcome(f"{kind}_pick", _options(candidates, kind), [], None)
+        # R-a (owner ruling, hand pass 6, 17 Sep 2026): re-roster on a domain switch
+        # ONLY where the domain must narrow to ONE (`must_narrow_one`/`narrow_by_tier`
+        # above). A SETTLED carry - every candidate holds a uuid, so an ambiguous typed
+        # token this message named would already have been caught by the branch just
+        # above - runs for ALL of them under `narrow_to_code` too, the same
+        # `settled_carry` rule `must_narrow_one` already applies. This retires the 16
+        # Sep browser-pass-2 ruling that offered a roster here whenever a settled carry
+        # held more than one distinct code ("incoming", with no product named, over a
+        # ten-variant carry): "hmm ok, any purchase cost" over that same carry re-asked
+        # the roster it had already answered instead of running purchase cost at all.
         if candidates:
             # R6 (captain ruling, 16 Sep 2026): a SETTLED carry - every candidate holds
             # a uuid, the resolver matched it or the customer picked it - is the thing
