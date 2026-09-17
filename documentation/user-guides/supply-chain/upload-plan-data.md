@@ -69,6 +69,9 @@ is what replaces the monthly order-book Excel; a **List** / **Schedule** toggle 
 the page. There is no "Plan until" line on the page any more - the cut-off date that used to show
 there now lives inside the **Auto link all...** dialog.
 
+The page opens on **To confirm**: every row CS has raised that you have not yet signed off. See
+"Confirming a row" below for what that means and how it works.
+
 ### Stage cards
 
 Three cards sit above the grid: **Buy**, **Purchased**, **Incoming**. Every unit is counted in one
@@ -83,6 +86,10 @@ Click a card to filter the grid to that stage. A row marked `used` (see "A row a
 by stock" below) never counts toward any of the three cards, or toward the Schedule matrix
 cards, so the card totals and what you see when you click into one always agree.
 
+A fourth tile, **To confirm**, sits beside the three stage cards. It shows how many rows are
+still waiting on your sign-off; click it to return to the To confirm view from anywhere else on
+the page. See "Confirming a row" below.
+
 ### Month tabs
 
 A row of tabs sits above the grid, and above the Schedule matrix too: one tab per delivery month
@@ -94,12 +101,19 @@ Click **Filters** to open the popover: **Location**, **Agent**, **SO month**, **
 **SPO number**, **Linked**, **Confirmed**, **Supplier**, **Project**, **Raised by**, **Raised on**.
 **Clear filters** resets every one of them.
 
+**Confirmed** is the sign-off filter: **To confirm**, **Confirmed**, **Changed**, **Rejected**,
+**All**. **To confirm** is what the page opens on; see "Confirming a row" below for what each
+value means.
+
 The search box uses multi-word narrowing: typing several words splits them on spaces and finds
 rows matching ALL of them. For example, typing `SO366990 SRTWT6801` finds only rows on sales order
 SO366990 whose product or item code contains SRTWT6801. The order of words does not matter; up to
 ten words are used and extra spaces are ignored. Besides sales order, item code, product name,
 customer, project and raiser, the search box also matches a PO number, an SPO number, and an
 agent.
+
+The grid remembers your sort order and every filter, per user, and restores them the next time
+you open the page. Page number and the search box always start fresh.
 
 ### Columns
 
@@ -172,8 +186,36 @@ do; each item counts only the rows it applies to, for example **Link selected (2
 * **Link selected** auto-links the ticked rows that still have something left to link.
 * **Unlink selected** takes a link off the ticked rows, including a row that is already fully
   linked.
-* **Reject selected**, **Confirm selected**, **Unlink all...** and **Export Excel** round out the
-  menu.
+* **Reject selected**, **Unlink all...**, **Upload purchase orders** and **Export Excel** round
+  out the menu.
+
+Use **Auto link all...**, **Choose document (1)**, **Link selected** and **Unlink selected** to
+review and fix a row's PO/SPO link before you confirm it - the cascade already linked what it
+could when the row was raised, so most of what is left is a wrong pick to correct by hand. Once
+you have placed or linked the documents directly in AutoCount, **Upload purchase orders** reads
+the purchase-order book back in and syncs that linkage onto these rows.
+
+### Confirming a row
+
+Once a row's link reads right, tick it and press the page's primary **Confirm (N)** button -
+disabled until at least one row is ticked. To confirm many rows at once, tick lines one by one,
+or tick the header to select the page and take **Select all N records** to reach every row
+matching your current filters, not only the ones on screen, before pressing **Confirm (N)**. A
+dialog states the count; press **Confirm** to write it.
+
+A confirmed row leaves **To confirm** without a reload, and the **To confirm** tile's count drops
+to match. Rejected and cancelled rows are skipped even if ticked, and the toast tells you how
+many rows were confirmed and how many were skipped. Only confirmed rows are counted by reorder
+planning - a row still on **To confirm**, or one that has come back as **Changed**, is left out
+until you confirm it.
+
+If CS changes a line you already confirmed - its quantity or delivery date - the row comes back
+onto **To confirm** marked **Changed**, showing what it was and what it is now. Confirm it again
+once you are happy with the new figures.
+
+The first time this confirm step went live, rows that had already come in from the order inquiry
+sheet Excel started out already confirmed; only rows raised from Fulfilment Planning needed your
+first confirm.
 
 ### Schedule view
 
@@ -298,10 +340,11 @@ left alone.
 
 ### Where the rows appear
 
-Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. The
-page opens on every row, so leave the **Confirmed** filter empty; a migrated row is confirmed the
-moment it is raised. Each row carries the quantity, delivery date and stock location the sheet
-stated, the instruction it was raised with, and the note naming the file it came from.
+Open **Procurement → Supply Chain → [Order Inquiries](/project-sales/order-inquiries)**. A
+migrated row is confirmed the moment it is raised, so it will not show on the page's default **To
+confirm** view - set the **Confirmed** filter to **Confirmed** or **All** to find it. Each row
+carries the quantity, delivery date and stock location the sheet stated, the instruction it was
+raised with, and the note naming the file it came from.
 
 ### Who can upload it
 

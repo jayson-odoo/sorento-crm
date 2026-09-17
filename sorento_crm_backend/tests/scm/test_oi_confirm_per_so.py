@@ -516,6 +516,21 @@ def test_ac_cf_8g_empty_filter_confirms_only_this_companys_rows(api):
     assert foreign_state == "awaiting", "a foreign-company row is invisible, never confirmed"
 
 
+def test_ac_cf_8h_filter_axis_key_must_be_a_uuid(api):
+    """AC-CF-8h (re-review). `axis_key` compares against a UUID column on every axis
+    the same way `project_id`/`supplier_id`/`agent` do, but was the one id field on
+    `AcknowledgeFilter` left without `Field(pattern=UUID_PATTERN)` - a malformed value
+    reached the column compare and 500'd instead of 422ing, unlike the list route's own
+    `axis_key` query param (`order_inquiries.py:167-172`, `pattern=UUID_PATTERN`)."""
+    _client, world = api
+    with _as_purchasing(world) as buyer:
+        response = buyer.post(
+            ACK_URL, json={"filter": {"axis": "product", "axis_key": "oops"}}
+        )
+
+    assert response.status_code == 422, response.text
+
+
 # ---------------------------------------------------------------------------
 # AC-CF-9: CS is still refused
 # ---------------------------------------------------------------------------

@@ -544,7 +544,7 @@ class AcknowledgeFilter(BaseModel):
     delivery_from: Optional[str] = None
     delivery_to: Optional[str] = None
     axis: Optional[str] = None
-    axis_key: Optional[str] = None
+    axis_key: Optional[str] = Field(None, pattern=UUID_PATTERN)
 
 
 class AcknowledgeRowsRequest(BaseModel):
