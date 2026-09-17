@@ -374,14 +374,27 @@ export function FulfilmentBoardPanel({
         : null,
     [bySoNumber],
   );
+  /**
+   * The UNCOVER step's own input, review round 2 (AC-F6): an APPLIED batch is history - the
+   * line's decision already carries what Apply did to it - and uncovering it would offer a
+   * Save the server refuses outright (R1). Filtered out here only: `appliedSoNumbers`, the
+   * Confirm-blocked banner and the change-icon annotations still read `changeBatchData` above
+   * unfiltered, because a deep link to an applied batch still has to SAY what it applied.
+   */
+  const openChangeBatchData: Pick<PlanningChangeBatch, 'orders'> | null = React.useMemo(() => {
+    const orders = Array.from(bySoNumber.values())
+      .filter((entry) => !entry.batch.applied_at)
+      .map((entry) => entry.order);
+    return orders.length > 0 ? { orders } : null;
+  }, [bySoNumber]);
   const board = React.useMemo(
     () => ({
       ...rawBoard,
       data: rawBoard.data
-        ? uncoverChangedLines(rawBoard.data, changeBatchData)
+        ? uncoverChangedLines(rawBoard.data, openChangeBatchData)
         : rawBoard.data,
     }),
-    [rawBoard, changeBatchData],
+    [rawBoard, openChangeBatchData],
   );
 
   /**
@@ -513,6 +526,16 @@ export function FulfilmentBoardPanel({
   const pendingDeletes = React.useRef<Set<string>>(new Set());
 
   /**
+   * Keys whose SAVE is on the wire right now (R3, AC-F5): added before `saveLineDraft`
+   * fires in `decide` below, cleared once it settles either way. The covered-line drop a
+   * few lines down has to skip a key here - a board read that races an in-flight Save can
+   * land BEFORE the write it is racing, and dropping the local entry on that read would
+   * flicker the pill back to Confirmed for a frame ahead of the very save that is about to
+   * make it Saved again.
+   */
+  const pendingSaves = React.useRef<Set<string>>(new Set());
+
+  /**
    * A line SAVED elsewhere - another device, another planner, or this one before a reload -
    * arrives ON THE BOARD ITSELF (S4, R-F): `contribution.draft` is the server's own row, and
    * this seeds it into the SAME `draft` map a click here would write, so a Saved pill, the
@@ -526,10 +549,21 @@ export function FulfilmentBoardPanel({
    * is the other half of that guard: a key whose Undo is still in flight is ALSO missing
    * from `draft`, and without the skip a same-tick refetch racing that DELETE puts the pill
    * straight back to Saved a moment after the click cleared it.
+   *
+   * R3 (SO314595, 17 Sep 2026): the SAME read also drops a local entry whose contribution is
+   * now `covered` and carries no server `draft`. A covered line with no draft means the
+   * server has already PROMOTED it (Confirm deletes the draft it promotes) or had it
+   * REMOVED some other way - either way this tab's own local copy is stale, and it is what
+   * printed Saved/Rejected over eleven lines a lost Confirm response had actually already
+   * confirmed. `pendingDeletes` and `pendingSaves` are both checked, because a key mid-write
+   * either way is not yet the state this board read is describing.
    */
   React.useEffect(() => {
     const serverDrafts = allContributions.filter((contribution) => contribution.draft);
-    if (serverDrafts.length === 0) return;
+    const coveredWithNoDraft = allContributions.filter(
+      (contribution) => contribution.covered && !contribution.draft,
+    );
+    if (serverDrafts.length === 0 && coveredWithNoDraft.length === 0) return;
     setDraft((current) => {
       let changed = false;
       const next = { ...current };
@@ -537,6 +571,14 @@ export function FulfilmentBoardPanel({
         if (pendingDeletes.current.has(contribution.key)) continue;
         if (!next[contribution.key] && contribution.draft) {
           next[contribution.key] = contribution.draft.decision;
+          changed = true;
+        }
+      }
+      for (const contribution of coveredWithNoDraft) {
+        if (pendingDeletes.current.has(contribution.key)) continue;
+        if (pendingSaves.current.has(contribution.key)) continue;
+        if (next[contribution.key]) {
+          delete next[contribution.key];
           changed = true;
         }
       }
@@ -613,7 +655,12 @@ export function FulfilmentBoardPanel({
           // (#573) adds the contribution's own `sources` as `proposed` for a DIFFERENT
           // reason: the Sales Order page's Suggested column reads it back on this line
           // until Confirm freezes a revision.
-          await saveLineDraft(key, decision, contribution?.sources);
+          pendingSaves.current.add(key);
+          try {
+            await saveLineDraft(key, decision, contribution?.sources);
+          } finally {
+            pendingSaves.current.delete(key);
+          }
         } else {
           await removeDraftKey(key);
         }

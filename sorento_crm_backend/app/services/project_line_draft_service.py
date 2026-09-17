@@ -26,10 +26,13 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 from sqlalchemy.orm import Session
 
 from app.models.order import SalesOrder, SalesOrderLine
+from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
 from app.models.product import Product
 from app.models.project_so import (
+    DECISION_ACTIVE,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
+    SOSupplyDecision,
     SOSupplyDecisionDraft,
 )
 from app.models.user import User
@@ -246,6 +249,15 @@ def save_draft(
     """
     sales_order_id, line_no, item_code, bucket_key = parse_contribution_key(key)
     core_line = _resolve_core_line(db, sales_order_id, line_no, item_code)
+    if decision.get("verdict") != "amended" and _covered_by_active_decision(db, core_line):
+        raise AppException(
+            status_code=409,
+            message=(
+                "This line is already confirmed. Amend it to change the decision, "
+                "or undo the confirmation."
+            ),
+            code="board_line_already_confirmed",
+        )
     row = _row_for(db, str(core_line.id), company_id=core_line.company_id)
     if row is None:
         row = SOSupplyDecisionDraft(
@@ -394,6 +406,53 @@ def is_stale(
     current_qty = qty_text(open_qty)
     current_date = required_date.isoformat() if required_date else None
     return snapshot.get("open_qty") != current_qty or snapshot.get("required_date") != current_date
+
+
+def _covered_by_active_decision(db: Session, core_line: SalesOrderLine) -> bool:
+    """R1 (SO314595, 17 Sep 2026): an outage lost the Confirm response, the planner re-saved
+    every line, and the drafts printed Saved over an already-Confirmed line. Covered = an
+    ACTIVE `SOSupplyDecision` on the mirror order whose `line_snapshots` names this core line,
+    UNLESS the line sits in a planning-change batch nobody has applied yet (AC-B8/B9/B10/B11,
+    review round 2).
+    """
+    decisions = (
+        db.query(SOSupplyDecision)
+        .join(ProjectSalesOrder, ProjectSalesOrder.id == SOSupplyDecision.project_sales_order_id)
+        .filter(
+            ProjectSalesOrder.so_id == core_line.sales_order_id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .all()
+    )
+    core_line_id = str(core_line.id)
+    for decision in decisions:
+        for snapshot in decision.line_snapshots or []:
+            if (snapshot or {}).get("core_line_id") == core_line_id:
+                return not _in_open_planning_change(
+                    db, core_line_id, decision.project_sales_order_id
+                )
+    return False
+
+
+def _in_open_planning_change(
+    db: Session, core_line_id: str, project_sales_order_id: str
+) -> bool:
+    """The BATCH is the unit the client uncovers a line on - `FulfilmentBoardPanel` picks
+    its surviving batch on `!batch.applied_at` - so the exemption keys on the same fact.
+    A row's own state (superseded, failed) is terminal on its own account and must never
+    carry the exemption once the batch it sits in is done.
+    """
+    return (
+        db.query(PlanningChangeRow.id)
+        .join(PlanningChangeBatch, PlanningChangeBatch.id == PlanningChangeRow.batch_id)
+        .filter(
+            PlanningChangeRow.core_line_id == core_line_id,
+            PlanningChangeRow.project_sales_order_id == project_sales_order_id,
+            PlanningChangeBatch.applied_at.is_(None),
+        )
+        .first()
+        is not None
+    )
 
 
 def _row_for(
