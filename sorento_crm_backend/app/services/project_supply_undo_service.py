@@ -19,6 +19,7 @@ audit_dict` for a whole row, `_entity_id_str` for a primary key.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
@@ -73,6 +74,9 @@ def _table_name(obj: Any) -> str:
     the keys `Base.metadata.tables` itself uses, so replay can look one up directly."""
     table = obj.__table__
     return f"{table.schema}.{table.name}" if table.schema else table.name
+
+
+logger = logging.getLogger(__name__)
 
 
 #: The three tables the refusal predicate and the authorisation check both read the
@@ -604,6 +608,38 @@ def _pso_ids_by_decision(db: Session, decisions: List[Any]) -> Dict[str, set]:
             for pk in _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
             if pk in pso_by_decision_pk
         }
+        if not touched and not journal:
+            # S3 (review round 1): a JOURNAL-LESS decision has no journal to name a
+            # donor order in at all - `reconstruct_undo` needs the same multi-order
+            # reach the journalled path gets from the journal, off a signal that
+            # survives without one. `_reissue_without_line` (`project_supply_
+            # service.py`) stamps a donor's re-issued decision with the SAME
+            # `confirmed_at` the superseded donor decision carried, which is not
+            # this decision's own `confirmed_at` in general - but a journal-less
+            # confirm that touches a donor writes BOTH decisions inside the one
+            # atomic transaction, and every decision this transaction commits
+            # shares its own literal timestamp (the same `datetime.utcnow()` call
+            # the write path stamps them all with). Every OTHER decision that
+            # shares this one's exact `confirmed_at` is read as a sibling of the
+            # same confirm - company-scoped, excluding itself.
+            company_id = getattr(d, "company_id", None)
+            if company_id and d.confirmed_at is not None:
+                sibling_rows = (
+                    db.query(SOSupplyDecision.project_sales_order_id)
+                    .filter(
+                        SOSupplyDecision.company_id == company_id,
+                        SOSupplyDecision.confirmed_at == d.confirmed_at,
+                        SOSupplyDecision.id != d.id,
+                    )
+                    .all()
+                )
+                if sibling_rows:
+                    # The sibling QUERY itself excludes `d`, on purpose - this
+                    # decision's own order still has to be in `touched` too, the
+                    # same way the journal-based branch above always finds it
+                    # (a confirm's journal always names its OWN decision insert).
+                    touched = {row[0] for row in sibling_rows}
+                    touched.add(d.project_sales_order_id)
         out[d.id] = touched or {d.project_sales_order_id}
     return out
 
@@ -1058,10 +1094,16 @@ def undo_last_confirm(
 
     refusal, refusal_detail = _refusal_reason_with_detail(db, decision)
     if refusal:
-        message = _REFUSAL_MESSAGES[refusal]
+        # Review round 1 nit: the client-facing message stays the generic
+        # sentence; a table name and a row's UUID are internal detail, logged
+        # for diagnosis rather than handed back in the response body.
         if refusal == "changed" and refusal_detail:
-            message = f"{message} ({refusal_detail['table']} pk={refusal_detail['pk']})"
-        raise AppException(status_code=409, message=message, code=refusal)
+            logger.info(
+                "undo_last_confirm changed refusal: %s pk=%s",
+                refusal_detail.get("table"),
+                refusal_detail.get("pk"),
+            )
+        raise AppException(status_code=409, message=_REFUSAL_MESSAGES[refusal], code=refusal)
 
     revision_no = decision.revision_no
     prior_id = decision.supersedes_id
