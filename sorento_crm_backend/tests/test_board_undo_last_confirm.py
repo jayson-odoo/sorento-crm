@@ -730,8 +730,14 @@ def test_journalless_decision_refuses_non_admin_offers_reconstructed_to_admin(ap
     null` for that order, same as no active decision at all."""
     client, world = api
     db = world.db
-    order = _project_so(db, world.project)
     core_so = _core_so(db, world.company_id)
+    # `so_id=core_so.id` (review round, captain's diagnosis): the old pre-lane test
+    # this rewrites never called the board route, so it never needed the mirror
+    # wired to its core order. Now that this test ALSO reads `GET .../board` by
+    # `core_so.so_number`, an unwired order is never found as an adopted mirror at
+    # all - `undo` reads None for every actor, and the non-admin half only "passes"
+    # because there is nothing there to see, not because the admin gate held.
+    order = _project_so(db, world.project, so_id=core_so.id)
     core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
     line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
     db.commit()
@@ -1780,9 +1786,14 @@ def test_changed_row_refuses_at_park_and_execute(api):
 
     # Another writer changes the SAME journalled column the second confirm's own
     # settle-in-place wrote (`order_inquiry_rows.qty`), bypassing the ORM so it is
-    # genuinely "since the confirm", not part of this journal.
+    # genuinely "since the confirm", not part of this journal. UNQUALIFIED table
+    # name (review round, captain's diagnosis): `blank_session()` routes raw SQL
+    # through `search_path`, never `schema_translate_map` - a schema-qualified
+    # `projects.order_inquiry_rows` resolves against the REAL `projects` schema
+    # outside the scratch one, so the UPDATE lands on zero rows there and this
+    # test's own mutation never happens.
     db.execute(
-        sa_text("UPDATE projects.order_inquiry_rows SET qty = :qty WHERE id = :id"),
+        sa_text("UPDATE order_inquiry_rows SET qty = :qty WHERE id = :id"),
         {"qty": Decimal("999"), "id": str(row.id)},
     )
     db.commit()
@@ -1831,9 +1842,10 @@ def test_legacy_entry_without_new_is_skipped(api):
     table = SOSupplyDecision.__table__
     db.execute(table.update().where(table.c.id == decision2.id).values(undo_journal=stripped))
     # Another writer touches the SAME journalled column - if the changed check were
-    # NOT skipped for a `new`-less entry, this alone would refuse.
+    # NOT skipped for a `new`-less entry, this alone would refuse. UNQUALIFIED table
+    # name, same routing fix as `test_changed_row_refuses_at_park_and_execute` above.
     db.execute(
-        sa_text("UPDATE projects.order_inquiry_rows SET qty = :qty WHERE id = :id"),
+        sa_text("UPDATE order_inquiry_rows SET qty = :qty WHERE id = :id"),
         {"qty": Decimal("999"), "id": str(row.id)},
     )
     db.commit()

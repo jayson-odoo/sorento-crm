@@ -208,8 +208,8 @@ def _reconstruct_world(api, *, buyer=None):
     db.commit()
 
     return {
-        "client": client, "world": world, "db": db, "order": order, "line": line,
-        "decision_p": p, "decision_d": d, "inquiry": inquiry,
+        "client": client, "world": world, "db": db, "order": order, "core_so": core_so,
+        "line": line, "decision_p": p, "decision_d": d, "inquiry": inquiry,
         "row_a": row_a, "row_b": row_b, "row_c": row_c, "row_d": row_d,
         "link_a": link_a, "claim_a": claim_a,
         "allocation": alloc, "proposed_transfer": proposed_transfer,
@@ -363,10 +363,15 @@ def test_reconstruct_undo_step_g_writes_no_draft(api):
     fx = _reconstruct_world(api)
     db = fx["db"]
     order = fx["order"]
+    # `SOSupplyDecisionDraft` keys on the CORE sales order (`sales_order_id`) plus
+    # `core_line_id` (review round, captain's diagnosis) - it has no
+    # `project_sales_order_id` column at all, so the original query raised
+    # `AttributeError` before ever reaching the reconstruct call.
+    core_so_id = fx["core_so"].id
 
     before = (
         db.query(SOSupplyDecisionDraft)
-        .filter(SOSupplyDecisionDraft.project_sales_order_id == order.id)
+        .filter(SOSupplyDecisionDraft.sales_order_id == core_so_id)
         .count()
     )
     assert before == 0, "setup: no draft should exist before the reconstruct"
@@ -376,7 +381,7 @@ def test_reconstruct_undo_step_g_writes_no_draft(api):
 
     after = (
         db.query(SOSupplyDecisionDraft)
-        .filter(SOSupplyDecisionDraft.project_sales_order_id == order.id)
+        .filter(SOSupplyDecisionDraft.sales_order_id == core_so_id)
         .count()
     )
     assert after == 0
@@ -621,6 +626,13 @@ def test_so314594_and_so314593_reconstructed_twice_then_one_confirm_one_email(
     row = OrderInquiryRow(
         company_id=world.company_id, order_inquiry_id=inquiry.id, so_line_id=line.id,
         item_code=world.product.product_code, qty=Decimal("182"), verb=IV_ORDER,
+        # Same delivery date the line itself carries (review round, captain's
+        # diagnosis): `_project_line` stamps `line.delivery_date = core_line.
+        # required_date`, so an unset `row.delivery_date` reads as a genuine move
+        # (None -> the required date) once the final Confirm settles this row in
+        # place, and `was` honestly grows a `delivery_date` key nothing in this
+        # scenario is supposed to change. Matching it keeps only qty moving.
+        delivery_date=core_line.required_date,
         state=INQUIRY_RAISED, supply_decision_id=rev2.id,
         created_at=t0 + timedelta(seconds=5),
     )
