@@ -296,9 +296,10 @@ describe('OrderInquiriesClient: reading the page', () => {
       .map((cell) => cell.textContent ?? '');
     const order = [
       // The Excel's own column order (Phase 2 round 2): SO date through PO/SPO reads
-      // the way the purchasing team already reads their sheet - Order inquiry (a
-      // number the sheet never carried) moves to the end, beside the rest of the
-      // system's own columns rather than in front of Item code.
+      // the way the purchasing team already reads their sheet. Order inquiry is NOT in
+      // this list any more (R5/AC-OH-01, one-header lane): it is hidden by default, so
+      // it renders no `columnheader` cell at all until a reader ticks it back on -
+      // asserted separately below, via the Columns menu.
       'SO date',
       'S/O no',
       'Item code',
@@ -313,7 +314,6 @@ describe('OrderInquiriesClient: reading the page', () => {
       'SPO',
       'Agent',
       'Location',
-      'Order inquiry',
       'Taken by PO/SPO',
       'Remaining',
       'Instruction',
@@ -334,6 +334,17 @@ describe('OrderInquiriesClient: reading the page', () => {
     // AC-1.5) - there is no manual confirm left to report on.
     expect(headers.some((text) => /^actions$/i.test(text))).toBe(false);
     expect(headers.some((text) => text === 'Confirmed')).toBe(false);
+
+    // R5/AC-OH-01: Order inquiry is offered in the Columns menu, unticked - present, not
+    // removed, so a reader who wants the number back can tick it on.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^columns$/i }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    const orderInquiryToggle = await screen.findByRole('menuitemcheckbox', {
+      name: 'Order inquiry',
+    });
+    expect(orderInquiryToggle).toHaveAttribute('aria-checked', 'false');
   });
 
   it('says nothing has been raised yet, and offers the screen that raises it', async () => {
