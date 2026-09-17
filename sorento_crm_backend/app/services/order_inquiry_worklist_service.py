@@ -443,6 +443,15 @@ _RAISED_DAY = cast(
 # NEITHER a decision NOR an acknowledger (there is none once G4 shipped, but the column
 # is nullable) reaches the header's `raised_by`.
 #
+# Accepted edge case (Opus review round 1): `acknowledge_rows` stamps `acknowledged_by`
+# with the ACKNOWLEDGER, not the raiser, on a row it finds still `awaiting` -
+# reachable today only by a pre-G4 row nobody has taken on yet (there is no FE press
+# onto that route any more). Once acknowledged, this column reads as "raised by" the
+# person who took it on rather than whoever actually raised it. Narrow and one-way
+# (a born-acknowledged row never reaches that branch), so left as a known quirk of the
+# handful of legacy rows still in that state rather than a reason to add a second
+# column to tell the two apart.
+#
 # The id never leaves the service: a screen printing a UUID at a buyer is a screen they
 # cannot use, so the filter takes an id and every read gives a name.
 _RAISED_BY_ID = func.coalesce(
