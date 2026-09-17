@@ -932,6 +932,15 @@ class ProjectOrderInquiryService:
             # DIFFERENT line of the same order was named is not a restatement of anything,
             # so its still-raised row keeps the ordinary cancel-and-re-raise
             # (`tests/scm/test_confirm_local_buy_no_oi.py`).
+            #
+            # A REFUSED row is excluded too (AC-H6, captain ruling on CI round 1):
+            # purchasing said no to that instruction, so re-deciding the line is a NEW
+            # instruction and has to be born acknowledged under its own id - settling the
+            # refused row in place would quietly re-open the very row purchasing declined,
+            # keeping its `rejected_by`/`rejected_at` stamp on a live instruction and
+            # leaving CS nothing to read the refusal off. The supersede path below is the
+            # right answer there: it cancels the refused row (the refusal stays readable
+            # on it) and raises a fresh one.
             target_verb = IV_ORDER_BACK if order_back else IV_ORDER
             named_raised = (
                 []
@@ -943,6 +952,9 @@ class ProjectOrderInquiryService:
                     and row.state == INQUIRY_RAISED
                     and not row.redirected_to_pool
                     and not drafted_links.get(str(row.id))
+                    and row.ack_state != ACK_REJECTED
+                    and row.rejected_by is None
+                    and row.rejected_at is None
                 ]
             )
             if not drafted and len(named_raised) == 1:
