@@ -1,8 +1,10 @@
-"""S1/S2 - the auto-link cascade skips a document arriving outside the row's lead-time
-window.
+"""S1/S2/S3/S4 - the auto-link cascade skips a document arriving outside the row's
+lead-time window, and the worklist pill / the Link dialog's recommendation agree with it.
 
 `PLAN-oi-cascade-skip-early-arrival.md`, UAC `oi-cascade-skip-early-arrival-acceptance-
-criteria.md` AC-EA-1 to AC-EA-12 (AC-EA-13 is the browser one, not this file's).
+criteria.md` AC-EA-1 to AC-EA-12, AC-EA-14, AC-EA-15 (AC-EA-13 is the browser one, not
+this file's). Review round 1 (S3/S4, "review round 1 nits folded") reworded AC-EA-3, 6,
+7, 9, 12 and added AC-EA-14/15; those tests below are the ones that changed shape.
 
 `blank_session` throughout, not `pg_session`, for the same reason
 `test_order_inquiry_links.py` and `test_order_inquiry_dedication.py` give: the cascade this
@@ -116,6 +118,21 @@ class _World:
             {"i": pool, "c": self.company_id},
         )
         self.warehouses["BRW"] = pool
+        # A CHILD pointing `pool_warehouse_id` at BRW - the only thing that makes
+        # `_pool_codes()` (R11) recognise "BRW" as a pool at all: an SPO allocation is
+        # only ever OFFERED at a warehouse code that set turns up in (review round 1,
+        # AC-EA-9 - `_World._build` used to seed BRW alone, so every SPO candidate at
+        # BRW was silently dropped and AC-EA-9 proved nothing).
+        brw_ib = _uid()
+        db.execute(
+            text(
+                "INSERT INTO warehouses (id, company_id, warehouse_code, warehouse_name, "
+                "is_active, pool_warehouse_id, segment) "
+                "VALUES (:i, :c, 'BRW-IB', 'BRW-IB', true, :p, 'project')"
+            ),
+            {"i": brw_ib, "c": self.company_id, "p": pool},
+        )
+        self.warehouses["BRW-IB"] = brw_ib
         self.supplier = _uid()
         db.execute(
             text(
@@ -469,7 +486,10 @@ def test_ac_ea_2_the_worklist_reads_the_shared_predicate(world):
 
 def test_ac_ea_3_a_stated_lead_row_refuses_its_only_early_po_line(world):
     """AC-EA-3: delivery 2027-01-15, lead 30, the only open PO line promised 2026-10-01 -
-    no link, `placed_rows == 0`, the row stays `raised`."""
+    no link, `placed_rows == 0`, the row stays `raised`, and the worklist row's own
+    `links` is empty (asserted, not implied - review round 1 nit)."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
     world.lead_time(world.product, days=STATED_LEAD)
     world.purchase_order(
         "ZZT-EA3-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
@@ -484,6 +504,12 @@ def test_ac_ea_3_a_stated_lead_row_refuses_its_only_early_po_line(world):
     assert result["placed_rows"] == 0
     assert row.state == "raised"
     assert world.svc._links_of(row.id) == []
+    entry = next(
+        item
+        for item in OrderInquiryWorklistService(world.db).list_rows(limit=100)["data"]
+        if item["id"] == row.id
+    )
+    assert entry["links"] == []
 
 
 def test_ac_ea_4_a_stated_lead_row_links_a_po_line_inside_the_window(world):
@@ -544,7 +570,10 @@ def test_ac_ea_5_default_lead_time_refuses_at_ninety_days_and_links_the_day_afte
 
 def test_ac_ea_6_an_early_line_this_rows_own_so_claims_links_regardless_of_the_window(world):
     """AC-EA-6: an early PO line THIS row's own SO claims (`scm.order_link_claim`) is
-    linked regardless of the window."""
+    linked regardless of the window, and the worklist then reads `suggestion is None`
+    on that link (S3) - the pill must not flag what the walk was just told to honour."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
     world.lead_time(world.product, days=STATED_LEAD)
     line = world.purchase_order(
         "ZZT-EA6-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
@@ -567,10 +596,21 @@ def test_ac_ea_6_an_early_line_this_rows_own_so_claims_links_regardless_of_the_w
     [link] = world.svc._links_of(row.id)
     assert link.po_line_id == line
 
+    entry = next(
+        item
+        for item in OrderInquiryWorklistService(world.db).list_rows(limit=100)["data"]
+        if item["id"] == row.id
+    )
+    [wire_link] = entry["links"]
+    assert wire_link["suggestion"] is None
+
 
 def test_ac_ea_7_an_early_line_the_row_cites_links_regardless_of_the_window(world):
     """AC-EA-7: an early PO line whose document number the row cites is linked
-    regardless of the window."""
+    regardless of the window, and the worklist then reads `suggestion is None` on that
+    link (S3)."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
     world.lead_time(world.product, days=STATED_LEAD)
     line = world.purchase_order(
         "ZZT-EA7-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
@@ -588,6 +628,14 @@ def test_ac_ea_7_an_early_line_the_row_cites_links_regardless_of_the_window(worl
     assert row.state == "placed"
     [link] = world.svc._links_of(row.id)
     assert link.po_line_id == line
+
+    entry = next(
+        item
+        for item in OrderInquiryWorklistService(world.db).list_rows(limit=100)["data"]
+        if item["id"] == row.id
+    )
+    [wire_link] = entry["links"]
+    assert wire_link["suggestion"] is None
 
 
 def test_ac_ea_8_only_the_inside_candidate_counts_toward_cover(world):
@@ -635,19 +683,42 @@ def test_ac_ea_8_when_the_inside_candidate_alone_cannot_cover_the_need_nothing_l
 
 def test_ac_ea_9_an_early_spo_allocation_is_refused_the_same_way_as_a_po_line(world):
     """AC-EA-9: an SPO allocation candidate promised a full lead time early is refused,
-    the same way a PO line is."""
-    world.lead_time(world.product, days=STATED_LEAD)
-    world.spo_allocation("ZZT-EA9-SPO", "BRW", 20, expected=date(2026, 10, 1))
-    row = world.row("ORDER", 20, location="BRW", delivery_date=DELIVERY)
+    the same way a PO line is - AND the positive control: the same allocation shape
+    promised 2026-12-20 (inside the window) links. `BRW-IB` (seeded in `_World._build`,
+    review round 1) points `pool_warehouse_id` at BRW, which is what makes `_pool_codes`
+    (R11) recognise BRW as a pool at all and lets the SPO candidate through
+    `_candidates_for_row` in the first place - without it BOTH halves would pass for
+    the wrong reason (an empty candidate list, not a refused one). Two independent
+    products, the same isolation AC-EA-5 uses, so the two allocations cannot be dealt
+    to the wrong row."""
+    refused_product = world.product
+    world.lead_time(refused_product, days=STATED_LEAD)
+    world.spo_allocation("ZZT-EA9A-SPO", "BRW", 20, expected=date(2026, 10, 1))
+    row_refused = world.row("ORDER", 20, location="BRW", delivery_date=DELIVERY)
+
+    linked_code = f"{MARKER}-EA9B"
+    linked_product = world.another_product(linked_code)
+    world.lead_time(linked_product, days=STATED_LEAD)
+    allocation_linked = world.spo_allocation(
+        "ZZT-EA9B-SPO", "BRW", 20, expected=date(2026, 12, 20), product=linked_product
+    )
+    row_linked = world.row(
+        "ORDER", 20, location="BRW", delivery_date=DELIVERY,
+        item_code=linked_code, so_line=False,
+    )
 
     result = world.svc.auto_place_for_products(
-        [world.product], actor_user_id=None, trigger="zzt"
+        [refused_product, linked_product], actor_user_id=None, trigger="zzt"
     )
-    world.db.refresh(row)
+    world.db.refresh(row_refused)
+    world.db.refresh(row_linked)
 
-    assert result["placed_rows"] == 0
-    assert row.state == "raised"
-    assert world.svc._links_of(row.id) == []
+    assert result["placed_rows"] == 1
+    assert row_refused.state == "raised"
+    assert world.svc._links_of(row_refused.id) == []
+    assert row_linked.state == "placed"
+    [link] = world.svc._links_of(row_linked.id)
+    assert link.spo_allocation_id == allocation_linked
 
 
 def test_ac_ea_10_a_redeal_keeps_a_draft_on_an_early_line_with_nothing_better(world):
@@ -712,23 +783,35 @@ def test_ac_ea_11_a_row_past_the_link_horizon_is_counted_after_horizon_first(wor
     assert row.state == "raised"
 
 
-def test_ac_ea_12_the_link_dialog_still_offers_the_early_line_by_hand(world):
-    """AC-EA-12: `po_candidates_for_row` still lists the early line, `place_on_po_
-    allocations` by hand still links it, and that link then shows the `reallocate` /
-    `unlink` suggestion on the worklist - the window narrows the automatic pass only."""
+def test_ac_ea_12_the_link_dialog_still_lists_the_early_line_unrecommended(world):
+    """AC-EA-12 (S4, reworded review round 1): `po_candidates_for_row` still lists the
+    early line - a buyer may take it by hand - but `recommended == False` and
+    `default_take == "0"` for it, while the inside-window line on the SAME row keeps
+    `recommended == True`: the dialog's own preview has to run the SAME window filter
+    the pass runs, or it recommends the very line the pass refuses. `place_on_po_
+    allocations` by hand still links the early line (unclaimed, uncited), and that link
+    then shows the `reallocate` / `unlink` suggestion on the worklist."""
     from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
 
     world.lead_time(world.product, days=STATED_LEAD)
-    line = world.purchase_order(
-        "ZZT-EA12-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
-    )[0]
-    row = world.row("ORDER", 20, location="BRW", delivery_date=DELIVERY)
+    lines = world.purchase_order(
+        "ZZT-EA12-PO", date(2026, 8, 1),
+        [("BRW", 20, date(2026, 10, 1), "1"), ("BRW", 20, date(2026, 12, 20), "2")],
+    )
+    early_line, inside_line = lines
+    row = world.row("ORDER", 10, location="BRW", delivery_date=DELIVERY)
 
-    candidates = world.svc.po_candidates_for_row(row.id)
-    assert candidates[0]["po_line_id"] == line
+    candidates = {
+        candidate["po_line_id"]: candidate
+        for candidate in world.svc.po_candidates_for_row(row.id)
+    }
+    assert set(candidates) == {early_line, inside_line}
+    assert candidates[early_line]["recommended"] is False
+    assert candidates[early_line]["default_take"] == "0"
+    assert candidates[inside_line]["recommended"] is True
 
     world.svc.place_on_po_allocations(
-        row.id, [{"po_line_id": line, "qty": Decimal("20")}], actor_user_id=None
+        row.id, [{"po_line_id": early_line, "qty": Decimal("10")}], actor_user_id=None
     )
     world.db.flush()
 
@@ -739,3 +822,84 @@ def test_ac_ea_12_the_link_dialog_still_offers_the_early_line_by_hand(world):
     )
     [link] = entry["links"]
     assert link["suggestion"]["kind"] in ("reallocate", "unlink")
+
+
+def _worklist_suggestion(world, row_id):
+    """The one link on `row_id`, read fresh through the worklist - AC-EA-14/15 read
+    this twice, before and after the exemption evidence is withdrawn."""
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    entry = next(
+        item
+        for item in OrderInquiryWorklistService(world.db).list_rows(limit=100)["data"]
+        if item["id"] == row_id
+    )
+    [link] = entry["links"]
+    return link["suggestion"]
+
+
+def test_ac_ea_14_a_hand_placed_link_on_a_claimed_early_line_loses_its_exemption_with_the_claim(
+    world,
+):
+    """AC-EA-14 (S3): a link a PERSON wrote by hand on an early line that the row's own
+    SO claims carries `suggestion is None` - the same exemption the automatic pass
+    reads (AC-EA-6), now proven through a HAND placement so S3 cannot be reading the
+    `auto` flag rather than the claim itself. Deleting the claim withdraws the
+    exemption on the very next read: `reallocate` / `unlink`."""
+    world.lead_time(world.product, days=STATED_LEAD)
+    line = world.purchase_order(
+        "ZZT-EA14-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
+    )[0]
+    world.set_own_so_number("ZZT-EA14-OWN")
+    _, own_core_line = world.claiming_so("ZZT-EA14-OWN", date(2026, 7, 1), qty=20)
+    claim_id = world.claim(
+        so_number="ZZT-EA14-OWN", po_number="ZZT-EA14-PO", so_line_id=own_core_line,
+        po_line_id=line,
+    )
+    row = world.row("ORDER", 20, location="BRW", delivery_date=DELIVERY)
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": line, "qty": Decimal("20")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    assert _worklist_suggestion(world, row.id) is None
+
+    world.db.execute(text("DELETE FROM order_link_claim WHERE id = :i"), {"i": claim_id})
+    world.db.flush()
+
+    suggestion = _worklist_suggestion(world, row.id)
+    assert suggestion is not None
+    assert suggestion["kind"] in ("reallocate", "unlink")
+
+
+def test_ac_ea_15_a_hand_placed_link_on_a_cited_early_line_loses_its_exemption_with_the_citation(
+    world,
+):
+    """AC-EA-15 (S3): a link a person wrote by hand on an early line whose document the
+    row cites carries `suggestion is None`; clearing the row's `cited_document`
+    withdraws the exemption on the very next read: `reallocate` / `unlink`."""
+    world.lead_time(world.product, days=STATED_LEAD)
+    line = world.purchase_order(
+        "ZZT-EA15-PO", date(2026, 8, 1), [("BRW", 20, date(2026, 10, 1), "1")]
+    )[0]
+    row = world.row(
+        "ORDER", 20, location="BRW", delivery_date=DELIVERY, cited="ZZT-EA15-PO"
+    )
+    world.svc.place_on_po_allocations(
+        row.id, [{"po_line_id": line, "qty": Decimal("20")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    assert _worklist_suggestion(world, row.id) is None
+
+    world.db.execute(
+        text(
+            "UPDATE " + P + ".order_inquiry_rows SET cited_document = NULL WHERE id = :i"
+        ),
+        {"i": row.id},
+    )
+    world.db.flush()
+
+    suggestion = _worklist_suggestion(world, row.id)
+    assert suggestion is not None
+    assert suggestion["kind"] in ("reallocate", "unlink")
