@@ -71,7 +71,6 @@ from app.models.project_so import (
     ACK_CHANGED,
     ACK_LINKABLE,
     ACK_REJECTED,
-    AMENDMENT_PUBLISHED,
     INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_LINK_STATES,
@@ -936,15 +935,18 @@ class ProjectOrderInquiryService:
 
             # S4/AC-OH-40..42, R4 revised/AC-OH-44: every row THIS call redirected,
             # whichever seam found it - `_settle_row_in_place`'s own single-row decline
-            # above, or the netting loop's PARTLY_LINKED branch just above - oldest first,
-            # so "the first one's delivery_date" (AC-OH-42) is the earliest released.
+            # above, or the netting loop's PARTLY_LINKED branch just above - earliest
+            # DUE first, so "the first one's delivery_date" (AC-OH-42) is well-defined.
+            # NOT `created_at`: both rows are written in the SAME apply's transaction, so
+            # Postgres' `now()` ties them (LESSONS-LEARNT, "now() ties in transaction")
+            # and the id tie-break would answer differently from one run to the next.
             redirected_this_call = sorted(
                 (
                     row
                     for row in rows
                     if row.redirected_to_pool and row.id not in previously_redirected_ids
                 ),
-                key=lambda row: (row.created_at or datetime.min, str(row.id)),
+                key=lambda row: (row.delivery_date or date.max, str(row.id)),
             )
             if redirected_this_call and asked_to_settle:
                 # R4 revised: a line the confirm restated - here, by releasing what it had
@@ -2451,16 +2453,20 @@ class ProjectOrderInquiryService:
         what the previous value was, so this stays as thin a wrapper over `net_demand` as
         `derive_for_amendment` is.
 
-        Written under its OWN `SOAmendment` row rather than the order's `amendment_id IS
-        NULL` inquiry `refresh_for_decision` owns: the two are different instructions (a
-        confirmed Buy residual vs a reaction to what changed) and the DB-level singleton on
-        `amendment_id IS NULL` would otherwise collide with whatever `confirm()` just wrote
-        earlier in the same apply. `from_version_kind='planning_change_batch'` names where
-        this one came from; nothing reads that column back for routing, so it costs no
-        contract anywhere else.
+        S3 (`PLAN-oi-worklist-one-header.md`, R1): written onto the order's OWN
+        `amendment_id IS NULL` header, the same one `refresh_for_decision` owns, rather than
+        under a synthetic `SOAmendment` of its own - one sales order, one order inquiry
+        number, whichever writer (a confirmed Buy residual, or a book-change reaction) put
+        rows on it. The DB-level singleton the old docstring feared colliding with was never
+        a real collision: `ensure_inquiry` returns the exact row `confirm()` wrote earlier in
+        the same apply, and `_write`'s own `inquiry=` argument tells it to append there
+        rather than mint a second header. `batch_id` is kept on the signature for the
+        caller's own bookkeeping (`planning_change_service.apply` still names its batch),
+        though nothing here writes it anywhere any more - the synthetic amendment it used to
+        travel on is gone. `derive_for_amendment` (OCN) is unchanged: a project-authored SO's
+        amendment still keeps its own header (backlog: fold those too, see the plan).
         """
         demand: List[DemandRow] = []
-        verb_summary: Dict[str, int] = {}
         for row in rows:
             qty = _dec(row.get("qty"))
             if qty <= _ZERO:
@@ -2478,21 +2484,10 @@ class ProjectOrderInquiryService:
                     note=row.get("note"),
                 )
             )
-            verb_summary[change] = verb_summary.get(change, 0) + 1
         if not demand:
             return None
-        amendment = SOAmendment(
-            company_id=order.company_id,
-            project_sales_order_id=order.id,
-            from_version_kind="planning_change_batch",
-            from_version_id=batch_id,
-            verb_summary=verb_summary,
-            status=AMENDMENT_PUBLISHED,
-            published_at=datetime.utcnow(),
-        )
-        self.db.add(amendment)
-        self.db.flush()
-        return self._write(order, amendment, demand, actor_user_id=actor_user_id)
+        inquiry = self.ensure_inquiry(order, actor_user_id=actor_user_id)
+        return self._write(order, None, demand, actor_user_id=actor_user_id, inquiry=inquiry)
 
     def _change_note(self, change: str, row: Dict[str, Any]) -> Optional[str]:
         """The half of the instruction the verb does not carry."""
@@ -2516,20 +2511,28 @@ class ProjectOrderInquiryService:
         demand: Sequence[DemandRow],
         *,
         actor_user_id: Optional[str],
+        inquiry: Optional[OrderInquiry] = None,
     ) -> OrderInquiry:
         plans = net_demand(demand, self._pools(order, demand))
 
-        inquiry = OrderInquiry(
-            company_id=order.company_id,
-            project_sales_order_id=order.id,
-            amendment_id=amendment.id if amendment else None,
-            state=INQUIRY_RAISED,
-            raised_by=actor_user_id,
-            # An amendment raises its OWN inquiry, so the stamp gives it its own number: it
-            # is a separate instruction to purchasing and gets referred to as one.
-        )
-        self.db.add(inquiry)
-        self.db.flush()
+        if inquiry is None:
+            inquiry = OrderInquiry(
+                company_id=order.company_id,
+                project_sales_order_id=order.id,
+                amendment_id=amendment.id if amendment else None,
+                state=INQUIRY_RAISED,
+                raised_by=actor_user_id,
+                # An amendment raises its OWN inquiry, so the stamp gives it its own
+                # number: it is a separate instruction to purchasing and gets referred
+                # to as one.
+            )
+            self.db.add(inquiry)
+            self.db.flush()
+        # S3 (AC-OH-30..32): a caller passing an EXISTING header (`derive_for_book_change`,
+        # onto the order's own amendment_id IS NULL inquiry) is appending to a header
+        # something else already raised or re-stamped this apply - re-stamping raised_by
+        # here would attribute rows a batch reaction wrote to whoever the SAME apply's
+        # confirm happened to run as, which is already right without touching it again.
 
         now = datetime.utcnow()
         written: List[OrderInquiryRow] = []
@@ -7292,6 +7295,69 @@ class ProjectOrderInquiryService:
             return ""
         row = self.db.query(Product.product_code).filter(Product.id == product_id).first()
         return row[0] if row else ""
+
+
+def fold_planning_change_batch_headers(db: Session) -> int:
+    """S3 migration helper (AC-OH-34, `PLAN-oi-worklist-one-header.md`): moves every row
+    off a `planning_change_batch` header (the synthetic per-apply header
+    `derive_for_book_change` used to mint, before this lane) onto its order's OWN
+    `amendment_id IS NULL` header, minting one when the order somehow has none, then
+    deletes the emptied header and its synthetic amendment.
+
+    Row ids, links, claims and handover records are all untouched - only
+    `order_inquiry_rows.order_inquiry_id` moves. A null header that already exists keeps
+    its own `raised_by`/`raised_at`/`state` exactly as they were; one minted here copies
+    them off the OLDEST batch header being folded onto it, so an order with several batch
+    headers accumulated over time (each apply used to mint its own) settles onto the
+    first one's identity rather than the last. Idempotent: a company with no
+    `planning_change_batch` header left does nothing. Runs in the caller's own
+    transaction - the caller commits (the Alembic migration's `upgrade()`, or a test).
+    """
+    batch_headers = (
+        db.query(OrderInquiry)
+        .join(SOAmendment, SOAmendment.id == OrderInquiry.amendment_id)
+        .filter(SOAmendment.from_version_kind == "planning_change_batch")
+        .order_by(OrderInquiry.raised_at.asc().nulls_last(), OrderInquiry.id.asc())
+        .all()
+    )
+    folded = 0
+    for header in batch_headers:
+        amendment_id = header.amendment_id
+        target = (
+            db.query(OrderInquiry)
+            .filter(
+                OrderInquiry.project_sales_order_id == header.project_sales_order_id,
+                OrderInquiry.amendment_id.is_(None),
+            )
+            .first()
+        )
+        if target is None:
+            target = OrderInquiry(
+                company_id=header.company_id,
+                project_sales_order_id=header.project_sales_order_id,
+                amendment_id=None,
+                state=header.state,
+                raised_by=header.raised_by,
+                raised_at=header.raised_at,
+            )
+            db.add(target)
+            db.flush()
+        db.query(OrderInquiryRow).filter(
+            OrderInquiryRow.order_inquiry_id == header.id
+        ).update({OrderInquiryRow.order_inquiry_id: target.id}, synchronize_session=False)
+        db.flush()
+        db.delete(header)
+        db.flush()
+        amendment = (
+            db.query(SOAmendment).filter(SOAmendment.id == amendment_id).first()
+            if amendment_id
+            else None
+        )
+        if amendment is not None:
+            db.delete(amendment)
+        db.flush()
+        folded += 1
+    return folded
 
 
 def confirmed_unplaced_buy_rows(
