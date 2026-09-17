@@ -99,6 +99,117 @@ def _sibling_decisions(db: Session, decision: SOSupplyDecision) -> List[SOSupply
     )
 
 
+def _return_batch_to_pending(
+    db: Session,
+    order: ProjectSalesOrder,
+    revision_no: int,
+    confirmed_at: Optional[Any],
+) -> None:
+    """AC-R2-19a: the planning-change batch that minted this revision goes back to
+    `pending`, and its `applied_at` clears once no applied row of it remains.
+
+    The journal undo gets this for free - it replays every table the confirm touched,
+    `planning_change_rows` included. A reconstructed undo has no journal, so the link has
+    to be found rather than replayed, and there are two ways to find it:
+
+    * THE STAMP, for anything applied since AC-R2-19a shipped:
+      `result_json["supply_decision_revision_no"]`, written by
+      `planning_change_service._apply_one_order` on every row it applies. Exact - the row
+      already carries `project_sales_order_id`, and `(order, revision_no)` is UNIQUE on
+      `so_supply_decisions`.
+    * THE WINDOW, for a batch applied BEFORE that stamp existed, which is a closed set
+      that shrinks to nothing: this order's applied rows whose batch was applied within
+      `_WINDOW_SECONDS` of the confirm. Used ONLY when no row of this order carries a
+      stamp at all, so a stamped batch never falls back to guessing, and the false
+      positive the window alone would allow (a plain board Confirm seconds after an
+      unrelated apply) cannot happen once the stamp is there. The trigger that justifies
+      keeping it: prod's SO314594 was applied on 16 Sep by batch
+      `bbde6b2d-2efb-4be7-a0ca-b6a399c510bc`, and the owner's recovery is an undo of
+      exactly that revision.
+
+    A revision from a plain board Confirm matches neither and touches no batch, which is
+    the whole of "A revision from a plain confirm touches no batch" in the AC.
+    """
+    from app.models.planning_change import PlanningChangeBatch, PlanningChangeRow
+    from app.services.planning_change_service import (
+        PLANNING_CHANGE_STATE_APPLIED,
+        PLANNING_CHANGE_STATE_PENDING,
+    )
+
+    applied_rows = (
+        db.query(PlanningChangeRow)
+        .filter(
+            PlanningChangeRow.project_sales_order_id == str(order.id),
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+        )
+        .all()
+    )
+    if not applied_rows:
+        return
+    returning = [
+        row
+        for row in applied_rows
+        if (row.result_json or {}).get("supply_decision_revision_no") == revision_no
+    ]
+    if not returning and confirmed_at is not None:
+        edge = timedelta(seconds=_WINDOW_SECONDS)
+        stamped_ids = {
+            row.batch_id
+            for row in applied_rows
+            if (row.result_json or {}).get("supply_decision_revision_no") is not None
+        }
+        applied_at_by_batch = dict(
+            db.query(PlanningChangeBatch.id, PlanningChangeBatch.applied_at)
+            .filter(
+                PlanningChangeBatch.id.in_({row.batch_id for row in applied_rows}),
+                PlanningChangeBatch.applied_at.isnot(None),
+            )
+            .all()
+        )
+        returning = [
+            row
+            for row in applied_rows
+            if row.batch_id not in stamped_ids
+            and applied_at_by_batch.get(row.batch_id) is not None
+            and abs((applied_at_by_batch[row.batch_id] - confirmed_at).total_seconds())
+            <= edge.total_seconds()
+        ]
+    if not returning:
+        return
+
+    for row in returning:
+        row.applied_state = PLANNING_CHANGE_STATE_PENDING
+        row.applied_reason = None
+        # The row is pending again, so it has no result. Same end state the journal undo
+        # reaches by restoring this column's pre-apply value, which was NULL.
+        row.result_json = None
+    db.flush()
+
+    for batch_id in {row.batch_id for row in returning}:
+        still_applied = (
+            db.query(PlanningChangeRow.id)
+            .filter(
+                PlanningChangeRow.batch_id == batch_id,
+                PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+            )
+            .first()
+        )
+        if still_applied is not None:
+            # Another order of the same batch is still applied - its own undo clears the
+            # batch when it runs. A batch is applied as a whole and un-applied one order
+            # at a time.
+            continue
+        batch = (
+            db.query(PlanningChangeBatch)
+            .filter(PlanningChangeBatch.id == batch_id)
+            .one_or_none()
+        )
+        if batch is not None:
+            batch.applied_at = None
+            batch.applied_by = None
+    db.flush()
+
+
 def _touched_pso_ids_and_revisions(db: Session, decision: SOSupplyDecision):
     """`(pso_ids, revision_nos, decision_ids)` for `decision` and every sibling
     `_sibling_decisions` finds - what every caller in this file needs: WHICH
@@ -262,7 +373,33 @@ def reconstruct_undo(
     # already UTC - every connection in this app sets `-c timezone=utc`
     # (`app/database.py`) - so subtracting a bare `timedelta` here is safe without a
     # tzinfo mismatch.
+    #
+    # AC-R2-19b: WHY THE GRACE WINDOW IS NOT MERELY CLOCK SKEW, and why it is not enough
+    # on its own. `order_inquiry_rows.created_at` is `server_default=func.now()`, and
+    # Postgres' `now()` is the TRANSACTION's start, not the statement's - while
+    # `confirmed_at` is a `datetime.utcnow()` read in Python partway through that same
+    # transaction. So a row this confirm RAISED is routinely stamped BEFORE its own
+    # decision's `confirmed_at` (prod SO314594: rows at 22:54:29.118, decision at
+    # 22:54:29.932), and without the window step (a) would miss every one of them. That
+    # also means the window BREAKS on a transaction that runs longer than it: a planning-
+    # change apply walking many orders can take minutes, and a row it raised would then
+    # sit further back than 60s, be read as pre-existing, and be repointed (to NULL, with
+    # no prior) instead of deleted - left alive as a decision-less live row, which is
+    # exactly the state AC-R2-19 traced the phantom "Confirmed" pill to.
+    #
+    # `raised_stamps` closes that without guessing: every row written in the SAME
+    # transaction as its decision carries the SAME `now()`, and `so_supply_decisions.
+    # created_at` is that identical default, so "raised by this confirm" is an EXACT
+    # equality. Verified against real data (prod copy, 18 Sep): all 61 rows carrying a
+    # `supply_decision_id` match their decision's own `created_at` to the microsecond. A
+    # row this confirm only SETTLED cannot collide with it - it was created in an earlier
+    # transaction, and `_settle_row_in_place` never touches `created_at`.
+    #
+    # The window stays as the outer bound rather than being replaced: it is what catches
+    # a row raised by a legacy path that set `created_at` in Python rather than letting
+    # the default fire.
     cutoff = decision.confirmed_at - timedelta(seconds=_WINDOW_SECONDS)
+    raised_stamps = {d.created_at for d in touched_decisions if d.created_at is not None}
 
     oi_service = ProjectOrderInquiryService(db)
     removed_lines: List[Dict[str, Any]] = []
@@ -276,7 +413,12 @@ def reconstruct_undo(
         .filter(OrderInquiryRow.supply_decision_id.in_(touched_decision_ids))
         .all()
     )
-    raised_rows = [row for row in touched_rows if row.created_at and row.created_at > cutoff]
+    raised_rows = [
+        row
+        for row in touched_rows
+        if row.created_at
+        and (row.created_at > cutoff or row.created_at in raised_stamps)
+    ]
     raised_ids = {row.id for row in raised_rows}
     remaining_rows = [row for row in touched_rows if row.id not in raised_ids]
 
@@ -331,6 +473,18 @@ def reconstruct_undo(
                     "outcome": "restored",
                 }
             )
+        # AC-R2-19b: NULL here means "belonged to no revision", and that is the honest
+        # answer for every row that reaches this line with no prior to point at, because
+        # every such row was already decision-less before this confirm settled it. Three
+        # writers make them and none sets `supply_decision_id`: the OI sheet import
+        # (#875, "Migrated from order inquiry sheet ..."), `derive_for_book_change` (the
+        # planning-change reaction - prod SO314594 carries three of those, noted "Was
+        # 2026-09-01"), and `derive_for_amendment` (an OCN's own exception rows). A row
+        # this confirm RAISED never reaches here at all: step (a) above took it, by the
+        # transaction-stamp equality documented at `raised_stamps`. So the one shape the
+        # AC forbids - a row left alive claiming a revision that no longer exists, or
+        # silently promoted to "decides the line" (`demand.live_inquiry_core_line_ids`)
+        # because a `SET NULL` cascade emptied its pointer - cannot be produced here.
         row.supply_decision_id = prior_by_decision_id.get(own_decision_id)
     db.flush()
 
@@ -451,6 +605,9 @@ def reconstruct_undo(
     )
     decision_id = decision.id
     revision_no = decision.revision_no
+    # Read before the DELETE below: `_return_batch_to_pending` (step g) needs the confirm
+    # instant for its legacy fallback, and the row is gone by the time it runs.
+    confirmed_at = decision.confirmed_at
     # D's own DELETE flushes on its own, before P is reactivated: `uq_so_supply_
     # decisions_active` allows only one ACTIVE row per order, and D (still active)
     # and P (about to become active) would otherwise coexist within the same flush.
@@ -462,7 +619,16 @@ def reconstruct_undo(
         prior.superseded_reason = None
         db.flush()
 
-    # (g) nothing here ever writes an `SOSupplyDecisionDraft` row.
+    # (g) AC-R2-19a: a revision minted by a PLANNING-CHANGE APPLY takes its batch back
+    # to `pending` with it, exactly as the journal undo does by replaying the
+    # `planning_change_*` rows it recorded. Without it the batch stayed `applied` while
+    # the revision it produced was gone, so the board kept reading the drifted lines as
+    # decided (`reopened_by_change` is a PENDING-row fact) and there was no way left to
+    # re-decide them. Runs after the delete above: the decision is already gone and both
+    # facts this needs - the order and the revision number - were read off it before.
+    _return_batch_to_pending(db, order, revision_no, confirmed_at)
+
+    # nothing here ever writes an `SOSupplyDecisionDraft` row.
 
     # (h) one order_inquiry_undone email, headline RECONSTRUCTED.
     oi_service._record_undo(
