@@ -23,7 +23,19 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import Date, DateTime, Numeric, and_, bindparam, event, func, inspect, text
+from sqlalchemy import (
+    Date,
+    DateTime,
+    Numeric,
+    and_,
+    bindparam,
+    case,
+    event,
+    func,
+    inspect,
+    null,
+    text,
+)
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -86,10 +98,31 @@ def _journalled_decision_clause():
     a board read and the undo it links to can never disagree about what "undoable"
     means at the edge (a NULL `confirmed_at`, or a journal that is present but
     empty).
+
+    `CASE WHEN jsonb_typeof(...) = 'array' THEN jsonb_array_length(...) ELSE 0 END > 0`
+    (hotfix, undo_0003), not `isnot(None)` + a bare `jsonb_array_length(...) > 0`: a
+    JSON literal `null` (a legacy row a pre-fix build wrote via Core
+    `.values(undo_journal=None)` before the model carried `none_as_null=True`) is
+    not a SQL NULL, so `isnot(None)` was true for it and `jsonb_array_length` then
+    threw (`InvalidParameterValue: cannot get array length of a scalar`). A plain
+    `and_(jsonb_typeof(...) == 'array', jsonb_array_length(...) > 0)` does NOT fix
+    this: Postgres does not guarantee left-to-right evaluation of an `AND`'s
+    branches, so it can (and here, does) still evaluate `jsonb_array_length` on a
+    JSON-null row even though the `jsonb_typeof` branch is false. A `CASE` IS
+    guaranteed to evaluate its branches in order and skip the ones it does not
+    take, so the array-length call never runs on anything that is not already
+    known to be a JSON array - not undoable, no crash - for a JSON null, a JSON
+    scalar, or a real SQL NULL alike.
     """
     return and_(
-        SOSupplyDecision.undo_journal.isnot(None),
-        func.jsonb_array_length(SOSupplyDecision.undo_journal) > 0,
+        case(
+            (
+                func.jsonb_typeof(SOSupplyDecision.undo_journal) == "array",
+                func.jsonb_array_length(SOSupplyDecision.undo_journal),
+            ),
+            else_=0,
+        )
+        > 0,
         SOSupplyDecision.confirmed_at.isnot(None),
     )
 
@@ -313,7 +346,7 @@ class UndoJournal:
             self.db.execute(
                 table.update()
                 .where(table.c.id == decision.supersedes_id)
-                .values(undo_journal=None)
+                .values(undo_journal=null())
             )
         self.db.flush()
         # Core SQL bypasses the ORM identity map - keep the in-memory object in sync
@@ -949,7 +982,7 @@ def undo_last_confirm(
         # `_replay` just touched via core SQL would be working off a stale in-memory
         # copy if this session had loaded it earlier.
         table = Base.metadata.tables["projects.so_supply_decisions"]
-        db.execute(table.update().where(table.c.id == prior_id).values(undo_journal=None))
+        db.execute(table.update().where(table.c.id == prior_id).values(undo_journal=null()))
 
     ProjectOrderInquiryService(db)._record_undo(
         pso_id=str(pso_id) if pso_id else None,
