@@ -835,6 +835,13 @@ class ProjectOrderInquiryService:
                 and self._cascade_only(drafted_links.get(str(row.id), []))
                 and not row.redirected_to_pool
             ]
+            # S4/AC-OH-40..42: every row this LINE already carried `redirected_to_pool` on,
+            # before anything below touches it - a row an EARLIER decision released
+            # (AC-OH-41) must never be re-read as "newly" released by this one. Whatever is
+            # `redirected_to_pool` afterwards and was not in this set is what THIS call
+            # redirected - whether `_settle_row_in_place` declined into it below, or the
+            # netting loop's own PARTLY_LINKED branch redirects it further down.
+            previously_redirected_ids = {row.id for row in rows if row.redirected_to_pool}
             asked_to_settle = str(line.id) in settle_in_place
             if (asked_to_settle or drafted) and self._settle_row_in_place(
                 inquiry, entry, rows, need, decision, actor_user_id=actor_user_id
@@ -901,6 +908,17 @@ class ProjectOrderInquiryService:
                 elif row.state == INQUIRY_PLACED:
                     placed += _dec(row.qty)
                 elif row.state == INQUIRY_PARTLY_LINKED:
+                    # AC-OH-42: this is `_settle_row_in_place`'s OWN received-document
+                    # decline (AC-RL-10..14), reached here rather than there because a
+                    # line with TWO still-owed rows never gets that far - `live` refuses
+                    # to guess which one the book moved, so both fall through to this
+                    # netting loop instead. The same rule applies at the same seam: a
+                    # fully received link is not carried through a replan, whichever path
+                    # found the row.
+                    if self._redirect_row_if_received(
+                        row, drafted_links.get(str(row.id), []), decision
+                    ):
+                        continue
                     covered = linked.get(row.id, _ZERO)
                     placed += covered
                     row.qty = covered
@@ -915,6 +933,27 @@ class ProjectOrderInquiryService:
                         if row.note
                         else f"Remainder superseded by revision {decision.revision_no}"
                     )
+
+            # S4/AC-OH-40..42, R4 revised/AC-OH-44: every row THIS call redirected,
+            # whichever seam found it - `_settle_row_in_place`'s own single-row decline
+            # above, or the netting loop's PARTLY_LINKED branch just above - oldest first,
+            # so "the first one's delivery_date" (AC-OH-42) is the earliest released.
+            redirected_this_call = sorted(
+                (
+                    row
+                    for row in rows
+                    if row.redirected_to_pool and row.id not in previously_redirected_ids
+                ),
+                key=lambda row: (row.created_at or datetime.min, str(row.id)),
+            )
+            if redirected_this_call and asked_to_settle:
+                # R4 revised: a line the confirm restated - here, by releasing what it had
+                # into stock and buying fresh - is not one the planning change should ALSO
+                # raise a DELAY/ADVANCE row for. `_settle_row_in_place`'s own decline never
+                # ran this line through the append at line ~847 above (it returned False),
+                # so it is joined here instead - the one list `_oi_demand_rows` already
+                # reads to suppress that reaction, no new flag.
+                settled_in_place.append(str(line.id))
 
             # Did purchasing already take this line's instruction on, and is this
             # confirmation actually changing it?
@@ -964,6 +1003,30 @@ class ProjectOrderInquiryService:
                     acknowledged_at=acknowledged_at,
                     changed_at=changed_at,
                 )
+                if redirected_this_call:
+                    # AC-OH-40..42: the fresh row states, in one place, what old supply it
+                    # replaces - the released rows' own qty (summed, AC-OH-42) and the
+                    # earliest one's date, plus a note naming each document. Only the rows
+                    # THIS call released (`redirected_this_call`, the diff computed above) -
+                    # AC-OH-41's later reconfirm carries none, so this block never runs for
+                    # it and the row's own ordinary settle value stands instead.
+                    raised_row.previous_qty = sum(
+                        (_dec(r.qty) for r in redirected_this_call), _ZERO
+                    )
+                    raised_row.previous_delivery_date = redirected_this_call[
+                        0
+                    ].delivery_date
+                    fragments = [
+                        fragment
+                        for fragment in (
+                            self._release_fragment(r) for r in redirected_this_call
+                        )
+                        if fragment
+                    ]
+                    raised_row.note = "; ".join(
+                        [f"Replaces {_qty_str(raised_row.previous_qty)} used"]
+                        + fragments
+                    )
                 self.db.add(raised_row)
                 if carried:
                     # AC-H20/AC-H22: the carry site cancels-and-re-raises even when
@@ -1368,6 +1431,25 @@ class ProjectOrderInquiryService:
         row.redirected_to_pool = True
         self.db.flush()
         return True
+
+    def _release_fragment(self, row: OrderInquiryRow) -> Optional[str]:
+        """S4/AC-OH-40..42: what the FRESH row's own note says about a row `this` just
+        released - `<document> received <date|in full> into <location>`, read off the
+        received link `_redirect_row_if_received` left standing on `row` rather than
+        parsed back out of its note (which reads differently - "released at revision N",
+        for a person looking at the OLD row's own history, not the new row's Was/Now).
+        """
+        links = self._links_of(row.id)
+        received = self._received_documents_for(links)
+        received_links = [link for link in links if str(link.id) in received]
+        if not received_links:
+            return None
+        first = received_links[0]
+        document = first.document or "the document"
+        arrived = received[str(first.id)]
+        when = arrived.strftime("%d %b %Y") if arrived else "in full"
+        location = f" into {row.stock_location}" if row.stock_location else ""
+        return f"{document} received {when}{location}"
 
     def _received_documents_for(
         self, links: Sequence[OrderInquiryLink]
