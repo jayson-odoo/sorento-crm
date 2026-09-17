@@ -98,6 +98,22 @@ def _record_action(action_key: str):
     return action
 
 
+# Some record actions cannot be replayed without a specific payload key captured at
+# park time - `project_sales_order.undo_confirm` needs the decision it targets, so a
+# Confirm written during the countdown is told apart from a stale one (AC-UC-28,
+# review round Contract G). Refused HERE, at park time: the execute path is too late
+# to give the click anything to show the refusal on.
+_REQUIRED_PAYLOAD_KEYS: dict = {
+    "project_sales_order.undo_confirm": ("decision_id",),
+}
+
+
+def _assert_required_payload(action_key: str, payload: dict) -> None:
+    for key in _REQUIRED_PAYLOAD_KEYS.get(action_key, ()):
+        if not (payload or {}).get(key):
+            raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
+
+
 def _assert_permission(db: Session, user_id: Optional[str], slug: str) -> None:
     """Enforce the action's own slug at the CLICK.
 
@@ -226,6 +242,7 @@ async def create_pending_action(
         )
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.permission)
+    _assert_required_payload(body.action_key, body.payload)
 
     try:
         service = FormActionService(db)

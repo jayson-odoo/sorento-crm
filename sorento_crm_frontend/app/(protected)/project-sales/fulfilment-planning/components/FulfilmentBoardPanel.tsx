@@ -119,9 +119,11 @@ export function boardViewFrom(value: string | null): BoardView {
   return value === 'grid' ? 'grid' : 'list';
 }
 
-/** The tooltip a disabled "Undo confirm" gear entry carries (AC-UC-03). */
+/** The reason a disabled "Undo confirm" gear entry states, visibly, inside the item
+ * itself (AC-UC-03, review round: a `title` on a `data-disabled` item never renders -
+ * `pointer-events-none` kills the tooltip on both a screen reader and a touch device). */
 const UNDO_REFUSAL_TITLES: Record<string, string> = {
-  manual_link: 'Purchasing linked a PO line',
+  linked: 'Purchasing linked a PO line',
   actioned: 'Purchasing marked a row actioned',
 };
 
@@ -1451,13 +1453,12 @@ export function FulfilmentBoardPanel({
                   <DropdownMenuSeparator />
                   {undoableOrders.map((order) => {
                     const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})`;
-                    const title = UNDO_REFUSAL_TITLES[order.undo?.refusal ?? ''];
-                    const disabled = Boolean(order.undo?.refusal) || !order.project_sales_order_id;
+                    const reason = UNDO_REFUSAL_TITLES[order.undo?.refusal ?? ''];
+                    const disabled = Boolean(order.undo?.refusal);
                     return (
                       <DropdownMenuItem
                         key={order.sales_order_id}
                         disabled={disabled}
-                        title={title}
                         onSelect={
                           disabled
                             ? undefined
@@ -1470,8 +1471,18 @@ export function FulfilmentBoardPanel({
                         }
                       >
                         <Undo2 className="size-4" aria-hidden />
-                        <span className="truncate" title={label}>
-                          {label}
+                        {/* Exactly one `title` owner in this item, the label span - a
+                            disabled item's own `title` never renders (AC-UC-03), so the
+                            reason is plain visible text underneath instead. */}
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate" title={label}>
+                            {label}
+                          </span>
+                          {reason ? (
+                            <span className="truncate text-xs text-muted-foreground">
+                              {reason}
+                            </span>
+                          ) : null}
                         </span>
                       </DropdownMenuItem>
                     );
@@ -1484,7 +1495,10 @@ export function FulfilmentBoardPanel({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {board.data && board.data.cells.length > 0 ? (
+          {/* An undo countdown must keep showing even once its own commit has cleared the
+              board down to zero cells (review round) - the Confirm slot this occupies is
+              not gated on there being anything left to confirm while it is counting down. */}
+          {board.data && (board.data.cells.length > 0 || undoAction.pending) ? (
             <DeferredActionButton
               pending={undoAction.pending}
               verb="Undoing"

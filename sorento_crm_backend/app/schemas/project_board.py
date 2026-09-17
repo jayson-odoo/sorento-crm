@@ -1140,8 +1140,9 @@ class BoardUndo(BaseModel):
     confirmed_at: Optional[datetime] = None
     confirmed_by_name: Optional[str] = None
     #: Set when purchasing has already acted on this order since the confirm - a
-    #: manual PO link, or a row marked actioned. Null when nothing blocks the undo.
-    refusal: Optional[Literal["manual_link", "actioned"]] = None
+    #: PO link (`linked`, whatever `auto` reads - review round), or a row marked
+    #: actioned. Null when nothing blocks the undo.
+    refusal: Optional[Literal["linked", "actioned"]] = None
     #: Addressing only, never rendered (no UUIDs in the UI): the pending action's
     #: payload names the decision it was created against, so `undo_last_confirm`
     #: can tell a Confirm written during the countdown apart and refuse `superseded`

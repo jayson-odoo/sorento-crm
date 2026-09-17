@@ -1207,6 +1207,22 @@ class SOSupplyDecision(Base, CompanyScopedMixin):
     __tablename__ = "so_supply_decisions"
     __audit_entity_type__ = "project_so_supply_decisions"
     __audit_track__ = True
+    # `undo_journal` deliberately excluded (review round, board-undo-last-confirm): it
+    # is a replay script, not a fact CS or purchasing reads, and it can be large - the
+    # audit trail names WHAT happened, never carries the raw journal that reverses it.
+    __audit_columns__ = [
+        "project_sales_order_id",
+        "revision_no",
+        "state",
+        "source_revision",
+        "line_snapshots",
+        "confirmed_by",
+        "confirmed_at",
+        "suspected_system_issue",
+        "supersedes_id",
+        "superseded_at",
+        "superseded_reason",
+    ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     project_sales_order_id = Column(

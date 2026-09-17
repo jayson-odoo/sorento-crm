@@ -48,6 +48,14 @@ export { standingsFor };
 export interface BoardDemandLine {
   sales_order_id: string;
   so_number: string;
+  /**
+   * Addressing only - the built order's own `project_sales_order_id` is always
+   * derived below as `pso-${sales_order_id}`, so this override affects nothing at
+   * runtime. Declared so a caller distinguishing several orders in one fixture (the
+   * undo gear's own vitest suite) can still spell it on the line without a spurious
+   * excess-property type error.
+   */
+  project_sales_order_id?: string | null;
   customer_name?: string | null;
   project_label?: string | null;
   line_no: number;

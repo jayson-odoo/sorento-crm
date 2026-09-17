@@ -1736,10 +1736,12 @@ export interface BoardAxisRow {
 /**
  * Why Undo of this order's newest confirm would be refused, even though it carries a journal
  * (`PLAN-board-undo-last-confirm.md`, R1): purchasing has already acted on one of the order's
- * OI rows since the confirm - linked a PO line by hand, or marked a row actioned. Null when
- * nothing blocks it.
+ * OI rows since the confirm - linked a PO line, or marked a row actioned - after the confirm's
+ * own journal stopped writing. Null when nothing blocks it. `linked`, not `manual_link` (review
+ * round): the `auto` flag on the link is irrelevant - an AutoCount pairing purchasing's own
+ * upload placed is purchasing's work as much as a hand click.
  */
-export type BoardUndoRefusal = 'manual_link' | 'actioned' | null;
+export type BoardUndoRefusal = 'linked' | 'actioned' | null;
 
 /**
  * What the board knows about undoing an order's newest confirm (`undo_0001`, S1, #978): the
@@ -1795,8 +1797,8 @@ export interface BoardOrderStanding {
   pending_change_batch_id?: string | null;
   /**
    * Whether the order's newest confirm can be undone from the gear, and why not when it
-   * cannot. Absent/null on a server that predates S1, which the Phase 1 mock overlay
-   * (`_shared/lib/boardUndoMock.ts`) stands in for until then.
+   * cannot. Absent/null on a server that predates S1, or when the order has no active
+   * decision, or the active decision was never journalled.
    */
   undo?: BoardUndo | null;
 }

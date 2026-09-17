@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from sqlalchemy import Date, DateTime, Numeric, event, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from sqlalchemy.orm.attributes import get_history
+from sqlalchemy.orm.attributes import get_history, set_committed_value
 
 from app.database import Base
 from app.models.audit import AuditLog
@@ -63,6 +63,15 @@ def _table_name(obj: Any) -> str:
     return f"{table.schema}.{table.name}" if table.schema else table.name
 
 
+#: The three tables the refusal predicate and the authorisation check both read the
+#: journal's OWN entries for (review round, "Undoable" / contracts A-C) - computed
+#: once here rather than re-derived per call, and shared so the predicate can never
+#: read a different table name than capture actually wrote.
+_DECISIONS_TABLE = "projects.so_supply_decisions"
+_OI_ROWS_TABLE = "projects.order_inquiry_rows"
+_OI_LINKS_TABLE = "projects.order_inquiry_links"
+
+
 def _journalled(obj: Any) -> bool:
     """Everything except `audit_logs` itself.
 
@@ -73,6 +82,23 @@ def _journalled(obj: Any) -> bool:
     never to the record that it happened at all.
     """
     return not isinstance(obj, AuditLog)
+
+
+def _assert_single_pk(obj: Any) -> None:
+    """Contract F (review round): a composite primary key is not safely replayable.
+
+    Replay's own `_pk_column` reads only the FIRST primary key column - a captured
+    composite-pk row would replay a delete/insert/update against the wrong half of
+    its own identity, silently. Raising here, at CAPTURE, means a table this module
+    has never been taught about fails loudly the moment a Confirm ever touches it,
+    rather than corrupting a stranger's row the day someone finally undoes it.
+    """
+    table = obj.__table__
+    if len(table.primary_key.columns) != 1:
+        raise ValueError(
+            f"UndoJournal cannot capture {_table_name(obj)}: composite primary key, "
+            "not replayable by a single pk column."
+        )
 
 
 def _changed_old_values(obj: Any) -> Dict[str, Any]:
@@ -126,9 +152,14 @@ class UndoJournal:
     def __exit__(self, exc_type, exc, tb) -> bool:
         # The unit of work's FINAL writes must be captured before the listener comes
         # off, or a caller that writes and never flushes again would leave that write
-        # out of the journal entirely.
+        # out of the journal entirely - but ONLY on the clean exit path (Contract J,
+        # review round): the route wraps the WHOLE confirm call in `UndoJournal(db):`,
+        # and a business-logic refusal leaves the session mid-transaction. Flushing
+        # anyway here, in a bare `finally`, could itself raise and turn a clean 409
+        # into a 500 - or worse, half-write a confirm the caller meant to abandon.
         try:
-            self.db.flush()
+            if exc_type is None:
+                self.db.flush()
         finally:
             event.remove(self.db, "before_flush", self._before_flush)
             event.remove(self.db, "after_flush", self._after_flush)
@@ -140,12 +171,14 @@ class UndoJournal:
         for obj in list(session.new):
             if not _journalled(obj):
                 continue
+            _assert_single_pk(obj)
             entry = {"seq": seq, "op": "insert", "table": _table_name(obj), "pk": None, "old": None}
             self.entries.append(entry)
             self._pending_inserts.append((entry, obj))
         for obj in list(session.dirty):
             if not _journalled(obj):
                 continue
+            _assert_single_pk(obj)
             old = _changed_old_values(obj)
             if not old:
                 continue
@@ -165,6 +198,7 @@ class UndoJournal:
         for obj in list(session.deleted):
             if not _journalled(obj):
                 continue
+            _assert_single_pk(obj)
             self.entries.append(
                 {
                     "seq": seq,
@@ -182,15 +216,46 @@ class UndoJournal:
             entry["pk"] = _entity_id_str(obj)
 
     def attach(self, decision: SOSupplyDecision) -> None:
-        """Write the captured journal onto the decision THIS confirm minted.
+        """Write the captured journal onto the decision THIS confirm minted, and null
+        the journal of the decision it superseded (Contract H, review round).
 
         Called AFTER the `with` block has exited, never inside it - the listener is
         already detached by then, so writing `undo_journal` does not journal itself.
         The decision's own insert is already in `self.entries` (captured like any
         other row), which is correct: replay deletes it along with everything else.
+
+        Core SQL (review round), not `decision.undo_journal = ...; self.db.flush()`:
+        an ORM assignment marks the decision dirty and goes through the SAME
+        `before_flush` audit listener every other write in this app does, which by
+        default captures every column - exactly the "whole journal copied into
+        audit_logs on confirm" finding. `__audit_columns__` now excludes the column
+        too (belt and braces), but the write itself should not depend on that.
+
+        The superseded decision's own journal is nulled HERE, at CONFIRM time, not
+        only later when an undo reinstates it (R3/AC-UC-22 is the separate, undo-side
+        guarantee): a superseded revision's journal replays against a book state THIS
+        confirm has already changed underneath it, and is not safely replayable by
+        the time a second confirm has landed on top of it.
         """
-        decision.undo_journal = list(self.entries)
+        journal_payload = list(self.entries)
+        table = Base.metadata.tables[_DECISIONS_TABLE]
+        self.db.execute(
+            table.update()
+            .where(table.c.id == decision.id)
+            .values(undo_journal=journal_payload)
+        )
+        if decision.supersedes_id:
+            self.db.execute(
+                table.update()
+                .where(table.c.id == decision.supersedes_id)
+                .values(undo_journal=None)
+            )
         self.db.flush()
+        # Core SQL bypasses the ORM identity map - keep the in-memory object in sync
+        # (`set_committed_value`, not a plain attribute assignment: this session's own
+        # later reads of `decision.undo_journal` must see the real value, but without
+        # marking the object dirty again for a future flush to re-audit).
+        set_committed_value(decision, "undo_journal", journal_payload)
 
 
 # --------------------------------------------------------------------------- replay
@@ -258,14 +323,26 @@ def _run_with_retries(db: Session, jobs: List[Any]) -> None:
         remaining = failed
 
 
-def _replay(db: Session, journal: List[Dict[str, Any]]) -> None:
+def _replay(
+    db: Session, journal: List[Dict[str, Any]], *, company_id: Optional[str]
+) -> None:
     """The three passes (plan "Replay"). Reversing the whole list once and filtering
     by op is capture order reversed for each population; within each population,
     `_run_with_retries` settles the FK-dependency order capture order does not
     promise.
+
+    Every delete and update ANDs `company_id == company_id` when the table carries
+    that column (review round: "no table allowlist" was declined - one writer of the
+    column today - but a company predicate costs nothing and core SQL bypasses the
+    ORM's own scope filter entirely, so this is the one guard replay keeps for itself).
     """
     reversed_entries = list(reversed(journal))
     inserted_keys = {(e["table"], e["pk"]) for e in journal if e["op"] == "insert"}
+
+    def _scoped(stmt, table):
+        if company_id is not None and "company_id" in table.c:
+            return stmt.where(table.c.company_id == company_id)
+        return stmt
 
     # Pass 1: delete every row this confirm inserted.
     delete_jobs = []
@@ -274,17 +351,23 @@ def _replay(db: Session, journal: List[Dict[str, Any]]) -> None:
             continue
         table = Base.metadata.tables[entry["table"]]
         pk = entry["pk"]
+        stmt = _scoped(table.delete().where(_pk_column(table) == pk), table)
 
-        def _delete(table=table, pk=pk):
-            db.execute(table.delete().where(_pk_column(table) == pk))
+        def _delete(stmt=stmt):
+            db.execute(stmt)
 
         delete_jobs.append(_delete)
     _run_with_retries(db, delete_jobs)
 
-    # Pass 2: re-insert every row this confirm deleted.
+    # Pass 2: re-insert every row this confirm deleted, skipping a pk this SAME
+    # confirm both inserted and later deleted (Contract E, review round) - a link
+    # drafted and removed inside one confirm never existed before it at all, and
+    # re-inserting it would bring back a row nothing before this confirm ever had.
     insert_jobs = []
     for entry in reversed_entries:
         if entry["op"] != "delete":
+            continue
+        if (entry["table"], entry["pk"]) in inserted_keys:
             continue
         table = Base.metadata.tables[entry["table"]]
         values = _coerce_row(table, entry["old"] or {})
@@ -314,8 +397,10 @@ def _replay(db: Session, journal: List[Dict[str, Any]]) -> None:
         if not values:
             continue
 
-        def _update(table=table, pk=pk, values=values):
-            db.execute(table.update().where(_pk_column(table) == pk).values(**values))
+        stmt = _scoped(table.update().where(_pk_column(table) == pk), table).values(**values)
+
+        def _update(stmt=stmt):
+            db.execute(stmt)
 
         update_jobs.append(_update)
     _run_with_retries(db, update_jobs)
@@ -325,72 +410,218 @@ def _replay(db: Session, journal: List[Dict[str, Any]]) -> None:
 
 _REFUSAL_MESSAGES = {
     "no_journal": "This confirm cannot be undone.",
-    "manual_link": "Purchasing has linked a PO line to this order since it was confirmed.",
+    "linked": "Purchasing has linked a PO line to this order since it was confirmed.",
     "actioned": "Purchasing has marked a row on this order actioned since it was confirmed.",
     "superseded": "A newer confirm has already replaced this one.",
 }
 
 
-def _refusal_reason(db: Session, pso_id: str, decision: SOSupplyDecision) -> Optional[str]:
-    """R1: only a manual link or an actioned row written AFTER the confirm blocks
-    undo. Time, not actor, separates purchasing's own work from the confirm's own
-    step-3 borrow link, which is `auto=False` but `linked_at` no later than
-    `confirmed_at` (written inside the same transaction; Postgres `now()` is constant
-    within one)."""
-    confirmed_at = decision.confirmed_at
-    if not confirmed_at:
-        return None
-    line_ids = [
-        row[0]
-        for row in db.query(ProjectSalesOrderLine.id)
-        .filter(ProjectSalesOrderLine.project_sales_order_id == pso_id)
-        .all()
-    ]
-    if not line_ids:
-        return None
-    row_ids = [
-        row[0]
-        for row in db.query(OrderInquiryRow.id)
-        .filter(OrderInquiryRow.so_line_id.in_(line_ids))
-        .all()
-    ]
-    if not row_ids:
-        return None
-    actioned = (
-        db.query(OrderInquiryRow.id)
-        .filter(
-            OrderInquiryRow.id.in_(row_ids),
-            OrderInquiryRow.state == INQUIRY_ACTIONED,
-            OrderInquiryRow.actioned_at.isnot(None),
-            OrderInquiryRow.actioned_at > confirmed_at,
-        )
-        .first()
-    )
-    if actioned:
-        return "actioned"
-    manual_link = (
-        db.query(OrderInquiryLink.id)
-        .filter(
-            OrderInquiryLink.row_id.in_(row_ids),
-            OrderInquiryLink.auto.is_(False),
-            OrderInquiryLink.linked_at.isnot(None),
-            OrderInquiryLink.linked_at > confirmed_at,
-        )
-        .first()
-    )
-    if manual_link:
-        return "manual_link"
+def _journal_pk_set(journal, table: str, ops: Tuple[str, ...]) -> set:
+    return {e["pk"] for e in journal if e["table"] == table and e["op"] in ops}
+
+
+def _journal_entry_for_pk(journal, table: str, pk: str) -> Optional[Dict[str, Any]]:
+    for entry in journal:
+        if entry["table"] == table and entry["pk"] == pk:
+            return entry
     return None
+
+
+def touched_project_sales_order_ids(db: Session, decision: SOSupplyDecision) -> set:
+    """Every project sales order THIS decision's own journal names (review round,
+    "Undoable"): the order confirmed, plus any donor order a cross-project borrow
+    re-issued in the same transaction. The journal, not the caller's own idea of
+    "this order", says what the confirm actually touched - `undo_last_confirm`'s
+    own authorisation check and the refusal predicate both read this same set, so a
+    donor's row purchasing has since acted on is never missed (Contract B).
+
+    Falls back to the decision's own order when the journal carries no
+    `so_supply_decisions` entry naming one (should not happen for a real journal -
+    the decision's own insert is always in it - but a hand-built one, as the
+    "cascade restamp" kill test constructs, may name only the row it is about).
+    """
+    journal = decision.undo_journal or []
+    pks = _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
+    if not pks:
+        return {decision.project_sales_order_id}
+    rows = (
+        db.query(SOSupplyDecision.id, SOSupplyDecision.project_sales_order_id)
+        .filter(SOSupplyDecision.id.in_(pks))
+        .all()
+    )
+    resolved = {pso_id for _id, pso_id in rows if pso_id}
+    return resolved or {decision.project_sales_order_id}
+
+
+def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[str]]:
+    """R1's refusal, computed for every decision passed at once (review round: the
+    N+1 finding) - a fixed small number of queries regardless of how many decisions
+    are asked about, rather than `_refusal_reason`'s own shape run once per decision.
+
+    `decisions` needs only `.id`, `.project_sales_order_id`, `.confirmed_at` and
+    `.undo_journal` - a real `SOSupplyDecision` or a lightweight stand-in both work.
+
+    `linked`: an `order_inquiry_links` row on one of the touched orders' rows whose
+    id is NOT in the journal's own insert set for that table, and whose `linked_at`
+    is after `confirmed_at`. `auto` is irrelevant (review round: an AutoCount pairing
+    is purchasing's placement as much as a hand click) - membership in the journal's
+    own insert set, not a raw flag, is what tells the confirm's OWN step-3 link
+    apart from one purchasing placed afterward (the clock-mismatch finding this
+    replaces: `confirmed_at` is a Python `datetime.utcnow()`, `linked_at` is
+    Postgres `now()` resolved microseconds later in the very same transaction).
+
+    `actioned`: a row currently `state = 'actioned'` that was not ALREADY actioned
+    when the confirm ran - read off the journal's own old value for that row's
+    `state` when the row is IN the journal (present but the key absent means the
+    column never changed, so the old value is the current one - still `actioned`,
+    not a fresh transition); a row the journal never touched counts only when its
+    own `actioned_at` is after `confirmed_at`.
+    """
+    journal_by_decision = {d.id: (d.undo_journal or []) for d in decisions}
+    confirmed_at_by_decision = {d.id: d.confirmed_at for d in decisions}
+
+    all_decision_pks: set = set()
+    for journal in journal_by_decision.values():
+        all_decision_pks |= _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
+    pso_by_decision_pk: Dict[str, str] = {}
+    if all_decision_pks:
+        pso_by_decision_pk = dict(
+            db.query(SOSupplyDecision.id, SOSupplyDecision.project_sales_order_id)
+            .filter(SOSupplyDecision.id.in_(all_decision_pks))
+            .all()
+        )
+
+    pso_ids_by_decision: Dict[str, set] = {}
+    for d in decisions:
+        journal = journal_by_decision[d.id]
+        touched = {
+            pso_by_decision_pk[pk]
+            for pk in _journal_pk_set(journal, _DECISIONS_TABLE, ("insert", "update"))
+            if pk in pso_by_decision_pk
+        }
+        pso_ids_by_decision[d.id] = touched or {d.project_sales_order_id}
+
+    all_pso_ids: set = set()
+    for pso_ids in pso_ids_by_decision.values():
+        all_pso_ids |= pso_ids
+
+    pso_by_line: Dict[str, str] = {}
+    if all_pso_ids:
+        pso_by_line = dict(
+            db.query(ProjectSalesOrderLine.id, ProjectSalesOrderLine.project_sales_order_id)
+            .filter(ProjectSalesOrderLine.project_sales_order_id.in_(all_pso_ids))
+            .all()
+        )
+
+    row_ids_by_pso: Dict[str, set] = {}
+    pso_by_row: Dict[str, str] = {}
+    if pso_by_line:
+        for row_id, line_id in (
+            db.query(OrderInquiryRow.id, OrderInquiryRow.so_line_id)
+            .filter(OrderInquiryRow.so_line_id.in_(list(pso_by_line.keys())))
+            .all()
+        ):
+            pso_id = pso_by_line.get(line_id)
+            if not pso_id:
+                continue
+            pso_by_row[row_id] = pso_id
+            row_ids_by_pso.setdefault(pso_id, set()).add(row_id)
+
+    all_row_ids = list(pso_by_row.keys())
+    actioned_rows = (
+        db.query(OrderInquiryRow.id, OrderInquiryRow.actioned_at)
+        .filter(OrderInquiryRow.id.in_(all_row_ids), OrderInquiryRow.state == INQUIRY_ACTIONED)
+        .all()
+        if all_row_ids
+        else []
+    )
+    links_by_row: Dict[str, list] = {}
+    if all_row_ids:
+        for link_id, row_id, linked_at in (
+            db.query(OrderInquiryLink.id, OrderInquiryLink.row_id, OrderInquiryLink.linked_at)
+            .filter(
+                OrderInquiryLink.row_id.in_(all_row_ids),
+                OrderInquiryLink.linked_at.isnot(None),
+            )
+            .all()
+        ):
+            links_by_row.setdefault(row_id, []).append((link_id, linked_at))
+
+    out: Dict[str, Optional[str]] = {}
+    for d in decisions:
+        confirmed_at = confirmed_at_by_decision[d.id]
+        out[d.id] = None
+        if not confirmed_at:
+            continue
+        journal = journal_by_decision[d.id]
+        own_row_ids: set = set()
+        for pso_id in pso_ids_by_decision[d.id]:
+            own_row_ids |= row_ids_by_pso.get(pso_id, set())
+        if not own_row_ids:
+            continue
+
+        refusal: Optional[str] = None
+        for row_id, actioned_at in actioned_rows:
+            if row_id not in own_row_ids:
+                continue
+            entry = _journal_entry_for_pk(journal, _OI_ROWS_TABLE, row_id)
+            old = (entry.get("old") or {}) if entry is not None else {}
+            if "state" in old:
+                # The confirm's OWN write is what changed `state` (or left it, if
+                # this is a merged multi-flush entry whose oldest capture already
+                # read "actioned" - the cascade re-stamp case, AC-UC unchanged).
+                # Present and not "actioned" means the confirm itself was the one
+                # that actioned it - "not already actioned when the confirm ran".
+                if old["state"] != "actioned":
+                    refusal = "actioned"
+                    break
+                continue
+            # The journal says nothing about `state` for this row - either it was
+            # never touched by the confirm at all, or it was touched for OTHER
+            # columns only, which tells us nothing about when it became actioned.
+            # Fall back to the same clock test an untouched row gets.
+            if actioned_at is not None and actioned_at > confirmed_at:
+                refusal = "actioned"
+                break
+
+        if refusal is None:
+            insert_link_pks = _journal_pk_set(journal, _OI_LINKS_TABLE, ("insert",))
+            for row_id in own_row_ids:
+                found = False
+                for link_id, linked_at in links_by_row.get(row_id, ()):
+                    if link_id in insert_link_pks:
+                        continue
+                    if linked_at and linked_at > confirmed_at:
+                        refusal = "linked"
+                        found = True
+                        break
+                if found:
+                    break
+
+        out[d.id] = refusal
+    return out
+
+
+def _refusal_reason(db: Session, decision: SOSupplyDecision) -> Optional[str]:
+    """`_grouped_refusals`'s own rule, for a single decision - `undo_last_confirm`
+    checks exactly one, so batching buys it nothing; `board_undo_map` is the caller
+    that batches, over every decision on the board at once."""
+    return _grouped_refusals(db, [decision]).get(decision.id)
 
 
 # --------------------------------------------------------------------------- email
 
 
-def _undo_email_lines(db: Session, journal: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _undo_email_lines(
+    db: Session, journal: List[Dict[str, Any]], pso_id: str
+) -> List[Dict[str, Any]]:
     """One `{item_code, qty, delivery_date, outcome}` per order inquiry row the
-    journal touched (plan "The email"): a row this confirm INSERTED is `removed`
-    (undo deletes it); a row it UPDATED goes `back to <qty> on <dd/mm/yyyy>`, from
-    the journal's own restored (old) values.
+    journal touched, belonging to THIS order alone (review round: "the undone email
+    lists a donor's rows" - a cross-project borrow's journal can also name the
+    donor's own re-issue, and the undone order's own email must never speak for an
+    order it did not undo): a row this confirm INSERTED is `removed` (undo deletes
+    it); a row it UPDATED goes `back to <qty> on <dd/mm/yyyy>`, from the journal's
+    own restored (old) values.
 
     Reads the rows BEFORE `_replay` runs - by the time replay has deleted or
     overwritten them, this information is gone.
@@ -405,7 +636,16 @@ def _undo_email_lines(db: Session, journal: List[Dict[str, Any]]) -> List[Dict[s
         return []
     rows_by_pk = {
         row.id: row
-        for row in db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(pks)).all()
+        for row in db.query(OrderInquiryRow)
+        .join(
+            ProjectSalesOrderLine,
+            ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+        )
+        .filter(
+            OrderInquiryRow.id.in_(pks),
+            ProjectSalesOrderLine.project_sales_order_id == pso_id,
+        )
+        .all()
     }
 
     lines: List[Dict[str, Any]] = []
@@ -443,6 +683,48 @@ def _undo_email_lines(db: Session, journal: List[Dict[str, Any]]) -> List[Dict[s
     return lines
 
 
+# --------------------------------------------------------------------------- authorisation
+
+
+def _actor_permission_slugs(db: Session, user_id: Optional[str]) -> set:
+    from app.services.user_service import UserPermissionService
+
+    if not user_id:
+        return set()
+    return set(UserPermissionService(db).get_user_permission_slugs(user_id))
+
+
+def _assert_actor_can_undo(db: Session, actor_user_id: Optional[str], pso_ids: set) -> None:
+    """Contract C (review round): undo re-runs Confirm's own per-project
+    authorisation for the REQUESTING user, at EXECUTE time - `projects.projects.edit`
+    alone is the park-time gate (checked once, when the pending action is created),
+    not the write gate. Same shape `_assert_can_act_on` in `fulfilment_planning.py`
+    uses for Confirm itself: no project on the order means the module permission on
+    the route is the whole gate (an order adopted from the AutoCount book has none by
+    design), so only an order that DOES carry a project is checked here.
+
+    Runs over EVERY order the journal touched (Contract B) - a donor order's own
+    project rights matter just as much as the order the planner clicked Undo on.
+    """
+    if not pso_ids:
+        return
+    orders = (
+        db.query(ProjectSalesOrder.id, ProjectSalesOrder.project_id)
+        .filter(ProjectSalesOrder.id.in_(pso_ids))
+        .all()
+    )
+    if not orders:
+        return
+    from app.services.project_service import assert_can_edit_project, get_project_or_404
+
+    slugs = _actor_permission_slugs(db, actor_user_id)
+    for _pso_id, project_id in orders:
+        if not project_id:
+            continue
+        project = get_project_or_404(db, project_id)
+        assert_can_edit_project(db, project, actor_user_id, slugs)
+
+
 # --------------------------------------------------------------------------- undo
 
 
@@ -478,7 +760,10 @@ def undo_last_confirm(
             status_code=409, message=_REFUSAL_MESSAGES["superseded"], code="superseded"
         )
 
-    refusal = _refusal_reason(db, str(order.id), decision)
+    pso_ids = touched_project_sales_order_ids(db, decision)
+    _assert_actor_can_undo(db, actor_user_id, pso_ids)
+
+    refusal = _refusal_reason(db, decision)
     if refusal:
         raise AppException(status_code=409, message=_REFUSAL_MESSAGES[refusal], code=refusal)
 
@@ -490,7 +775,7 @@ def undo_last_confirm(
     pso_id = order.id
 
     # Read BEFORE replay: `_replay` below deletes or overwrites these very rows.
-    undo_lines = _undo_email_lines(db, journal)
+    undo_lines = _undo_email_lines(db, journal, str(pso_id))
 
     restored_to: Optional[int] = None
     if prior_id:
@@ -503,17 +788,21 @@ def undo_last_confirm(
     # AC-UC-29: the undone decision's own audit DELETE, written explicitly - replay
     # below is core SQL throughout (`Base.metadata.tables`, not ORM objects) so no
     # listener re-fires on the way back except this one, deliberate row.
+    # `undo_journal` popped (review round, Contract D): a replay script is not a
+    # fact the audit trail names, and it can be large.
+    audit_old_values = _model_to_audit_dict(decision)
+    audit_old_values.pop("undo_journal", None)
     log_audit(
         db,
         "project_so_supply_decisions",
         str(decision_id),
         "DELETE",
-        old_values=_model_to_audit_dict(decision),
+        old_values=audit_old_values,
         user_id=actor_user_id,
         company_id=company_id,
     )
 
-    _replay(db, journal)
+    _replay(db, journal, company_id=company_id)
 
     if prior_id:
         # R3: one revision back, once - the reinstated decision is not itself
@@ -544,15 +833,30 @@ def board_undo_map(
     """One `undo` per selected order, keyed the same way `adopted_by_so` is - by the
     CORE `sales_orders.id` - so `project_fulfilment_board_service.py` can read it
     straight into each `BoardOrderStanding` (plan "Undoable", AC-UC-15).
+
+    Review round (N+1 finding): the board's own per-order facts (revision, confirmed
+    at/by) are read as SCALAR COLUMNS, never the `undo_journal` JSONB - a board of
+    fifty orders has no reason to pull fifty replay scripts into Python to answer
+    "who confirmed this and when". The journal itself is fetched separately, scoped
+    to just the decisions that are actually undoable, and the refusal for every one
+    of them is computed in ONE pass by `_grouped_refusals` rather than once per order.
     """
+    from types import SimpleNamespace
+
     from app.models.user import User
 
     pso_ids = {pso_id for pso_id in adopted_by_so.values() if pso_id}
     if not pso_ids:
         return {so_id: None for so_id in adopted_by_so}
 
-    decisions = (
-        db.query(SOSupplyDecision)
+    scalar_rows = (
+        db.query(
+            SOSupplyDecision.id,
+            SOSupplyDecision.project_sales_order_id,
+            SOSupplyDecision.revision_no,
+            SOSupplyDecision.confirmed_at,
+            SOSupplyDecision.confirmed_by,
+        )
         .filter(
             SOSupplyDecision.project_sales_order_id.in_(pso_ids),
             SOSupplyDecision.state == DECISION_ACTIVE,
@@ -560,23 +864,43 @@ def board_undo_map(
         )
         .all()
     )
-    by_pso = {d.project_sales_order_id: d for d in decisions}
-    user_ids = {d.confirmed_by for d in decisions if d.confirmed_by}
+    if not scalar_rows:
+        return {so_id: None for so_id in adopted_by_so}
+
+    decision_ids = [row.id for row in scalar_rows]
+    journals = dict(
+        db.query(SOSupplyDecision.id, SOSupplyDecision.undo_journal)
+        .filter(SOSupplyDecision.id.in_(decision_ids))
+        .all()
+    )
+    decision_stand_ins = [
+        SimpleNamespace(
+            id=row.id,
+            project_sales_order_id=row.project_sales_order_id,
+            confirmed_at=row.confirmed_at,
+            undo_journal=journals.get(row.id) or [],
+        )
+        for row in scalar_rows
+    ]
+    refusal_by_decision = _grouped_refusals(db, decision_stand_ins)
+
+    by_pso = {row.project_sales_order_id: row for row in scalar_rows}
+    user_ids = {row.confirmed_by for row in scalar_rows if row.confirmed_by}
     names: Dict[str, str] = {}
     if user_ids:
         names = dict(db.query(User.id, User.name).filter(User.id.in_(user_ids)).all())
 
     out: Dict[str, Optional[Dict[str, Any]]] = {}
     for so_id, pso_id in adopted_by_so.items():
-        decision = by_pso.get(pso_id) if pso_id else None
-        if decision is None:
+        row = by_pso.get(pso_id) if pso_id else None
+        if row is None:
             out[so_id] = None
             continue
         out[so_id] = {
-            "revision_no": decision.revision_no,
-            "confirmed_at": decision.confirmed_at,
-            "confirmed_by_name": names.get(decision.confirmed_by),
-            "refusal": _refusal_reason(db, pso_id, decision),
-            "decision_id": str(decision.id),
+            "revision_no": row.revision_no,
+            "confirmed_at": row.confirmed_at,
+            "confirmed_by_name": names.get(row.confirmed_by),
+            "refusal": refusal_by_decision.get(row.id),
+            "decision_id": str(row.id),
         }
     return out
