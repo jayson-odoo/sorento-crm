@@ -132,6 +132,25 @@ memory the stock inquiries and sales orders grids already have.
   is written to the memory; absent params fall back to the memory, then the default.
 - Data query gated on `!isViewPrefsLoading` so the first fetch is not the default view.
 
+### S8 Choose document on a linked row, one press (owner hand test 17 Sep)
+Owner: "we should be able to link to document manually for those that are linked, so it is
+1 step instead of two", and the dialog's Document column truncates ("I can't see what is
+the LA...") so it becomes a DataGrid. Measured: `_assert_linkable` (about :6944) refuses
+`state not in (raised, partly_linked)`; on the 0915 copy CKSW015 qty 3 exists as an
+`actioned` sheet row and as a `placed` board row with 0 links, both refused. A PO
+contributes one candidate per LINE (202605-S0060 had eight), and the cell shows only the
+truncated number.
+- Backend: `_assert_linkable` state gate = not cancelled. `po_candidates_for_row` returns
+  the row's own live links as candidates too (`current_take`, `remaining` counted as if the
+  row's take were free), header `still_to_link`. The place-on-po route becomes SET
+  semantics: the submitted takes are the row's links on those lines; an existing link on a
+  submitted line is adjusted, on an omitted line retired; state recomputed from links.
+- Frontend: `OrderInquiryDocumentDialog` table = `DataGrid` (`tableLayout fixed,
+  columnsResizable, columnResizeMode onChange`, explicit sizes), Document column 260 wide
+  with the full number + "line N of M", Current mark + prefilled Take on linked lines;
+  Actions "Choose document (1)" enabled for any non-cancelled ticked row.
+- Tests: pytest gate + candidates + set-semantics move; vitest grid + prefilled takes.
+
 ### S7 Guide + archive
 - Outline guide page for order inquiries: Confirm step, To confirm default, remembered view.
 

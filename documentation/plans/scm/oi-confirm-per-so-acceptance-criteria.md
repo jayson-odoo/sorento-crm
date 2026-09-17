@@ -79,6 +79,21 @@ Layout
 - AC-CF-22 Usable, nothing clipped, at 375px and 1280px; Actions menu and banner reachable
   on mobile.
 
+Choose document on a linked row (owner hand test 17 Sep, slice S8)
+- AC-CF-23 Choose document (1) is offered for any ticked row that is not cancelled, and the
+  dialog opens for a placed or actioned row instead of "Only a raised or partly linked row
+  can be linked to a document".
+- AC-CF-24 For a row that already holds links, the dialog lists the lines it is linked to
+  with the Take prefilled and a Current mark, alongside the other candidates; the header
+  reads "N still to link of Q".
+- AC-CF-25 Changing the takes and pressing Link applies them in ONE press: a take moved
+  from one line to another retires the old link and writes the new one; a take set to 0
+  unlinks that line; nothing else on the row changes. The row's state follows its links.
+- AC-CF-26 The dialog table is a DataGrid with resizable columns; the Document column shows
+  the full document number and "line N of M" when a document contributes several lines;
+  nothing is truncated at the default width at 1280px.
+- AC-CF-27 A cancelled row is still refused (409) on both the candidates and the link route.
+
 ## Evidence
 
 Browser run on the lane stack, agent-browser via sidebar: screenshots for AC-CF-5, 7, 10,
