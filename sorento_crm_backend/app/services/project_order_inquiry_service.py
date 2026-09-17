@@ -5468,6 +5468,14 @@ class ProjectOrderInquiryService:
 
         The need is the row's UNLINKED remainder, not its whole quantity: a row already
         linked 5 of 8 opens the dialog looking for 3.
+
+        S8's "choose document in one press" widened this to a row that ALREADY holds
+        links: `credit_own_links=True` adds this row's own take back into every line's
+        `remaining` before the walk measures it, so a line this row has fully claimed -
+        `remaining` would otherwise read 0 and the line would vanish from the list -
+        still shows, with `current_take` naming what this row already holds there and
+        `remaining` read as if that take were free to re-place. A line nothing of this
+        row's sits on carries `current_take: "0"`, unaffected either way.
         """
         row = self._row_or_404(row_id)
         self._assert_linkable(row)
@@ -5479,18 +5487,26 @@ class ProjectOrderInquiryService:
                 code="order_inquiry_no_product",
             )
         need = self._unlinked_need(row)
-        candidates = self._candidates_for_row(row)
+        candidates = self._candidates_for_row(row, credit_own_links=True)
         cascade = {
             candidate["target_id"]: take
             for candidate, take in self._cascade_take(candidates, need)
         }
         claims_by_line = self._linked_claims_by_target(candidates)
+        own_take_by_target: Dict[str, Decimal] = {}
+        for link in self._links_of(row.id):
+            target = str(link.po_line_id or link.spo_allocation_id)
+            own_take_by_target[target] = own_take_by_target.get(target, _ZERO) + _dec(
+                link.qty
+            )
         out: List[Dict[str, Any]] = []
         for candidate in candidates:
             # Off `raw_remaining` - what an ACTUAL link already claims - never off the
             # dedication-reduced `remaining`, or a line no link has ever touched but
             # another SO's claim reserves would misreport that claim as an "already
-            # tagged" placement nobody made (G7).
+            # tagged" placement nobody made (G7). `credit_own_links` has already taken
+            # this row's OWN take back out of `raw_remaining`, so `already` names what
+            # OTHER rows claim, never this one's.
             already = (
                 candidate["qty_ordered"]
                 - candidate["qty_received"]
@@ -5526,12 +5542,26 @@ class ProjectOrderInquiryService:
                     # G7 / G12 (S6): the dedication state the dialog greys with.
                     "dedicated_to": candidate["dedicated_to"],
                     "unattributed": candidate["unattributed"],
+                    # S8: this row's own current take on this line, "0" when it holds
+                    # none - the dialog's "Current" mark and prefilled Take.
+                    "current_take": _qty_str(
+                        own_take_by_target.get(candidate["target_id"], _ZERO)
+                    ),
                 }
             )
         recommended = next((entry for entry in out if entry["covers"]), None)
         if recommended is not None:
             recommended["recommended"] = True
         return out
+
+    def still_to_link_for_row(self, row_id: str) -> str:
+        """The Link dialog's own header line (S8, AC-CF-24): "N still to link of Q" -
+        the SAME `_unlinked_need` the candidate walk itself measures `covers` against,
+        read separately so the row-id-keyed HTTP response can carry it without changing
+        what `po_candidates_for_row` itself returns (existing callers read a plain list).
+        """
+        row = self._row_or_404(row_id)
+        return _qty_str(self._unlinked_need(row))
 
     def _unlinked_need(self, row: OrderInquiryRow) -> Decimal:
         """What is still to be linked on this row: its quantity, less its links, less
@@ -5828,6 +5858,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: str,
         auto_trigger: Optional[str] = None,
+        full_set: bool = False,
     ) -> List[Dict[str, Any]]:
         """Link this row across one or more document lines, in one call.
 
@@ -5841,9 +5872,16 @@ class ProjectOrderInquiryService:
         (R5, 27 August: every linkable verb may name either book, SPO first then PO), an
         allocation bigger than what the line has left, and a total bigger than what the
         row still needs.
+
+        `full_set=True` is S8's SET semantics, the "Choose document" dialog's own write:
+        the submitted allocations become the row's ENTIRE link set, so a line the row held
+        before that is missing from this call is retired, not merely uncounted. See
+        `_place_on_po_set`.
         """
         row = self._row_or_404(row_id)
         self._assert_linkable(row)
+        if full_set:
+            return self._place_on_po_set(row, allocations, actor_user_id=actor_user_id)
         if not allocations:
             raise AppException(
                 status_code=422,
@@ -5947,6 +5985,148 @@ class ProjectOrderInquiryService:
             self._write_link(
                 row, candidate, qty, actor_user_id=actor_user_id, auto_trigger=auto_trigger
             )
+
+        self.refresh_link_state([row])
+        self.db.flush()
+        self._refresh_inquiry_states({row.order_inquiry_id})
+        return self.serialize_rows([row])
+
+    def _place_on_po_set(
+        self,
+        row: OrderInquiryRow,
+        allocations: Sequence[Dict[str, Any]],
+        *,
+        actor_user_id: str,
+    ) -> List[Dict[str, Any]]:
+        """S8's one-press re-link (AC-CF-25): the submitted allocations ARE the row's
+        link set afterwards.
+
+        A line left out of the submission is RETIRED, through the same `_remove_links`
+        `unplace` uses - audit note and claim release included. A line submitted with a
+        different qty than it already holds is ADJUSTED in place (the link row's own
+        `qty` is changed directly): no "Unlinked from X; Linked to X" churn on a line the
+        buyer never actually let go of, which is what "nothing else on the row changes"
+        (AC-CF-25) means for a line whose take only moved by a number. A line the row
+        held NOTHING on before is a fresh link, written the usual way. The caller
+        (`place_on_po_allocations(full_set=True)`) has already checked `_assert_linkable`.
+        """
+        if not allocations:
+            raise AppException(
+                status_code=422,
+                message="Name at least one document line.",
+                code="order_inquiry_no_allocations",
+            )
+        product_id = self._resolve_product_id(row)
+        if not product_id:
+            raise AppException(
+                status_code=409,
+                message="This row names no product to match a purchase order line against.",
+                code="order_inquiry_no_product",
+            )
+
+        existing = {
+            str(link.po_line_id or link.spo_allocation_id): link
+            for link in self._links_of(row.id)
+        }
+
+        # Accumulate by target: `{po_line_id | spo_allocation_id, qty}` entries the FE
+        # never repeats today, but two entries naming the same line is a total, not a
+        # second placement.
+        resolved: Dict[str, Dict[str, Any]] = {}
+        for entry in allocations:
+            spo_allocation_id = str(entry.get("spo_allocation_id") or "") or None
+            po_line_id = str(entry.get("po_line_id") or "") or None
+            qty = _dec(entry.get("qty"))
+            if qty <= _ZERO:
+                continue
+            if spo_allocation_id and row.verb not in _SPO_LINKABLE_VERBS:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        "This row's instruction cannot be linked to a document - it is "
+                        "not one of the linkable verbs."
+                    ),
+                    code="order_inquiry_spo_not_linkable",
+                )
+            target_id = spo_allocation_id or po_line_id
+            if not target_id:
+                raise AppException(
+                    status_code=422,
+                    message="Each line must name a purchase order line or an SPO allocation.",
+                    code="order_inquiry_no_target",
+                )
+            slot = resolved.setdefault(
+                target_id,
+                {
+                    "po_line_id": po_line_id,
+                    "spo_allocation_id": spo_allocation_id,
+                    "qty": _ZERO,
+                },
+            )
+            slot["qty"] = slot["qty"] + qty
+
+        if not resolved:
+            raise AppException(
+                status_code=422,
+                message="Name at least one document line.",
+                code="order_inquiry_no_allocations",
+            )
+
+        capacity = _dec(row.qty) - _dec(row.bundled_qty)
+        total = sum((slot["qty"] for slot in resolved.values()), _ZERO)
+        if total > capacity:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"{_qty_str(total)} allocated is more than the {_qty_str(capacity)} "
+                    "this row can hold."
+                ),
+                code="order_inquiry_over_allocated",
+            )
+
+        # Manual override, credited: a line THIS row already sits on is measured as if
+        # that take were free (S8's whole point - re-place it without first unlinking),
+        # and a person naming a line by hand may still reach one a redeal walk would not
+        # (`manual=True`, the same override `place_on_po_allocations`'s ADD path grants).
+        by_target = {
+            candidate["target_id"]: candidate
+            for candidate in self._candidates_for_row(row, manual=True, credit_own_links=True)
+        }
+        for target_id, slot in resolved.items():
+            candidate = by_target.get(target_id)
+            if candidate is None:
+                self._refuse_absent_target(
+                    po_line_id=slot["po_line_id"],
+                    spo_allocation_id=slot["spo_allocation_id"],
+                    product_id=product_id,
+                )
+                continue
+            if slot["qty"] > candidate["raw_remaining"]:
+                raise AppException(
+                    status_code=409,
+                    message=(
+                        f"{candidate['document'] or 'That line'} has "
+                        f"{_qty_str(candidate['raw_remaining'])} left, "
+                        f"{_qty_str(slot['qty'] - candidate['raw_remaining'])} short of "
+                        f"the {_qty_str(slot['qty'])} allocated to it."
+                    ),
+                    code="order_inquiry_po_line_short",
+                )
+
+        to_retire = [
+            link for target_id, link in existing.items() if target_id not in resolved
+        ]
+        if to_retire:
+            self._remove_links(row, to_retire)
+
+        for target_id, slot in resolved.items():
+            link = existing.get(target_id)
+            if link is not None:
+                if _dec(link.qty) != slot["qty"]:
+                    link.qty = slot["qty"]
+                continue
+            candidate = by_target[target_id]
+            self._write_link(row, candidate, slot["qty"], actor_user_id=actor_user_id)
 
         self.refresh_link_state([row])
         self.db.flush()
@@ -6944,9 +7124,10 @@ class ProjectOrderInquiryService:
     def _assert_linkable(self, row: OrderInquiryRow) -> None:
         """Refuse a row that cannot hold a link, in the words the buyer needs.
 
-        A PARTLY LINKED row is linkable, which is the change the child table brought: it
-        still has quantity nobody has covered, and refusing it would leave that quantity
-        with no way of ever reaching a document.
+        A PARTLY LINKED, PLACED or ACTIONED row is linkable too (S8): "Choose document"
+        is a one-press re-link on a row that already carries links, not just a first
+        placement, so only CANCELLED - a row nobody can point at a document any more -
+        is refused.
         """
         if row.verb not in _LINKABLE_VERBS:
             raise AppException(
@@ -6957,10 +7138,10 @@ class ProjectOrderInquiryService:
                 ),
                 code="order_inquiry_not_placeable_verb",
             )
-        if row.state not in (INQUIRY_RAISED, INQUIRY_PARTLY_LINKED):
+        if row.state == INQUIRY_CANCELLED:
             raise AppException(
                 status_code=409,
-                message="Only a raised or partly linked row can be linked to a document.",
+                message="A cancelled row cannot be linked to a document.",
                 code="order_inquiry_not_raised",
             )
 

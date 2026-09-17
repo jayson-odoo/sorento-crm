@@ -30,6 +30,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryDetail,
     OrderInquiryMatrixResponse,
     OrderInquiryPoCandidate,
+    OrderInquiryPoCandidatesResponse,
     OrderInquiryPoDetail,
     OrderInquiryRowOut,
     OrderInquirySpoDetail,
@@ -884,17 +885,21 @@ async def mark_order_inquiry_rows(
 
 @router.get(
     "/order-inquiry-rows/{row_id}/po-candidates",
-    response_model=List[OrderInquiryPoCandidate],
+    response_model=OrderInquiryPoCandidatesResponse,
 )
 async def order_inquiry_po_candidates(
     row_id: str,
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Open PO lines this row could be tagged to (section G), soonest first."""
+    """Open PO lines this row could be tagged to (section G), soonest first, plus the
+    dialog's own header line (S8, AC-CF-24): how much of the row is still unlinked."""
     try:
         validate_uuid_path(row_id, resource="Order inquiry row")
-        return ProjectOrderInquiryService(db).po_candidates_for_row(row_id)
+        service = ProjectOrderInquiryService(db)
+        candidates = service.po_candidates_for_row(row_id)
+        still_to_link = service.still_to_link_for_row(row_id)
+        return {"candidates": candidates, "still_to_link": still_to_link}
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -940,6 +945,10 @@ async def place_order_inquiry_row_on_po(
                     for allocation in payload.allocations
                 ],
                 actor_user_id=current_user["id"],
+                # S8 (AC-CF-25): the dialog's `allocations` submission is the row's whole
+                # link set - SET semantics, not an add-on-top. The single `po_line_id`
+                # form below keeps its old ADD meaning.
+                full_set=True,
             )
             body = written[0]
         else:

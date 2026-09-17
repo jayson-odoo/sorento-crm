@@ -1,6 +1,13 @@
 'use client';
 
 import * as React from 'react';
+import {
+  type ColumnDef,
+  type ExpandedState,
+  getCoreRowModel,
+  getExpandedRowModel,
+  useReactTable,
+} from '@tanstack/react-table';
 import { ChevronDown, ChevronRight, PackageSearch } from 'lucide-react';
 import {
   Alert,
@@ -21,6 +28,9 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { cn } from '@/lib/utils';
 import {
@@ -31,17 +41,10 @@ import { formatInquiryQty } from '../lib/orderInquiryWorklist';
 import { formatHorizon, isDueAfterHorizon } from '../lib/linkHorizon';
 import type { OrderInquiryPoAllocation, OrderInquiryPoCandidate } from '../types/orderInquiry.types';
 
-const CHEVRON_COL = 'w-[28px] min-w-[28px] max-w-[28px]';
-const PO_COL = 'w-[170px] min-w-[170px] max-w-[170px]';
-const WHERE_COL = 'w-[130px] min-w-[130px] max-w-[130px]';
-const SUPPLIER_COL = 'w-[160px] min-w-[160px] max-w-[160px]';
-const DATE_COL = 'w-[110px] min-w-[110px] max-w-[110px]';
-const NUMBER_COL = 'w-[100px] min-w-[100px] max-w-[100px]';
-const TAKE_COL = 'w-[110px] min-w-[110px] max-w-[110px]';
-
-const HEAD_CELL =
-  'sticky top-0 z-10 border-b border-e border-border bg-muted px-2 py-1.5 text-start align-bottom font-medium';
-const BODY_CELL = 'border-b border-e border-border px-2 py-1.5 align-middle';
+/** A stable reference for "no candidates yet" - never a fresh `[]` literal at the read
+ * site, which would give the grid's `data` prop a new identity every render and spin
+ * TanStack's `autoResetPageIndex` loop (measured on the M5 lane, 5 Sep 2026). */
+const EMPTY_CANDIDATES: OrderInquiryPoCandidate[] = [];
 
 /**
  * How a candidate is addressed. Exactly one of the two ids is set - the same rule the
@@ -98,8 +101,16 @@ function formatCandidateUnitPrice(
  * 3 a site pool, 4 a sibling at the site. An SPO allocation is a candidate for an ORDER
  * BACK row and for nothing else (captain, 25 Aug), and the document CS cited comes first.
  *
- * NOT a DataGrid, the same carve-out `BorrowAddDialog` and `CellStockTable` document: a
- * small fixed table inside a dialog, no column config, sort, resize or pagination.
+ * The candidate table is the shared `DataGrid`/`DataGridTable` (S8, AC-CF-26): fixed table
+ * layout, resizable columns, no pagination - a candidate list is short and a page 2 would
+ * hide a line the buyer expects in one scroll, the same carve-out a document's own line
+ * table already takes. `listingKey={null}` (never `PanelDataGrid`, which cannot take one):
+ * this table is a per-open, ephemeral picker, not a listing a reader's column order is
+ * worth remembering across sessions, and skipping the fetch is also what keeps it working
+ * in a bare render with no `useListingColumnPreferences` mock. The Document column never
+ * truncates and states "line N of M" when the same document contributes several candidate
+ * lines - a PO with eight lines used to show the same truncated number eight times with
+ * nothing to tell them apart.
  */
 export function LinkDocumentDialog({
   rowId,
@@ -132,8 +143,13 @@ export function LinkDocumentDialog({
 }) {
   const candidatesQuery = useOrderInquiryPoCandidates(rowId);
   const { placeAllocations } = useOrderInquiryPlacementMutations();
-  const candidates = candidatesQuery.data ?? [];
-  const [expandedIds, setExpandedIds] = React.useState<Set<string>>(new Set());
+  // Stable across a render that touches nothing to do with the query itself (typing in a
+  // Take input, expanding a row) - see `EMPTY_CANDIDATES`'s own note.
+  const candidates = React.useMemo(
+    () => candidatesQuery.data?.candidates ?? EMPTY_CANDIDATES,
+    [candidatesQuery.data],
+  );
+  const [expanded, setExpanded] = React.useState<ExpandedState>({});
   /**
    * ONLY the hand edits, keyed by candidate. The cascade's own preview is read straight
    * off the candidate in `takeFor` below rather than copied into state by an effect, so
@@ -144,42 +160,90 @@ export function LinkDocumentDialog({
   const [edits, setEdits] = React.useState<Record<string, string>>({});
 
   /**
-   * What this candidate is taking: the hand edit when there is one, else the cascade's own
-   * preview (`default_take`, server-computed, so it can never disagree with what auto-place
-   * itself would do). A preview of zero reads blank - nothing is being taken off that line.
+   * What this candidate is taking: the hand edit when there is one; else this row's own
+   * CURRENT link on that line (S8, AC-CF-24) - prefilled so re-pressing Link with nothing
+   * touched resubmits the same set; else the cascade's own preview (`default_take`,
+   * server-computed, so it can never disagree with what auto-place itself would do). A
+   * preview of zero reads blank - nothing is being taken off that line.
    */
   function takeFor(candidate: OrderInquiryPoCandidate): string {
     const edit = edits[candidateKey(candidate)];
     if (edit !== undefined) return edit;
+    if (toNumber(candidate.current_take ?? '0') > 0) return candidate.current_take as string;
     return toNumber(candidate.default_take) > 0 ? candidate.default_take : '';
-  }
-
-  function toggleExpanded(key: string) {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
   }
 
   function setTake(key: string, value: string) {
     setEdits((prev) => ({ ...prev, [key]: value }));
   }
 
+  // AC-CF-26: "line N of M" when the same document contributes several candidate lines -
+  // a PO with eight lines otherwise showed the same truncated number eight times with
+  // nothing to tell them apart. `M` is a count over the CANDIDATE list, not the document's
+  // own line count: only the lines actually offered to this row are what "of M" answers.
+  const lineCounts = React.useMemo(() => {
+    const totals = new Map<string, number>();
+    candidates.forEach((candidate) => {
+      totals.set(candidate.po_number, (totals.get(candidate.po_number) ?? 0) + 1);
+    });
+    const seen = new Map<string, number>();
+    const positions = new Map<string, { index: number; total: number }>();
+    candidates.forEach((candidate) => {
+      const index = (seen.get(candidate.po_number) ?? 0) + 1;
+      seen.set(candidate.po_number, index);
+      positions.set(candidateKey(candidate), {
+        index,
+        total: totals.get(candidate.po_number) ?? 1,
+      });
+    });
+    return positions;
+  }, [candidates]);
+
+  const columns = React.useMemo<ColumnDef<OrderInquiryPoCandidate>[]>(
+    () => candidateColumns({ lineCounts, takeFor, setTake }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lineCounts, edits, candidatesQuery.data],
+  );
+
+  // `listingKey={null}` below (never `PanelDataGrid`, which requires one) - see the
+  // component doc comment for why. Built directly rather than through `PanelDataGrid`
+  // so there is no Card/search/pagination chrome around a picker this small.
+  const table = useReactTable({
+    columns,
+    data: candidates,
+    getRowId: candidateKey,
+    state: { expanded },
+    onExpandedChange: setExpanded,
+    getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
+
   const horizon = formatHorizon(linkUpTo);
   const dueAfter = isDueAfterHorizon(deliveryDate, linkUpTo);
-  const need = Math.max(toNumber(qty) - toNumber(linkedQty ?? '0'), 0);
+  // The header's own number (AC-CF-24): the server's `still_to_link` (`qty - linked`),
+  // read off the SAME `_unlinked_need` the candidate walk itself measures against -
+  // falling back to the row's own props only while the query has not answered yet.
+  const need =
+    candidatesQuery.data?.still_to_link !== undefined
+      ? toNumber(candidatesQuery.data.still_to_link)
+      : Math.max(toNumber(qty) - toNumber(linkedQty ?? '0'), 0);
+  // The row's whole capacity - what SET semantics allows the submitted takes to total,
+  // whether each one is a fresh take or a line this row already held (S8): `totalTaken`
+  // below is the row's PROSPECTIVE total after Link, not just what is newly added, so it
+  // is measured against the row's full quantity rather than against `need`.
+  const capacity = toNumber(qty);
   const totalTaken = candidates.reduce(
     (sum, candidate) => sum + toNumber(takeFor(candidate)),
     0,
   );
-  const overTaken = totalTaken > need;
+  const overTaken = totalTaken > capacity;
   const lineErrors = candidates.some((candidate) => {
     const take = toNumber(takeFor(candidate));
     return take > toNumber(candidate.remaining);
   });
-  const remainder = Math.max(need - totalTaken, 0);
+  const remainder = Math.max(capacity - totalTaken, 0);
   const valid = totalTaken > 0 && !overTaken && !lineErrors;
 
   function handleConfirm() {
@@ -261,52 +325,15 @@ export function LinkDocumentDialog({
             </div>
           ) : (
             <>
-              <div
-                data-testid="po-candidates-table"
-                className="max-h-[45vh] w-full overflow-x-auto overflow-y-auto overscroll-x-contain rounded-lg border border-border"
-              >
-                <table className="w-max border-separate border-spacing-0 text-xs">
-                  <thead>
-                    <tr>
-                      <th scope="col" className={cn(CHEVRON_COL, HEAD_CELL)}>
-                        <span className="sr-only">Expand</span>
-                      </th>
-                      <th scope="col" className={cn(PO_COL, HEAD_CELL)}>
-                        Document
-                      </th>
-                      <th scope="col" className={cn(WHERE_COL, HEAD_CELL)}>
-                        Where
-                      </th>
-                      <th scope="col" className={cn(SUPPLIER_COL, HEAD_CELL)}>
-                        Supplier
-                      </th>
-                      <th scope="col" className={cn(DATE_COL, HEAD_CELL)}>
-                        Issued
-                      </th>
-                      <th scope="col" className={cn(DATE_COL, HEAD_CELL)}>
-                        Expected
-                      </th>
-                      <th scope="col" className={cn(NUMBER_COL, HEAD_CELL, 'text-end')}>
-                        Remaining
-                      </th>
-                      <th scope="col" className={cn(TAKE_COL, HEAD_CELL, 'text-end')}>
-                        Take
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {candidates.map((candidate) => (
-                      <CandidateRow
-                        key={candidateKey(candidate)}
-                        candidate={candidate}
-                        take={takeFor(candidate)}
-                        onTakeChange={(value) => setTake(candidateKey(candidate), value)}
-                        expanded={expandedIds.has(candidateKey(candidate))}
-                        onToggleExpand={() => toggleExpanded(candidateKey(candidate))}
-                      />
-                    ))}
-                  </tbody>
-                </table>
+              <div data-testid="po-candidates-table">
+                <DataGrid
+                  table={table}
+                  recordCount={candidates.length}
+                  listingKey={null}
+                  tableLayout={{ width: 'fixed', columnsResizable: true, scrollerMaxHeight: false }}
+                >
+                  <DataGridTable />
+                </DataGrid>
               </div>
 
               <div
@@ -314,7 +341,7 @@ export function LinkDocumentDialog({
                 className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2 text-xs"
               >
                 <span>
-                  {formatInquiryQty(String(totalTaken))} of {formatInquiryQty(String(need))}
+                  {formatInquiryQty(String(totalTaken))} of {formatInquiryQty(String(capacity))}
                   {' '}linked
                   {remainder > 0 && !overTaken
                     ? ` - ${formatInquiryQty(String(remainder))} stays demand`
@@ -322,7 +349,7 @@ export function LinkDocumentDialog({
                 </span>
                 {overTaken && (
                   <span className="font-medium text-destructive">
-                    {formatInquiryQty(String(totalTaken - need))} more than this row needs
+                    {formatInquiryQty(String(totalTaken - capacity))} more than this row needs
                   </span>
                 )}
                 {!overTaken && lineErrors && (
@@ -357,157 +384,235 @@ export function LinkDocumentDialog({
   );
 }
 
-function CandidateRow({
-  candidate,
-  take,
-  onTakeChange,
-  expanded,
-  onToggleExpand,
+/**
+ * The candidate grid's own columns (S8, AC-CF-26). A plain factory, not a component: the
+ * caller memoizes the returned array itself (`columns` in `LinkDocumentDialog`), keyed on
+ * the closures it needs fresh (`takeFor`/`setTake`, which read/write `edits`) - keeping it
+ * a function rather than a hook means nothing here fights that memoization.
+ */
+function candidateColumns({
+  lineCounts,
+  takeFor,
+  setTake,
 }: {
-  candidate: OrderInquiryPoCandidate;
-  take: string;
-  onTakeChange: (value: string) => void;
-  expanded: boolean;
-  onToggleExpand: () => void;
-}) {
-  const remaining = toNumber(candidate.remaining);
-  const taken = toNumber(take);
-  const overLine = taken > remaining;
-  // G7 / G12 (`PLAN-scm-reorder-oi-feedback-1sep.md` S6): a line explicitly claimed by
-  // another SO, or - project-bin only - claimed by nobody at all. Greyed rather than
-  // hidden: the automatic cascade never touches either, but a manual link still does,
-  // and writes (or reassigns) the claim behind it.
-  const dedicated = Boolean(candidate.dedicated_to);
-  const unattributed = Boolean(candidate.unattributed);
-  const greyed = dedicated || unattributed;
-
-  return (
-    <>
-      <tr
-        data-testid={`po-candidate-${candidateKey(candidate)}`}
-        className={cn(greyed && 'bg-muted/40 text-muted-foreground')}
-      >
-        <td className={cn(CHEVRON_COL, BODY_CELL)}>
-          <button
-            type="button"
-            className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-muted"
-            onClick={onToggleExpand}
-            aria-label={expanded ? 'Collapse' : 'Expand'}
-            aria-expanded={expanded}
+  lineCounts: Map<string, { index: number; total: number }>;
+  takeFor: (candidate: OrderInquiryPoCandidate) => string;
+  setTake: (key: string, value: string) => void;
+}): ColumnDef<OrderInquiryPoCandidate>[] {
+  return [
+    {
+      id: 'expander',
+      header: () => <span className="sr-only">Expand</span>,
+      cell: ({ row }) => (
+        <Button
+          type="button"
+          mode="icon"
+          variant="ghost"
+          size="sm"
+          className="size-6"
+          onClick={(event) => {
+            event.stopPropagation();
+            row.toggleExpanded();
+          }}
+          aria-label={row.getIsExpanded() ? 'Collapse' : 'Expand'}
+          aria-expanded={row.getIsExpanded()}
+        >
+          {row.getIsExpanded() ? (
+            <ChevronDown className="size-3.5" aria-hidden />
+          ) : (
+            <ChevronRight className="size-3.5" aria-hidden />
+          )}
+        </Button>
+      ),
+      size: 44,
+      enableSorting: false,
+      meta: {
+        expandedContent: (candidate: OrderInquiryPoCandidate) => (
+          <div data-testid={`po-candidate-expand-${candidateKey(candidate)}`}>
+            <CandidateExpandPanel candidate={candidate} />
+          </div>
+        ),
+      },
+    },
+    {
+      id: 'document',
+      accessorFn: (candidate) => candidate.po_number,
+      header: ({ column }) => <DataGridColumnHeader title="Document" column={column} />,
+      // At least 260 wide, and NEVER truncated (AC-CF-26): the whole point of the
+      // conversion off the old fixed-width table was the number CS quotes getting cut
+      // off ("I can't see what is the LA...").
+      size: 280,
+      enableSorting: false,
+      cell: ({ row }) => {
+        const candidate = row.original;
+        const key = candidateKey(candidate);
+        const line = lineCounts.get(key);
+        const dedicated = Boolean(candidate.dedicated_to);
+        const unattributed = Boolean(candidate.unattributed);
+        const greyed = dedicated || unattributed;
+        return (
+          <div
+            data-testid={`po-candidate-${key}`}
+            className={cn('min-w-0 py-1', greyed && 'rounded bg-muted/40 text-muted-foreground')}
           >
-            {expanded ? (
-              <ChevronDown className="size-3.5" aria-hidden />
-            ) : (
-              <ChevronRight className="size-3.5" aria-hidden />
-            )}
-          </button>
-        </td>
-        <td className={cn(PO_COL, BODY_CELL)}>
-          <span className="min-w-0">
-            <span className="flex min-w-0 items-center gap-1">
-              <span
-                className="block truncate font-medium tabular-nums"
-                title={candidate.po_number}
-              >
+            <span className="flex min-w-0 flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
+              <span className="whitespace-normal break-words font-medium tabular-nums">
                 {candidate.po_number}
                 {candidate.line_label ? ` ${candidate.line_label}` : ''}
               </span>
               <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
                 {candidate.kind}
               </span>
-            </span>
-            {candidate.cited && (
-              <span className="mt-0.5 me-1 inline-block rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-                Cited
-              </span>
-            )}
-            {dedicated && (
-              <span
-                data-testid={`po-candidate-dedicated-${candidateKey(candidate)}`}
-                className="mt-0.5 me-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-              >
-                {`Dedicated to SO ${candidate.dedicated_to}`}
-              </span>
-            )}
-            {unattributed && (
-              <span
-                data-testid={`po-candidate-unattributed-${candidateKey(candidate)}`}
-                className="mt-0.5 me-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-              >
-                Unattributed - link manually
-              </span>
-            )}
-            {toNumber(candidate.default_take) > 0 && (
-              <span className="mt-0.5 inline-block rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                Cascade take {formatInquiryQty(candidate.default_take)}
-              </span>
-            )}
-          </span>
-        </td>
-        <td className={cn(WHERE_COL, BODY_CELL)}>
-          <span className="min-w-0">
-            <span className="block truncate" title={candidate.location ?? 'Not stated'}>
-              {candidate.location ?? (
-                <span className="text-muted-foreground">Not stated</span>
+              {line && line.total > 1 && (
+                <span className="shrink-0 text-[10px] text-muted-foreground">
+                  {`line ${line.index} of ${line.total}`}
+                </span>
               )}
             </span>
-            <span className="block truncate text-[10px] text-muted-foreground">
-              {TIER_LABEL[candidate.tier] ?? 'Elsewhere'}
+            <span className="mt-0.5 flex flex-wrap gap-1">
+              {candidate.cited && (
+                <span className="inline-block rounded-sm bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
+                  Cited
+                </span>
+              )}
+              {dedicated && (
+                <span
+                  data-testid={`po-candidate-dedicated-${key}`}
+                  className="inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                >
+                  {`Dedicated to SO ${candidate.dedicated_to}`}
+                </span>
+              )}
+              {unattributed && (
+                <span
+                  data-testid={`po-candidate-unattributed-${key}`}
+                  className="inline-block rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                >
+                  Unattributed - link manually
+                </span>
+              )}
+              {toNumber(candidate.current_take ?? '0') > 0 && (
+                <span
+                  data-testid={`po-candidate-current-${key}`}
+                  className="inline-block rounded-sm bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700"
+                >
+                  {`Current ${formatInquiryQty(candidate.current_take as string)}`}
+                </span>
+              )}
+              {toNumber(candidate.default_take) > 0 && (
+                <span className="inline-block rounded-sm bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  Cascade take {formatInquiryQty(candidate.default_take)}
+                </span>
+              )}
             </span>
+          </div>
+        );
+      },
+      meta: { headerTitle: 'Document' },
+    },
+    {
+      id: 'location',
+      accessorFn: (candidate) => candidate.location ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Where" column={column} />,
+      size: 140,
+      enableSorting: false,
+      cell: ({ row }) => (
+        <div className="min-w-0">
+          <span className="block truncate" title={row.original.location ?? 'Not stated'}>
+            {row.original.location ?? <span className="text-muted-foreground">Not stated</span>}
           </span>
-        </td>
-        <td className={cn(SUPPLIER_COL, BODY_CELL)}>
-          <span
-            className="block truncate"
-            title={candidate.supplier_name ?? 'Not stated'}
-          >
-            {candidate.supplier_name ?? <span className="text-muted-foreground">Not stated</span>}
+          <span className="block truncate text-[10px] text-muted-foreground">
+            {TIER_LABEL[row.original.tier] ?? 'Elsewhere'}
           </span>
-        </td>
-        <td className={cn(DATE_COL, BODY_CELL)}>
-          <span className="block truncate">
-            {candidate.issue_date ? (
-              formatDateInMalaysia(candidate.issue_date)
-            ) : (
-              <span className="text-muted-foreground">No date</span>
-            )}
-          </span>
-        </td>
-        <td className={cn(DATE_COL, BODY_CELL)}>
-          <span className="block truncate">
-            {candidate.expected_date ? (
-              formatDateInMalaysia(candidate.expected_date)
-            ) : (
-              <span className="text-muted-foreground">No date</span>
-            )}
-          </span>
-        </td>
-        <td className={cn(NUMBER_COL, BODY_CELL)}>
-          <span className="block truncate text-end tabular-nums">
-            {formatInquiryQty(candidate.remaining)}
-          </span>
-        </td>
-        <td className={cn(TAKE_COL, BODY_CELL)}>
+        </div>
+      ),
+      meta: { headerTitle: 'Where' },
+    },
+    {
+      id: 'supplier',
+      accessorFn: (candidate) => candidate.supplier_name ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+      size: 170,
+      enableSorting: false,
+      cell: ({ row }) => (
+        <span className="block truncate" title={row.original.supplier_name ?? 'Not stated'}>
+          {row.original.supplier_name ?? (
+            <span className="text-muted-foreground">Not stated</span>
+          )}
+        </span>
+      ),
+      meta: { headerTitle: 'Supplier' },
+    },
+    {
+      id: 'issue_date',
+      accessorFn: (candidate) => candidate.issue_date ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Issued" column={column} />,
+      size: 110,
+      enableSorting: false,
+      cell: ({ row }) =>
+        row.original.issue_date ? (
+          formatDateInMalaysia(row.original.issue_date)
+        ) : (
+          <span className="text-muted-foreground">No date</span>
+        ),
+      meta: { headerTitle: 'Issued' },
+    },
+    {
+      id: 'expected_date',
+      accessorFn: (candidate) => candidate.expected_date ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Expected" column={column} />,
+      size: 110,
+      enableSorting: false,
+      cell: ({ row }) =>
+        row.original.expected_date ? (
+          formatDateInMalaysia(row.original.expected_date)
+        ) : (
+          <span className="text-muted-foreground">No date</span>
+        ),
+      meta: { headerTitle: 'Expected' },
+    },
+    {
+      id: 'remaining',
+      accessorFn: (candidate) => Number.parseFloat(candidate.remaining) || 0,
+      header: ({ column }) => (
+        <DataGridColumnHeader title="Remaining" column={column} className="justify-end" />
+      ),
+      size: 100,
+      enableSorting: false,
+      cell: ({ row }) => (
+        <span className="block text-end font-medium tabular-nums">
+          {formatInquiryQty(row.original.remaining)}
+        </span>
+      ),
+      meta: { headerTitle: 'Remaining' },
+    },
+    {
+      id: 'take',
+      header: ({ column }) => (
+        <DataGridColumnHeader title="Take" column={column} className="justify-end" />
+      ),
+      size: 120,
+      enableSorting: false,
+      cell: ({ row }) => {
+        const candidate = row.original;
+        const key = candidateKey(candidate);
+        const take = takeFor(candidate);
+        const overLine = toNumber(take) > toNumber(candidate.remaining);
+        return (
           <Input
             type="number"
             min={0}
             step="any"
             value={take}
-            onChange={(event) => onTakeChange(event.target.value)}
+            onChange={(event) => setTake(key, event.target.value)}
             aria-label={`Take off ${candidate.po_number}`}
             className={cn('h-7 text-end text-xs', overLine && 'border-destructive')}
           />
-        </td>
-      </tr>
-      {expanded && (
-        <tr data-testid={`po-candidate-expand-${candidateKey(candidate)}`}>
-          <td colSpan={8} className="border-b border-e border-border bg-muted/30 p-0">
-            <CandidateExpandPanel candidate={candidate} />
-          </td>
-        </tr>
-      )}
-    </>
-  );
+        );
+      },
+      meta: { headerTitle: 'Take' },
+    },
+  ];
 }
 
 /**

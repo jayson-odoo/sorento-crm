@@ -677,3 +677,43 @@ describe('AC-CF-21: the first fetch waits for the memory', () => {
     await waitFor(() => expect(listOrderInquiryWorklist).toHaveBeenCalled());
   });
 });
+
+describe('AC-CF-23: Choose document (1) is offered for any ticked row that is not cancelled', () => {
+  it('a single ticked PLACED row leaves the menu item enabled, not just a raised one', async () => {
+    const placedRow = ackRow({
+      id: 'row-placed',
+      item_code: 'ZZT-PLACED',
+      so_number: 'SO-PLACED',
+      state: 'placed',
+      ack_state: 'acknowledged',
+    });
+    listOrderInquiryWorklist.mockResolvedValue(envelope([placedRow]));
+    renderClient();
+    await screen.findByText('SO-PLACED');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-PLACED on SO-PLACED'));
+    openActionsMenu();
+
+    const item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('a single ticked ACTIONED row leaves the menu item enabled too', async () => {
+    const actionedRow = ackRow({
+      id: 'row-actioned',
+      item_code: 'ZZT-ACTIONED',
+      so_number: 'SO-ACTIONED',
+      state: 'actioned',
+      ack_state: 'acknowledged',
+    });
+    listOrderInquiryWorklist.mockResolvedValue(envelope([actionedRow]));
+    renderClient();
+    await screen.findByText('SO-ACTIONED');
+
+    fireEvent.click(screen.getByLabelText('Select ZZT-ACTIONED on SO-ACTIONED'));
+    openActionsMenu();
+
+    const item = screen.getByRole('menuitem', { name: 'Choose document (1)' });
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+  });
+});

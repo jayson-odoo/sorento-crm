@@ -10,7 +10,7 @@ import type {
   OrderInquiryListParams,
   OrderInquiryPoAllocation,
   OrderInquiryBulkRejectResult,
-  OrderInquiryPoCandidate,
+  OrderInquiryPoCandidatesResponse,
   OrderInquiryPoDetail,
   OrderInquiryRow,
   OrderInquirySpoDetail,
@@ -119,12 +119,16 @@ export async function markOrderInquiryRows(
  * `place-on-po` is the link endpoint and `unplace` is the unlink one.
  *
  *   GET  {BASE}/order-inquiry-rows/{rowId}/po-candidates
- *        -> OrderInquiryPoCandidate[], in the walk's own order: the cited document first,
- *        then SPO allocations before PO lines on an ORDER BACK row, then location tier
- *        (Q5), then the PO's issue date, then the line's expected date, then the document
- *        number (Q7). Every candidate carries BOTH dates and its tier; location never
- *        filters a candidate out. `default_take` is the cascade's own preview of what it
- *        would take off that line. 409 when the row is not linkable.
+ *        -> OrderInquiryPoCandidatesResponse { candidates, still_to_link }, the candidate
+ *        list in the walk's own order: the cited document first, then SPO allocations
+ *        before PO lines on an ORDER BACK row, then location tier (Q5), then the PO's
+ *        issue date, then the line's expected date, then the document number (Q7). Every
+ *        candidate carries BOTH dates and its tier; location never filters a candidate
+ *        out. `default_take` is the cascade's own preview of what it would take off that
+ *        line. A line this row already holds a link on appears too (S8), even at
+ *        `remaining: "0"` - `current_take` names what this row already has there.
+ *        `still_to_link` is the header line's own number: `qty - linked`. 409 when the
+ *        row is cancelled.
  *
  *   POST {BASE}/order-inquiry-rows/{rowId}/place-on-po  { po_line_id }
  *        -> OrderInquiryRowOut. One PO line, the single-target shape.
@@ -169,7 +173,7 @@ export async function markOrderInquiryRows(
 
 export async function getOrderInquiryPoCandidates(
   rowId: string,
-): Promise<OrderInquiryPoCandidate[]> {
+): Promise<OrderInquiryPoCandidatesResponse> {
   const response = await apiFetch(`${BASE}/order-inquiry-rows/${rowId}/po-candidates`);
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to load candidate lines'));
@@ -193,8 +197,10 @@ export async function placeOrderInquiryRowOnPo(
 
 /**
  * Link a row across one or more document lines - PO lines, or SPO allocations on an
- * ORDER BACK row - in one call. The row keeps its full quantity and gains one link per
- * allocation, so the response is that same row.
+ * ORDER BACK row - in one call. SET semantics (S8, AC-CF-25): the submitted allocations
+ * ARE the row's link set afterwards - a line the row held before that is missing from
+ * this call is retired, a resubmitted line is adjusted to the new qty, and a new line is
+ * linked. The row keeps its full quantity, so the response is that same row.
  */
 export async function placeOrderInquiryRowOnPoAllocations(
   rowId: string,

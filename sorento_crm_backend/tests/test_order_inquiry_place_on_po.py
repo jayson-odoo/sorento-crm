@@ -35,6 +35,7 @@ from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
     INQUIRY_ACTIONED,
+    INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
@@ -328,7 +329,7 @@ def test_candidates_are_soonest_expected_date_first_with_the_earliest_covering_r
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert [c["po_line_id"] for c in body] == [early_short.id, late_covers.id]
     assert body[0]["covers"] is False
     assert body[0]["recommended"] is False
@@ -354,7 +355,7 @@ def test_candidates_are_netted_by_what_other_placed_rows_already_tagged(api):
     response = client.get(f"{BASE}/order-inquiry-rows/{row_b.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert body[0]["already_tagged"] == "20"
     assert body[0]["remaining"] == "30"
     assert body[0]["covers"] is True
@@ -389,7 +390,7 @@ def test_candidates_claims_array_names_every_other_row_tagged_with_price(api):
     response = client.get(f"{BASE}/order-inquiry-rows/{row_c.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    candidate = next(c for c in response.json() if c["po_line_id"] == line.id)
+    candidate = next(c for c in response.json()["candidates"] if c["po_line_id"] == line.id)
     assert candidate["already_tagged"] == "35"
     assert candidate["unit_cost"] == "12.75"
     assert candidate["currency"] == "MYR"
@@ -414,7 +415,7 @@ def test_candidates_unit_cost_and_currency_are_blank_when_the_line_carries_none(
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    candidate = response.json()[0]
+    candidate = response.json()["candidates"][0]
     assert candidate["unit_cost"] is None
     assert candidate["currency"] is None
     assert candidate["claims"] == []
@@ -433,10 +434,26 @@ def test_candidates_409_for_a_verb_that_is_not_placeable(api):
     assert response.json()["code"] == "order_inquiry_not_placeable_verb"
 
 
-def test_candidates_409_for_a_row_that_is_not_raised(api):
+def test_candidates_200_for_an_actioned_row_s8_widened_the_state_gate(api):
+    """S8 (AC-CF-23): "Choose document" is a one-press re-link, so a row already
+    ACTIONED - the old refusal this test used to pin - is offered candidates too, same
+    as PLACED. Only CANCELLED is refused now (the next test)."""
     client, db, world, _user_id = api
     row = _row(
         db, world["company_id"], world["inquiry"], verb=IV_ORDER, state=INQUIRY_ACTIONED,
+        qty="10", item_code=world["product"].product_code,
+    )
+
+    response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["still_to_link"] == "10"
+
+
+def test_candidates_409_for_a_cancelled_row(api):
+    client, db, world, _user_id = api
+    row = _row(
+        db, world["company_id"], world["inquiry"], verb=IV_ORDER, state=INQUIRY_CANCELLED,
         qty="10", item_code=world["product"].product_code,
     )
 
@@ -563,7 +580,12 @@ def test_two_rows_tagging_the_same_line_cannot_exceed_its_balance(api):
     assert exact.json()["state"] == INQUIRY_PLACED
 
 
-def test_a_placed_row_cannot_be_placed_again(api):
+def test_a_fully_placed_row_has_nothing_left_for_the_single_line_form_to_add(api):
+    """S8 (AC-CF-23) widened `_assert_linkable`'s state gate to every state but
+    CANCELLED, so a second `place-on-po` on a PLACED row is no longer refused by the
+    state gate itself - but the single `po_line_id` form KEEPS its old ADD meaning (the
+    row's whole UNLINKED remainder), and that remainder is 0 once the row is fully
+    placed, so there is nothing to name."""
     client, db, world, _user_id = api
     line = _po_line(
         db, world["company_id"], world["po"], world["product"], world["warehouse"], qty_ordered="50",
@@ -581,8 +603,8 @@ def test_a_placed_row_cannot_be_placed_again(api):
     again = client.post(
         f"{BASE}/order-inquiry-rows/{row.id}/place-on-po", json={"po_line_id": other_line.id}
     )
-    assert again.status_code == 409
-    assert again.json()["code"] == "order_inquiry_not_raised"
+    assert again.status_code == 422
+    assert again.json()["code"] == "order_inquiry_no_allocations"
 
 
 def test_a_reader_cannot_place_a_row(reader_api):
@@ -905,7 +927,7 @@ def test_candidates_are_ordered_by_document_sequence_when_expected_dates_tie(api
     response = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
 
     assert response.status_code == 200, response.text
-    body = response.json()
+    body = response.json()["candidates"]
     assert [c["po_line_id"] for c in body] == [line_a.id, line_b.id]
     # The cascade preview (`default_take`) walks the SAME order: the earlier document
     # takes its whole balance first, the later one takes only what is left.
@@ -925,7 +947,7 @@ def test_spo_prefixed_documents_are_never_candidates_the_flag_or_the_cascade(api
 
     candidates = client.get(f"{BASE}/order-inquiry-rows/{row.id}/po-candidates")
     assert candidates.status_code == 200, candidates.text
-    assert candidates.json() == []
+    assert candidates.json()["candidates"] == []
 
     listing = client.get(f"{BASE}/projects/{world['project'].id}/order-inquiry-rows")
     assert listing.status_code == 200, listing.text

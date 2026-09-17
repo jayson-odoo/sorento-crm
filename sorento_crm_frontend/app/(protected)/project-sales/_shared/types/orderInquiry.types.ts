@@ -787,6 +787,21 @@ export interface OrderInquiryPoCandidate {
    * still succeeds and writes the claim; always false on a pool-destination line.
    */
   unattributed?: boolean;
+  /**
+   * S8 (AC-CF-24): what THIS row already takes off this line, `"0"` when it holds none.
+   * `remaining` is already credited back to include it, so re-placing the same take
+   * never reads as over the line's remaining.
+   */
+  current_take?: string;
+}
+
+/**
+ * The Link dialog's own GET (S8): the candidate list, plus the header line the dialog
+ * reads - "N still to link of Q" - computed off the row's own unlinked remainder.
+ */
+export interface OrderInquiryPoCandidatesResponse {
+  candidates: OrderInquiryPoCandidate[];
+  still_to_link: string;
 }
 
 /**

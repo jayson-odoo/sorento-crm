@@ -747,6 +747,20 @@ class OrderInquiryPoCandidate(BaseModel):
     # SO has claimed it, not even this row's own - the dialog greys it "Unattributed -
     # link manually". Always `False` for a pool-destination line (AC-6.10).
     unattributed: bool = False
+    # S8 (AC-CF-24): what THIS row already takes off this line, "0" when it holds none.
+    # `remaining` above is already credited back to include it, so re-placing the same
+    # take never reads as "over the line's remaining".
+    current_take: str = "0"
+
+
+class OrderInquiryPoCandidatesResponse(BaseModel):
+    """The Link dialog's own GET (S8): the candidate list, plus the header line the
+    dialog reads - "N still to link of Q" - computed the same way `covers` is, so the
+    two can never disagree.
+    """
+
+    candidates: List[OrderInquiryPoCandidate] = []
+    still_to_link: str
 
 
 class PlaceOnPoAllocation(BaseModel):

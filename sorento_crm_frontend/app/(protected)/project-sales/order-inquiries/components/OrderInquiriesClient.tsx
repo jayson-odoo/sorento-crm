@@ -633,7 +633,18 @@ export function OrderInquiriesClient() {
   // row. Safe to run from the very first commit - `useListingViewPreferences` does not
   // persist anything until IT has applied what was already stored, so an early call here
   // only updates its in-memory value and is superseded the moment that happens.
+  //
+  // GUARDED on `pathname` (AC-CF-18 fix, browser pass 17 Sep): navigating away via the
+  // sidebar was measured writing a SECOND, narrower PUT right behind the correct one -
+  // `{ack: 'to_confirm'}` with `location` gone - because leaving the route can still run
+  // this effect once more (a transitional render/remount whose local filter state has
+  // not carried over) before this component is actually torn down, and nothing here
+  // could tell that render apart from a reader genuinely clearing the field. `pathname`
+  // is App Router's own answer to "which route is this", so a render that fires while it
+  // no longer names this page is a navigation artefact, never a person's edit - skip it
+  // rather than persist it.
   React.useEffect(() => {
+    if (!pathname.endsWith('/order-inquiries')) return;
     const blob: OrderInquiryViewFilters = {};
     if (ackFilter) blob.ack = ackFilter;
     if (view !== 'list') blob.view = view;
@@ -652,6 +663,7 @@ export function OrderInquiriesClient() {
     if (kindFilter) blob.kind = kindFilter;
     setViewFilters(Object.keys(blob).length ? blob : null);
   }, [
+    pathname,
     ackFilter,
     view,
     matrixGranularity,
