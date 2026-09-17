@@ -104,3 +104,44 @@ caller that bypasses the disabled UI (a raw API call, exactly as this check did)
 counting-down action that fails a few seconds later rather than an immediate 409. Worth a
 follow-up ticket if a synchronous 409 at creation time is wanted; not something this
 verification pass changes, since browser verification does not edit implementation.
+
+## Re-verification after the review fix round (`bca512634`) - AC-UC-03 and AC-UC-41 only
+
+The disabled gear entry's reason moved from a `title` attribute (never rendered on a
+`data-disabled` item, see the tooltip screenshot above) to plain visible text inside the item,
+and the refusal code changed from `manual_link` to `linked`. Re-ran only the two ACs this
+touched, same order (SO314593), fresh chain: saved and confirmed the one remaining undecided
+line (Line 10, SRTWC8605-SC-RL) to get a new active revision (2), inserted a manual
+`order_inquiry_links` row by hand on the OI row that revision raised, then reversed both.
+
+1. `AC-UC-03-refused-reason-visible-1280.png`, `AC-UC-03-refused-reason-visible-375.png` - Board
+   actions menu, "Undo SO314593 confirm (rev 2)" disabled, with "Purchasing linked a PO line"
+   rendered as its own line of muted text under the entry label (confirmed via the
+   accessibility snapshot: the string is inside the menuitem's accessible name, not a hover-only
+   `title`). Legible and non-clipped at both widths.
+2. `AC-UC-41-refused-409.txt` - the same `POST /api/v1/pending-actions` re-check: still answers
+   `202` (parks), not `409`, for the same by-design reason as the original AC-UC-41 pass above
+   (the "linked" refusal is a commit-time check, not a create-time one). The pending action
+   resolved 5s later as `status = ineligible`, `error_text = "Purchasing has linked a PO line to
+   this order since it was confirmed."`, and revision 2 was never touched by the refused
+   attempt - matching the original pass's finding exactly, now with the reason string updated to
+   match the new visible-text copy. Also notes a `last_outcome` ordering quirk found while
+   re-checking (`committed_at desc nullslast` ranks an older `committed` row ahead of a newer
+   `ineligible` one, since `ineligible` never sets `committed_at`) - not exercised by the gear's
+   own disabled state (that reads fresh from the board endpoint each load), logged as a possible
+   follow-up.
+3. `AC-UC-41-undo-after-unlink-1280.png` - link deleted, gear entry re-enabled, undo run for
+   real through the UI (countdown let lapse, per standing rule), board back to revision 1
+   active, line 10 reading "Not decided" again (after also removing the leftover
+   `so_supply_decision_drafts` row this walk's own "Save decision" click created - same
+   AC-UC-17 recovery-not-loss behaviour the original AC-UC-40 pass documented above, cleaned up
+   by hand so the final state matches what the run started from).
+
+Cleanup: `order_inquiry_links` row and the `so_supply_decision_drafts` row this walk created
+were both deleted by hand; no pending countdown was left running; 2 `email_outbox` rows this
+walk generated (`OI: BRW-IR @ SO314593`, `OI undone: SO314593 rev 2`) were cancelled
+(`status='cancelled', cancel_reason='lane evidence run'`). Final DB check: `so_supply_decisions`
+for SO314593 shows only revision 1, active - matches the state before this walk started.
+
+One pre-existing, unrelated console warning throughout ("Each child in a list should have a
+unique key prop... Demo1Layout") - the Metronic shell, not this feature; not a regression.
