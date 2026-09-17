@@ -100,7 +100,7 @@ memory the stock inquiries and sales orders grids already have.
   0 with the reason in `title`; permission = acknowledge grant (CS never sees it). Press
   opens the same confirm-all dialog shape as the board, then calls the existing endpoint
   with `row_ids`.
-- Per-row action "Confirm" in the row menu, same endpoint, one id.
+- Line by line = tick one row, Confirm (1). No per-row menu exists on this worklist (parity lane R8) and none is added.
 - `selectAllMatching` wired: banner "Select all N records" after a page tick; Confirm then
   sends `filter` (the list's own query params) instead of `row_ids`; the endpoint applies
   `_base` and confirms every eligible row in scope. One body, two mutually exclusive keys.

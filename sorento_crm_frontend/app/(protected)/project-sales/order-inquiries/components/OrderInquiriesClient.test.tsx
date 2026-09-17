@@ -66,6 +66,23 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   }),
 }));
 
+// PLAN-oi-confirm-per-so S6: the remembered sort/filters read this service under
+// `useListingViewPreferences`. Stubbed to resolve fast with nothing stored, so the
+// gated list/summary/matrix fetches unblock on the next tick rather than hanging on a
+// real network call under jsdom (the same stub `SalesOrdersList.filters.test.tsx` and
+// `StockInquiriesList.viewMemory.test.tsx` already use for the same hook).
+vi.mock('@/lib/listing-column-preferences/listColumnPreferencesService', () => ({
+  getUserListColumnConfig: vi.fn(async () => ({
+    listing_key: 'projects.projects.view::order-inquiry-worklist',
+    config: null,
+  })),
+  upsertUserListColumnConfig: vi.fn(async (listingKey: string, payload: unknown) => ({
+    listing_key: listingKey,
+    config: payload,
+  })),
+  resetUserListColumnConfig: vi.fn(async () => undefined),
+}));
+
 const listOrderInquiryWorklist = vi.fn();
 const getOrderInquiryWorklistSummary = vi.fn();
 const downloadOrderInquiryWorklistXlsx = vi.fn();
@@ -419,17 +436,17 @@ describe('OrderInquiriesClient: reading the page', () => {
   });
 });
 
-describe('AC-1.5/G5: no default ack filter', () => {
-  it('opens on every row, off no `?ack=` at all, and shows no active-filter chip', async () => {
+describe('AC-CF-11/12/13 (PLAN-oi-confirm-per-so): To confirm is the default view again', () => {
+  it('opens on To confirm off no `?ack=` at all, and shows the chip (G4/G5 reversed)', async () => {
     renderClient();
     await screen.findByText('SO385126');
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ ack: undefined }),
+        expect.objectContaining({ ack: 'to_confirm' }),
       ),
     );
-    expect(screen.queryByText(/^Confirmed:/)).not.toBeInTheDocument();
+    expect(screen.getByText('Confirmed: To confirm')).toBeInTheDocument();
   });
 
   it('a URL naming an explicit ?ack= still narrows the list and shows its chip', async () => {
@@ -445,11 +462,20 @@ describe('AC-1.5/G5: no default ack filter', () => {
     expect(screen.getByText('Confirmed: Rejected')).toBeInTheDocument();
   });
 
-  it('the Confirmed filter no longer offers To confirm (S3, review of PR #471)', async () => {
-    // A row is born acknowledged now (G4) and a settle auto-acknowledges again, so
-    // nothing purchasing still has to answer sits in `awaiting` any more - the FE stops
-    // offering the option even though the backend still accepts an old bookmark's
-    // `?ack=to_confirm` for compatibility.
+  it('?ack=all shows every row and hides the chip', async () => {
+    currentSearchParams = new URLSearchParams('ack=all');
+    renderClient();
+    await screen.findByText('SO385126');
+
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ ack: undefined }),
+      ),
+    );
+    expect(screen.queryByText(/^Confirmed:/)).not.toBeInTheDocument();
+  });
+
+  it('the Confirmed filter offers To confirm, Confirmed, Changed, Rejected, All (AC-CF-13)', async () => {
     getOrderInquiryWorklistSummary.mockResolvedValue({
       ...MOCK_WORKLIST_SUMMARY,
       ack: {
@@ -457,6 +483,7 @@ describe('AC-1.5/G5: no default ack filter', () => {
         acknowledged: 1,
         changed: 1,
         rejected: 0,
+        to_confirm: 1,
       },
     });
     renderClient();
@@ -466,9 +493,11 @@ describe('AC-1.5/G5: no default ack filter', () => {
     const select = (await screen.findByLabelText('Any')) as HTMLSelectElement;
     expect([...select.options].map((option) => option.textContent)).toEqual([
       'Any',
+      'To confirm (1)',
       'Confirmed (1)',
       'Changed (1)',
       'Rejected (0)',
+      'All',
     ]);
   });
 });
@@ -493,17 +522,23 @@ describe('AC-D13/AC-D14: one toolbar row, Actions + Start, counts disabling at 0
     expect(screen.queryByRole('menuitem', { name: /^Acknowledge/ })).toBeNull();
   });
 
-  it('Start is a single Upload purchase orders press, no Confirm and no history upload', async () => {
-    // S1 (AC-1.5): a row is born acknowledged, so there is no second press left for
-    // Start to hold - it is one button, not a dropdown.
+  it('the primary press is Confirm (N); Upload purchase orders moved into Actions', async () => {
+    // PLAN-oi-confirm-per-so, AC-CF-5: a row is born `awaiting` again, so the primary
+    // press is Confirm - Upload purchase orders is still purchasing's, just no longer
+    // the one thing this toolbar does, and moves into the Actions menu.
     renderClient();
     await screen.findByText('SO385126');
 
     expect(
-      screen.getByRole('button', { name: 'Upload purchase orders' }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole('menuitem', { name: /Confirm selected/ })).toBeNull();
+      screen.queryByRole('button', { name: 'Upload purchase orders' }),
+    ).toBeNull();
+    expect(screen.getByRole('button', { name: 'Confirm (0)' })).toBeDisabled();
     expect(screen.queryByRole('button', { name: /history/i })).toBeNull();
+
+    openActionsMenu();
+    expect(
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
+    ).toBeInTheDocument();
   });
 
   it('AC-T5: Choose document (1) is enabled ONLY with exactly one row ticked', async () => {
@@ -833,7 +868,7 @@ describe('AC-D9: Auto link all - the date lives in the dialog now', () => {
   });
 });
 
-describe('AC-H13: the uploaded book, offered from the Start button', () => {
+describe('AC-H13: the uploaded book, offered from Upload purchase orders (now in Actions)', () => {
   it('offers nothing while the worker is still reading the book', async () => {
     uploadSessions = [
       { session_id: 'job-1', import_job_id: 'job-1', status: 'processing' },
@@ -841,8 +876,11 @@ describe('AC-H13: the uploaded book, offered from the Start button', () => {
     renderClient();
     await screen.findByText('SO385126');
 
+    // PLAN-oi-confirm-per-so: Upload purchase orders moved off the primary slot into
+    // the Actions menu, since Confirm is the primary press now.
+    openActionsMenu();
     fireEvent.click(
-      screen.getByRole('button', { name: 'Upload purchase orders' }),
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 
@@ -863,8 +901,9 @@ describe('AC-H13: the uploaded book, offered from the Start button', () => {
     renderClient();
     await screen.findByText('SO385126');
 
+    openActionsMenu();
     fireEvent.click(
-      screen.getByRole('button', { name: 'Upload purchase orders' }),
+      screen.getByRole('menuitem', { name: 'Upload purchase orders' }),
     );
     fireEvent.click(screen.getByRole('button', { name: 'Upload (stub)' }));
 

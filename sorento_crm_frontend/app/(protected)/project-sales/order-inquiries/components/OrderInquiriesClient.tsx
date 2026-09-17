@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   PaginationState,
-  SortingState,
   getCoreRowModel,
   getPaginationRowModel,
   useReactTable,
@@ -113,6 +112,8 @@ import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 import { PageHeader } from '@/components/common/PageHeader';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
+import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
 
 /** "Link selected (2 of 3)", or "Link selected (3)" when every ticked row is eligible
  * (S4, AC-T2): the count is never "of n" when a === n, which would say the obvious. */
@@ -238,18 +239,44 @@ const ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION =
   'projects.order_inquiries.acknowledge';
 
 /**
- * No default ack filter any more (S1, AC-1.5, G5): a row is born acknowledged, so "To
- * confirm" is no longer a to-do list anybody works from - the page opens on every row,
- * and the filter stays available for a rejected or changed lookup.
- *
- * A CLEARED filter travels as `?ack=all`, never as an absent parameter: an absent one
- * means "nobody has chosen" and a future default would go straight back over the choice
- * on the next reload.
+ * An absent `?ack=` now opens on To confirm (PLAN-oi-confirm-per-so, AC-CF-11: G4/G5
+ * reversed - a row is born `awaiting` again, so purchasing has a work queue to open on).
+ * `null` is left unresolved here on purpose: the caller does not yet know whether this
+ * browser has a REMEMBERED view (`useListingViewPreferences`) to fall back to before the
+ * hardcoded default applies, so the one-time memory-seed effect below is what actually
+ * turns an absent param into `to_confirm`. `ack=all` travels as a real value, never
+ * emptiness, so a reload cannot mistake a deliberate "show everything" for "nobody has
+ * chosen" and put To confirm back over it.
  */
 function ackFilterFrom(value: string | null): string {
-  if (value === null) return '';
-  return value === ACK_ANY ? '' : value;
+  return value ?? '';
 }
+
+/** The same key `DataGrid` already keys column preferences off (line ~1445 below) - one
+ * row, one listing, for columns AND for the remembered sort/filters (S6). */
+const ORDER_INQUIRY_LISTING_KEY = 'projects.projects.view::order-inquiry-worklist';
+
+/** What this page remembers per user (S6, AC-CF-17/18): every filter except page and
+ * search text, which stay session-only (AC-CF-19) - matching the shape the DataGrid's
+ * own sort/filter memory already uses on Stock Inquiries and Sales Orders.
+ * BUMP `filtersVersion` on the hook call below if this shape changes (AC-B4). */
+type OrderInquiryViewFilters = {
+  ack?: string;
+  view?: OrderInquiryView;
+  granularity?: OrderInquiryMatrixGranularity;
+  delivery_month?: string;
+  location?: string;
+  agent?: string;
+  so_month?: string;
+  po_number?: string;
+  spo_number?: string;
+  supplier_id?: string;
+  project_id?: string;
+  raised_date?: string;
+  raised_by?: string;
+  linked?: 'po' | 'spo' | 'none';
+  kind?: OrderInquiryKind;
+};
 
 /**
  * Purchasing's own order inquiry, across every project and every adopted sales order.
@@ -284,9 +311,42 @@ export function OrderInquiriesClient() {
     ORDER_INQUIRY_ACTION_PERMISSION,
   );
   const canAcknowledge = useHasPermission(ORDER_INQUIRY_ACKNOWLEDGE_PERMISSION);
-  const { linkNow } = useOrderInquiryHandshake();
+  const { linkNow, acknowledge } = useOrderInquiryHandshake();
   const [unlinkingSelected, setUnlinkingSelected] = React.useState(false);
   const [linkingSelected, setLinkingSelected] = React.useState(false);
+
+  // S6: the sort and every filter this listing remembers, per user, off the SAME row the
+  // columns are already keyed by. `filters` here is the STORED blob only - what this
+  // render should actually show still lives in the plain `useState`s below, seeded from
+  // it once (the memory-seed effect, after the individual filters), because the URL has
+  // to win over the memory for a visit that names one (AC-CF-20) and half of these
+  // filters are ALSO URL-synced for sharing, which an opaque blob cannot drive directly.
+  const {
+    sorting,
+    setSorting,
+    filters: viewFilters,
+    setFilters: setViewFilters,
+    isLoading: isViewPrefsLoading,
+  } = useListingViewPreferences<OrderInquiryViewFilters>({
+    listingKey: ORDER_INQUIRY_LISTING_KEY,
+    defaultSorting: [{ id: 'delivery_date', desc: false }],
+    filtersVersion: 1,
+  });
+  // Captured ONCE, at mount, for exactly the filters that also travel in the URL: whether
+  // THIS visit named one, which is what "a URL param present on arrival wins" (AC-CF-20)
+  // has to test against - reading `searchParams` again after the sync effect below has
+  // started rewriting it would always say yes.
+  const urlProvidedFilters = React.useRef({
+    ack: searchParams.get('ack') !== null,
+    view: searchParams.get('view') !== null,
+    granularity: searchParams.get('granularity') !== null,
+    delivery_month: searchParams.get('delivery_month') !== null,
+    location: searchParams.get('location') !== null,
+    agent: searchParams.get('agent') !== null,
+    so_month: searchParams.get('so_month') !== null,
+    po_number: searchParams.get('po_number') !== null,
+    spo_number: searchParams.get('spo_number') !== null,
+  });
 
   const [view, setView] = React.useState<OrderInquiryView>(() =>
     viewFrom(searchParams.get('view')),
@@ -333,11 +393,13 @@ export function OrderInquiriesClient() {
     value: poNumberInput,
     setValue: setPoNumberInput,
     debouncedValue: poNumberFilter,
+    reset: resetPoNumberInput,
   } = useDebouncedSearch(searchParams.get('po_number') ?? '');
   const {
     value: spoNumberInput,
     setValue: setSpoNumberInput,
     debouncedValue: spoNumberFilter,
+    reset: resetSpoNumberInput,
   } = useDebouncedSearch(searchParams.get('spo_number') ?? '');
   const soMonthChoices = React.useMemo(() => soMonthOptions(), []);
   // Sourced from `?ack=` on mount and kept URL-synced, like `view` and `query`: the plan
@@ -408,9 +470,10 @@ export function OrderInquiriesClient() {
     pageIndex: 0,
     pageSize: 25,
   });
-  const [sorting, setSorting] = React.useState<SortingState>([
-    { id: 'delivery_date', desc: false },
-  ]);
+  // `sorting` itself comes from `useListingViewPreferences` above (S6, AC-CF-17) - it was
+  // never URL-synced, so remembering it per user is a straight swap with no URL side.
+  const [selectAllMatchingActive, setSelectAllMatchingActive] = React.useState(false);
+  const [confirmingOpen, setConfirmingOpen] = React.useState(false);
   const [matrixAxis, setMatrixAxis] = React.useState<OrderInquiryMatrixAxis>(
     () => matrixAxisFrom(searchParams.get('rows')),
   );
@@ -470,10 +533,13 @@ export function OrderInquiriesClient() {
       if (value) next.set(key, value);
       else next.delete(key);
     }
-    // A CLEARED Confirmed filter says so out loud, because an absent `ack` is what the
-    // DEFAULT is read from (AC-D12): dropping the parameter would put To confirm back on
-    // the next reload and read as the clear having failed.
-    next.set('ack', ackFilter || ACK_ANY);
+    // AC-CF-11 (G5 reversed): To confirm - the page's own default again - carries no
+    // param, the same rule `delivery_month` above follows for ITS default, so a fresh
+    // visit and a reload of one read identically. `ack=all` (a deliberate "show
+    // everything") and every other value travel explicit, so a reload or a shared link
+    // keeps them rather than falling back to the default over the buyer's choice.
+    if (ackFilter && ackFilter !== 'to_confirm') next.set('ack', ackFilter);
+    else next.delete('ack');
     if (linkUpTo) next.set('link_up_to', linkUpTo);
     else next.delete('link_up_to');
     // A CLEARED horizon travels too (item 6). Dropping `link_up_to` and putting nothing in
@@ -511,9 +577,11 @@ export function OrderInquiriesClient() {
   }, [matrixAxis, matrixGranularity]);
 
   // Narrowing changes which rows exist, so page 3 of the old set is a page of nothing in
-  // the new one.
+  // the new one - and a "Select all N matching" taken under the OLD filters has nothing
+  // to do with the new set either.
   React.useEffect(() => {
     setPagination((previous) => ({ ...previous, pageIndex: 0 }));
+    setSelectAllMatchingActive(false);
   }, [
     debounced,
     month,
@@ -531,6 +599,77 @@ export function OrderInquiriesClient() {
     spoNumberFilter,
   ]);
 
+  // S6 (AC-CF-20): once, when the remembered view has resolved, every filter the URL did
+  // NOT name for this visit takes the remembered value (or the shipped default when
+  // nothing was ever remembered either). `link_up_to`/`link_horizon` are not in this
+  // list - they keep the horizon's own, older per-browser memory (`readStoredLinkHorizon`
+  // above), which already does the same job for that one field.
+  const memorySeededRef = React.useRef(false);
+  React.useEffect(() => {
+    if (memorySeededRef.current || isViewPrefsLoading) return;
+    memorySeededRef.current = true;
+    const stored = viewFilters ?? {};
+    const urlHad = urlProvidedFilters.current;
+    if (!urlHad.ack) setAckFilter(stored.ack ?? 'to_confirm');
+    if (!urlHad.view) setView(stored.view ?? 'list');
+    if (!urlHad.granularity) setMatrixGranularity(stored.granularity ?? 'week');
+    if (!urlHad.delivery_month) setMonth(stored.delivery_month ?? '');
+    if (!urlHad.location) setLocationFilter(stored.location ?? '');
+    if (!urlHad.agent) setAgentFilter(stored.agent ?? '');
+    if (!urlHad.so_month) setSoMonthFilter(stored.so_month ?? '');
+    if (!urlHad.po_number) resetPoNumberInput(stored.po_number ?? '');
+    if (!urlHad.spo_number) resetSpoNumberInput(stored.spo_number ?? '');
+    // These six have no URL representation at all today (Measured facts) - the memory is
+    // their only persistence, so it always applies.
+    setSupplierFilter(stored.supplier_id ?? '');
+    setProjectFilter(stored.project_id ?? '');
+    setRaisedDate(stored.raised_date ?? '');
+    setRaisedByFilter(stored.raised_by ?? '');
+    setLinkedFilter(stored.linked ?? '');
+    setKindFilter(stored.kind ?? null);
+  }, [isViewPrefsLoading, viewFilters, resetPoNumberInput, resetSpoNumberInput]);
+
+  // The other half (AC-CF-18): every change here is written back to the same remembered
+  // row. Safe to run from the very first commit - `useListingViewPreferences` does not
+  // persist anything until IT has applied what was already stored, so an early call here
+  // only updates its in-memory value and is superseded the moment that happens.
+  React.useEffect(() => {
+    const blob: OrderInquiryViewFilters = {};
+    if (ackFilter) blob.ack = ackFilter;
+    if (view !== 'list') blob.view = view;
+    if (matrixGranularity !== 'week') blob.granularity = matrixGranularity;
+    if (month) blob.delivery_month = month;
+    if (locationFilter) blob.location = locationFilter;
+    if (agentFilter) blob.agent = agentFilter;
+    if (soMonthFilter) blob.so_month = soMonthFilter;
+    if (poNumberFilter) blob.po_number = poNumberFilter;
+    if (spoNumberFilter) blob.spo_number = spoNumberFilter;
+    if (supplierFilter) blob.supplier_id = supplierFilter;
+    if (projectFilter) blob.project_id = projectFilter;
+    if (raisedDate) blob.raised_date = raisedDate;
+    if (raisedByFilter) blob.raised_by = raisedByFilter;
+    if (linkedFilter) blob.linked = linkedFilter as 'po' | 'spo' | 'none';
+    if (kindFilter) blob.kind = kindFilter;
+    setViewFilters(Object.keys(blob).length ? blob : null);
+  }, [
+    ackFilter,
+    view,
+    matrixGranularity,
+    month,
+    locationFilter,
+    agentFilter,
+    soMonthFilter,
+    poNumberFilter,
+    spoNumberFilter,
+    supplierFilter,
+    projectFilter,
+    raisedDate,
+    raisedByFilter,
+    linkedFilter,
+    kindFilter,
+    setViewFilters,
+  ]);
+
   const filters = React.useMemo(
     () => ({
       query: debounced || undefined,
@@ -540,7 +679,14 @@ export function OrderInquiriesClient() {
       project_id: projectFilter || undefined,
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
-      ack: (ackFilter || undefined) as OrderInquiryWorklistParams['ack'],
+      // AC-CF-11: `ack=all` (the explicit "show everything") sends no filter at all;
+      // anything else - including the transient '' before the memory-seed effect above
+      // resolves it - reads as `to_confirm`, the page's own default. The list query is
+      // gated off until that effect has run (`!isViewPrefsLoading`), so `to_confirm` is
+      // never actually asked for on the transient's account.
+      ack: (ackFilter === ACK_ANY
+        ? undefined
+        : (ackFilter || 'to_confirm')) as OrderInquiryWorklistParams['ack'],
       // S1, R-K. The backend does not read these yet (Phase 1 mock contract) - forwarded
       // all the same so the page keeps working once it does, and unknown params are
       // ignored server-side in the meantime.
@@ -610,12 +756,19 @@ export function OrderInquiriesClient() {
     [listFilters, pagination, sorting],
   );
 
-  const list = useOrderInquiryWorklist(params, { enabled: view === 'list' });
+  // Gated on `!isViewPrefsLoading` (AC-CF-21): the first fetch waits for the remembered
+  // view, so it asks with the filters the buyer actually left it on rather than the
+  // shipped defaults for one request and the real ones for the next.
+  const list = useOrderInquiryWorklist(params, {
+    enabled: view === 'list' && !isViewPrefsLoading,
+  });
   // Asked WITH the pressed card, so the header badges and the month / supplier / project
   // controls describe the rows actually on screen. Its `kinds` facet is the one thing
   // computed with the card dropped (server-side), which is what keeps the other two
   // cards readable while one is held down.
-  const summary = useOrderInquiryWorklistSummary(listFilters);
+  const summary = useOrderInquiryWorklistSummary(listFilters, {
+    enabled: !isViewPrefsLoading,
+  });
   const planHorizon = summary.data?.link_up_to_default ?? null;
 
   // The plan's own coverage date, taken ONCE and only when neither the URL nor this
@@ -647,7 +800,7 @@ export function OrderInquiriesClient() {
     [listFilters, matrixAxis, matrixGranularity],
   );
   const matrixQuery = useOrderInquiryMatrix(matrixParams, {
-    enabled: view === 'schedule',
+    enabled: view === 'schedule' && !isViewPrefsLoading,
   });
   const matrix = React.useMemo(
     () => buildOrderInquiryMatrix(matrixQuery.data?.data ?? [], matrixGranularity),
@@ -657,6 +810,9 @@ export function OrderInquiriesClient() {
   const rows = React.useMemo(() => list.data?.data ?? [], [list.data]);
   const total = list.data?.total ?? 0;
   const months = summary.data?.by_month ?? [];
+  // The default (`to_confirm`, an unfilled ack has not resolved yet either) counts as
+  // filtered - the page opens narrowed on purpose (R3) - `ack=all` (a deliberate "show
+  // everything") does not.
   const filtered = Boolean(
     debounced ||
     month ||
@@ -665,7 +821,7 @@ export function OrderInquiriesClient() {
     raisedDate ||
     raisedByFilter ||
     linkedFilter ||
-    ackFilter ||
+    (ackFilter && ackFilter !== ACK_ANY) ||
     kindFilter ||
     locationFilter ||
     agentFilter ||
@@ -726,7 +882,7 @@ export function OrderInquiriesClient() {
   // rows to unplace" on a company that may hold hundreds. Held off entirely rather than
   // fired-and-403'd for a person who could never press the button anyway.
   const unplacePreview = useUnplaceAllPreview(unplaceAllFilters, {
-    enabled: view === 'list' && canActOnOrderInquiry,
+    enabled: view === 'list' && canActOnOrderInquiry && !isViewPrefsLoading,
   });
   const unplaceCount = unplacePreview.data?.count ?? 0;
 
@@ -778,6 +934,13 @@ export function OrderInquiriesClient() {
   const selectedRejectable = selectedRows.filter((row) =>
     isBulkRejectable(row),
   );
+  // What Confirm (N) acts on (PLAN-oi-confirm-per-so, AC-CF-5): ticked rows purchasing
+  // has not yet signed off - `awaiting` or `changed` - and not cancelled (cancelled rows
+  // do not tick at all, but a row can be ticked before it is cancelled elsewhere).
+  const selectedConfirmable = selectedRows.filter((row) => {
+    const state = ackStateOf(row);
+    return (state === 'awaiting' || state === 'changed') && row.state !== 'cancelled';
+  });
   // The manual Link dialog is a ONE-row override (R8/S4 "Choose document"), so it is
   // offered at exactly one tick: two ticked rows would leave the page choosing which of
   // them it meant.
@@ -786,6 +949,26 @@ export function OrderInquiriesClient() {
   const linkingRow = linkingRowId
     ? (rows.find((row) => row.id === linkingRowId) ?? null)
     : null;
+  // AC-CF-7: once "Select all N matching" is taken, Confirm's own count is the FULL
+  // matching total, not the twenty-five loaded rows' share of it.
+  const confirmCount = selectAllMatchingActive ? total : selectedConfirmable.length;
+
+  /** Confirm (N) (AC-CF-5/7/8): ticked rows by id, or the whole matching scope by
+   * `filter` once "Select all N matching" is taken - the endpoint accepts exactly one. */
+  function runConfirm() {
+    setConfirmingOpen(false);
+    acknowledge.mutate(
+      selectAllMatchingActive
+        ? { filter: listFilters, horizon: horizonRequest }
+        : { rowIds: selectedConfirmable.map((row) => row.id), horizon: horizonRequest },
+      {
+        onSuccess: () => {
+          setRowSelection({});
+          setSelectAllMatchingActive(false);
+        },
+      },
+    );
+  }
 
   async function unlinkSelected() {
     if (selectedLinked.length === 0) return;
@@ -861,13 +1044,16 @@ export function OrderInquiriesClient() {
   // sees three rows, and has nothing on the toolbar offering to give the rest back.
 
   // What the chip above the grid says, so the buyer can see WHY the list is short and
-  // take the narrowing off in one press (AC-D12).
-  const ackChipLabel = ackFilter
-    ? `Confirmed: ${
-        ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
-          ?.label ?? ackFilter
-      }`
-    : null;
+  // take the narrowing off in one press (AC-CF-11/12). `ack=all` shows no chip - it is
+  // the "show everything" state, not a narrowing - and the default (`to_confirm`) DOES,
+  // because the page opens narrowed to purchasing's own work queue on purpose.
+  const ackChipLabel =
+    ackFilter && ackFilter !== ACK_ANY
+      ? `Confirmed: ${
+          ACK_FILTER_OPTIONS.find((option) => option.value === ackFilter)
+            ?.label ?? ackFilter
+        }`
+      : null;
 
   const filtersActiveCount =
     (month ? 1 : 0) +
@@ -876,7 +1062,7 @@ export function OrderInquiriesClient() {
     (raisedDate ? 1 : 0) +
     (raisedByFilter ? 1 : 0) +
     (linkedFilter ? 1 : 0) +
-    (ackFilter ? 1 : 0) +
+    (ackFilter && ackFilter !== ACK_ANY ? 1 : 0) +
     (kindFilter ? 1 : 0) +
     (locationFilter ? 1 : 0) +
     (agentFilter ? 1 : 0) +
@@ -1001,7 +1187,6 @@ export function OrderInquiriesClient() {
         <SearchableSelect
           value={ackFilter}
           onChange={setAckFilter}
-          clearable
           options={ACK_FILTER_OPTIONS.map((option) => {
             const count =
               summary.data?.ack?.[
@@ -1077,7 +1262,10 @@ export function OrderInquiriesClient() {
             setRaisedDate('');
             setRaisedByFilter('');
             setLinkedFilter('');
-            setAckFilter('');
+            // Clearing means "show everything" (`ack=all`), never the default
+            // `to_confirm` - the default is what an UNTOUCHED filter reads as,
+            // and this press is the buyer actively asking to see it all.
+            setAckFilter(ACK_ANY);
             setLocationFilter('');
             setAgentFilter('');
             setSoMonthFilter('');
@@ -1122,7 +1310,7 @@ export function OrderInquiriesClient() {
         // The page opens narrowed to what purchasing has not confirmed, and a
         // list that is short for a reason nobody stated reads as missing data.
         activeSummary: ackChipLabel
-          ? { label: ackChipLabel, onClear: () => setAckFilter('') }
+          ? { label: ackChipLabel, onClear: () => setAckFilter(ACK_ANY) }
           : undefined,
         content: filtersContent,
       }}
@@ -1216,6 +1404,20 @@ export function OrderInquiriesClient() {
                 ? 'No linked rows to unlink'
                 : undefined,
         },
+        ...(canAcknowledge
+          ? [
+              {
+                key: 'upload-purchase-orders',
+                // Moved off the primary slot (PLAN-oi-confirm-per-so, AC-CF-5): the
+                // primary press is Confirm now that a row is born `awaiting` again -
+                // feeding the book is still purchasing's, just no longer the ONE thing
+                // this toolbar does.
+                label: 'Upload purchase orders',
+                icon: Upload,
+                onClick: () => setUploadingBook(true),
+              },
+            ]
+          : []),
         {
           key: 'export',
           label: exporting ? 'Preparing…' : 'Export Excel',
@@ -1224,15 +1426,41 @@ export function OrderInquiriesClient() {
           onClick: () => void handleExport(),
         },
       ]}
-      // START: feeding the book is the one thing purchasing presses here now
-      // (S1, AC-1.5) - a row is born acknowledged, so there is no second press
-      // to say yes to it any more, and a one-item dropdown read as a step that
-      // was not there.
+      // AC-CF-7: the header tick is the current page only - this is what offers the
+      // WHOLE matching set once every loaded row is ticked. Purchasing's own affordance;
+      // CS (no acknowledge grant) never ticks a row here at all.
+      selectAllMatching={
+        canAcknowledge
+          ? {
+              total,
+              loadedCount: rows.length,
+              active: selectAllMatchingActive,
+              onSelectAll: () => setSelectAllMatchingActive(true),
+              onClear: () => {
+                setSelectAllMatchingActive(false);
+                setRowSelection({});
+              },
+            }
+          : undefined
+      }
+      // Confirm (N) (AC-CF-5): the primary press once a row is born `awaiting` again -
+      // ticked rows purchasing has not yet signed off, or the whole matching scope once
+      // "Select all N matching" is taken. Disabled at 0, with the reason as its title
+      // (D3): a dead button with nothing beside it to say why reads as broken.
       primaryAction={
         canAcknowledge ? (
-          <Button type="button" size="sm" onClick={() => setUploadingBook(true)}>
-            <Upload className="size-4" aria-hidden />
-            Upload purchase orders
+          <Button
+            type="button"
+            size="sm"
+            disabled={confirmCount === 0 || acknowledge.isPending}
+            title={
+              confirmCount === 0
+                ? 'Tick rows still to confirm, or Select all matching.'
+                : undefined
+            }
+            onClick={() => setConfirmingOpen(true)}
+          >
+            {`Confirm (${confirmCount})`}
           </Button>
         ) : null
       }
@@ -1253,17 +1481,40 @@ export function OrderInquiriesClient() {
     <div className="space-y-5">
       <PageHeader title="Order inquiries" actions={viewToggle} />
 
-      {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the
-          rows in view still need, in the same colours the cells and the "Linked to"
-          column draw. No legend beside them - each card carries its own swatch and its
-          own words, so there is nothing left for a legend to say. */}
-      <OrderInquiryStrip
-        totals={facetSegments(summary.data?.kinds)}
-        active={kindFilter}
-        onToggle={(kind) =>
-          setKindFilter((current) => (current === kind ? null : kind))
-        }
-      />
+      <div className="flex flex-wrap items-start gap-2">
+        {/* The three cards, above BOTH views and pressed in both (AC-I11/AC-I14): what the
+            rows in view still need, in the same colours the cells and the "Linked to"
+            column draw. No legend beside them - each card carries its own swatch and its
+            own words, so there is nothing left for a legend to say. */}
+        <OrderInquiryStrip
+          totals={facetSegments(summary.data?.kinds)}
+          active={kindFilter}
+          onToggle={(kind) =>
+            setKindFilter((current) => (current === kind ? null : kind))
+          }
+        />
+        {/* AC-CF-12: purchasing's own work-queue count, beside the three supply cards -
+            what still needs a press, not what still needs a document. CS never sees it -
+            it is not their queue to clear. */}
+        {canAcknowledge ? (
+          <SupplyKindCard
+            kind="to_confirm"
+            label="To confirm"
+            swatchClass="bg-amber-500"
+            selected={ackFilter === 'to_confirm'}
+            disabled={false}
+            onClick={() => setAckFilter('to_confirm')}
+            testId="order-inquiry-strip-to-confirm"
+          >
+            <span
+              data-testid="order-inquiry-strip-to-confirm-count"
+              className="mt-1.5 block text-lg font-semibold tabular-nums text-amber-700"
+            >
+              {summary.data?.ack?.to_confirm ?? '-'}
+            </span>
+          </SupplyKindCard>
+        ) : null}
+      </div>
 
       {/* The book this page queued has been READ (AC-H13) - the worker is done with it,
           which is when its documents exist to link against. Two next steps and no third:
@@ -1575,6 +1826,32 @@ export function OrderInquiriesClient() {
         productCode={unplacePreview.data?.product_code}
         scopeLabels={activeUnplaceScopeLabels}
       />
+      {/* Confirm (N) (AC-CF-5), the same shape as the fulfilment board's own Confirm
+          dialog: state the count, then the press - no explanation, the count IS the
+          statement. */}
+      <AlertDialog open={confirmingOpen} onOpenChange={setConfirmingOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {`Confirm ${confirmCount} row${confirmCount === 1 ? '' : 's'}?`}
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={acknowledge.isPending}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                runConfirm();
+              }}
+              disabled={acknowledge.isPending}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

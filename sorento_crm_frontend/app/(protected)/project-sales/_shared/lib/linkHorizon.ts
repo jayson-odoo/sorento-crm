@@ -214,9 +214,13 @@ export function linkOutcomeText(result: AutoPlaceResult): string {
   );
 }
 
-/** The same, for the Acknowledge press, which reports what it took on first. */
+/**
+ * The same, for the Confirm press (PLAN-oi-confirm-per-so, AC-CF-10: "Confirmed N rows" -
+ * R7 renamed Acknowledge to Confirm everywhere visible; this is the last spot that still
+ * said the old word), which reports what it took on first.
+ */
 export function acknowledgeOutcomeText(result: AcknowledgeResult): string {
-  const rows = `${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'} acknowledged`;
+  const rows = `Confirmed ${result.acknowledged} row${result.acknowledged === 1 ? '' : 's'}`;
   const after = result.after_horizon ?? 0;
   if (after > 0) {
     return `${rows}, ${result.linked_rows} linked, ${afterPhrase(after, result.link_up_to)}`;

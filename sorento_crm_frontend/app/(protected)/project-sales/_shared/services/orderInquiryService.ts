@@ -271,6 +271,27 @@ export async function acknowledgeOrderInquiryRows(
 }
 
 /**
+ * Confirm "Select all N matching" (PLAN-oi-confirm-per-so, AC-CF-7/8): the SAME endpoint
+ * as `acknowledgeOrderInquiryRows`, `filter` in place of `row_ids` - the list's own
+ * worklist parameters, minus `page/limit/sort/dir`, so the server resolves the scope
+ * itself rather than trusting a client-built id list that may span more pages than were
+ * ever loaded. `row_ids` and `filter` are mutually exclusive on the wire.
+ */
+export async function acknowledgeOrderInquiryRowsByFilter(
+  filter: OrderInquiryWorklistParams,
+  horizon?: LinkHorizonRequest,
+): Promise<AcknowledgeResult> {
+  const response = await apiFetch(`${BASE}/order-inquiries/acknowledge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filter, ...(horizon ?? {}) }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to confirm those rows'));
+  return response.json();
+}
+
+/**
  * Purchasing refuses one row, with a reason (AC-H5). The row leaves netting and its
  * sales-order line goes back to the board undecided carrying the refusal.
  */

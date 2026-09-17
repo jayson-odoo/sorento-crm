@@ -42,21 +42,25 @@ describe('ACK_LABELS (R7: Confirm replaced Acknowledge everywhere a person can s
   });
 });
 
-describe('ACK_ANY / ACK_FILTER_OPTIONS (S3, review of PR #471: no "To confirm" option)', () => {
+describe('ACK_ANY / ACK_FILTER_OPTIONS (PLAN-oi-confirm-per-so, AC-CF-13: G4/G5 reversed)', () => {
   it('ACK_ANY is the URL word for "show me everything"', () => {
     expect(ACK_ANY).toBe('all');
   });
 
-  it('offers acknowledged, changed and rejected only - a row is born acknowledged now', () => {
+  it('offers To confirm, Confirmed, Changed, Rejected, All - a row is born awaiting again', () => {
     expect(ACK_FILTER_OPTIONS.map((option) => option.value)).toEqual([
+      'to_confirm',
       'acknowledged',
       'changed',
       'rejected',
+      'all',
     ]);
     expect(ACK_FILTER_OPTIONS.map((option) => option.label)).toEqual([
+      'To confirm',
       'Confirmed',
       'Changed',
       'Rejected',
+      'All',
     ]);
   });
 });

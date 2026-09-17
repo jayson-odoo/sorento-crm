@@ -636,6 +636,12 @@ export interface AcknowledgeResult {
   link_up_to?: string | null;
   /** Whether a horizon was in force at all (S1). */
   link_horizon?: 'date' | 'none';
+  /**
+   * PLAN-oi-confirm-per-so (AC-CF-8): a rejected or cancelled row named in `row_ids` or
+   * matching `filter` that this press left alone. Optional so a page rendered against an
+   * older answer still reads; the FE reads `undefined` as 0 rather than hiding the count.
+   */
+  skipped?: number;
 }
 
 /* --------------------------------------------------------- the schedule matrix

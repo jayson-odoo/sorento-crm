@@ -35,7 +35,8 @@ Confirm
   changed and not cancelled; disabled at 0 with the reason as its title; a press opens a
   confirm dialog stating the count, like the fulfilment board's Confirm (N). "Upload
   purchase orders" sits in the Actions menu.
-- AC-CF-6 Each row's menu holds Confirm for an eligible row; absent otherwise.
+- AC-CF-6 Line by line = tick one row and press Confirm (1). The worklist has no per-row
+  menu (R8 of the parity lane) and this lane adds none; superseded by AC-CF-5.
 - AC-CF-7 After a page tick, the "Select all N records" banner appears; Confirm then
   confirms every eligible row matching the current filters (all pages), not the page only.
 - AC-CF-8 `POST /order-inquiries/acknowledge` accepts `row_ids` OR `filter`, never both

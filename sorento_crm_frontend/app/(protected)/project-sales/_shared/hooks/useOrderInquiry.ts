@@ -5,6 +5,7 @@ import { toast } from '@/lib/toast';
 import { useUploadActivity } from '@/components/upload-activity/useUploadActivity';
 import {
   acknowledgeOrderInquiryRows,
+  acknowledgeOrderInquiryRowsByFilter,
   autoPlaceOrderInquiryRows,
   getOrderInquiryPoCandidates,
   getOrderInquiryUploadJob,
@@ -409,8 +410,23 @@ export function useOrderInquiryHandshake() {
     // every ticked row is taken on, and one due after that date is left Not linked and
     // reported back as "N after <date>". `linkHorizonRequest` builds it, so this press and
     // the other three say the same thing about the same date (S1).
-    mutationFn: ({ rowIds, horizon }: { rowIds: string[]; horizon?: LinkHorizonRequest }) =>
-      acknowledgeOrderInquiryRows(rowIds, horizon),
+    //
+    // `filter` is the worklist's own "Select all N matching" (PLAN-oi-confirm-per-so,
+    // AC-CF-7): the CURRENT worklist scope rather than a client-built id list, for a
+    // selection that spans more pages than were ever loaded. Mutually exclusive with
+    // `rowIds` on the wire - the caller sends exactly one.
+    mutationFn: ({
+      rowIds,
+      filter,
+      horizon,
+    }: {
+      rowIds?: string[];
+      filter?: OrderInquiryWorklistParams;
+      horizon?: LinkHorizonRequest;
+    }) =>
+      filter
+        ? acknowledgeOrderInquiryRowsByFilter(filter, horizon)
+        : acknowledgeOrderInquiryRows(rowIds ?? [], horizon),
     onSuccess: (result) => {
       invalidate();
       toast.success(acknowledgeOutcomeText(result));
