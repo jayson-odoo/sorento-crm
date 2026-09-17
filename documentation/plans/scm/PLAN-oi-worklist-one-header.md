@@ -106,9 +106,18 @@ header of their own - nothing for the migration to touch, since it walks from th
 not the amendment). Both orders already had their own null-amendment header (OI-000477 on
 SO314593 with 14 rows, OI-000539 on SO314594 with 13 rows).
 
-`alembic upgrade head` ran in 1.77s wall (`time`, one Python/SQLAlchemy session per the
-migration's own `Session(bind=op.get_bind())`), logging `oioh_0001: folded 2
-planning_change_batch header(s)`.
+**Re-verified after review round 1 rewrote the migration as plain SQL (`_fold`, no
+`Session`/service import).** The run above predates that rewrite - it ran the old
+`Session(bind=op.get_bind())` implementation. A second ephemeral copy,
+`sorento_oioh_mig` (same method: `createdb -O sorento_crm sorento_oioh_mig && pg_dump
+-Fc sorento_ai_automation_0915_1900 | pg_restore --no-owner --role=sorento_crm -d
+sorento_oioh_mig`, `sorento_ai_automation_0915_1900` was free by then), confirmed the
+SQL `_fold` produces the byte-identical result before it was dropped:
+
+`alembic upgrade head` ran in 1.47s wall (`time`), logging `oioh_0001: folded 2
+planning_change_batch header(s)` - same two headers, same counts before (2 batch
+headers / 7 batch amendments / 11886 rows / 6207 links / 63200 claims / 0 tasks
+anywhere in this data) as the first run.
 
 After: 0 headers left on a `planning_change_batch` amendment; the amendment count dropped
 7 -> 5 (only the two WITH a header got deleted, matching "delete the synthetic amendment"
@@ -117,9 +126,15 @@ OI-000477 now carries 19 rows (14 + 5), OI-000539 carries 16 (13 + 3) - `raised_
 `raised_at` on BOTH unchanged byte-for-byte against the pre-migration source (same
 `9993276c-...` actor, same timestamps to the microsecond). Global row/link/claim counts
 untouched: `order_inquiry_rows` still 11886, `order_inquiry_links` still 6207,
-`scm.order_link_claim` still 63200. Spot-checked five of OI-000477's links (SPO documents)
-- `row_id` unchanged, still pointing at the same row, now under the new
-`order_inquiry_id`.
+`scm.order_link_claim` still 63200. Task counts on OI-000477 and OI-000539 are 0 before
+and 0 after - this copy carries no `projects.tasks` rows at all, so the round-2
+task-collision logic (re-point vs. delete, `_fold`'s own `projects.tasks` step) ran its
+query and found nothing to move, which the unit tests (`test_migration_folds_
+planning_change_batch_headers_AC_OH_34`, `test_migration_repoints_task_when_target_
+has_none_review_round_2`) are what actually exercise both branches. Spot-checked five
+of OI-000477's links (SPO documents) - `row_id` unchanged, still pointing at the same
+row, now under the new `order_inquiry_id`. `sorento_oioh_mig` dropped after this run;
+`sorento_oioh_stack` (below) is the one left in place.
 
 `sorento_oioh_stack` is left in place as the browser-verification DB (Phase 3). Its two
 `email_outbox` rows in `pending` (both real prod addresses, `purchase02@mocha.com.my`,
