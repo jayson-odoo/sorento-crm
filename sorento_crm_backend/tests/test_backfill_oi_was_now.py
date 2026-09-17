@@ -12,13 +12,14 @@ cannot host the `projects` schema at all.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from app.models.base import set_company_scope
 from app.models.project_so import (
+    DECISION_SUPERSEDED,
     INQUIRY_CANCELLED,
     INQUIRY_PARTLY_LINKED,
     INQUIRY_RAISED,
@@ -119,12 +120,14 @@ def _used_row(world, *, revision_no=REVISION_NO, note=None) -> OrderInquiryRow:
     return row
 
 
-def _fresh_row(world, *, supply_decision_id=None, previous_qty=None) -> OrderInquiryRow:
+def _fresh_row(
+    world, *, supply_decision_id=None, previous_qty=None, state=INQUIRY_RAISED
+) -> OrderInquiryRow:
     db = world["db"]
     row = OrderInquiryRow(
         id=_u(), company_id=SORENTO, order_inquiry_id=world["inquiry"].id,
         so_line_id=world["line"].id, item_code=f"{MARKER}-ITEM", qty=FRESH_QTY,
-        delivery_date=FRESH_DATE, verb=IV_ORDER, state=INQUIRY_RAISED,
+        delivery_date=FRESH_DATE, verb=IV_ORDER, state=state,
         supply_decision_id=(
             world["decision"].id if supply_decision_id is None else supply_decision_id
         ),
@@ -135,7 +138,7 @@ def _fresh_row(world, *, supply_decision_id=None, previous_qty=None) -> OrderInq
     return row
 
 
-def _delay_row(world) -> OrderInquiryRow:
+def _delay_row(world, *, created_at=None) -> OrderInquiryRow:
     db = world["db"]
     row = OrderInquiryRow(
         id=_u(), company_id=SORENTO, order_inquiry_id=world["inquiry"].id,
@@ -143,6 +146,8 @@ def _delay_row(world) -> OrderInquiryRow:
         delivery_date=FRESH_DATE, verb=IV_DELAY, state=INQUIRY_RAISED,
         supply_decision_id=None, note="Was 2026-06-01",
     )
+    if created_at is not None:
+        row.created_at = created_at
     db.add(row)
     db.flush()
     return row
@@ -234,3 +239,76 @@ def test_used_row_with_no_revision_fragment_is_skipped(world):
     summary = backfill.run(world["db"], apply=True)
 
     assert summary["fresh_rows_found"] == 0
+
+
+def test_reconfirm_that_supersedes_revision_n_still_stamps_the_live_row(world):
+    """Owner correction, 18 Sep 2026 (SO314593/SO314594 on prod): a network-outage
+    reconfirm can supersede revision N's OWN fresh row before this ever runs - CS
+    reconfirmed at revision N+1 minutes later, cancelling the row revision N raised and
+    raising a fresh one under the new decision instead. The live 220 sits on revision
+    N+1's row, and the DELAY row the FIRST confirm raised is still cancelled - keyed off
+    revision N's own `confirmed_at` (10:11), never the live row's much later
+    `created_at` (11:25)."""
+    db = world["db"]
+    t1 = datetime(2026, 9, 16, 10, 11, 0)
+    t2 = datetime(2026, 9, 16, 11, 25, 0)
+    world["decision"].confirmed_at = t1
+    world["decision"].state = DECISION_SUPERSEDED
+    db.flush()
+
+    _used_row(world)  # "released at revision 7"
+    # Revision 7's OWN fresh row - already cancelled by CS's revision 8 reconfirm, and
+    # must never be the one this backfill touches.
+    stale_fresh = _fresh_row(world, state=INQUIRY_CANCELLED)
+
+    decision2 = SOSupplyDecision(
+        id=_u(), company_id=SORENTO, project_sales_order_id=world["pso"].id,
+        revision_no=REVISION_NO + 1, confirmed_at=t2, line_snapshots={},
+    )
+    db.add(decision2)
+    db.flush()
+    live_fresh = _fresh_row(world, supply_decision_id=decision2.id)
+
+    # Raised beside the FIRST confirm (revision 7, 10:11), not the reconfirm.
+    delay = _delay_row(world, created_at=t1 + timedelta(minutes=1))
+
+    summary = backfill.run(db, apply=True)
+
+    assert summary["fresh_rows_stamped"] == 1
+    assert summary["reaction_rows_cancelled"] == 1
+
+    db.refresh(live_fresh)
+    assert live_fresh.previous_qty == USED_QTY
+    assert live_fresh.previous_delivery_date == USED_DATE
+    assert f"Replaces {USED_QTY.normalize():f} used" in (live_fresh.note or "")
+
+    db.refresh(stale_fresh)
+    assert stale_fresh.previous_qty is None, "the cancelled revision-7 row must never be touched"
+
+    db.refresh(delay)
+    assert delay.state == INQUIRY_CANCELLED
+    assert f"Superseded by revision {REVISION_NO}" in delay.note
+
+
+def test_chain_with_no_live_row_anywhere_is_skipped(world):
+    """The whole supersession chain has been walked and nothing on it is still a live,
+    unstamped ORDER/ORDER_BACK row - nothing crashes, nothing is written."""
+    db = world["db"]
+    used = _used_row(world)
+    world["decision"].state = DECISION_SUPERSEDED
+    # Revision 7's own fresh row was cancelled by the reconfirm...
+    _fresh_row(world, state=INQUIRY_CANCELLED)
+    # ...and revision 8 (the reconfirm) raised nothing further on this line at all.
+    decision2 = SOSupplyDecision(
+        id=_u(), company_id=SORENTO, project_sales_order_id=world["pso"].id,
+        revision_no=REVISION_NO + 1, line_snapshots={},
+    )
+    db.add(decision2)
+    db.flush()
+
+    summary = backfill.run(db, apply=True)
+
+    assert summary["fresh_rows_found"] == 0
+    assert summary["fresh_rows_stamped"] == 0
+    db.refresh(used)
+    assert used.redirected_to_pool is True

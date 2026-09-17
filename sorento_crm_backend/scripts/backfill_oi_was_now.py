@@ -22,15 +22,24 @@ carries "released at revision N" (the exact fragment
 ``_redirect_row_if_received`` writes):
 
 1. finds the ``so_supply_decisions`` row for R's own order at ``revision_no = N``,
-2. finds the ONE fresh ORDER/ORDER_BACK row F on the same SO line, pointing at that
-   decision, still carrying no Was/Now (``previous_qty IS NULL``) - skipping (and
-   printing why) when there is none or more than one,
-3. stamps F's ``previous_qty`` / ``previous_delivery_date`` from R and appends the same
-   "Replaces <qty> used; ..." note the live confirm would have written - reusing
+2. walks the supersession chain FORWARD from revision N - every later revision of the
+   same order (a plain reconfirm never lowers ``revision_no``, so ``revision_no >= N``
+   is the same set ``supersedes_id`` would walk) - because a network-outage reconfirm
+   can supersede revision N's OWN fresh row before this ever runs (SO314593/SO314594,
+   18 Sep 2026): revision 1's fresh row was cancelled by CS's revision 2 reconfirm, and
+   the live 220 sits on revision 2's row instead. Finds the ONE still-live
+   (``raised``/``partly_linked``/``placed``) ORDER/ORDER_BACK row on the same SO line
+   pointing at ANY decision in that chain, still carrying no Was/Now
+   (``previous_qty IS NULL``) - skipping (and printing why) when there is none or more
+   than one across the whole chain,
+3. stamps that row's ``previous_qty`` / ``previous_delivery_date`` from R and appends the
+   same "Replaces <qty> used; ..." note the live confirm would have written - reusing
    ``ProjectOrderInquiryService._release_fragment`` rather than re-deriving its wording,
 4. cancels every DELAY/ADVANCE row on the same line, still ``raised`` with no supply
-   decision of its own, written within five minutes of F - the reaction the live confirm
-   would have suppressed - and appends why to its note.
+   decision of its own, written within five minutes of revision N's OWN
+   ``confirmed_at`` - the reaction the live confirm would have suppressed, written at
+   THAT first confirm regardless of which later revision ended up carrying the live
+   row - and appends why to its note.
 
 SAFETY / IDEMPOTENCY
 ---------------------
@@ -50,8 +59,8 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
 # Allow `from app.*` imports when invoked from the backend directory.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -96,11 +105,14 @@ _BACKFILL_NOTE = (
 
 @dataclass
 class Repair:
-    """One used row matched to the one fresh row it should have stamped."""
+    """One used row matched to the one live fresh row it should have stamped."""
 
     used_row_id: str
     fresh_row_id: str
     revision_no: int
+    #: Revision N's OWN `confirmed_at` - the anchor for the DELAY/ADVANCE cancel window,
+    #: not the fresh row's `created_at`, which may be a later reconfirm entirely.
+    anchor_at: datetime
     order_label: str
     item_code: Optional[str]
 
@@ -135,31 +147,53 @@ def _used_rows(db: Session) -> List[OrderInquiryRow]:
     )
 
 
-def _fresh_row_for(db: Session, used_row: OrderInquiryRow, revision_no: int) -> Optional[OrderInquiryRow]:
+def _decision_chain(
+    db: Session, project_sales_order_id: str, revision_no: int
+) -> List[SOSupplyDecision]:
+    """Revision N and every decision the same order confirmed AFTER it, oldest first.
+
+    A plain reconfirm never lowers `revision_no`, so this is the same set
+    `supersedes_id` would walk pointer by pointer, without needing to: revision N's OWN
+    fresh row can already be superseded by the time this runs (a network-outage
+    reconfirm, SO314593/SO314594 18 Sep 2026 - revision 1's fresh row was cancelled by
+    CS's revision 2 reconfirm, and the live 220 sits on revision 2's row instead), and
+    the live row is wherever in the chain purchasing's last confirm left it.
+    """
+    return (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == project_sales_order_id,
+            SOSupplyDecision.revision_no >= revision_no,
+        )
+        .order_by(SOSupplyDecision.revision_no.asc())
+        .all()
+    )
+
+
+def _fresh_row_for(
+    db: Session, used_row: OrderInquiryRow, revision_no: int
+) -> Optional[Tuple[OrderInquiryRow, datetime]]:
+    """The one still-live fresh row for `used_row`'s revision, wherever the
+    supersession chain since left it, paired with revision N's OWN `confirmed_at` (the
+    DELAY/ADVANCE cancel window's anchor - see `Repair.anchor_at`)."""
     inquiry = (
         db.query(OrderInquiry).filter(OrderInquiry.id == used_row.order_inquiry_id).one_or_none()
     )
     if inquiry is None:
         print(f"  SKIP used row {used_row.id}: its order inquiry header is gone")
         return None
-    decision = (
-        db.query(SOSupplyDecision)
-        .filter(
-            SOSupplyDecision.project_sales_order_id == inquiry.project_sales_order_id,
-            SOSupplyDecision.revision_no == revision_no,
-        )
-        .one_or_none()
-    )
-    if decision is None:
+    chain = _decision_chain(db, inquiry.project_sales_order_id, revision_no)
+    if not chain or chain[0].revision_no != revision_no:
         print(
             f"  SKIP used row {used_row.id}: no revision {revision_no} decision on its order"
         )
         return None
+    decision_ids = [decision.id for decision in chain]
     candidates = (
         db.query(OrderInquiryRow)
         .filter(
             OrderInquiryRow.so_line_id == used_row.so_line_id,
-            OrderInquiryRow.supply_decision_id == decision.id,
+            OrderInquiryRow.supply_decision_id.in_(decision_ids),
             OrderInquiryRow.verb.in_(_OWNED_VERBS),
             OrderInquiryRow.state.in_(_FRESH_STATES),
             OrderInquiryRow.previous_qty.is_(None),
@@ -168,20 +202,21 @@ def _fresh_row_for(db: Session, used_row: OrderInquiryRow, revision_no: int) -> 
     )
     if len(candidates) != 1:
         print(
-            f"  SKIP used row {used_row.id}: found {len(candidates)} unstamped fresh rows "
-            f"for revision {revision_no} (need exactly 1)"
+            f"  SKIP used row {used_row.id}: found {len(candidates)} unstamped live fresh "
+            f"rows across revisions {revision_no}..{chain[-1].revision_no} (need exactly 1)"
         )
         return None
-    return candidates[0]
+    anchor_at = chain[0].confirmed_at or chain[0].created_at
+    return candidates[0], anchor_at
 
 
-def _reaction_rows_for(db: Session, fresh_row: OrderInquiryRow) -> List[OrderInquiryRow]:
-    lo = fresh_row.created_at - _REACTION_WINDOW
-    hi = fresh_row.created_at + _REACTION_WINDOW
+def _reaction_rows_for(db: Session, so_line_id: str, anchor_at: datetime) -> List[OrderInquiryRow]:
+    lo = anchor_at - _REACTION_WINDOW
+    hi = anchor_at + _REACTION_WINDOW
     return (
         db.query(OrderInquiryRow)
         .filter(
-            OrderInquiryRow.so_line_id == fresh_row.so_line_id,
+            OrderInquiryRow.so_line_id == so_line_id,
             OrderInquiryRow.verb.in_(_REACTION_VERBS),
             OrderInquiryRow.state == INQUIRY_RAISED,
             OrderInquiryRow.supply_decision_id.is_(None),
@@ -196,8 +231,8 @@ def find_repairs(db: Session) -> List[Repair]:
     """Every used row still missing its fresh row's Was/Now, matched one-for-one.
 
     A used row with no "released at revision N" fragment, no matching revision, or
-    not exactly one unstamped fresh row on its line is reported (never raised) and
-    left out of the returned list - see `_fresh_row_for`.
+    not exactly one unstamped live fresh row across its revision's supersession chain
+    is reported (never raised) and left out of the returned list - see `_fresh_row_for`.
     """
     repairs: List[Repair] = []
     for used_row in _used_rows(db):
@@ -205,14 +240,16 @@ def find_repairs(db: Session) -> List[Repair]:
         if not match:
             continue
         revision_no = int(match.group(1))
-        fresh_row = _fresh_row_for(db, used_row, revision_no)
-        if fresh_row is None:
+        found = _fresh_row_for(db, used_row, revision_no)
+        if found is None:
             continue
+        fresh_row, anchor_at = found
         repairs.append(
             Repair(
                 used_row_id=str(used_row.id),
                 fresh_row_id=str(fresh_row.id),
                 revision_no=revision_no,
+                anchor_at=anchor_at,
                 order_label=_order_label(db, used_row.order_inquiry_id),
                 item_code=used_row.item_code,
             )
@@ -238,7 +275,7 @@ def apply_repair(db: Session, repair: Repair) -> int:
     fresh_row.previous_delivery_date = used_row.delivery_date
 
     cancelled = 0
-    for reaction_row in _reaction_rows_for(db, fresh_row):
+    for reaction_row in _reaction_rows_for(db, fresh_row.so_line_id, repair.anchor_at):
         print(
             f"    cancelling {reaction_row.verb} row {reaction_row.id} "
             f"(superseded by revision {repair.revision_no})"
