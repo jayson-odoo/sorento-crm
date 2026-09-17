@@ -131,15 +131,18 @@ def _assert_undo_not_refused(db: Session, action_key: str, entity_id: str) -> No
     from app.services.project_supply_service import ProjectSupplyService
     from app.services.project_supply_undo_service import (
         _REFUSAL_MESSAGES,
-        refusal_for_order,
+        refusal_for_order_with_detail,
     )
 
     order = ProjectSupplyService(db).get_order(entity_id)
-    refusal = refusal_for_order(db, str(order.id))
+    refusal, refusal_detail = refusal_for_order_with_detail(db, str(order.id))
     if refusal:
+        message = _REFUSAL_MESSAGES[refusal]
+        if refusal == "changed" and refusal_detail:
+            message = f"{message} ({refusal_detail['table']} pk={refusal_detail['pk']})"
         raise AppException(
             status_code=status.HTTP_409_CONFLICT,
-            message=_REFUSAL_MESSAGES[refusal],
+            message=message,
             code=refusal,
         )
 

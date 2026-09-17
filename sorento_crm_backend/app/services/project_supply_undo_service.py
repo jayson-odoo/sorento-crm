@@ -33,7 +33,6 @@ from sqlalchemy import (
     event,
     func,
     inspect,
-    null,
     text,
 )
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -244,6 +243,14 @@ class UndoJournal:
         self.entries: List[Dict[str, Any]] = []
         self._seq = 0
         self._pending_inserts: List[Tuple[Dict[str, Any], Any]] = []
+        #: (entry, obj, keys) for an "update" entry touched in the flush about to run -
+        #: AC-R2-23 (S4): `new` is read from the object's live attributes in
+        #: `_after_flush`, POST-flush, so a Python-side onupdate/default that only
+        #: resolves during the flush is the real written value, not a guess taken
+        #: before it ran. Re-queued on every flush the same row is touched in (the
+        #: merge case below), so a row updated across two flushes ends with `new`
+        #: covering every column EITHER flush changed, same as `old` already does.
+        self._pending_updates: List[Tuple[Dict[str, Any], Any, List[str]]] = []
         #: (table, pk) -> index into `self.entries`, for an "update" entry only. A row
         #: touched across TWO separate flushes of the same confirm (a common shape:
         #: `set_row_decision` writes `composition_json` in one flush, `apply` writes
@@ -299,11 +306,14 @@ class UndoJournal:
                 existing_old = self.entries[existing_index]["old"]
                 for column, value in old.items():
                     existing_old.setdefault(column, value)
-            else:
-                self.entries.append(
-                    {"seq": seq, "op": "update", "table": table, "pk": pk, "old": old}
+                self._pending_updates.append(
+                    (self.entries[existing_index], obj, list(old.keys()))
                 )
+            else:
+                entry = {"seq": seq, "op": "update", "table": table, "pk": pk, "old": old}
+                self.entries.append(entry)
                 self._update_index[key] = len(self.entries) - 1
+                self._pending_updates.append((entry, obj, list(old.keys())))
         for obj in list(session.deleted):
             if not _journalled(obj):
                 continue
@@ -323,10 +333,18 @@ class UndoJournal:
         while self._pending_inserts:
             entry, obj = self._pending_inserts.pop(0)
             entry["pk"] = _entity_id_str(obj)
+        # AC-R2-23: `new` for an update entry, read from the object's own attributes
+        # now that the flush that wrote them has run - a Python-side onupdate/default
+        # (e.g. `updated_at`) only resolves during the flush, so reading it before
+        # would have captured a stale value.
+        while self._pending_updates:
+            entry, obj, keys = self._pending_updates.pop(0)
+            new_values = entry.setdefault("new", {})
+            for key in keys:
+                new_values[key] = _json_serial(getattr(obj, key, None))
 
     def attach(self, decision: SOSupplyDecision) -> None:
-        """Write the captured journal onto the decision THIS confirm minted, and null
-        the journal of the decision it superseded (Contract H, review round).
+        """Write the captured journal onto the decision THIS confirm minted.
 
         Called AFTER the `with` block has exited, never inside it - the listener is
         already detached by then, so writing `undo_journal` does not journal itself.
@@ -340,11 +358,15 @@ class UndoJournal:
         audit_logs on confirm" finding. `__audit_columns__` now excludes the column
         too (belt and braces), but the write itself should not depend on that.
 
-        The superseded decision's own journal is nulled HERE, at CONFIRM time, not
-        only later when an undo reinstates it (R3/AC-UC-22 is the separate, undo-side
-        guarantee): a superseded revision's journal replays against a book state THIS
-        confirm has already changed underneath it, and is not safely replayable by
-        the time a second confirm has landed on top of it.
+        AC-R2-20 (`PLAN-scm-oi-handover-r2-undo.md` S4, reverses ruling 3 of `PLAN-
+        board-undo-last-confirm.md` and this method's own former Contract H): the
+        superseded decision's own journal is LEFT AS IT WAS, never nulled here. Depth-N
+        undo needs it: undoing revision 2 reinstates revision 1's post-image, and a
+        SECOND undo has to be able to replay revision 1's own journal in turn - which a
+        journal this confirm nulled at write time could never do. `changed`
+        (`_grouped_refusals` below) is what stops a stale journal from ever being
+        replayed against a book state it no longer matches, so nulling it here is no
+        longer the safety net it once was.
         """
         journal_payload = list(self.entries)
         table = Base.metadata.tables[_DECISIONS_TABLE]
@@ -353,12 +375,6 @@ class UndoJournal:
             .where(table.c.id == decision.id)
             .values(undo_journal=journal_payload)
         )
-        if decision.supersedes_id:
-            self.db.execute(
-                table.update()
-                .where(table.c.id == decision.supersedes_id)
-                .values(undo_journal=null())
-            )
         self.db.flush()
         # Core SQL bypasses the ORM identity map - keep the in-memory object in sync
         # (`set_committed_value`, not a plain attribute assignment: this session's own
@@ -534,6 +550,7 @@ _REFUSAL_MESSAGES = {
     "linked": "Purchasing has linked a PO line to this order since it was confirmed.",
     "actioned": "Purchasing has marked a row on this order actioned since it was confirmed.",
     "superseded": "A newer confirm has already replaced this one.",
+    "changed": "A row changed since this confirm.",
 }
 
 
@@ -753,23 +770,110 @@ def _grouped_refusals(db: Session, decisions: List[Any]) -> Dict[str, Optional[s
     return out
 
 
+def _changed_refusal(db: Session, decision: SOSupplyDecision) -> Optional[Dict[str, str]]:
+    """AC-R2-24 (S4, `PLAN-scm-oi-handover-r2-undo.md`): refuse when a journalled
+    `update` entry's `new` no longer matches the row's CURRENT value - another
+    writer touched the same column since this confirm, so replaying the journal's
+    own `old` would silently discard that write. An entry with no `new` at all is a
+    LEGACY one (written before this lane) and is skipped outright (AC-R2-25).
+
+    One `SELECT ... WHERE pk IN (...)` per table (review round shape, `_grouped_
+    refusals`'s own batching precedent), never per row. Returns `{"table", "pk"}`
+    for the FIRST mismatch found - enough to name it in the refusal message - or
+    `None` when every journalled value still matches.
+
+    Deliberately NOT folded into `_grouped_refusals`: that predicate also serves
+    `board_undo_map`'s own multi-order read off a TRIMMED journal (three table
+    kinds only, no `new` guarantee needed there - AC-R2-27's "no full-journal
+    deserialisation added"), and this check needs the FULL journal plus a live
+    read of every touched row. It runs only where an undo is actually about to
+    happen: at park (`refusal_for_order`) and at execute, just before `_replay`.
+    """
+    from sqlalchemy import select
+
+    journal = decision.undo_journal or []
+    by_table: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in journal:
+        if entry.get("op") != "update" or not entry.get("new"):
+            continue
+        by_table.setdefault(entry["table"], []).append(entry)
+    for table_name, entries in by_table.items():
+        table = Base.metadata.tables.get(table_name)
+        if table is None:
+            continue
+        pk_col = _pk_column(table)
+        keys_needed = sorted({key for entry in entries for key in entry["new"]})
+        cols = [table.c[key] for key in keys_needed if key in table.c]
+        if not cols:
+            continue
+        # `Base.metadata.tables[...]` (via `table`/`pk_col`/`cols` above), never a
+        # schema-qualified `text()` literal: a raw string like `"projects.order_
+        # inquiry_rows"` bypasses `blank_session()`'s own `schema_translate_map`
+        # AND its pinned `search_path` (schema-qualified names never consult
+        # `search_path` at all), silently landing on the real, empty schema
+        # instead of the test's scratch one - see that fixture's own docstring.
+        rows = db.execute(
+            select(pk_col, *cols).where(pk_col.in_([entry["pk"] for entry in entries]))
+        ).all()
+        # RAW, typed values here - NOT `_json_serial`'d: a `Numeric(15, 4)` column
+        # reads back `Decimal("15.0000")` where the journalled `new` (captured via
+        # `_json_serial` on the ORM's own in-memory value right after assignment)
+        # holds the string `"15"` - equal numerically, not string-equal. Coercing
+        # the journalled STRING back through `_coerce_value` onto the column's own
+        # type (the same helper replay uses) and comparing typed-to-typed is what
+        # makes `Decimal("15") == Decimal("15.0000")` (True) the comparison that
+        # runs, instead of a spurious mismatch on formatting alone.
+        current_by_pk = {
+            str(row[0]): {col.name: value for col, value in zip(cols, row[1:])} for row in rows
+        }
+        for entry in entries:
+            current = current_by_pk.get(entry["pk"])
+            if current is None:
+                continue
+            for key, new_value in entry["new"].items():
+                if key not in current:
+                    continue
+                column = table.c.get(key)
+                coerced_new = _coerce_value(column, new_value) if column is not None else new_value
+                if current[key] != coerced_new:
+                    return {"table": table_name, "pk": entry["pk"]}
+    return None
+
+
+def _refusal_reason_with_detail(
+    db: Session, decision: SOSupplyDecision
+) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+    """`_grouped_refusals`'s own `linked`/`actioned` rule for a single decision, then
+    the `changed` check (AC-R2-24) - in that order, so a `linked`/`actioned` row
+    still reports the refusal purchasing's own work earned, not a `changed` one a
+    slower query happened to find first. `detail` (`{"table", "pk"}`) is only ever
+    set alongside `"changed"` - every other code's message is the static one in
+    `_REFUSAL_MESSAGES`."""
+    reason = _grouped_refusals(db, [decision]).get(decision.id)
+    if reason:
+        return reason, None
+    detail = _changed_refusal(db, decision)
+    return ("changed", detail) if detail else (None, None)
+
+
 def _refusal_reason(db: Session, decision: SOSupplyDecision) -> Optional[str]:
-    """`_grouped_refusals`'s own rule, for a single decision - `undo_last_confirm`
-    checks exactly one, so batching buys it nothing; `board_undo_map` is the caller
-    that batches, over every decision on the board at once."""
-    return _grouped_refusals(db, [decision]).get(decision.id)
+    """`_refusal_reason_with_detail`'s own code, for callers that never render the
+    detail (`undo_last_confirm`'s existing test suite reads this bare)."""
+    return _refusal_reason_with_detail(db, decision)[0]
 
 
-def refusal_for_order(db: Session, pso_id: str) -> Optional[str]:
-    """The SAME `linked`/`actioned` predicate `undo_last_confirm` checks at
+def refusal_for_order_with_detail(
+    db: Session, pso_id: str
+) -> Tuple[Optional[str], Optional[Dict[str, str]]]:
+    """The SAME `linked`/`actioned`/`changed` predicate `undo_last_confirm` checks at
     commit time, run early - at PARK time (review round, follow-up) - so
     `POST /pending-actions` gives a raw caller the same synchronous 409 the
     disabled gear entry already implies, instead of a 202 followed by a failure
     several seconds later when the countdown lapses.
 
-    `None` when the order has no active, journalled decision at all - that is
-    the commit-time `no_journal` refusal's own job (`undo_last_confirm`),
-    unchanged; this predicate only ever answers `linked` or `actioned`.
+    `(None, None)` when the order has no active, journalled decision at all - that
+    is the commit-time `no_journal` refusal's own job (`undo_last_confirm`),
+    unchanged.
     """
     decision = (
         db.query(SOSupplyDecision)
@@ -780,8 +884,14 @@ def refusal_for_order(db: Session, pso_id: str) -> Optional[str]:
         .first()
     )
     if decision is None or not _decision_is_journalled(decision):
-        return None
-    return _refusal_reason(db, decision)
+        return None, None
+    return _refusal_reason_with_detail(db, decision)
+
+
+def refusal_for_order(db: Session, pso_id: str) -> Optional[str]:
+    """`refusal_for_order_with_detail`'s own code, for callers that never render the
+    detail."""
+    return refusal_for_order_with_detail(db, pso_id)[0]
 
 
 # --------------------------------------------------------------------------- email
@@ -946,9 +1056,12 @@ def undo_last_confirm(
     pso_ids = touched_project_sales_order_ids(db, decision)
     _assert_actor_can_undo(db, actor_user_id, pso_ids)
 
-    refusal = _refusal_reason(db, decision)
+    refusal, refusal_detail = _refusal_reason_with_detail(db, decision)
     if refusal:
-        raise AppException(status_code=409, message=_REFUSAL_MESSAGES[refusal], code=refusal)
+        message = _REFUSAL_MESSAGES[refusal]
+        if refusal == "changed" and refusal_detail:
+            message = f"{message} ({refusal_detail['table']} pk={refusal_detail['pk']})"
+        raise AppException(status_code=409, message=message, code=refusal)
 
     revision_no = decision.revision_no
     prior_id = decision.supersedes_id
@@ -987,14 +1100,12 @@ def undo_last_confirm(
 
     _replay(db, journal, company_id=company_id)
 
-    if prior_id:
-        # R3: one revision back, once - the reinstated decision is not itself
-        # undoable. Raw SQL, like the rest of replay: an ORM assignment on a row
-        # `_replay` just touched via core SQL would be working off a stale in-memory
-        # copy if this session had loaded it earlier.
-        table = Base.metadata.tables["projects.so_supply_decisions"]
-        db.execute(table.update().where(table.c.id == prior_id).values(undo_journal=null()))
-
+    # AC-R2-21 (S4, reverses R3 "one revision back, once"): the reinstated
+    # decision's own journal is left exactly as it is - depth-N undo needs it alive
+    # so a SECOND undo can replay revision 1's own journal in turn (AC-R2-22). The
+    # `changed` guard above is what now stops a stale journal from ever being
+    # replayed against a book state it no longer matches, so there is nothing left
+    # for this null-out to protect against.
     ProjectOrderInquiryService(db)._record_undo(
         pso_id=str(pso_id) if pso_id else None,
         decision_id=str(decision_id),
@@ -1151,5 +1262,10 @@ def board_undo_map(
             "confirmed_by_name": names.get(row.confirmed_by),
             "refusal": refusal_by_decision.get(row.id),
             "decision_id": str(row.id),
+            # AC-R2-27: every entry this loop builds carries a real journal (the
+            # `_journalled_decision_clause()` filter above), so `mode` is always
+            # `journal` here. S5 adds a SECOND pass for journal-less decisions,
+            # admin-gated, which sets `reconstructed` instead.
+            "mode": "journal",
         }
     return out
