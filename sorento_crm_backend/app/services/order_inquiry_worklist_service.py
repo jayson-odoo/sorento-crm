@@ -1327,6 +1327,12 @@ class OrderInquiryWorklistService:
                 return True
         document = str(link.get("document") or "").strip().upper()
         if row is not None and document:
+            # F4: `row` is the worklist's OWN `_COLUMNS` tuple, not an
+            # `OrderInquiryRow` ORM instance - `_cited_documents` may read only the
+            # three fields `_COLUMNS` carries for it (`cited_document`, `note`,
+            # `spo_ref`). A fourth field added to that reader with no matching column
+            # here fails loudly (`AttributeError`), not silently; AC-EA-15 is the test
+            # that goes red first.
             return document in inquiry_service._cited_documents(row)
         return False
 

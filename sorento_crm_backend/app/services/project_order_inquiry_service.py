@@ -5434,9 +5434,13 @@ class ProjectOrderInquiryService:
         outranks the window exactly as it already outranks every ordering rule in
         `_candidate`'s own sort key. Everything else promised a full lead time (or
         more) before `row.delivery_date` (`arrives_outside_window`) is REMOVED from
-        the list, not marked `cascadable=False`: `cascadable` is what greys a line in
-        the Link dialog, and an early line is not greyed - it stays listed, still
-        takeable by hand, just not the walk's own answer.
+        the list, not marked `cascadable=False` (F3, review round 2): `cascadable` is a
+        property of the LINE - who may take it at ALL, whichever row is asking - while
+        the window is a property of THIS ROW's own delivery date, so folding it into
+        `cascadable` would state a row-specific fact on a dict several rows' walks can
+        share. An early candidate simply stays OUT of the list this call returns; it is
+        still listed in the Link dialog (`po_candidates_for_row` runs this same filter
+        only for `recommended`/`default_take`, never to drop a row from what it shows).
         """
         return [
             candidate
@@ -5531,14 +5535,16 @@ class ProjectOrderInquiryService:
                     "unattributed": candidate["unattributed"],
                 }
             )
-        # S4: the first entry that BOTH covers the need AND survives the window - `out`
-        # and `candidates` share one order (no filtering in the loop above), so `zip`
-        # pairs each entry with the candidate it was built from.
+        # S4: the first entry that BOTH covers the need AND survives the window - by the
+        # entry's OWN target id (`po_line_id` on a PO candidate, `spo_allocation_id` on
+        # an SPO one; `_candidate`'s `target_id` is whichever of the two is set), never
+        # positional pairing against `candidates`.
         recommended = next(
             (
                 entry
-                for entry, candidate in zip(out, candidates)
-                if candidate["target_id"] in within_window_ids and entry["covers"]
+                for entry in out
+                if (entry["po_line_id"] or entry["spo_allocation_id"]) in within_window_ids
+                and entry["covers"]
             ),
             None,
         )
