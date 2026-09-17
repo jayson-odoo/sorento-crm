@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.models.product import Product
 from app.models.scm import SupplierInventory
+from app.services.scm.supplier_code_composer import WordList
 from app.services.scm.supplier_inventory_reader import InventoryReadResult, read_workbook
 from app.services.scm.supplier_scope import (
     supplier_check as _supplier_check,
@@ -55,8 +56,11 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
-def _parse(db: Session, data: bytes) -> InventoryReadResult:
-    return read_workbook(data, db=db)
+def _parse(db: Session, data: bytes, supplier_id: Optional[str] = None) -> InventoryReadResult:
+    """The read, with the CHOSEN supplier's own word list (D1-D6): a bare 型号 composes
+    through it, a letter-led one never consults it at all (D1/D2's regression guard)."""
+    words = WordList.for_supplier(db, supplier_id) if supplier_id else None
+    return read_workbook(data, db=db, words=words)
 
 
 def _products_by_code(
@@ -171,7 +175,7 @@ def preview(
     before the plan it will apply into exists, so there is nothing of that plan's own to
     count) narrows to `loading_plan_id IS NULL`, exactly as `apply`'s own replace scope does.
     """
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id)
     summary = _summarise(db, parsed, supplier_id) if parsed.ok else {}
     held_scope = db.query(SupplierInventory).filter(
         SupplierInventory.supplier_id == supplier_id
@@ -205,7 +209,7 @@ def preview(
 
 def validate(db: Session, data: bytes, *, supplier_id: str) -> dict:
     """The Test verdict: the same read `apply` performs, with nothing written."""
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id)
     if not parsed.ok:
         missing = ", ".join(parsed.missing_columns)
         reason = (
@@ -282,7 +286,7 @@ def apply(
     read straight off the screen by a buyer. Without the label the ladder fell back to the
     id and the Remembered table printed a UUID at her.
     """
-    parsed = _parse(db, data)
+    parsed = _parse(db, data, supplier_id)
     if not parsed.ok:
         return {
             "readable": False,

@@ -31,6 +31,7 @@ _DOC_TYPE_LABELS = {
     "proforma_invoice": "proforma invoices",
     "packing_list": "packing lists",
     "outstanding_so": "outstanding sales orders",
+    "supplier_inventory_word": "stock list words",
 }
 
 _VIEW = require_permission("system.import_field_aliases.view")
@@ -44,6 +45,10 @@ class ImportFieldAliasCreate(BaseModel):
     field: str = Field(..., min_length=1, max_length=64)
     alias: str = Field(..., min_length=1, max_length=255)
     locale: Optional[str] = Field(None, max_length=8)
+    # NULL = a shared row, answering for every supplier (D6). Only meaningful for
+    # `supplier_inventory_word`; a caller may still send it for another doc type and the row
+    # simply carries a supplier it will never be looked up by.
+    supplier_id: Optional[str] = None
 
 
 def _assert_known_field(doc_type: str, field: str) -> None:
@@ -65,12 +70,42 @@ def _assert_known_field(doc_type: str, field: str) -> None:
         )
 
 
-def _serialize_alias(row: ImportFieldAlias) -> dict:
+def _assert_supplier_exists(db: Session, supplier_id: Optional[str]) -> None:
+    """A word row scoped to a supplier that does not exist would sit on the page unable to
+    ever apply - the composer looks suppliers up by id, never by name."""
+    if not supplier_id:
+        return
+    from app.models.procurement import Supplier
+
+    if db.query(Supplier.id).filter(Supplier.id == supplier_id).first() is None:
+        raise AppException(422, "That supplier does not exist.", detail="supplier_id")
+
+
+def _serialize_alias(row: ImportFieldAlias, supplier_names: Optional[dict[str, str]] = None) -> dict:
+    supplier_names = supplier_names or {}
+    supplier_id = str(row.supplier_id) if row.supplier_id else None
     return {
         "id": str(row.id),
         "alias": row.alias,
         "locale": row.locale,
         "created_at": row.created_at.isoformat() if row.created_at else None,
+        # No UUID in the UI: the id travels for a delete action, the name is what renders.
+        "supplier_id": supplier_id,
+        "supplier_name": supplier_names.get(supplier_id) if supplier_id else None,
+    }
+
+
+def _supplier_names(db: Session, rows: list[ImportFieldAlias]) -> dict[str, str]:
+    ids = {str(r.supplier_id) for r in rows if r.supplier_id}
+    if not ids:
+        return {}
+    from app.models.procurement import Supplier
+
+    return {
+        str(sid): name
+        for sid, name in db.query(Supplier.id, Supplier.supplier_name)
+        .filter(Supplier.id.in_(ids))
+        .all()
     }
 
 
@@ -81,9 +116,10 @@ def _grouped_aliases(db: Session, doc_type: str) -> dict[str, list[dict]]:
         .order_by(ImportFieldAlias.field, ImportFieldAlias.alias)
         .all()
     )
+    names = _supplier_names(db, rows)
     grouped: dict[str, list[dict]] = {}
     for row in rows:
-        grouped.setdefault(row.field, []).append(_serialize_alias(row))
+        grouped.setdefault(row.field, []).append(_serialize_alias(row, names))
     return grouped
 
 
@@ -119,12 +155,14 @@ def create_import_field_alias(
 ):
     """One new header spelling for a field. 409 on a triple already on file."""
     _assert_known_field(payload.doc_type, payload.field)
+    _assert_supplier_exists(db, payload.supplier_id)
     existing = (
         db.query(ImportFieldAlias)
         .filter(
             ImportFieldAlias.doc_type == payload.doc_type,
             ImportFieldAlias.field == payload.field,
             ImportFieldAlias.alias == payload.alias,
+            ImportFieldAlias.supplier_id == payload.supplier_id,
         )
         .first()
     )
@@ -137,7 +175,7 @@ def create_import_field_alias(
         )
     row = ImportFieldAlias(
         doc_type=payload.doc_type, field=payload.field, alias=payload.alias,
-        locale=payload.locale,
+        locale=payload.locale, supplier_id=payload.supplier_id,
     )
     db.add(row)
     db.commit()
@@ -151,10 +189,11 @@ def create_import_field_alias(
         .order_by(ImportFieldAlias.alias)
         .all()
     )
+    names = _supplier_names(db, siblings)
     return {
         "field": payload.field,
         "label": field_label(payload.field),
-        "aliases": [_serialize_alias(r) for r in siblings],
+        "aliases": [_serialize_alias(r, names) for r in siblings],
     }
 
 

@@ -14,8 +14,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { useSupplierSelectQuery } from '../../../procurement-management/suppliers/hooks/useSupplierSelectQuery';
 import { useCreateImportFieldAlias, useImportFieldAliasFields } from '../hooks/useImportFieldAliases';
 import type { ImportFieldAliasDocType } from '../types/importFieldAlias.types';
+
+//: The word list is per-supplier (D6, `PLAN-stock-list-bare-model-codes.md`); every other
+//: doc type's mapping is shared, so this select is scoped to that one doc type alone.
+const WORD_DOC_TYPE: ImportFieldAliasDocType = 'supplier_inventory_word';
 
 /**
  * Add mapping (AC-E3): the field is a `SearchableSelect` over E1's field list, the alias
@@ -33,15 +38,19 @@ export function ImportFieldAliasFormDialog({
 }) {
   const fields = useImportFieldAliasFields(docType);
   const create = useCreateImportFieldAlias(docType);
+  const isWordDocType = docType === WORD_DOC_TYPE;
+  const { data: suppliers = [] } = useSupplierSelectQuery();
   const [field, setField] = useState('');
   const [alias, setAlias] = useState('');
   const [locale, setLocale] = useState('');
+  const [supplierId, setSupplierId] = useState('');
 
   useEffect(() => {
     if (open) {
       setField('');
       setAlias('');
       setLocale('');
+      setSupplierId('');
     }
   }, [open]);
 
@@ -51,7 +60,14 @@ export function ImportFieldAliasFormDialog({
   const submit = async () => {
     if (!canSave) return;
     try {
-      await create.mutateAsync({ field, alias: alias.trim(), locale: locale.trim() || null });
+      await create.mutateAsync({
+        field,
+        alias: alias.trim(),
+        locale: locale.trim() || null,
+        // NULL = a shared row, answering for every supplier (D6) - only meaningful for the
+        // word doc type, so every other doc type's create call carries no such key at all.
+        ...(isWordDocType ? { supplier_id: supplierId || null } : {}),
+      });
       onOpenChange(false);
     } catch {
       // The mutation hook already toasts the message (409 on a header already mapped).
@@ -101,6 +117,22 @@ export function ImportFieldAliasFormDialog({
               className="w-32"
             />
           </div>
+          {isWordDocType && (
+            <div>
+              <Label htmlFor="import-field-alias-supplier" className="mb-1 block text-xs">
+                Supplier
+              </Label>
+              <SearchableSelect
+                id="import-field-alias-supplier"
+                clearable
+                value={supplierId}
+                onChange={setSupplierId}
+                options={suppliers.map((s) => ({ value: s.id, label: s.supplier_name }))}
+                placeholder="Shared - every supplier"
+                emptyMessage="No suppliers found."
+              />
+            </div>
+          )}
         </DialogBody>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

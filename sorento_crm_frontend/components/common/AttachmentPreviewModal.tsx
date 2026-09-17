@@ -64,6 +64,25 @@ async function downloadItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes)
 }
 
 /**
+ * Same fix as `downloadItem` (D10, `PLAN-stock-list-bare-model-codes.md`): an item with no
+ * CDN url has no `<a href target=_blank>` that could carry auth, so a plain anchor to the
+ * same-origin `/download` route sent no Bearer token and 401ed with a raw JSON page. Open
+ * fetches the bytes the same way Download does, then opens the resulting blob in a new tab.
+ */
+async function openItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes) {
+  if (!item.downloadUrl) return;
+  try {
+    const resp = await fetchBytes(item);
+    if (!resp.ok) throw new Error('Open failed');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+  } catch {
+    toast.error(`Could not open ${item.name}`);
+  }
+}
+
+/**
  * One previewable file. `url` is the stable, cacheable CDN URL (for
  * <img>/<video>/<iframe> - no CORS/fetch needed, browser + CDN cache it).
  * `downloadUrl` is the same-origin backend `/download` route, used both for the
@@ -179,11 +198,12 @@ export default function AttachmentPreviewModal({
   if (!open || items.length === 0) return null;
   const activeItem = items[current] ?? items[0];
   const activeIsImage = kindOf(activeItem?.name ?? '') === 'image';
-  // Open-in-new-tab target: the cacheable CDN url if we have one, else the
-  // same-origin download route.
-  const openUrl = activeItem?.url?.startsWith('http')
-    ? activeItem.url
-    : activeItem?.downloadUrl;
+  // Open-in-new-tab target: the cacheable CDN url if we have one - a plain link, unchanged
+  // (AC-F3). Without one, a plain `<a href=/download target=_blank>` sends no auth header and
+  // 401s (D10), so Open becomes a button that fetches the bytes and opens the resulting blob
+  // instead (AC-F2/AC-F4).
+  const openUrl = activeItem?.url?.startsWith('http') ? activeItem.url : undefined;
+  const canOpenViaFetch = !openUrl && !!activeItem?.downloadUrl;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,6 +233,16 @@ export default function AttachmentPreviewModal({
                     <ExternalLink className="size-4 mr-1" />
                     Open
                   </a>
+                </Button>
+              )}
+              {canOpenViaFetch && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openItem(activeItem, resolvedFetchBytes)}
+                >
+                  <ExternalLink className="size-4 mr-1" />
+                  Open
                 </Button>
               )}
               {activeItem?.downloadUrl && (

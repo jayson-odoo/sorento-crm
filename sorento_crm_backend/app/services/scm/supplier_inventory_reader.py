@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.services.import_alias_service import AliasResolver, normalize_header
 from app.services.scm.outstanding_reader import RowProblem, sheet_merges, sheet_rows
+from app.services.scm.supplier_code_composer import WordList, compose, is_bare, raw_key
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,10 @@ _REQUIRED_COLUMNS = ("item_code", "qty_packed")
 #: the family. Quantities never fill through: `qty_packed`, `qty_unfinished` and `cbm_total`
 #: are each one figure for the WHOLE merged family, and copying it onto every covered row
 #: would count that figure once per row instead of once.
-_MERGE_FILL_FIELDS = {"product_name", "brand", "spec", "remark", "cbm_per_unit"}
+#: `item_code` (型号) joins this set too (D8, AC-R1) - a supplier merges the model number over
+#: the same family the type and brand cover, and a covered row with no model of its own is
+#: not "no model number", it is the anchor's model repeated onto every row it spans.
+_MERGE_FILL_FIELDS = {"item_code", "product_name", "brand", "spec", "remark", "cbm_per_unit"}
 
 
 @dataclass
@@ -52,6 +56,9 @@ class InventoryRow:
     brand: Optional[str] = None
     spec: Optional[str] = None
     remark: Optional[str] = None
+    #: The 型号 exactly as the supplier wrote it (after merge fill-through), whatever
+    #: `item_code` ends up being - composed, raw-joined, or (letter-led) identical to it.
+    model_no: Optional[str] = None
 
 
 @dataclass
@@ -102,12 +109,20 @@ def _number(value: Any) -> Optional[float]:
 
 
 def read_workbook(
-    file_data: bytes, resolver: Optional[AliasResolver] = None, *, db: Optional[Session] = None
+    file_data: bytes,
+    resolver: Optional[AliasResolver] = None,
+    *,
+    db: Optional[Session] = None,
+    words: Optional[WordList] = None,
 ) -> InventoryReadResult:
     """Parse the first sheet of a supplier stock list.
 
     `resolver` is injectable so the parsing can be tested against a file alone, with no
     database in the picture; `db` builds one from the alias table for the normal path.
+
+    `words` is the supplier's word list (D1-D5, `supplier_code_composer.py`): a bare 型号
+    (`^[-0-9]`) is composed through it into a candidate our own code; a letter-led 型号 never
+    consults it at all, so a caller with no supplier chosen yet may pass `None`.
     """
     if resolver is None:
         if db is None:
@@ -202,17 +217,35 @@ def read_workbook(
             if total is not None and basis > 0:
                 per_unit = round(total / basis, 6)
 
+        product_name = _text(values.get("product_name"))
+        brand = _text(values.get("brand"))
+        spec = _text(values.get("spec"))
+
+        # D1/D2: a letter-led 型号 is handed to the matcher exactly as written, whatever the
+        # word list holds - the existing catalogue's own codes never touch composition at
+        # all. Only a bare 型号 (D3-D5) is composed, and only when every word it needs
+        # resolves; otherwise the raw join is the row's key (AC-R5), still keeping siblings
+        # with different specs apart while it waits for a human to pick once.
+        if is_bare(code):
+            composed = compose(code, spec, brand, product_name, words)
+            item_code = composed if composed is not None else raw_key(
+                code, spec, brand, product_name
+            )
+        else:
+            item_code = code
+
         result.rows.append(
             InventoryRow(
                 row_number=offset,
-                item_code=code,
+                item_code=item_code,
                 qty_packed=packed,
                 qty_unfinished=unfinished,
                 cbm_per_unit=per_unit,
-                product_name=_text(values.get("product_name")),
-                brand=_text(values.get("brand")),
-                spec=_text(values.get("spec")),
+                product_name=product_name,
+                brand=brand,
+                spec=spec,
                 remark=_text(values.get("remark")),
+                model_no=code,
             )
         )
 

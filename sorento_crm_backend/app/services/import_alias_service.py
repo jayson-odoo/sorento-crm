@@ -154,6 +154,12 @@ def canonical_fields(doc_type: str) -> list[str]:
         from app.services.scm.packing_list_reader import PackingBlock, PackingLine
 
         classes = (PackingLine, PackingBlock)
+    elif doc_type == "supplier_inventory_word":
+        # Not a reader's dataclass fields - the closed vocabulary a word row may resolve TO
+        # (D6, `PLAN-stock-list-bare-model-codes.md`), declared once in the composer.
+        from app.services.scm.supplier_code_composer import WORD_TOKENS
+
+        return list(WORD_TOKENS)
     else:
         return []
 
