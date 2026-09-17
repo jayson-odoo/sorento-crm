@@ -600,6 +600,17 @@ describe('useConfirmManyMutation', () => {
       'Confirmed 1 order; 1 refused - see the results below.',
     );
   });
+
+  it('AC-F3 (R3, `PLAN-board-draft-on-confirmed-line.md`): invalidates the planning board and the fulfilment-planning list on a lost or failed confirm', async () => {
+    confirmMany.mockRejectedValue(new Error('network lost'));
+
+    await expect(confirmAll()).rejects.toThrow('network lost');
+
+    const flattened = invalidated.map((key) => JSON.stringify(key));
+    for (const key of [PLANNING_BOARD_KEY, FULFILMENT_PLANNING_KEY]) {
+      expect(flattened.some((entry) => entry.includes(key))).toBe(true);
+    }
+  });
 });
 
 describe('useStockDetail', () => {

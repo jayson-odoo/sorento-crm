@@ -587,7 +587,11 @@ export function preMarkedKeys(
         contribution.project_line_id !== null &&
         contribution.project_line_id !== undefined &&
         changed.has(contribution.project_line_id) &&
-        !contribution.unplannable,
+        !contribution.unplannable &&
+        // A line an active decision covers has nothing to pre-mark (the same rule
+        // `canQuickSave` states) - without this, a batch resolving as APPLIED after the
+        // board already uncovered the line seeded a Saved draft onto a Confirmed line.
+        !contribution.covered,
     )
     .map((contribution) => contribution.key);
 }

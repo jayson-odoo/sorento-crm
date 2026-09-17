@@ -146,7 +146,13 @@ def test_a_plain_confirm_journals_every_row_it_touched(api):
 
     key1 = f"{core_so.id}|10|{world.product.product_code}|bkt"
     key2 = f"{core_so.id}|20|{world.product.product_code}|bkt"
-    project_line_draft_service.save_draft(db, key1, decision={"x": 1}, actor_user_id=world.eling)
+    # R1 (`PLAN-board-draft-on-confirmed-line.md`): line1 is already covered by `decision1`
+    # from the first confirm above, so its draft's verdict has to be `amended` - the only one
+    # a covered line's save still accepts. The decision content is otherwise opaque to
+    # `save_draft` and unread by every assertion below.
+    project_line_draft_service.save_draft(
+        db, key1, decision={"x": 1, "verdict": "amended"}, actor_user_id=world.eling
+    )
     project_line_draft_service.save_draft(db, key2, decision={"x": 2}, actor_user_id=world.eling)
     db.commit()
     draft_ids = {

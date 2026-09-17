@@ -3486,3 +3486,158 @@ describe('FulfilmentBoardPanel: the strip and the views agree', () => {
     ).not.toBeInTheDocument();
   });
 });
+
+/**
+ * R3 (`PLAN-board-draft-on-confirmed-line.md`): a Confirm the tab never heard back from left
+ * eleven confirmed lines reading Saved/Rejected on prod (SO314595, 17 Sep 2026), because the
+ * local draft map only ever gained entries, never lost one on the server's own say-so. The
+ * seeding effect (`FulfilmentBoardPanel.tsx` around the "seeded on EVERY board read" comment)
+ * has to drop a local entry once a fresh board read says the line is covered and carries no
+ * server draft - TEST-FIRST: it carries no such drop yet, so AC-F4 is red against current code.
+ *
+ * TWO orders, so-a (the line under test, WESERP10B) and so-b (WESERP20B), because ONE order
+ * confounds this with a mechanism `runConfirmAll` ALREADY has (the `setDraft` a few dozen
+ * lines under "What the press produced" in `FulfilmentBoardPanel.tsx`, which deletes a key
+ * this SAME press just confirmed successfully) - a naive one-order version of this test
+ * passes today for that reason alone, never having exercised R3's own drop at all. so-b is
+ * what actually gets confirmed (and its own key legitimately clears through the existing
+ * mechanism); so-a's own confirm attempt is answered `ok: false` in `confirmMany`'s result,
+ * so the existing per-press clear never touches its key, and only R3's board-read drop can
+ * explain a "Confirmed" pill on it afterwards.
+ *
+ * Granularity stays fixed at the default `week` throughout - `weekStart('2026-09-04')` is a
+ * Friday, not the Monday the "confirm counter is selection-scoped" describe block's own
+ * comment claims, so switching granularity would move the bucket key (and so the contribution
+ * `key`) mid-test. Confirm is the key-preserving second read instead: "refetches the board
+ * once the confirmation lands" (above) already proves a successful Confirm invalidates
+ * `PLANNING_BOARD_KEY` and the SAME query (same orders/granularity/window) refetches.
+ */
+describe('FulfilmentBoardPanel: a local draft is dropped once the server confirms it (R3)', () => {
+  const KEY_A = 'so-a|1|WESERP10B|2026-08-31';
+
+  function orderB() {
+    return demand({
+      sales_order_id: 'so-b',
+      so_number: 'SO398322',
+      line_no: 1,
+      item_code: 'WESERP20B',
+    });
+  }
+
+  function draftedInitialBoard() {
+    return withContribution(
+      boardOf([demand(), orderB()]),
+      () => true,
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' as const },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-03T00:00:00Z',
+        },
+      }),
+    );
+  }
+
+  function refetchedBoardCoveringSoA() {
+    return boardOf([
+      demand({
+        decision: {
+          revision_no: 1,
+          confirmed_at: '2026-09-05T00:00:00',
+          timely_spo_qty: '0',
+          reserve: [],
+          borrow: [],
+          buy_qty: '100',
+        },
+      }),
+      orderB(),
+    ]);
+  }
+
+  /** so-a's own confirm attempt is refused, so-b's succeeds - see the block comment above. */
+  const PARTIAL_RESULT = {
+    results: [
+      { pso_id: 'pso-so-a', ok: false, error: 'refused' },
+      { pso_id: 'pso-so-b', ok: true, decision_revision: 1 },
+    ],
+  };
+
+  it('AC-F4: drops a key once the board reports it covered with no server draft, and the pill reads Confirmed', async () => {
+    getPlanningBoard
+      .mockResolvedValueOnce(draftedInitialBoard())
+      .mockResolvedValue(refetchedBoardCoveringSoA());
+    confirmMany.mockResolvedValue(PARTIAL_RESULT);
+
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    // The seeding effect has already picked up the server's own draft: the pill reads Saved
+    // before the confirmation below ever fires.
+    expect(await screen.findByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
+
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    await waitFor(() =>
+      expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Confirmed'),
+    );
+  });
+
+  /**
+   * AC-F5, the other half of R3: a key whose own save is still on the wire must not be
+   * dropped by the same read AC-F4 exists to make drop an ABANDONED one - or a planner's own
+   * Save would flicker Confirmed for a frame before flipping back to Saved once the write
+   * lands. `putLineDraft` (mocked at the top of this file) is made to hang, so so-a's own save
+   * is genuinely still in flight when the Confirm below lands a board read that already shows
+   * it covered with no server draft - the exact race, rather than reaching into
+   * `pendingDeletes` or a same-named save ref that does not exist in the source yet. This pins
+   * the OBSERVABLE promise, not the mechanism the coder picks for it.
+   */
+  it('AC-F5: does not drop a key while its own save is still in flight', async () => {
+    getPlanningBoard
+      .mockResolvedValueOnce(
+        withContribution(
+          boardOf([demand(), orderB()]),
+          (entry) => entry.sales_order_id === 'so-b',
+          (entry) => ({
+            ...entry,
+            draft: {
+              decision: { verdict: 'approved' as const },
+              saved_by: 'Test Planner',
+              saved_at: '2026-09-03T00:00:00Z',
+            },
+          }),
+        ),
+      )
+      .mockResolvedValue(refetchedBoardCoveringSoA());
+    confirmMany.mockResolvedValue(PARTIAL_RESULT);
+    (putLineDraft as unknown as ReturnType<typeof vi.fn>).mockImplementation(
+      () => new Promise(() => {}), // never resolves: so-a's own save, held open
+    );
+
+    renderPanel(['SO403340', 'SO398322']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    fireEvent.click(screen.getByRole('button', { name: 'List' }));
+
+    fireEvent.click(await screen.findByText('WESERP10B'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Save decision' }));
+    // Optimistic (S4, R-F): the pill answers the click before the network write settles, and
+    // `putLineDraft` above never will.
+    expect(await screen.findByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
+
+    // Confirm succeeds overall (so-b's own line goes through) and its refetch lands a board
+    // read that already shows so-a covered with no server draft - so-a's own save is still on
+    // the wire underneath it, and its own confirm attempt was refused, never committed.
+    fireEvent.click(await screen.findByTestId('board-confirm'));
+    await screen.findByRole('alertdialog');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getPlanningBoard).toHaveBeenCalledTimes(2));
+
+    expect(screen.getByTestId(`decision-pill-${KEY_A}`)).toHaveTextContent('Saved');
+  });
+});
