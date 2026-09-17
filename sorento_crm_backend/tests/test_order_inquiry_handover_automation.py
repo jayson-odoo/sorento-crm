@@ -45,7 +45,10 @@ from alembic.operations import Operations
 from app.models.base import company_scope
 from app.models.project_so import (
     ACK_REJECTED,
+    AMENDMENT_PUBLISHED,
     INQUIRY_CANCELLED,
+    INQUIRY_PLACED,
+    INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
     IV_CHANGE_SO,
     IV_ORDER,
@@ -53,6 +56,9 @@ from app.models.project_so import (
     IV_PRE_ORDERED,
     IV_RESERVE_AND_ORDER,
     OrderInquiry,
+    OrderInquiryLink,
+    OrderInquiryRow,
+    SOAmendment,
 )
 from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.automation_triggers import build_order_inquiry_link
@@ -1051,37 +1057,34 @@ def test_unchanged_carry_silent_when_handshake_missing(api, monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_named_line_reconfirmed_new_qty_prints_cancel_and_order(api, monkeypatch):
-    """AC-H23 (review round 1, S5).
+def test_named_changed_raised_row_settles_with_one_line(api, monkeypatch):
+    """AC-R2-11 (rewrite of the old AC-H23 cancel+order expectation, `PLAN-scm-oi-
+    handover-r2-undo.md` S2, owner ruling Q3 "one settled line").
 
-    `test_order_inquiry_handshake.py::test_a_supersede_of_an_acknowledged_row_raises_
-    its_replacement_acknowledged` already drives this exact seam: a line that is NAMED
-    again (not carried) at a qty the row cannot absorb in place. `_settle_row_in_place`
-    only ever runs when the line was ASKED to settle in place or already carries a
-    cascade DRAFT (`INQUIRY_PLACED`/`INQUIRY_PARTLY_LINKED` with only cascade links) -
-    neither is true here (no purchase order or SPO was ever opened for this row, so the
-    raise-time cascade found nothing to link, and this test never asks for a
-    settle-in-place). So the per-entry loop takes its OTHER branch: the still-raised old
-    row is silently flipped to `INQUIRY_CANCELLED` / "Superseded by revision N" with no
-    `_record_handover` call anywhere in that branch, while the freshly raised
-    replacement (a NAMED line, not `carried`) hits the plain
-    `self._record_handover(raised_row, kind="raised", ...)` else-branch below it -
-    so today only the new row ever reaches purchasing's inbox, and the fact that this
-    line's OLD instruction is gone is never said.
-    """
+    Same seam `test_order_inquiry_handshake.py::test_a_supersede_of_an_acknowledged_
+    row_raises_its_replacement_acknowledged` drives: a line that is NAMED again (not
+    carried) at a qty the row cannot absorb AS FAR AS today's `_settle_row_in_place`
+    gate goes (its own live row is a plain `INQUIRY_RAISED` ORDER row with no links -
+    not yet a cascade DRAFT). Before this lane that shape fell through to the
+    supersede branch (cancel the old row, raise a fresh one, two handover lines,
+    `test_named_unchanged_raised_row_settles_silently`'s own sibling before the fix).
+    S2 widens the `drafted` predicate to ALSO admit exactly this shape - a single
+    still-owed ORDER/ORDER_BACK row, no links, not redirected, same verb the reconfirm
+    would raise - so it settles in place instead: same row id, new qty, one `settled`
+    handover line (`CANCEL BALANCE 2 NOS`, not a `CANCEL BALANCE 10 NOS` + `ORDER 8`
+    pair)."""
     client, world = api
     _register(world)
     calls = _captured_dispatches(monkeypatch)
 
     fixture = _raise_one_row(api, qty="10")
     world.db.commit()
+    original_row_id = fixture["row"].id
     calls.clear()
 
     # The confirm endpoint refuses a composition that does not add up to the LINE'S
     # OWN open qty ("the line is open for 10") - a genuinely different need has to come
-    # from the book moving, exactly like `_settle`'s own mutation, but WITHOUT asking
-    # for settle-in-place: that is what keeps this on the supersede branch rather than
-    # `_settle_row_in_place`.
+    # from the book moving, exactly like `_settle`'s own mutation.
     fixture["core_line"].qty_ordered = Decimal("8")
     fixture["line"].qty = Decimal("8")
     world.db.flush()
@@ -1093,22 +1096,142 @@ def test_named_line_reconfirmed_new_qty_prints_cancel_and_order(api, monkeypatch
     assert response.status_code == 200, response.text
     world.db.commit()
 
-    world.db.refresh(fixture["row"])
-    assert fixture["row"].state == INQUIRY_CANCELLED, (
-        "the old row has to have been silently superseded for this test to mean anything"
+    world.db.expire_all()
+    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == original_row_id).one()
+    assert row.state == INQUIRY_RAISED, (
+        "AC-R2-11: the widened gate settles the row in place, never cancels it"
     )
+    assert row.qty == Decimal("8")
+    assert row.previous_qty == Decimal("10")
 
     matches = _handover_calls(calls)
     assert matches, "the reconfirm must dispatch the handover"
     lines = matches[-1]["context"]["handover"]["lines"]
+    assert len(lines) == 1, (
+        f"AC-R2-11: exactly one settled line, never a cancel+order pair, got {lines}"
+    )
+    assert lines[0]["remark"] == "CANCEL BALANCE 2 NOS"
+    assert lines[0]["was"] == {"qty": "10"}
+    assert lines[0]["qty"] == "8"
 
-    cancelled = [l for l in lines if l["remark"] == "CANCEL BALANCE 10 NOS"]
-    assert cancelled, f"the superseded old row must still print as cancelled, found {lines}"
-    assert cancelled[0]["qty"] == "0"
-    assert cancelled[0]["was"] == {"qty": "10"}
 
-    fresh = [l for l in lines if l["remark"] == "ORDER" and l["qty"] == "8"]
-    assert fresh, f"the replacement must print as its own ORDER line, found {lines}"
+def test_named_unchanged_raised_row_settles_silently(api, monkeypatch):
+    """AC-R2-10: a NAMED line whose only live row is a plain `raised` ORDER row with
+    no links, same verb, same qty and same delivery date as the new need - the row is
+    kept (same id), only its `supply_decision_id` moves to the new revision, and NO
+    handover line is recorded at all (no cancel, no raise, no settle - purchasing's
+    instruction did not change)."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _raise_one_row(api, qty="10")
+    world.db.commit()
+    original_row_id = fixture["row"].id
+    calls.clear()
+
+    response = _confirm(
+        client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.expire_all()
+    row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == original_row_id).one()
+    assert row.state == INQUIRY_RAISED, "AC-R2-10: the unchanged row is never cancelled"
+    assert row.qty == Decimal("10")
+
+    assert _handover_calls(calls) == [], (
+        "AC-R2-10: an unchanged reconfirm of a named line must record no handover line"
+    )
+
+
+def test_named_verb_switch_supersedes(api, monkeypatch):
+    """AC-R2-12 (verb switch): the widened gate only admits a live row whose verb
+    equals the verb this confirm would raise - a plain ORDER row does NOT settle in
+    place when the reconfirm's own need is now an ORDER BACK, so today's supersede
+    (cancel the old row, raise the new one under its own verb) still runs."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _raise_one_row(api, qty="10")
+    world.db.commit()
+    original_row_id = fixture["row"].id
+    calls.clear()
+
+    payload = [
+        {
+            **_line_payload(fixture["line"].id, buy_qty="10"),
+            "order_back": True,
+            "cited_document": "SPO-2026/09-0099",
+        }
+    ]
+    response = _confirm(client, fixture["order"].id, payload)
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.expire_all()
+    old_row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == original_row_id).one()
+    assert old_row.state == INQUIRY_CANCELLED, "AC-R2-12: a verb switch still supersedes"
+
+    matches = _handover_calls(calls)
+    assert matches, "the reconfirm must dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    assert any(l["remark"].startswith("CANCEL BALANCE") for l in lines), lines
+    assert any(l["remark"].startswith("ORDER BACK") for l in lines), lines
+
+
+def test_named_two_live_rows_supersede(api, monkeypatch):
+    """AC-R2-12 (two live rows): `_settle_row_in_place` already declines a line
+    carrying two still-owed rows regardless of state - there is no single instruction
+    to read the reconfirm's new need against - so the widened gate must not change
+    this shape either: both rows are cancelled and a fresh ORDER row is raised, same
+    as today."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _raise_one_row(api, qty="10")
+    world.db.commit()
+    row_a = fixture["row"]
+
+    row_b = OrderInquiryRow(
+        company_id=world.company_id,
+        order_inquiry_id=row_a.order_inquiry_id,
+        so_line_id=fixture["line"].id,
+        item_code=row_a.item_code,
+        qty=Decimal("3"),
+        delivery_date=row_a.delivery_date,
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+    )
+    world.db.add(row_b)
+    world.db.commit()
+    calls.clear()
+
+    fixture["core_line"].qty_ordered = Decimal("8")
+    fixture["line"].qty = Decimal("8")
+    world.db.flush()
+    world.db.commit()
+
+    response = _confirm(
+        client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="8")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.expire_all()
+    old_a = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_a.id).one()
+    old_b = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_b.id).one()
+    assert old_a.state == INQUIRY_CANCELLED
+    assert old_b.state == INQUIRY_CANCELLED
+
+    matches = _handover_calls(calls)
+    assert matches, "the reconfirm must dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    cancelled = [l for l in lines if l["remark"].startswith("CANCEL BALANCE")]
+    assert len(cancelled) == 2, f"AC-R2-12: both still-owed rows must print cancelled, got {lines}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1829,3 +1952,537 @@ def test_handover_sends_one_email_with_actor_in_cc(monkeypatch):
             "the actor must be LAST (notification_tasks.py puts the first address in "
             f"To and the rest in Cc), got {recipient_emails}"
         )
+
+
+# =============================================================================== #
+# `PLAN-scm-oi-handover-r2-undo.md` - S1 email layout, S2 named-path equality gate #
+# (S2's own new tests live above, beside the rewritten AC-H23 test), S3 subject,   #
+# AC-R2-16/17 still-raised amendment rows on the next Confirm's own email.         #
+# TEST-FIRST: `oihr_0001_handover_r2_layout` does not exist yet, so every test     #
+# that loads it fails on the `assert path is not None` below - the right reason.  #
+# =============================================================================== #
+
+
+def _find_r2_migration_path() -> Path | None:
+    """Locate the coder's r2 layout migration by name (PLAN section 2, S1: "named
+    `oihr_0001_handover_r2_layout`"). `None` until the migration exists."""
+    versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    for path in versions_dir.glob("oihr_0001_handover_r2_layout*.py"):
+        return path
+    return None
+
+
+def _load_r2_migration():
+    path = _find_r2_migration_path()
+    assert path is not None, (
+        "no alembic migration named oihr_0001_handover_r2_layout was found under "
+        "alembic/versions/ - the coder must add it (PLAN-scm-oi-handover-r2-undo.md "
+        "S1, AC-R2-08), down_revision undo_0003_journal_sql_null."
+    )
+    spec = importlib.util.spec_from_file_location("zzt_oihr_r2_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _table_rows(html: str) -> list[list[str]]:
+    """Every `<tr>...</tr>`'s `<td>` cell texts, tags stripped, in document order."""
+    rows = []
+    for row_html in re.findall(r"<tr>(.*?)</tr>", html, re.S):
+        cells = re.findall(r"<td[^>]*>(.*?)</td>", row_html, re.S)
+        if cells:
+            rows.append([re.sub(r"<[^>]+>", "", c).strip() for c in cells])
+    return rows
+
+
+def _r2_template(db):
+    from app.models.email_template import EmailTemplate
+
+    module = _load_r2_migration()
+    _run_upgrade(module, db)
+    return (
+        db.query(EmailTemplate)
+        .filter(EmailTemplate.code == "order_inquiry_handover_default")
+        .one()
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-08: the r2 migration updates the r1 template in place, idempotently,  #
+# inserts on a blank DB, and downgrades back to the r1 body.                  #
+# --------------------------------------------------------------------------- #
+
+
+def test_r2_migration_updates_template_in_place_and_is_idempotent():
+    r1 = _load_seed_migration()
+    r2 = _load_r2_migration()
+    with blank_session() as db:
+        _run_upgrade(r1, db)
+        r1_html = db.execute(
+            sa.text(
+                "SELECT body_html FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).scalar()
+        assert "QTY CHANGE TO" not in r1_html, "sanity: r1 does not carry the new column"
+
+        _run_upgrade(r2, db)
+        row = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).mappings().one()
+        for header in (
+            "SO DATE", "S/O NO", "ITEM CODE", "QTY", "QTY CHANGE TO",
+            "DELIVERY DATE", "DELIVERY DATE CHANGE TO", "REMARK",
+        ):
+            assert header in row["body_html"], f"{header!r} missing from the r2 body_html"
+            assert header in row["body_text"], f"{header!r} missing from the r2 body_text"
+        assert "<s>" not in row["body_html"], "AC-R2-09: no strike markers in r2"
+        count = db.execute(
+            sa.text(
+                "SELECT count(*) FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).scalar()
+        assert count == 1
+
+        # Idempotent re-run: same one row, same body.
+        _run_upgrade(r2, db)
+        row_again = db.execute(
+            sa.text(
+                "SELECT body_html FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).scalar()
+        assert row_again == row["body_html"]
+        count_again = db.execute(
+            sa.text(
+                "SELECT count(*) FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).scalar()
+        assert count_again == 1
+
+        # Downgrade restores the r1 body verbatim.
+        _run_downgrade(r2, db)
+        restored_html = db.execute(
+            sa.text(
+                "SELECT body_html FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).scalar()
+        assert restored_html == r1_html, "downgrade must restore the r1 body verbatim"
+
+
+def test_r2_migration_inserts_when_row_absent():
+    """AC-R2-08: a DB without the r1 row at all still gets the r2 shape inserted."""
+    r2 = _load_r2_migration()
+    with blank_session() as db:
+        _run_upgrade(r2, db)
+        count = db.execute(
+            sa.text(
+                "SELECT count(*) FROM email_templates WHERE code = "
+                "'order_inquiry_handover_default'"
+            )
+        ).scalar()
+        assert count == 1
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-01..05, 09: the r2 line table's own cells, per kind.                  #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("kind_label", "line_ctx", "expected_cells"),
+    [
+        (
+            "settled qty (182 -> 214)",
+            {
+                "so_date": "01/09/2026", "so_number": "SO314594",
+                "item_code": "SRTWCX8605-S-RL-PJ", "qty": "214",
+                "delivery_date": "01/09/2026", "remark": "ORDER 32",
+                "was": {"qty": "182"},
+            },
+            ["01/09/2026", "SO314594", "SRTWCX8605-S-RL-PJ", "182", "214",
+             "01/09/2026", "", "ORDER 32"],
+        ),
+        (
+            "settled date (01/09/2026 -> 01/04/2027)",
+            {
+                "so_date": "01/09/2026", "so_number": "SO314594",
+                "item_code": "CB2806A", "qty": "280",
+                "delivery_date": "01/04/2027", "remark": "DELAY",
+                "was": {"delivery_date": "01/09/2026"},
+            },
+            ["01/09/2026", "SO314594", "CB2806A", "280", "",
+             "01/09/2026", "01/04/2027", "DELAY"],
+        ),
+        (
+            "cancelled (old qty 280)",
+            {
+                "so_date": "01/09/2026", "so_number": "SO314594",
+                "item_code": "CB2807", "qty": "0",
+                "delivery_date": "01/09/2026", "remark": "CANCEL BALANCE 280 NOS",
+                "was": {"qty": "280"},
+            },
+            ["01/09/2026", "SO314594", "CB2807", "280", "0",
+             "01/09/2026", "", "CANCEL BALANCE 280 NOS"],
+        ),
+        (
+            "plain raised",
+            {
+                "so_date": "01/09/2026", "so_number": "SO314594",
+                "item_code": "CSH2072", "qty": "214",
+                "delivery_date": "01/09/2026", "remark": "ORDER",
+                "was": None,
+            },
+            ["01/09/2026", "SO314594", "CSH2072", "214", "",
+             "01/09/2026", "", "ORDER"],
+        ),
+    ],
+)
+def test_handover_r2_template_cells(kind_label, line_ctx, expected_cells):
+    """AC-R2-01..05, 09."""
+    from app.services.email_template_service import EmailTemplateService
+
+    with blank_session() as db:
+        template = _r2_template(db)
+        context = {
+            "handover": {
+                "subject_scope": "SO314594",
+                "verbs": [line_ctx["remark"].split()[0]],
+                "headline": line_ctx["remark"],
+                "orders": [
+                    {"so_number": "SO314594", "customer": "BUIMACO", "project": "TUJU RESIDENCE"}
+                ],
+                "lines": [line_ctx],
+                "line_count": 1,
+                "link": "https://crm.test/project-sales/order-inquiries?query=SO314594",
+            },
+            "actor": {"name": "Eling", "email": "eling@sorento.com.my"},
+            "today": "18/09/2026",
+        }
+        rendered = EmailTemplateService(db).render(template, context)
+        html = rendered["body_html"]
+
+        assert "<s>" not in html, f"AC-R2-09 ({kind_label}): no strike markers in r2"
+
+        headers = [
+            re.sub(r"<[^>]+>", "", h).strip()
+            for h in re.findall(r"<th[^>]*>(.*?)</th>", html, re.S)
+        ]
+        # CUSTOMER/PROJECT belong to the SO table above only - the line table's own
+        # headers are the LAST eight.
+        line_headers = headers[-8:]
+        assert line_headers == [
+            "SO DATE", "S/O NO", "ITEM CODE", "QTY", "QTY CHANGE TO",
+            "DELIVERY DATE", "DELIVERY DATE CHANGE TO", "REMARK",
+        ], f"AC-R2-01 ({kind_label}): header order/count wrong, got {line_headers}"
+        assert "CUSTOMER" not in line_headers and "PROJECT" not in line_headers
+
+        rows = _table_rows(html)
+        line_row = rows[-1]
+        assert line_row == expected_cells, (
+            f"AC-R2-0x ({kind_label}): {line_row} != {expected_cells}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-06: an amendment-derived DELAY/ADVANCE row carries `was.delivery_date` #
+# and a bare-verb REMARK, never "DELAY - Was 2026-08-25".                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_amendment_delay_row_carries_previous_date_in_was_and_bare_verb(api, monkeypatch):
+    """AC-R2-06. Today `_write` never populates `was` for an amendment-derived raise, so
+    the delta's own ISO-dated sentence (`_change_note`) lands in the REMARK column via
+    `handover_remark`'s note-append instead of a structured `was`."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    fixture = _raise_one_row(api, qty="10")
+    calls.clear()
+
+    amendment = SOAmendment(
+        company_id=world.company_id,
+        project_sales_order_id=fixture["order"].id,
+        from_version_kind="schedule",
+        status=AMENDMENT_PUBLISHED,
+        delta_json={
+            "rows": [
+                {
+                    "row_key": "0",
+                    "verb": "DELAY",
+                    "so_line_id": str(fixture["line"].id),
+                    "product_id": str(world.product.id),
+                    "product_code": world.product.product_code,
+                    "qty": "10",
+                    "from_value": "2026-08-25",
+                    "to_value": "2026-09-10",
+                }
+            ]
+        },
+    )
+    db.add(amendment)
+    db.flush()
+
+    service = ProjectOrderInquiryService(db)
+    service.derive_for_amendment(amendment, actor_user_id=world.cs_user)
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "an amendment-derived raise must dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    delay = next((l for l in lines if l["remark"].startswith("DELAY")), None)
+    assert delay is not None, f"expected a DELAY line, got {lines}"
+    assert delay["remark"] == "DELAY", (
+        f"AC-R2-06: REMARK must be the bare verb, not {delay['remark']!r}"
+    )
+    assert delay["was"] == {"delivery_date": "25/08/2026"}, (
+        f"AC-R2-06: was.delivery_date must be the previous date dd/mm/yyyy, "
+        f"got {delay['was']!r}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-07: `_change_note`'s own date is dd/mm/yyyy, matching every other      #
+# date the email and the OI worklist note both print.                        #
+# --------------------------------------------------------------------------- #
+
+
+def test_change_note_and_email_dates_are_ddmmyyyy(api):
+    from app.services.project_order_inquiry_engine import CHANGE_DATE_LATER
+
+    client, world = api
+    service = ProjectOrderInquiryService(world.db)
+    note = service._change_note(
+        CHANGE_DATE_LATER, {"from_value": "2026-09-01", "to_value": "2026-09-10"}
+    )
+    assert note == "Was 01/09/2026", f"AC-R2-07: expected dd/mm/yyyy, got {note!r}"
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-14/15: the subject builds from non-blank locations only.             #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("locations", "expected_subject"),
+    [
+        (["BRW-IR", None], "BRW-IR @ SO314594"),  # AC-R2-14: one named, blanks ignored
+        (["BRW-IR", "SEL", None], "SO314594"),  # AC-R2-15: two+ named stays mixed/bare
+        ([None], "SO314594"),  # only blanks -> bare, unchanged
+    ],
+)
+def test_subject_ignores_blank_locations(locations, expected_subject):
+    from app.services.project_order_inquiry_service import _build_handover_context
+
+    def _pending(location):
+        return {
+            "pso_id": "pso-1", "so_number": "SO314594", "customer": "BUIMACO",
+            "project": "TUJU", "stock_location": location, "verb_keys": (),
+            "line": {"item_code": "X"}, "order_inquiry_id": "oi-1",
+            "actor": {"name": "Eling", "email": "eling@sorento.com.my"},
+        }
+
+    context, _ = _build_handover_context([_pending(loc) for loc in locations])
+    assert context["handover"]["subject_scope"] == expected_subject
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-16/17: still-raised amendment rows ride along on the next Confirm's   #
+# own email, appended once after the confirm's own lines.                    #
+# --------------------------------------------------------------------------- #
+
+
+def test_confirm_email_appends_still_raised_amendment_rows_once(api, monkeypatch):
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    fixture = _raise_one_row(api, qty="10")
+    db.commit()
+
+    core_line_b = _core_line(
+        db, fixture["core_so"], world.product, world.warehouse,
+        qty_ordered="6", required_date=WAS,
+    )
+    line_b = _project_line(
+        db, fixture["order"], line_no=2, product=world.product, core_line=core_line_b
+    )
+    db.commit()
+
+    amendment = SOAmendment(
+        company_id=world.company_id, project_sales_order_id=fixture["order"].id,
+        from_version_kind="schedule", status=AMENDMENT_PUBLISHED,
+        delta_json={
+            "rows": [
+                {
+                    "row_key": "0", "verb": "DELAY", "so_line_id": str(fixture["line"].id),
+                    "product_id": str(world.product.id),
+                    "product_code": world.product.product_code,
+                    "qty": "10", "from_value": "2026-09-01", "to_value": "2026-10-01",
+                }
+            ]
+        },
+    )
+    db.add(amendment)
+    db.flush()
+    inquiry = ProjectOrderInquiryService(db).derive_for_amendment(
+        amendment, actor_user_id=world.cs_user
+    )
+    db.commit()
+    calls.clear()
+
+    delay_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.order_inquiry_id == inquiry.id)
+        .one()
+    )
+    assert delay_row.state == INQUIRY_RAISED, "setup: the amendment row must still be raised"
+
+    response = _confirm(client, fixture["order"].id, [_line_payload(line_b.id, buy_qty="6")])
+    assert response.status_code == 200, response.text
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "the confirm must dispatch its own handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    own_lines = [l for l in lines if l["qty"] == "6" and l["remark"] == "ORDER"]
+    assert own_lines, f"the confirm's own line must be present, got {lines}"
+
+    delay_lines = [
+        l for l in lines
+        if l["remark"] == "DELAY" and (l.get("was") or {}).get("delivery_date")
+    ]
+    assert len(delay_lines) == 1, (
+        f"AC-R2-16: the still-raised amendment row must ride along exactly once, got {lines}"
+    )
+    assert delay_lines[0]["was"]["delivery_date"] == "01/09/2026"
+    assert lines.index(delay_lines[0]) > lines.index(own_lines[0]), (
+        "AC-R2-16: the amendment row must be appended AFTER the confirm's own lines"
+    )
+
+
+def test_confirm_without_amendment_rows_appends_nothing(api, monkeypatch):
+    """AC-R2-17: a Confirm on an order with no still-raised amendment rows appends
+    nothing extra - only its own lines print."""
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+
+    fixture = _raise_one_row(api, qty="10")
+    world.db.commit()
+    calls.clear()
+
+    fixture["core_line"].qty_ordered = Decimal("8")
+    fixture["line"].qty = Decimal("8")
+    world.db.flush()
+    world.db.commit()
+
+    response = _confirm(
+        client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="8")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches
+    lines = matches[-1]["context"]["handover"]["lines"]
+    assert all(l["remark"] != "DELAY" for l in lines), (
+        f"no amendment rows exist on this order, nothing extra should print: {lines}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# AC-R2-13: the SO314594 shape (plan section 1 numbers) - a full re-confirm    #
+# naming every line prints only the genuinely NEW lines, keeping every         #
+# unchanged row's own id. Scoped-down proxy: four plain raised rows (the       #
+# numbers the plan and UAC give, 280/280/214/280) plus the two new lines       #
+# (214/214) - the cascade-DRAFTED-with-a-link shape is the SAME "settle        #
+# silently when unchanged" seam AC-R2-10 already pins at the single-row level, #
+# and the three amendment DELAY rows are AC-R2-16's own fixture - building all #
+# three shapes again here would not exercise anything this file does not      #
+# already cover, per the tester's own time budget.                            #
+# --------------------------------------------------------------------------- #
+
+
+def test_so314594_shape_full_reconfirm_prints_two_lines(api, monkeypatch):
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    db = world.db
+
+    core_so = _core_so(db, world.company_id)
+    order = _project_so(db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number)
+
+    plain_qtys = ["280", "280", "214", "280"]
+    plain_lines = []
+    for i, qty in enumerate(plain_qtys, start=1):
+        core_line = _core_line(
+            db, core_so, world.product, world.warehouse, qty_ordered=qty, required_date=WAS
+        )
+        line = _project_line(db, order, line_no=i, product=world.product, core_line=core_line)
+        plain_lines.append((line, qty))
+    db.commit()
+
+    first_payload = [_line_payload(line.id, buy_qty=qty) for line, qty in plain_lines]
+    first = _confirm(client, order.id, first_payload)
+    assert first.status_code == 200, first.text
+    db.commit()
+
+    original_row_ids = {
+        line.id: (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+            .one()
+            .id
+        )
+        for line, _qty in plain_lines
+    }
+
+    new_qtys = ["214", "214"]
+    new_lines = []
+    for i, qty in enumerate(new_qtys, start=len(plain_lines) + 1):
+        core_line = _core_line(
+            db, core_so, world.product, world.warehouse, qty_ordered=qty, required_date=WAS
+        )
+        line = _project_line(db, order, line_no=i, product=world.product, core_line=core_line)
+        new_lines.append((line, qty))
+    db.commit()
+    calls.clear()
+
+    full_payload = [_line_payload(line.id, buy_qty=qty) for line, qty in plain_lines] + [
+        _line_payload(line.id, buy_qty=qty) for line, qty in new_lines
+    ]
+    second = _confirm(client, order.id, full_payload)
+    assert second.status_code == 200, second.text
+    db.commit()
+
+    matches = _handover_calls(calls)
+    assert matches, "the full re-confirm must dispatch the handover"
+    lines = matches[-1]["context"]["handover"]["lines"]
+    assert len(lines) == 2, (
+        f"AC-R2-13: exactly the two NEW lines must print, no cancel+order pair for "
+        f"the four unchanged rows, got {lines}"
+    )
+    assert {l["qty"] for l in lines} == {"214"}
+
+    db.expire_all()
+    for line, _qty in plain_lines:
+        row = (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+            .one()
+        )
+        assert row.id == original_row_ids[line.id], (
+            "AC-R2-13: every unchanged plain row must keep its own id across the "
+            "full re-confirm"
+        )
+        assert row.state == INQUIRY_RAISED

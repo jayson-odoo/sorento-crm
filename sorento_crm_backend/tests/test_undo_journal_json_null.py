@@ -81,25 +81,28 @@ def _raw_journal_state(db, decision_id):
     return bool(row["is_sql_null"]), row["jtype"]
 
 
-def test_supersede_clears_journal_to_sql_null(api):
-    """Confirm twice on one order: rev2 supersedes rev1. Rev1's journal must be cleared to
-    a real SQL NULL, not the JSON literal `null` (`UndoJournal.attach`, ~line 316)."""
+def test_supersede_keeps_journal_as_sql_array_not_null(api):
+    """AC-R2-20 (`PLAN-scm-oi-handover-r2-undo.md` S4, rewrite - depth-N undo needs
+    EVERY revision's own journal alive for life). Confirm twice on one order: rev2
+    supersedes rev1. Rev1's `undo_journal` must be KEPT as a real jsonb ARRAY, never
+    nulled (SQL NULL or the JSON literal `null` alike) - the raw-SQL read this file's
+    siblings use is what tells a real clear apart from a merely-empty-looking one."""
     fixture = _confirm_linked_world(api, second_buy_qty="15")
     db = fixture["db"]
     decision1 = fixture["decision1"]
 
     is_sql_null, jtype = _raw_journal_state(db, decision1.id)
-    assert is_sql_null is True, (
-        f"rev1's undo_journal must be SQL NULL after being superseded, not a JSON "
-        f"literal (jsonb_typeof={jtype!r})"
+    assert is_sql_null is False, (
+        "AC-R2-20: rev1's undo_journal must NOT be cleared to SQL NULL when it is "
+        "superseded - it has to stay alive for a later undo of rev1 itself"
     )
-    assert jtype is None, f"jsonb_typeof must read NULL, not {jtype!r}"
+    assert jtype == "array", f"jsonb_typeof must read 'array', not {jtype!r}"
 
 
-def test_undo_clears_reinstated_journal_to_sql_null(api):
-    """Confirm twice, then undo once: the reinstated rev1 (R3, "one revision back, once")
-    must have its own journal cleared to a real SQL NULL, not the JSON literal `null`
-    (`undo_last_confirm`, ~line 952)."""
+def test_undo_keeps_reinstated_journal_as_sql_array(api):
+    """AC-R2-21 (rewrite): confirm twice, then undo once - the reinstated rev1 must
+    KEEP its own journal as a real jsonb ARRAY (raw-SQL read), not have it cleared to
+    SQL NULL or the JSON literal `null` (`undo_last_confirm`, ~line 990 today)."""
     fixture = _confirm_linked_world(api, second_buy_qty="15")
     db = fixture["db"]
     order = fixture["order"]
@@ -108,11 +111,11 @@ def test_undo_clears_reinstated_journal_to_sql_null(api):
     undo_last_confirm(db, order, actor_user_id=fixture["world"].eling)
 
     is_sql_null, jtype = _raw_journal_state(db, decision1.id)
-    assert is_sql_null is True, (
-        f"the reinstated decision's undo_journal must be SQL NULL, not a JSON literal "
-        f"(jsonb_typeof={jtype!r})"
+    assert is_sql_null is False, (
+        "AC-R2-21: the reinstated decision's own undo_journal must be KEPT, not "
+        "cleared to SQL NULL - it must itself be undoable in turn"
     )
-    assert jtype is None, f"jsonb_typeof must read NULL, not {jtype!r}"
+    assert jtype == "array", f"jsonb_typeof must read 'array', not {jtype!r}"
 
 
 def test_orm_none_assignment_writes_sql_null(api):

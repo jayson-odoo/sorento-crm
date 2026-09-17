@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
@@ -68,6 +68,18 @@ vi.mock('next-auth/react', () => ({
     data: { user: { id: 'user-1', name: 'Test Planner' } },
     status: 'authenticated',
   }),
+}));
+
+const createPendingAction = vi.fn().mockResolvedValue({
+  id: 'pending-1',
+  commit_at: '2026-09-18T00:00:10Z',
+  entity_id: 'pso-1',
+});
+
+vi.mock('@/services/pendingActionService', () => ({
+  createPendingAction: (...args: unknown[]) => createPendingAction(...args),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('@/hooks/usePermissions', () => ({
@@ -136,8 +148,13 @@ function demand(overrides: Partial<BoardDemandLine> = {}): BoardDemandLine {
 
 type UndoOverlay = {
   revision_no: number;
-  refusal: 'linked' | 'actioned' | null;
+  refusal: 'linked' | 'actioned' | 'changed' | null;
   decision_id: string;
+  /** `PLAN-scm-oi-handover-r2-undo.md` S6. Optional here so the pre-r2 AC-UC-02/03/04
+   * fixtures above (written before `mode` existed) still compile - the component's own
+   * fallback (`order.undo?.mode ?? 'journal'`) is what a real omitted field would read
+   * as too. */
+  mode?: 'journal' | 'reconstructed';
 };
 
 /** Overlays a mocked `undo` onto `board.orders`, keyed by `sales_order_id` - the same
@@ -251,5 +268,90 @@ describe('AC-UC-04: nothing undoable renders no entry and no separator', () => {
     // "Undo all" keeps its own leading separator; no SECOND one is added for an
     // undo-entries block that has nothing to show.
     expect(separators.length).toBeLessThanOrEqual(1);
+  });
+});
+
+// --------------------------------------------------------------------------- //
+// `PLAN-scm-oi-handover-r2-undo.md` S6 - the three FE cases the plan names:
+// mode label, `changed` refusal, mode in the parked payload. The panel's own
+// `mode`/`RECONSTRUCTED_UNDO_NOTE`/`UNDO_REFUSAL_TITLES.changed` logic already
+// shipped in Phase 1 (frontend-first, against `NEXT_PUBLIC_BOARD_UNDO_MOCK`) -
+// these pin that contract with a real `undo.mode` on the mocked board payload,
+// the same way `AC-UC-02/03/04` above pin the journal-only shape.
+// --------------------------------------------------------------------------- //
+
+describe('AC-R2-F02: a reconstructed entry names itself and what it will not restore', () => {
+  it('shows ", reconstructed" on the label and the drafts/notes note as its second line', async () => {
+    const board = buildBoard(
+      [demand({ sales_order_id: 'so-1', so_number: 'SO000001', project_line_id: 'pl-1-1' })],
+      { today: TODAY, freeStock: {}, granularity: 'week' },
+    );
+    getPlanningBoard.mockResolvedValue(
+      withUndo(board, {
+        'so-1': { revision_no: 3, refusal: null, decision_id: 'dec-1', mode: 'reconstructed' },
+      }),
+    );
+
+    renderPanel(['SO000001']);
+    const menu = await openBoardActions();
+
+    const item = within(menu)
+      .getByText('Undo SO000001 confirm (rev 3), reconstructed')
+      .closest('[role="menuitem"]') as HTMLElement;
+    expect(item).not.toHaveAttribute('aria-disabled', 'true');
+    expect(
+      within(item).getByText('Saved drafts and row notes are not restored'),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('AC-R2-F03: a "changed" refusal is disabled and states its own reason', () => {
+  it('shows "A row changed since this confirm" as visible text in the item', async () => {
+    const board = buildBoard(
+      [demand({ sales_order_id: 'so-1', so_number: 'SO000001', project_line_id: 'pl-1-1' })],
+      { today: TODAY, freeStock: {}, granularity: 'week' },
+    );
+    getPlanningBoard.mockResolvedValue(
+      withUndo(board, {
+        'so-1': { revision_no: 1, refusal: 'changed', decision_id: 'dec-1', mode: 'journal' },
+      }),
+    );
+
+    renderPanel(['SO000001']);
+    const menu = await openBoardActions();
+
+    const item = within(menu)
+      .getByText(/Undo SO000001 confirm \(rev 1\)/)
+      .closest('[role="menuitem"]') as HTMLElement;
+    expect(item).toHaveAttribute('aria-disabled', 'true');
+    expect(within(item).getByText('A row changed since this confirm')).toBeInTheDocument();
+  });
+});
+
+describe('AC-R2-F04 (payload half): mode travels with decision_id in the parked payload', () => {
+  it('parks {decision_id, mode} together when a reconstructed entry is pressed', async () => {
+    const board = buildBoard(
+      [demand({ sales_order_id: 'so-1', so_number: 'SO000001', project_line_id: 'pl-1-1' })],
+      { today: TODAY, freeStock: {}, granularity: 'week' },
+    );
+    getPlanningBoard.mockResolvedValue(
+      withUndo(board, {
+        'so-1': { revision_no: 2, refusal: null, decision_id: 'dec-9', mode: 'reconstructed' },
+      }),
+    );
+
+    renderPanel(['SO000001']);
+    const menu = await openBoardActions();
+    const item = within(menu).getByText('Undo SO000001 confirm (rev 2), reconstructed');
+    fireEvent.click(item);
+
+    await waitFor(() => {
+      expect(createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'project_sales_order.undo_confirm',
+          payload: { decision_id: 'dec-9', mode: 'reconstructed' },
+        }),
+      );
+    });
   });
 });
