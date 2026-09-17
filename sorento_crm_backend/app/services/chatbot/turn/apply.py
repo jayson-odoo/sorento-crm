@@ -678,6 +678,17 @@ def _focus_rules(
                 if getattr(focus, attr, None):
                     setattr(focus, attr, [])
                     trace.rules_fired.append(f"new_ask_drops_{kind}")
+            if focus.date_window:
+                # Defect 3 (owner hand pass 6, 17 Sep 2026): the window is a focus axis
+                # like any other, and a NEW ASK drops every axis it did not itself name
+                # - "aug 2026" then "outstanding SO for chin chun" (a fresh customer,
+                # `domain_in_message`) still ran the report over August, and a later
+                # stock MISS on a different product printed an "Order date:" line that
+                # turn never asked for. `_focus_rules`' own tail re-sets it below when
+                # THIS message names a window of its own (N2's default-not-override
+                # rule, unchanged).
+                focus.date_window = None
+                trace.rules_fired.append("new_ask_drops_date_window")
         elif decision.refines:
             trace.rules_fired.append("refinement_keeps_subject")
 
@@ -834,7 +845,9 @@ _IDLE_CHAT_DISQUALIFIERS = (
 )
 
 
-def _is_idle_chat(verdict: dict[str, Any], entities: list[dict[str, Any]]) -> bool:
+def _is_idle_chat(
+    verdict: dict[str, Any], entities: list[dict[str, Any]], decision: Decision
+) -> bool:
     """A message that carries no question of its own - not even a subject.
 
     Every part of this is the PARSER's own structured verdict, never the words: a casual
@@ -843,6 +856,15 @@ def _is_idle_chat(verdict: dict[str, Any], entities: list[dict[str, Any]]) -> bo
     asked, so a greeting plans no fetch and the focus is left exactly as it was (owner
     ruling, S6 cluster 4, 16 Sep 2026 - browser pass 2 turn 9 replayed the previous
     business answer back, byte for byte, at a customer who had said "hello").
+
+    Defect 5 (owner hand pass 6, 17 Sep 2026) is this rule's own extension, per the
+    ruling's own words: "idle chat never fetches; extend it to the offer-open case."
+    Whether this casual message ENGAGES the open question is exactly what `decide()`
+    already computed (`decision.answers`) - read here instead of the two proxies this
+    used to test for itself (`is_affirmative is not None`, any escalation value
+    truthy), which can say "engaged" for a message `_answer_pending` itself already
+    filed as `answer_pending_not_an_answer`. "good" over an open offer read that way
+    and re-ran the very report the offer followed, byte for byte.
     """
     if verdict.get("message_type") not in _CASUAL_TYPES:
         return False
@@ -850,12 +872,7 @@ def _is_idle_chat(verdict: dict[str, Any], entities: list[dict[str, Any]]) -> bo
         return False
     if any(verdict.get(key) for key in _IDLE_CHAT_DISQUALIFIERS):
         return False
-    # A yes, a no, or a pick ENGAGES the open question - "yes" to "shall I list the
-    # DOs?" is the fetch, not idle chat. (`resolved: true` never reaches here anyway:
-    # the locked-domain branch runs first.)
-    if verdict.get("is_affirmative") is not None:
-        return False
-    if any((verdict.get("escalation") or {}).values()):
+    if decision.answers:
         return False
     return True
 
@@ -1101,6 +1118,23 @@ def apply(
     only: a roster is never built out of a word that matched nothing."""
     trace = Trace()
 
+    if state.pending is not None and _fully_answered_roster(state.pending):
+        # Defect 2 (owner hand pass 6, 17 Sep 2026): a roster every option of which is
+        # ALREADY answered, from an earlier turn, is a question the bot has finished
+        # asking - contract 36's sticky roster is for a PICK STILL IN PROGRESS, not one
+        # spent to the last option. Left open it answered a LATER, unrelated turn
+        # instead of the one that named it: "hmm ok, any purchase cost" over a
+        # ten-variant roster fully answered by "all" two turns earlier matched
+        # `broaden_axis: "all"` again and re-ran the roster's own domains, purchase
+        # cost never running; an escalate offer patched onto that same stale roster
+        # (`compose._lane_question`) carried its long-superseded team rather than the
+        # one THIS turn's own miss named. Closed on entry rather than only after its
+        # own answering turn, so both readers - the next turn's `decide()` and
+        # `compose.py`'s offer-patching - see no pending at all, the same as contract
+        # 36's own "closed once the answering turn's fetch ran" wording allows.
+        state = replace(state, pending=None)
+        trace.rules_fired.append("stale_roster_closed")
+
     # F3 (contract 65): a `domain_hint` outside the declared enum must never reach a
     # reader - evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b emitted "purchasing"
     # (a TEAM name, not a domain) and it survived into a tool pick. `coerce_domain_hint`
@@ -1167,20 +1201,29 @@ def apply(
     )
 
     asks = verdict.get("asks") or []
-    if domain_locked and focus.domains:
+    if domain_locked and focus.domains and not asks:
         # Contract 121 / AC-1522: a pick never re-domains the turn. `_answer_pending`
         # put the domain the question was ASKED under onto the focus and `_focus_rules`
         # left it alone, and this is the second half of that: re-reading `asks` or
         # `domain_hint` here would have undone it, because a bare "3" is parsed against
         # the whole message history and its verdict still carries the PREVIOUS turn's
         # domain hint. The answer belongs to the roster it was picked off.
+        #
+        # Defect 1 (owner hand pass 6, 17 Sep 2026): that is only true when this
+        # message says nothing of its own. "stock, incoming and PO for all of them"
+        # and "ok how about stock and PO only" both answered a roster AND named their
+        # own domains in the same breath (`asks` non-empty on the SAME verdict), and
+        # the lock rendered the roster's old domain set instead - two of three the
+        # first time, three again (re-adding incoming) the second. `asks` is what THIS
+        # message actually asked for; the lock exists to stop a message that asked for
+        # nothing being read against stale history, not to overrule one that did ask.
         domains = list(focus.domains)
         trace.rules_fired.append("domain_locked_by_pick")
     elif asks:
         domains = [a["domain"] for a in asks if a.get("domain")]
     elif verdict.get("domain_hint"):
         domains = [verdict["domain_hint"]]
-    elif focus.domains and not _is_idle_chat(verdict, entities):
+    elif focus.domains and not _is_idle_chat(verdict, entities, decision):
         domains = list(focus.domains)
     elif focus.domains:
         # S6 cluster 4 (owner ruling, 16 Sep 2026): the pending is carried unchanged and
@@ -1310,6 +1353,21 @@ def apply(
         trace.rules_fired.append("new_ask_closes_stale_roster")
 
     return new_state, plan
+
+
+def _fully_answered_roster(pending: Pending) -> bool:
+    """Every position this roster ever offered is already in `answered_positions` -
+    defect 2's own test, read at `apply()`'s entry (`turn/pending.py::is_roster`,
+    `with_answered_positions`).
+
+    Only a ROSTER kind stays alive after its own pick at all (contract 36); an OFFER
+    kind clears the same turn it is answered and never reaches here carrying anything
+    to check.
+    """
+    if not is_roster(pending.kind):
+        return False
+    positions = {o.get("position") for o in pending.options if o.get("position") is not None}
+    return bool(positions) and positions <= set(pending.answered_positions)
 
 
 def _roster_is_about(pending: Pending, focus: Focus) -> bool:
