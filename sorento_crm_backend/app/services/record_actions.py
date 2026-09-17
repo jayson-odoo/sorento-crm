@@ -1696,7 +1696,7 @@ def _undo_confirm(db: Session, payload: dict):
 
 register(
     FormAction(
-        key="fulfilment_planning.undo_confirm",
+        key="project_sales_order.undo_confirm",
         entity_types=("project_sales_order",),
         execute=_undo_confirm,
         # Reversible: the previous revision comes back exactly as it was (R2), not a

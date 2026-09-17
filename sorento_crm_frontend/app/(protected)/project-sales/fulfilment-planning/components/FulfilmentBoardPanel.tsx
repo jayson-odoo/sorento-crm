@@ -825,7 +825,7 @@ export function FulfilmentBoardPanel({
     decisionId: string;
   } | null>(null);
   const undoAction = useDeferredAction({
-    actionKey: 'fulfilment_planning.undo_confirm',
+    actionKey: 'project_sales_order.undo_confirm',
     entityType: 'project_sales_order',
     entityId: undoTarget?.orderId ?? null,
     verb: 'Undoing',
