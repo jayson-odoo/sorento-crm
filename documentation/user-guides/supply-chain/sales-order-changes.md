@@ -65,6 +65,9 @@ Every suggestion arrives already filled in, ready to post exactly as shown. Ther
 * To do something different on one line, open it (it opens read-only) and click **Amend** to
   unlock it. Change what covers the line yourself, then save. Confirm won't overwrite a line
   that's been amended - it posts what was decided for that line instead.
+* Pressed Confirm and want it back? The board's gear menu carries an undo for the order's newest
+  Confirm, for a short window after you click it - see
+  [Undo last confirm](local-buy-and-borrow-source.md#undo-last-confirm).
 
 ## What Confirm does to Order Inquiries
 
@@ -165,7 +168,8 @@ All on SO419772 / B2155-NL-BLUE, own location BRW-IB, pool BRW, unless another o
 
 ## See also
 
-* [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md)
+* [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md) (also covers
+  Undo last confirm)
 * [Plan a sales order nobody decided](plan-undecided-lines.md) (a pending change puts a line
   carrying an order inquiry back in play)
 * [Upload the data a reorder plan is built from](upload-plan-data.md) (the sales order book this

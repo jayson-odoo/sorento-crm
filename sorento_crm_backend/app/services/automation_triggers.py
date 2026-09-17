@@ -534,6 +534,39 @@ register(
 )
 
 
+def _trigger_order_inquiry_undone(
+    db: Session,
+    config: dict[str, Any],
+    timezone: str,
+) -> Iterable[TriggerMatch]:
+    """Event-driven; pull-mode evaluation yields nothing.
+
+    Matches are produced via `ProjectOrderInquiryService._record_undo`
+    (`PLAN-board-undo-last-confirm.md` "The email"), queued mid-transaction by
+    `undo_last_confirm` and drained post-commit by `_fire_pending_undo` - the same
+    shape `_trigger_order_inquiry_handover` above uses. One dispatch per undo commit.
+    """
+    return []
+
+
+register(
+    TriggerSpec(
+        type="order_inquiry_undone",
+        label="Order inquiry undone",
+        description=(
+            "Fires once a board Confirm's undo has committed (event-driven), telling "
+            "purchasing which order inquiry rows reverted or disappeared."
+        ),
+        config_schema={
+            "type": "object",
+            "properties": {},
+            "additionalProperties": False,
+        },
+    ),
+    _trigger_order_inquiry_undone,
+)
+
+
 def _trigger_sponsorship_form_approved(
     db: Session,
     config: dict[str, Any],

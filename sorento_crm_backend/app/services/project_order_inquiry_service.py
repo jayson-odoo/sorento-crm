@@ -160,6 +160,14 @@ _HANDOVER_PENDING_KEY = "oi_handover_pending"
 #: commit path, and drained of its own entries as each is consumed.
 _HANDOVER_COMMITTED_TX_KEY = "oi_handover_committed_tx"
 
+#: `Session.info` key for the `order_inquiry_undone` email
+#: (`PLAN-board-undo-last-confirm.md` "The email") queued mid-transaction by
+#: `undo_last_confirm` and fired once the session actually commits - see
+#: `_record_undo` / `register_order_inquiry_post_commit_dispatch`. Same shape as
+#: `_HANDOVER_PENDING_KEY` / `_HANDOVER_COMMITTED_TX_KEY` above, copied not adapted.
+_UNDO_PENDING_KEY = "oi_undo_pending"
+_UNDO_COMMITTED_TX_KEY = "oi_undo_committed_tx"
+
 
 def _transaction_chain(session) -> List[Any]:
     """The transaction a queued item was written under, and every one above it.
@@ -2006,6 +2014,50 @@ class ProjectOrderInquiryService:
         )
         self._handover_actor_cache[user_id] = actor
         return actor
+
+    def _record_undo(
+        self,
+        *,
+        pso_id: Optional[str],
+        decision_id: str,
+        revision_no: int,
+        lines: List[Dict[str, Any]],
+        actor_user_id: Optional[str],
+    ) -> None:
+        """Queue one `order_inquiry_undone` email (`PLAN-board-undo-last-confirm.md`
+        "The email"), fired post-commit by `_fire_pending_undo` - copied from
+        `_record_handover` above, not adapted: same `Session.info` queue shape, same
+        `tx` / `tx_chain` bookkeeping via `_transaction_chain`, for the same reason -
+        `undo_last_confirm` runs inside the board confirm routes' own transaction and
+        a fresh drain-time session cannot see a write that has not committed yet.
+
+        `lines` is built by the caller (`undo_last_confirm`) from the journal's OWN
+        order inquiry row entries, read BEFORE replay deletes or overwrites them - by
+        the time this method runs, those rows may already be gone.
+        """
+        facts = self._handover_order_facts(pso_id) if pso_id else {}
+        from app.services.automation_triggers import build_order_inquiry_link
+
+        so_number = facts.get("so_number")
+        self.db.info.setdefault(_UNDO_PENDING_KEY, []).append(
+            {
+                "decision_id": str(decision_id),
+                "so_number": so_number,
+                "customer": facts.get("customer"),
+                "project": facts.get("project"),
+                "revision_no": revision_no,
+                "lines": lines,
+                "link": build_order_inquiry_link(so_number),
+                "actor": self._handover_actor(actor_user_id),
+                #: Which savepoint this was earned under (C2, `_notify_purchasing`'s
+                #: own rule), so a sibling order's rollback cannot discard it.
+                "tx_chain": (tx_chain := _transaction_chain(self.db)),
+                #: The OUTERMOST entry of that same chain - the ROOT transaction
+                #: (AC-H27/AC-H28's own ruling, carried over unchanged) - is what
+                #: `_fire_pending_undo` waits to see CONCLUDE BY COMMIT before firing.
+                "tx": tx_chain[-1] if tx_chain else None,
+            }
+        )
 
     def _retire_settled_cancel_balance(
         self,
@@ -7265,6 +7317,33 @@ def _build_handover_context(
     return context, pending[0]["order_inquiry_id"]
 
 
+def _build_undo_context(
+    pending: Sequence[Dict[str, Any]]
+) -> Optional[Tuple[Dict[str, Any], str]]:
+    """The `order_inquiry_undone` dispatch context plus the `source_id` to dispatch it
+    under - PURE aggregation over what `_record_undo` already resolved and formatted
+    eagerly, the same shape `_build_handover_context` above is. One undo commits one
+    decision at a time, so there is exactly one entry to read (`pending[0]`), unlike
+    the handover queue's own many-lines-per-commit shape.
+    """
+    if not pending:
+        return None
+    item = pending[0]
+    context = {
+        "undo": {
+            "so_number": item.get("so_number"),
+            "customer": item.get("customer"),
+            "project": item.get("project"),
+            "revision_no": item.get("revision_no"),
+            "lines": item.get("lines"),
+            "link": item.get("link"),
+        },
+        "actor": item.get("actor"),
+        "today": date.today().strftime("%d/%m/%Y"),
+    }
+    return context, item["decision_id"]
+
+
 _POST_COMMIT_DISPATCH_REGISTERED = False
 
 
@@ -7496,6 +7575,77 @@ def register_order_inquiry_post_commit_dispatch() -> None:
         finally:
             fresh.close()
 
+    @event.listens_for(Session, "after_commit")
+    def _mark_undo_transaction_committed(session):  # noqa: ANN001
+        """Copied from `_mark_handover_transaction_committed` above, not adapted -
+        same reasoning, same rule: tell the ROOT transaction's own commit apart from a
+        nested savepoint's, for `_fire_pending_undo` below.
+        """
+        if not session.info.get(_UNDO_PENDING_KEY):
+            return
+        if session.get_nested_transaction() is not None:
+            return
+        session.info.setdefault(_UNDO_COMMITTED_TX_KEY, []).append(
+            session.get_transaction()
+        )
+
+    @event.listens_for(Session, "after_transaction_end")
+    def _fire_pending_undo(session, transaction):  # noqa: ANN001
+        """Fire the `order_inquiry_undone` email once the ROOT transaction has
+        genuinely CONCLUDED BY COMMIT - copied from `_fire_pending_handover` above,
+        not adapted; see that listener's own docstring for the full reasoning
+        (`after_transaction_end` vs `after_commit`, why a savepoint's own conclusion
+        is not this listener's to act on).
+        """
+        if transaction.parent is not None:
+            return
+        committed = session.info.get(_UNDO_COMMITTED_TX_KEY)
+        was_committed = False
+        if committed:
+            still_committed = [tx for tx in committed if tx is not transaction]
+            was_committed = len(still_committed) != len(committed)
+            if still_committed:
+                session.info[_UNDO_COMMITTED_TX_KEY] = still_committed
+            else:
+                session.info.pop(_UNDO_COMMITTED_TX_KEY, None)
+
+        pending = session.info.get(_UNDO_PENDING_KEY)
+        if not pending:
+            return
+        concluded = [item for item in pending if item["tx"] is transaction]
+        if not concluded:
+            return
+        if not was_committed:
+            # This transaction ENDED (closed) via rollback, not commit - leave the
+            # items for `after_soft_rollback` to discard.
+            return
+        remaining = [item for item in pending if item["tx"] is not transaction]
+        if remaining:
+            session.info[_UNDO_PENDING_KEY] = remaining
+        else:
+            session.info.pop(_UNDO_PENDING_KEY, None)
+
+        from app.database import SessionLocal
+        from app.services.automation_service import AutomationService
+
+        fresh = SessionLocal()
+        try:
+            built = _build_undo_context(concluded)
+            if built is None:
+                return
+            context, source_id = built
+            AutomationService(fresh).dispatch_event(
+                "order_inquiry_undone",
+                context=context,
+                source_kind="order_inquiry_undone",
+                source_id=source_id,
+            )
+        except Exception:  # noqa: BLE001 - a post-commit side effect never raises
+            fresh.rollback()
+            logger.exception("Automation dispatch(order_inquiry_undone) failed to queue")
+        finally:
+            fresh.close()
+
     @event.listens_for(Session, "after_soft_rollback")
     def _discard_pending_changed_with_links(session, previous_transaction):  # noqa: ANN001
         session.info.pop(_CHANGED_WITH_LINKS_PENDING_KEY, None)
@@ -7531,5 +7681,21 @@ def register_order_inquiry_post_commit_dispatch() -> None:
                 session.info[_HANDOVER_PENDING_KEY] = handover_kept
             else:
                 session.info.pop(_HANDOVER_PENDING_KEY, None)
+
+        # Same C2 rule for the undo queue: only the entries earned under the
+        # transaction that just rolled back are discarded, never a sibling order's.
+        undo_pending = session.info.get(_UNDO_PENDING_KEY)
+        if undo_pending:
+            undo_kept = [
+                item
+                for item in undo_pending
+                if not any(
+                    tx is previous_transaction for tx in item.get("tx_chain") or ()
+                )
+            ]
+            if undo_kept:
+                session.info[_UNDO_PENDING_KEY] = undo_kept
+            else:
+                session.info.pop(_UNDO_PENDING_KEY, None)
 
     _POST_COMMIT_DISPATCH_REGISTERED = True

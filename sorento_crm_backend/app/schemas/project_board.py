@@ -1132,6 +1132,25 @@ class BoardProductRow(BaseModel):
     description: Optional[str] = None
 
 
+class BoardUndo(BaseModel):
+    """Whether the order's newest confirm can be undone from the gear, and why not
+    when it cannot (`PLAN-board-undo-last-confirm.md` S1, #978)."""
+
+    revision_no: int
+    confirmed_at: Optional[datetime] = None
+    confirmed_by_name: Optional[str] = None
+    #: Set when purchasing has already acted on this order since the confirm - a
+    #: PO link (`linked`, whatever `auto` reads - review round), or a row marked
+    #: actioned. Null when nothing blocks the undo.
+    refusal: Optional[Literal["linked", "actioned"]] = None
+    #: Addressing only, never rendered (no UUIDs in the UI): the pending action's
+    #: payload names the decision it was created against, so `undo_last_confirm`
+    #: can tell a Confirm written during the countdown apart and refuse `superseded`
+    #: (AC-UC-28) rather than undoing whatever happens to be newest by the time the
+    #: window lapses.
+    decision_id: str
+
+
 class BoardOrderStanding(BaseModel):
     sales_order_id: str
     #: The planning record this order's confirmation posts to
@@ -1150,6 +1169,10 @@ class BoardOrderStanding(BaseModel):
     #: fulfilment-planning list and the SCM Sales Orders list name the same id off the same
     #: `planning_change_service.pending_batch_id_by_sales_order`.
     pending_change_batch_id: Optional[str] = None
+    #: Null when the order has no active decision, or its active decision carries no
+    #: journal (a pre-lane revision, or one minted by `uncover_lines` rather than the
+    #: board's own confirm routes) - there is nothing this lane can replay.
+    undo: Optional[BoardUndo] = None
 
 
 class BoardPolicy(BaseModel):

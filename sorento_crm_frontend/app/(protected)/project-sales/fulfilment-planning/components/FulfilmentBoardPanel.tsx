@@ -35,14 +35,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
+  PLANNING_BOARD_KEY,
   useConfirmManyMutation,
   useFulfilmentPlanningMutations,
   useLineDraftMutation,
@@ -114,6 +118,14 @@ type BoardBatchResult = ConfirmManyOrderResult & { so_number?: string };
 export function boardViewFrom(value: string | null): BoardView {
   return value === 'grid' ? 'grid' : 'list';
 }
+
+/** The reason a disabled "Undo confirm" gear entry states, visibly, inside the item
+ * itself (AC-UC-03, review round: a `title` on a `data-disabled` item never renders -
+ * `pointer-events-none` kills the tooltip on both a screen reader and a touch device). */
+const UNDO_REFUSAL_TITLES: Record<string, string> = {
+  linked: 'Purchasing linked a PO line',
+  actioned: 'Purchasing marked a row actioned',
+};
 
 /** The calendar control the captain asked for: day, week or month (PLAN 13.3). */
 const GRANULARITY_OPTIONS = [
@@ -800,6 +812,43 @@ export function FulfilmentBoardPanel({
     }.`;
   }, [singleBatch]);
 
+  /**
+   * Undo last confirm (`PLAN-board-undo-last-confirm.md`, S2/#979).
+   *
+   * One `useDeferredAction` for the whole board: `undoTarget` names whichever order the
+   * planner just picked from the gear, and the effect below fires `start()` once the hook
+   * has re-rendered against that order's id - `start()` reads `entityId`/`payload` from
+   * THIS render's closure, so it must run after the state that produced them has landed,
+   * never in the same tick as the click that set it.
+   */
+  const [undoTarget, setUndoTarget] = React.useState<{
+    orderId: string;
+    soNumber: string;
+    decisionId: string;
+  } | null>(null);
+  const undoAction = useDeferredAction({
+    actionKey: 'project_sales_order.undo_confirm',
+    entityType: 'project_sales_order',
+    entityId: undoTarget?.orderId ?? null,
+    verb: 'Undoing',
+    subject: undoTarget?.soNumber ?? '',
+    surface: 'inline',
+    successMessage: `${undoTarget?.soNumber ?? 'Order'} confirm undone`,
+    payload: undoTarget ? { decision_id: undoTarget.decisionId } : undefined,
+    invalidateKeys: [[PLANNING_BOARD_KEY]],
+  });
+  React.useEffect(() => {
+    if (!undoTarget) return;
+    if (undoAction.pending || undoAction.isPending) return;
+    undoAction.start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [undoTarget]);
+
+  const undoableOrders = React.useMemo(
+    () => (board.data?.orders ?? []).filter((order) => order.undo),
+    [board.data],
+  );
+
   const confirmMany = useConfirmManyMutation();
   const [confirmAllOpen, setConfirmAllOpen] = React.useState(false);
   /**
@@ -1394,25 +1443,88 @@ export function FulfilmentBoardPanel({
                 <Undo2 className="size-4" aria-hidden />
                 Undo all
               </DropdownMenuItem>
+              {/* Undo last confirm, one entry per order the newest revision can be undone
+                  for (R6): below Undo all, same permission as Confirm, hidden entirely when
+                  nothing on the board is undoable (AC-UC-04). A refused order keeps its
+                  entry so purchasing's reason is where the planner is already looking,
+                  rather than a control that silently is not there (AC-UC-03). */}
+              {undoableOrders.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  {undoableOrders.map((order) => {
+                    const label = `Undo ${order.so_number} confirm (rev ${order.undo?.revision_no})`;
+                    const reason = UNDO_REFUSAL_TITLES[order.undo?.refusal ?? ''];
+                    const disabled = Boolean(order.undo?.refusal);
+                    return (
+                      <DropdownMenuItem
+                        key={order.sales_order_id}
+                        disabled={disabled}
+                        onSelect={
+                          disabled
+                            ? undefined
+                            : () =>
+                                setUndoTarget({
+                                  orderId: order.project_sales_order_id as string,
+                                  soNumber: order.so_number,
+                                  decisionId: order.undo?.decision_id as string,
+                                })
+                        }
+                      >
+                        <Undo2 className="size-4" aria-hidden />
+                        {/* Exactly one `title` owner in this item, the label span - a
+                            disabled item's own `title` never renders (AC-UC-03), so the
+                            reason is plain visible text underneath instead. */}
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate" title={label}>
+                            {label}
+                          </span>
+                          {reason ? (
+                            // `text-foreground/70`, not `text-muted-foreground`
+                            // (review round follow-up): the disabled item's own
+                            // reduced opacity stacks with a muted foreground and
+                            // drops this line below the contrast floor.
+                            <span className="truncate text-xs text-foreground/70">
+                              {reason}
+                            </span>
+                          ) : null}
+                        </span>
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </>
+              )}
               <DropdownMenuItem onSelect={onBack}>
                 <ArrowLeft className="size-4" aria-hidden />
                 Back to sales orders
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-          {board.data && board.data.cells.length > 0 ? (
-            <Button
-              type="button"
-              size="sm"
-              data-testid="board-confirm"
-              disabled={
-                confirmSummary.toConfirm === 0 || confirmingAll || Boolean(confirmBlockedReason)
+          {/* An undo countdown must keep showing even once its own commit has cleared the
+              board down to zero cells (review round) - the Confirm slot this occupies is
+              not gated on there being anything left to confirm while it is counting down. */}
+          {board.data && (board.data.cells.length > 0 || undoAction.pending) ? (
+            <DeferredActionButton
+              pending={undoAction.pending}
+              verb="Undoing"
+              subject={undoTarget?.soNumber}
+              onCancel={undoAction.cancel}
+              idle={
+                <Button
+                  type="button"
+                  size="sm"
+                  data-testid="board-confirm"
+                  disabled={
+                    confirmSummary.toConfirm === 0 ||
+                    confirmingAll ||
+                    Boolean(confirmBlockedReason)
+                  }
+                  title={confirmBlockedReason ?? undefined}
+                  onClick={() => setConfirmAllOpen(true)}
+                >
+                  {`Confirm (${confirmSummary.toConfirm})`}
+                </Button>
               }
-              title={confirmBlockedReason ?? undefined}
-              onClick={() => setConfirmAllOpen(true)}
-            >
-              {`Confirm (${confirmSummary.toConfirm})`}
-            </Button>
+            />
           ) : null}
         </div>
       </div>

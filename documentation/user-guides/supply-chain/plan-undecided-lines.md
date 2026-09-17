@@ -112,7 +112,8 @@ WhatsApp for planning an order; purchasing picks the work up from Order Inquirie
 
 ## See also
 
-* [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md)
+* [Buy and borrow decisions on Fulfilment Planning](local-buy-and-borrow-source.md) (also covers
+  Undo last confirm, if you confirm the wrong thing)
 * [Sales order changes after planning](sales-order-changes.md)
 * [Upload the data a reorder plan is built from](upload-plan-data.md) (the sales order book and
   the Order Inquiry sheet behind these lines)

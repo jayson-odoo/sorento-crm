@@ -679,6 +679,16 @@ class FulfilmentBoardService:
                 adoption = ProjectSOAdoptionService(self.db)
                 for order in heal_targets:
                     adoption.mirror_missing_lines(order)
+        # S1 (#978): one `undo` per selected order, keyed the same way `adopted_by_so`
+        # is. A separate read rather than folded into `_order_plan_status`'s own query -
+        # that one is a query-count guard over the LINE-scaling `PlanningChangeRow` join;
+        # this is bounded by the (<=50) order count regardless of how many lines a board
+        # holds, so it does not carry the same guard. Runs AFTER the self-heal above so a
+        # newly-healed order's own decision (none yet, but a future re-confirm's) is read
+        # off the mirror the heal just completed, not a stale one.
+        from app.services.project_supply_undo_service import board_undo_map
+
+        undo_by_so = board_undo_map(self.db, adopted_by_so)
         rows = self._demand_rows(numbers, reopened_by_change=pending_core_lines)
         # R3 (13 Sep browser walk): a cancelled line with a still-PENDING change row, read
         # separately from ordinary demand and added to `contributions` alone, below - never
@@ -827,7 +837,7 @@ class FulfilmentBoardService:
                 [self._contribution(row) for row in rows]
                 + [self._contribution(row) for row in cancelled_rows]
             ),
-            "orders": self._standings(rows, adopted_by_so, pending_by_so),
+            "orders": self._standings(rows, adopted_by_so, pending_by_so, undo_by_so),
             # SELECTION-scoped totals, counted over every contributing line before any window
             # is applied - never over the cells on screen.
             #
@@ -5056,6 +5066,7 @@ class FulfilmentBoardService:
         rows: Sequence[_Row],
         adopted_by_so: Optional[Dict[str, str]] = None,
         pending_by_so: Optional[Dict[str, str]] = None,
+        undo_by_so: Optional[Dict[str, Optional[Dict[str, Any]]]] = None,
     ) -> List[Dict[str, Any]]:
         """Per order: how much of it is on this board, and how much of it can never be decided.
 
@@ -5074,6 +5085,7 @@ class FulfilmentBoardService:
         """
         adopted_by_so = adopted_by_so or {}
         pending_by_so = pending_by_so or {}
+        undo_by_so = undo_by_so or {}
         by_order: Dict[str, Dict[str, Any]] = {}
         for row in rows:
             standing = by_order.setdefault(
@@ -5091,6 +5103,9 @@ class FulfilmentBoardService:
                     "decided_count": 0,
                     "unplannable_count": 0,
                     "pending_change_batch_id": pending_by_so.get(row.sales_order_id),
+                    #: S1 (#978): whether the order's newest confirm can be undone from
+                    #: the gear, and why not when it cannot. `board_undo_map`'s own read.
+                    "undo": undo_by_so.get(row.sales_order_id),
                 },
             )
             standing["line_count"] += 1
