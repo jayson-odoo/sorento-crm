@@ -10,6 +10,14 @@ strikethrough-old-value-then-new-value-in-one-cell. Reverses ruling R3 of the ar
 ``PLAN-scm-oi-handover-email.md``. ``CUSTOMER``/``PROJECT`` stay on the SO table above,
 unchanged.
 
+AC-R2-18 (owner ruling Q5, 18 Sep, folded into THIS revision rather than a follow-up
+one - it is unreleased, so there is no DB anywhere carrying the unconditional body):
+either CHANGE TO column is printed only when at least one line IN THAT EMAIL carries the
+matching ``was`` field. A mail where nothing moved is six columns wide, one where only a
+quantity moved is seven, and the empty column pair purchasing had to read past is gone.
+Per EMAIL, not per line: a table whose header and rows disagreed about their column
+count would not be a table. See ``_COLUMNS_IN_USE`` below for how it is computed.
+
 An UPDATE, not a skip-if-exists insert (unlike ``oihe_0001_seed_handover_automation``,
 whose seed this revises): the row already exists on every DB that ran this lane's
 down_revision, and the point of THIS migration is to deliver a fix to its body, so
@@ -53,6 +61,23 @@ TEMPLATE_CODE = "order_inquiry_handover" + "_default"
 # context builder (`_build_handover_context`), not the template.
 _SUBJECT = "OI: {{ handover.subject_scope }}"
 
+# AC-R2-18 (owner ruling Q5, 18 Sep): the two CHANGE TO columns are a property of the
+# EMAIL, not of a line. A mail where nothing moved must not print an empty column pair at
+# all, and one where a single line moved prints it for the whole table - so the answer is
+# computed ONCE here, ahead of the line table, and read by the header and by every row.
+#
+# `namespace` is what makes that possible: a plain `{% set %}` inside a `{% for %}` is
+# scoped to the iteration and always reads false again afterwards, so the flag has to live
+# on an object the loop mutates. Whitespace-trimmed on every tag (`{%-` / `-%}`) because
+# this preamble sits in the rendered body and must contribute nothing to it.
+_COLUMNS_IN_USE = (
+    "{%- set cols = namespace(qty=false, delivery_date=false) -%}"
+    "{%- for line in handover.lines -%}"
+    "{%- if line.was and line.was.qty %}{% set cols.qty = true %}{% endif -%}"
+    "{%- if line.was and line.was.delivery_date %}{% set cols.delivery_date = true %}{% endif -%}"
+    "{%- endfor -%}"
+)
+
 _TH_STYLE = "border:1px solid #d0d0d5;padding:4px 8px;background:#f2f2f5;text-align:left;"
 _TD_STYLE = "border:1px solid #d0d0d5;padding:4px 8px;"
 _TABLE_STYLE = "border-collapse:collapse;font-family:Arial, sans-serif;font-size:13px;"
@@ -73,12 +98,12 @@ _BODY_HTML = """\
     {% endfor %}
   </tbody>
 </table>
-<table style="__TABLE_STYLE__margin-top:12px;">
+__COLUMNS_IN_USE__<table style="__TABLE_STYLE__margin-top:12px;">
   <thead>
     <tr>
       <th style="__TH_STYLE__">SO DATE</th><th style="__TH_STYLE__">S/O NO</th><th style="__TH_STYLE__">ITEM CODE</th>
-      <th style="__TH_STYLE__">QTY</th><th style="__TH_STYLE__">QTY CHANGE TO</th>
-      <th style="__TH_STYLE__">DELIVERY DATE</th><th style="__TH_STYLE__">DELIVERY DATE CHANGE TO</th>
+      <th style="__TH_STYLE__">QTY</th>{% if cols.qty %}<th style="__TH_STYLE__">QTY CHANGE TO</th>{% endif %}
+      <th style="__TH_STYLE__">DELIVERY DATE</th>{% if cols.delivery_date %}<th style="__TH_STYLE__">DELIVERY DATE CHANGE TO</th>{% endif %}
       <th style="__TH_STYLE__">REMARK</th>
     </tr>
   </thead>
@@ -89,9 +114,9 @@ _BODY_HTML = """\
       <td style="__TD_STYLE__">{{ line.so_number | default("", true) }}</td>
       <td style="__TD_STYLE__">{{ line.item_code | default("", true) }}</td>
       <td style="__TD_STYLE__">{% if line.was and line.was.qty %}{{ line.was.qty }}{% else %}{{ line.qty | default("", true) }}{% endif %}</td>
-      <td style="__TD_STYLE__">{% if line.was and line.was.qty %}{{ line.qty | default("", true) }}{% endif %}</td>
+      {% if cols.qty %}<td style="__TD_STYLE__">{% if line.was and line.was.qty %}{{ line.qty | default("", true) }}{% endif %}</td>{% endif %}
       <td style="__TD_STYLE__">{% if line.was and line.was.delivery_date %}{{ line.was.delivery_date }}{% else %}{{ line.delivery_date | default("", true) }}{% endif %}</td>
-      <td style="__TD_STYLE__">{% if line.was and line.was.delivery_date %}{{ line.delivery_date | default("", true) }}{% endif %}</td>
+      {% if cols.delivery_date %}<td style="__TD_STYLE__">{% if line.was and line.was.delivery_date %}{{ line.delivery_date | default("", true) }}{% endif %}</td>{% endif %}
       <td style="__TD_STYLE__">{{ line.remark | default("", true) }}</td>
     </tr>
     {% endfor %}
@@ -101,19 +126,19 @@ _BODY_HTML = """\
 <p><a href="{{ handover.link }}">Open in Order Inquiries</a></p>
 """.replace("__TABLE_STYLE__", _TABLE_STYLE).replace("__TH_STYLE__", _TH_STYLE).replace(
     "__TD_STYLE__", _TD_STYLE
-)
+).replace("__COLUMNS_IN_USE__", _COLUMNS_IN_USE)
 
 _BODY_TEXT = """\
-{{ handover.headline }}
+__COLUMNS_IN_USE__{{ handover.headline }}
 
 {% for order in handover.orders %}{{ order.so_number | default("", true) }}{% if order.customer %} - {{ order.customer }}{% endif %}{% if order.project %} - {{ order.project }}{% endif %}
 {% endfor %}
-SO DATE | S/O NO | ITEM CODE | QTY | QTY CHANGE TO | DELIVERY DATE | DELIVERY DATE CHANGE TO | REMARK
-{% for line in handover.lines %}{{ line.so_date | default("", true) }} | {{ line.so_number | default("", true) }} | {{ line.item_code | default("", true) }} | {% if line.was and line.was.qty %}{{ line.was.qty }}{% else %}{{ line.qty | default("", true) }}{% endif %} | {% if line.was and line.was.qty %}{{ line.qty | default("", true) }}{% endif %} | {% if line.was and line.was.delivery_date %}{{ line.was.delivery_date }}{% else %}{{ line.delivery_date | default("", true) }}{% endif %} | {% if line.was and line.was.delivery_date %}{{ line.delivery_date | default("", true) }}{% endif %} | {{ line.remark | default("", true) }}
+SO DATE | S/O NO | ITEM CODE | QTY |{% if cols.qty %} QTY CHANGE TO |{% endif %} DELIVERY DATE |{% if cols.delivery_date %} DELIVERY DATE CHANGE TO |{% endif %} REMARK
+{% for line in handover.lines %}{{ line.so_date | default("", true) }} | {{ line.so_number | default("", true) }} | {{ line.item_code | default("", true) }} | {% if line.was and line.was.qty %}{{ line.was.qty }}{% else %}{{ line.qty | default("", true) }}{% endif %} |{% if cols.qty %} {% if line.was and line.was.qty %}{{ line.qty | default("", true) }}{% endif %} |{% endif %} {% if line.was and line.was.delivery_date %}{{ line.was.delivery_date }}{% else %}{{ line.delivery_date | default("", true) }}{% endif %} |{% if cols.delivery_date %} {% if line.was and line.was.delivery_date %}{{ line.delivery_date | default("", true) }}{% endif %} |{% endif %} {{ line.remark | default("", true) }}
 {% endfor %}
 Raised by {{ actor.name if actor else '-' }} on {{ today }}.
 Open: {{ handover.link }}
-"""
+""".replace("__COLUMNS_IN_USE__", _COLUMNS_IN_USE)
 
 
 # --------------------------------------------------------------------------- #
