@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from itertools import groupby
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -83,6 +83,7 @@ from app.services.product_companion_service import (
 )
 from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
+    arrives_outside_window,
     derived_spo_open_clauses,
     project_customer_label,
 )
@@ -493,6 +494,11 @@ _COLUMNS = (
     OrderInquiryRow.verb.label("verb"),
     OrderInquiryRow.note.label("note"),
     OrderInquiryRow.cited_document.label("cited_document"),
+    # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the last of the three fields
+    # `ProjectOrderInquiryService._cited_documents` reads, so `_attach_link_
+    # suggestions` can call that SAME reader on the row it already holds rather than
+    # re-deriving what "cited" means a second time.
+    OrderInquiryRow.spo_ref.label("spo_ref"),
     # PLAN-scm-supplied-with-companions.md S5.
     OrderInquiryRow.bundled_qty.label("bundled_qty"),
     OrderInquiryRow.bundled_with_row_id.label("bundled_with_row_id"),
@@ -1182,14 +1188,36 @@ class OrderInquiryWorklistService:
         open need (never a row on the SAME SO line), delivery date ascending then open
         need descending - the first candidate is the suggested target (ruling 17 Sep:
         list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
-        on a received link or one still inside the window.
+        on a received link, one still inside the window, or one of the two S3
+        exemptions below.
 
-        ONE grouped query for the whole page's candidates (AC-RL-23), never one per
-        link: every triggered link's product is collected first, and `_repoint_
-        candidates_by_product` answers all of them together.
+        S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
+        automatic pass was TOLD to honour regardless of the window earns no pill
+        either - a link THIS row's own SO claims live, or one whose document the row
+        cites (`ProjectOrderInquiryService._cited_documents`, the same reader the walk
+        uses). Flagging what the pass was just instructed to keep is the same noise the
+        owner complained about ("kinda redundant"), one door over; it holds for a
+        HAND-placed link exactly as for an automatic one (AC-EA-14/15) - the exemption
+        is the evidence, not who pressed the button.
+
+        Review round 2 (F1): "claims live" is read through the WALK's own claim reader
+        (`ProjectOrderInquiryService._prime_claims` / `_dedication_for_target`), not a
+        second predicate - a first cut here filtered `scm.order_link_claim.resolved_at
+        IS NOT NULL`, which is neither necessary (the walk links an unresolved but live
+        claim regardless, AC-EA-17) nor sufficient (the walk refuses a RESOLVED claim
+        whose sales-order line has since SETTLED, AC-EA-16 - `resolved_at` says the
+        pairing was found, not that the order still wants it). One reader, never a
+        second spelling of "this row's own SO claims it".
+
+        ONE grouped query for the whole page's candidates (AC-RL-23), and ONE priming
+        read for the page's triggered claims (S3/F1, `_prime_claims`) - never one per
+        link: every triggered link's product, and every triggered link's target, is
+        collected first.
         """
         delivery_by_row = {row.id: row.delivery_date for row in rows}
         so_line_by_row = {row.id: row.so_line_id for row in rows}
+        so_number_by_row = {row.id: row.so_number for row in rows}
+        row_by_id = {row.id: row for row in rows}
         product_ids = {pid for pid in product_by_row.values() if pid}
         lead_times = (
             ProjectSupplyService(self.db).lead_times(product_ids) if product_ids else {}
@@ -1209,10 +1237,32 @@ class OrderInquiryWorklistService:
                 lead_days = lead_times.get(product_id)
                 if lead_days is None:
                     lead_days = DEFAULT_LEAD_TIME_DAYS
-                if expected_date > delivery_date - timedelta(days=lead_days):
+                if not arrives_outside_window(expected_date, delivery_date, lead_days):
                     continue
                 triggered.append((row_id, link, product_id))
 
+        if not triggered:
+            return
+
+        target_ids = {
+            link.get("po_line_id") or link.get("spo_allocation_id")
+            for _row_id, link, _product_id in triggered
+            if link.get("po_line_id") or link.get("spo_allocation_id")
+        }
+        inquiry_service = ProjectOrderInquiryService(self.db)
+        # F1: the walk's OWN claim cache, primed for the page's triggered targets - not
+        # a second query with a second predicate.
+        inquiry_service._prime_claims(list(target_ids))
+        triggered = [
+            (row_id, link, product_id)
+            for row_id, link, product_id in triggered
+            if not self._exempt_from_window(
+                link,
+                row=row_by_id.get(row_id),
+                own_so_number=so_number_by_row.get(row_id),
+                inquiry_service=inquiry_service,
+            )
+        ]
         if not triggered:
             return
         candidates_by_product = self._repoint_candidates_by_product(
@@ -1245,6 +1295,46 @@ class OrderInquiryWorklistService:
                 }
             else:
                 link["suggestion"] = {"kind": "unlink"}
+
+    @staticmethod
+    def _exempt_from_window(
+        link: Dict[str, Any],
+        *,
+        row: Optional[Any],
+        own_so_number: Optional[str],
+        inquiry_service: ProjectOrderInquiryService,
+    ) -> bool:
+        """S3's two exemptions - the SAME two `auto_place_for_products` reads (S2): a
+        target THIS row's own SO still claims LIVE, or a document the row cites. Either
+        is a person's or the book's word, and the window does not overrule it, on the
+        pass or on the pill.
+
+        F1 (review round 2): "claims live" is `_dedication_for_target`'s own `own_claim`
+        element (index 2 of its `(reserved, dedicated_to, own_claim)` return) - the
+        SAME reader `_candidates_for_row` builds `own_so_claim` from. That is a claim
+        whose SO LINE still has outstanding, never `resolved_at`: a claim written before
+        the purchase side is named is unresolved and still live (AC-EA-17); a resolved
+        claim whose sales order has since settled is no longer live (AC-EA-16). Caller
+        must have already primed `inquiry_service._prime_claims` for `target_id`, or
+        this falls back to priming it alone (`_claims_of`'s own guard).
+        """
+        target_id = link.get("po_line_id") or link.get("spo_allocation_id")
+        if target_id and own_so_number is not None:
+            _reserved, _dedicated_to, own_claim = inquiry_service._dedication_for_target(
+                target_id, own_so_number
+            )
+            if own_claim:
+                return True
+        document = str(link.get("document") or "").strip().upper()
+        if row is not None and document:
+            # F4: `row` is the worklist's OWN `_COLUMNS` tuple, not an
+            # `OrderInquiryRow` ORM instance - `_cited_documents` may read only the
+            # three fields `_COLUMNS` carries for it (`cited_document`, `note`,
+            # `spo_ref`). A fourth field added to that reader with no matching column
+            # here fails loudly (`AttributeError`), not silently; AC-EA-15 is the test
+            # that goes red first.
+            return document in inquiry_service._cited_documents(row)
+        return False
 
     def _repoint_candidates_by_product(
         self, product_ids: set

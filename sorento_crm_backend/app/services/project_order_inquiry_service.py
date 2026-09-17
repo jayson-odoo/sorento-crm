@@ -41,7 +41,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -109,6 +109,7 @@ from app.models.projects import (
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
 from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.pool_predicate import is_site_pool
 from app.services.scm.supply_assignment import (
     KIND_PO as SA_KIND_PO,
@@ -503,6 +504,22 @@ def _as_date(value: Any) -> Optional[date]:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
         return None
+
+
+def arrives_outside_window(
+    expected_date: Optional[date], delivery_date: Optional[date], lead_days: int
+) -> bool:
+    """True when a document's promised arrival is a full lead time (or more) BEFORE the
+    row's delivery date - the stock would sit for a whole buying cycle before this row
+    needs it, so a nearer row should have it. Either date missing -> False.
+
+    The ONE predicate both the worklist's reallocate/unlink pill
+    (`_attach_link_suggestions`) and the cascade (`auto_place_for_products`) read, so the
+    two can never drift apart by another route (`PLAN-oi-cascade-skip-early-arrival.md`).
+    """
+    if expected_date is None or delivery_date is None:
+        return False
+    return expected_date <= delivery_date - timedelta(days=lead_days)
 
 
 #: The location tiers a link candidate is ranked by (Q5, ruled 25 August 2026). NEVER a
@@ -3289,6 +3306,11 @@ class ProjectOrderInquiryService:
                 {
                     "id": link.id,
                     "kind": "spo" if is_spo else "po",
+                    # S3 (`PLAN-oi-cascade-skip-early-arrival.md`): the target itself,
+                    # so a reader deciding whether THIS row's own SO claims the line
+                    # (`scm.order_link_claim`) can ask without a second query per link.
+                    "po_line_id": link.po_line_id,
+                    "spo_allocation_id": link.spo_allocation_id,
                     # The link's own copy first: the document it was made against, even
                     # when the line it named has since been deleted out from under it.
                     "document": link.document or spo_number or po_number,
@@ -5324,6 +5346,10 @@ class ProjectOrderInquiryService:
             "unit_cost": unit_cost,
             "currency": currency,
             "cited": is_cited,
+            # The G7 fact itself, not just its fold into `cascadable` above - S2
+            # (`PLAN-oi-cascade-skip-early-arrival.md`) reads this to let an early
+            # candidate through the lead-time window when THIS row's own SO claims it.
+            "own_so_claim": own_so_claim,
             # G7's dedication label: the SO another claim names, when this row's own SO
             # is not the one holding it. None on the ordinary, unclaimed line.
             "dedicated_to": dedicated_to,
@@ -5393,13 +5419,51 @@ class ProjectOrderInquiryService:
                 still -= take
         return takes
 
+    @staticmethod
+    def _within_window(
+        row: OrderInquiryRow, candidates: Sequence[Dict[str, Any]], lead_days: int
+    ) -> List[Dict[str, Any]]:
+        """The candidates this row may be linked to AUTOMATICALLY
+        (`PLAN-oi-cascade-skip-early-arrival.md` S2/S4) - the ONE filter both
+        `auto_place_for_products` and the Link dialog's own preview
+        (`po_candidates_for_row`) run, so the walk and the dialog never disagree about
+        which candidate the pass would take.
+
+        A candidate THIS row's own SO claims (`own_so_claim`), or one the row cites
+        (`cited`), is exempt regardless of when it arrives - a person or the book
+        outranks the window exactly as it already outranks every ordering rule in
+        `_candidate`'s own sort key. Everything else promised a full lead time (or
+        more) before `row.delivery_date` (`arrives_outside_window`) is REMOVED from
+        the list, not marked `cascadable=False` (F3, review round 2): `cascadable` is a
+        property of the LINE - who may take it at ALL, whichever row is asking - while
+        the window is a property of THIS ROW's own delivery date, so folding it into
+        `cascadable` would state a row-specific fact on a dict several rows' walks can
+        share. An early candidate simply stays OUT of the list this call returns; it is
+        still listed in the Link dialog (`po_candidates_for_row` runs this same filter
+        only for `recommended`/`default_take`, never to drop a row from what it shows).
+        """
+        return [
+            candidate
+            for candidate in candidates
+            if candidate.get("own_so_claim")
+            or candidate.get("cited")
+            or not arrives_outside_window(
+                candidate.get("expected_date"), row.delivery_date, lead_days
+            )
+        ]
+
     def po_candidates_for_row(self, row_id: str) -> List[Dict[str, Any]]:
         """The candidate list the Link dialog shows, in the walk's own order.
 
         `remaining` already nets what every OTHER link claims on the same line, so `covers`
-        and `default_take` are answered against what is ACTUALLY left. `default_take` is
-        the cascade's own preview computed by the SAME walk `auto_place_for_products` runs,
-        which is what stops the dialog and the automatic pass being two opinions.
+        and `default_take` are answered against what is ACTUALLY left. `default_take` and
+        `recommended` are the cascade's own preview, computed by the SAME walk
+        `auto_place_for_products` runs and through the SAME lead-time window it refuses an
+        early candidate with (`_within_window`, S4, `PLAN-oi-cascade-skip-early-
+        arrival.md`) - which is what stops the dialog and the automatic pass being two
+        opinions. A candidate the window refuses stays LISTED, so a buyer may still take
+        it by hand, but reads `recommended = False` and `default_take = "0"`: the dialog
+        must never pre-recommend the very line the automatic pass just refused.
 
         The need is the row's UNLINKED remainder, not its whole quantity: a row already
         linked 5 of 8 opens the dialog looking for 3.
@@ -5415,9 +5479,17 @@ class ProjectOrderInquiryService:
             )
         need = self._unlinked_need(row)
         candidates = self._candidates_for_row(row)
+        # S4: the SAME lead-time source and default S2 reads, for this one product.
+        from app.services.project_supply_service import ProjectSupplyService
+
+        lead_days = ProjectSupplyService(self.db).lead_times({product_id}).get(product_id)
+        if lead_days is None:
+            lead_days = DEFAULT_LEAD_TIME_DAYS
+        within_window = self._within_window(row, candidates, lead_days)
+        within_window_ids = {candidate["target_id"] for candidate in within_window}
         cascade = {
             candidate["target_id"]: take
-            for candidate, take in self._cascade_take(candidates, need)
+            for candidate, take in self._cascade_take(within_window, need)
         }
         claims_by_line = self._linked_claims_by_target(candidates)
         out: List[Dict[str, Any]] = []
@@ -5463,7 +5535,19 @@ class ProjectOrderInquiryService:
                     "unattributed": candidate["unattributed"],
                 }
             )
-        recommended = next((entry for entry in out if entry["covers"]), None)
+        # S4: the first entry that BOTH covers the need AND survives the window - by the
+        # entry's OWN target id (`po_line_id` on a PO candidate, `spo_allocation_id` on
+        # an SPO one; `_candidate`'s `target_id` is whichever of the two is set), never
+        # positional pairing against `candidates`.
+        recommended = next(
+            (
+                entry
+                for entry in out
+                if (entry["po_line_id"] or entry["spo_allocation_id"]) in within_window_ids
+                and entry["covers"]
+            ),
+            None,
+        )
         if recommended is not None:
             recommended["recommended"] = True
         return out
@@ -6313,23 +6397,39 @@ class ProjectOrderInquiryService:
 
         rows = query.all()
         rows = self._rank_raised_rows(rows)
+        # `_resolve_product_id` costs one or two queries per row (review round 1 nit) -
+        # resolved ONCE here and read everywhere else this pass needs it (the netting
+        # prime below, S2's lead-time set, and the walk itself), rather than three times
+        # over a pass that names thousands.
+        product_id_by_row = {row.id: self._resolve_product_id(row) for row in rows}
         # LADDER V4 (section 1d): prime the availability reader ONCE, from every product
         # this pass will ask about. `_netting` rebuilds whenever it meets a product it has
         # not seen, so a loop that met them one at a time would rebuild per row - three
         # queries each, over a growing product list, on a pass that names thousands.
-        self._netting([self._resolve_product_id(row) for row in rows])
+        self._netting(list(product_id_by_row.values()))
         # Batched (S6): one grouped load for the WHOLE pass - "a pass that names
         # thousands" (the comment above) turned the old per-row `_links_of` +
         # `_only_cascade_links` pair into a doubled N+1 across every row it walked.
         # Only when there is a re-deal to measure; an ordinary pass never touches drafts.
         redeal_links = self._links_by_row([str(row.id) for row in rows]) if redeal_drafts else {}
+        # S2 (`PLAN-oi-cascade-skip-early-arrival.md`): the SAME two lead-time sources and
+        # the SAME default the worklist's reallocate/unlink pill reads
+        # (`order_inquiry_worklist_service._attach_link_suggestions`), fetched once for
+        # the whole pass rather than per row. `ProjectSupplyService` stays a LOCAL import,
+        # by the same convention as `_uncover_rejected_lines` above - not because of a
+        # cycle with this pass; `DEFAULT_LEAD_TIME_DAYS` has no such cycle and imports at
+        # module level.
+        from app.services.project_supply_service import ProjectSupplyService
+
+        pass_product_ids = {pid for pid in product_id_by_row.values() if pid}
+        lead_times = ProjectSupplyService(self.db).lead_times(pass_product_ids)
 
         placed_rows = 0
         allocation_count = 0
         after_horizon = 0
         products_touched: set = set()
         for row in rows:
-            product_id = self._resolve_product_id(row)
+            product_id = product_id_by_row.get(row.id)
             if not product_id:
                 continue
             # A DRAFT this pass may re-deal: its links come down only if the walk finds
@@ -6352,6 +6452,16 @@ class ProjectOrderInquiryService:
                 after_horizon += 1
                 continue
             candidates = self._candidates_for_row(row, credit_own_links=bool(drafts))
+            if not candidates:
+                continue
+            # S2/S4 (`PLAN-oi-cascade-skip-early-arrival.md`): `_within_window` is the
+            # SAME filter the Link dialog's own preview runs (`po_candidates_for_row`),
+            # so the walk and the dialog stay one opinion about which candidate this
+            # row may take automatically.
+            lead_days = lead_times.get(product_id)
+            if lead_days is None:
+                lead_days = DEFAULT_LEAD_TIME_DAYS
+            candidates = self._within_window(row, candidates, lead_days)
             if not candidates:
                 continue
             takes = self._cascade_take(candidates, need)
