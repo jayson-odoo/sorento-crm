@@ -722,11 +722,20 @@ class ProjectOrderInquiryService:
                 if entry.get("origin") != "local"
             ) or bool(borrow_shortfalls)
             if not will_raise:
+                # R9 (review round 4, item 2): a local line still has to join
+                # settled_in_place even when the order mints no header at all - an
+                # all-local decision on an order with no prior header would otherwise
+                # return an empty list here, and the reaction pass (which never reaches
+                # the loop below) would raise a DELAY/ADVANCE row nobody local buys.
                 return {
                     "inquiry": None,
                     "created": 0,
                     "exceptions": [],
-                    "settled_in_place": [],
+                    "settled_in_place": [
+                        str(entry["line"].id)
+                        for entry in buy_lines
+                        if entry.get("origin") == "local"
+                    ],
                 }
             inquiry = self.ensure_inquiry(order, actor_user_id=actor_user_id)
         elif actor_user_id:
@@ -764,6 +773,14 @@ class ProjectOrderInquiryService:
             # harmless here, since a migrated row with no `supply_decision_id` reads to
             # that method as the amendment path and it never touches these rows anyway.
             if entry.get("origin") == "local":
+                if entry.get("carried"):
+                    # A carried local line is not a change at all - this confirmation
+                    # named OTHER lines, and R9 only retires a line CS actively
+                    # re-decided this revision (the same reason the ordinary supersede
+                    # path a few lines down gates ITS OWN handover on `not carried`).
+                    # Left exactly alone: the old S3 behaviour, for a line nobody asked
+                    # about this time.
+                    continue
                 local_line = entry["line"]
                 local_owned_verbs = (
                     (IV_ORDER, IV_ORDER_BACK)

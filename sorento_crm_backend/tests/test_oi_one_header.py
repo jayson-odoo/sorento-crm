@@ -81,7 +81,7 @@ from .test_order_inquiry_handshake import (
     api,
     world,
 )
-from .test_order_inquiry_worklist_raised_by import _decision
+from .test_order_inquiry_worklist_raised_by import _decision, _product
 from .test_order_inquiry_worklist import (
     LIST as WL_LIST,
     MARKER as WL_MARKER,
@@ -1541,3 +1541,148 @@ class TestLocalBuyNotPurchasingsJob:
         )
         assert demand_rows == [], "no DELAY/ADVANCE row for a local line"
         assert "DELAY" not in counts and "ADVANCE" not in counts
+
+    def test_all_local_decision_no_header_suppresses_delay_row_review_round_4(self, api):
+        """Review round 4 item 2: the `will_raise` early-return (no header exists yet)
+        must still return the local line ids in `settled_in_place`, or an all-local
+        decision on a brand-new order mints no inquiry but STILL leaves the reaction
+        pass free to raise a DELAY row for a line nobody is buying."""
+        _client, world = api
+        db = world.db
+        core_so = _core_so(db, world.company_id)
+        core_line = _core_line(
+            db, core_so, world.product, world.warehouse, qty_ordered="30",
+            required_date=WAS,
+        )
+        order = _project_so(
+            db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+        )
+        line = _project_line(
+            db, order, line_no=1, product=world.product, core_line=core_line
+        )
+        db.commit()
+
+        header_count_before = (
+            db.query(OrderInquiry)
+            .filter(OrderInquiry.project_sales_order_id == order.id)
+            .count()
+        )
+        assert header_count_before == 0, "fixture sanity: no header yet"
+
+        decision = _decision(
+            db, world.company_id, order,
+            revision_no=1, confirmed_by=world.cs_user, confirmed_at=datetime.utcnow(),
+        )
+        service = ProjectOrderInquiryService(db)
+        result = service.refresh_for_decision(
+            order, decision,
+            [
+                {
+                    "line": line,
+                    "buy_qty": Decimal("30"),
+                    "item_code": world.product.product_code,
+                    "required_date": date(2027, 1, 1),
+                    "line_no": 1,
+                    "origin": "local",
+                }
+            ],
+            actor_user_id=world.cs_user,
+        )
+        db.commit()
+
+        assert result["inquiry"] is None
+        assert result["created"] == 0
+        assert str(line.id) in result["settled_in_place"]
+        header_count_after = (
+            db.query(OrderInquiry)
+            .filter(OrderInquiry.project_sales_order_id == order.id)
+            .count()
+        )
+        assert header_count_after == 0, "no header minted for an all-local decision"
+
+        live_rows = [
+            SimpleNamespace(
+                kind="delayed",
+                project_line_id=str(line.id),
+                core_line_id=str(core_line.id),
+                item_code=world.product.product_code,
+                from_json={"required_date": WAS.isoformat()},
+                to_json={"required_date": "2027-01-01", "qty": "30"},
+                held_json={},
+            )
+        ]
+        demand_rows, counts = _oi_demand_rows(
+            db, live_rows, core_so.so_number, result["settled_in_place"]
+        )
+        assert demand_rows == [], "no DELAY/ADVANCE row for an all-local, header-less order"
+        assert "DELAY" not in counts and "ADVANCE" not in counts
+
+    def test_carried_local_line_keeps_its_raised_row_review_round_4(self, api):
+        """Review round 4 item 3: a CARRIED local line (present in `buy_lines` from an
+        earlier decision, not actively re-decided this revision) must keep its raised
+        row exactly as it is - R9 only retires a line CS actively re-decided this
+        revision, the same rule the ordinary supersede path's own carry logic already
+        follows (its handover is gated on `not carried`; R9's whole branch is, since it
+        raises no replacement row for a carried line to silently inherit)."""
+        _client, world = api
+        fixture = _raise_one_row(api, qty="176")
+        order = fixture["order"]
+        core_so = fixture["core_so"]
+        line_b = fixture["line"]
+        row_b = fixture["row"]
+        first_decision = (
+            world.db.query(SOSupplyDecision)
+            .filter(SOSupplyDecision.id == row_b.supply_decision_id)
+            .one()
+        )
+        row_b.supply_decision_id = None
+        world.db.flush()
+        row_b_id = row_b.id
+        row_b_state = row_b.state
+        row_b_note = row_b.note
+
+        product_a = _product(world.db, f"ZZT-R4I3-{_uid()[:6]}")
+        core_line_a = _core_line(
+            world.db, core_so, product_a, world.warehouse, qty_ordered="40",
+            required_date=WAS,
+        )
+        line_a = _project_line(
+            world.db, order, line_no=2, product=product_a, core_line=core_line_a
+        )
+        world.db.commit()
+
+        decision_two = _decision(
+            world.db, world.company_id, order,
+            revision_no=2, confirmed_by=world.cs_user,
+            confirmed_at=datetime.utcnow(), supersedes=first_decision,
+        )
+        service = ProjectOrderInquiryService(world.db)
+        service.refresh_for_decision(
+            order, decision_two,
+            [
+                {
+                    "line": line_a,
+                    "buy_qty": Decimal("40"),
+                    "item_code": product_a.product_code,
+                    "required_date": date(2027, 1, 1),
+                    "line_no": 2,
+                    "origin": "overseas",
+                },
+                {
+                    "line": line_b,
+                    "buy_qty": Decimal("176"),
+                    "item_code": world.product.product_code,
+                    "required_date": row_b.delivery_date,
+                    "line_no": 1,
+                    "origin": "local",
+                    "carried": True,
+                },
+            ],
+            actor_user_id=world.cs_user,
+        )
+        world.db.commit()
+
+        world.db.refresh(row_b)
+        assert row_b.id == row_b_id
+        assert row_b.state == row_b_state, "a carried local line's row must not be superseded"
+        assert row_b.note == row_b_note
