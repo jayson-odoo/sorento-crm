@@ -55,6 +55,9 @@ Owner decisions: 10 Sep 2026, four grill rounds. Branch `feat/local-supplier-oi-
 8. Backfill: name heuristic → `MY`, rest blank; owner runs on prod.
 9. A line raised on the OI before this lane whose product is now local is left alone on
    the next confirm (not re-raised, not cancelled). Purchasing closes it by hand.
+   **Superseded 17 Sep 2026 by R9, `PLAN-oi-worklist-one-header.md` S9**: the row is now
+   retired on that confirm (cancelled "Superseded by revision N"), not left for
+   purchasing to close by hand - a local buy must not sit on the worklist at all.
 10. Countries permissions are derived, not admin-only (Phase 3 fix round ruling):
     `.view` to every role holding `master_data.units_of_measure.view` OR
     `procurement.suppliers.view`; `.add`/`.edit`/`.delete` to every role holding
@@ -156,6 +159,11 @@ Frontend, copy of `master-data-management/units-of-measure/`:
   `origin == "local"` before the raise / diff pass: it is neither raised nor treated as
   dropped, so an earlier raised row on that line is left untouched (AC-2.17). The header
   is still minted lazily only when an overseas residual exists (existing rule).
+  **Superseded 17 Sep 2026 by R9, `PLAN-oi-worklist-one-header.md` S9**: the local-origin
+  branch now retires the line's still-raised rows ("Superseded by revision N") instead of
+  leaving them untouched, raises nothing fresh, and joins `settled_in_place`; guarded on
+  `not carried`, so a carried local line (never actively re-decided this revision) is
+  still left exactly alone. AC-2.17 above is rewritten to this expectation.
 - Confirm result: the Buy count and the summary cards count local Buys as Buy (no change).
 - FE pill: `FulfilmentBoardListView.tsx` `suggested` (243-291) and `decided` (292-340)
   cells append `<Badge variant="secondary">Local</Badge>` when `contribution.buy_origin
@@ -239,7 +247,9 @@ beyond a copied CRUD page and a table swap; recorded here per the skill.
   retired China code stays overseas. Correct.
 - `refresh_for_decision` skip must run before the "absent line = dropped" pass or a local
   line's old row gets cancelled (measured: that pass exists, see `project_supply_service.py
-  :5620-5623` comment). AC-2.17 guards it.
+  :5620-5623` comment). AC-2.17 guards it. **Superseded 17 Sep 2026 by R9**: the row now
+  IS meant to be cancelled on a local line's own confirm, deliberately, at the same seam -
+  see the S3 note above.
 
 ## After deploy (owner)
 
@@ -272,7 +282,7 @@ Backend, pytest on Postgres via `tests/_pg_fixture.py`, every fixture seeded by 
 - AC-2.14 `tests/scm/test_confirm_local_buy_no_oi.py::test_board_and_supply_carry_buy_origin` - board contribution and `/supply` line carry `buy_origin`; a counter on the origin query proves one call per request.
 - AC-2.15 `test_confirm_local_buy_no_oi.py::test_local_buy_records_decision_no_oi_row` - confirm Buy on a local product: decision revision has the Buy, confirm result counts 1 buy, zero `order_inquiry_rows`, zero `order_inquiries`.
 - AC-2.16 `test_confirm_local_buy_no_oi.py::test_mixed_order_raises_only_overseas` - two lines, one local one overseas: exactly one row, one header, row belongs to the overseas line.
-- AC-2.17 `test_confirm_local_buy_no_oi.py::test_prior_raised_row_on_now_local_line_untouched` - seed a raised ORDER row for the line from an earlier revision, flip the product local, confirm again: the row's verb and state are unchanged and no new row exists.
+- AC-2.17 `test_confirm_local_buy_no_oi.py::test_prior_raised_row_on_now_local_line_is_superseded_AC_OH_90` - **superseded 17 Sep 2026 by R9, `PLAN-oi-worklist-one-header.md` S9**: seed a raised ORDER row for the line from an earlier revision, flip the product local, confirm again - the row is now cancelled ("Superseded by revision N") and no new row exists (was: verb/state unchanged, row left untouched).
 - AC-2.18 `test_confirm_local_buy_no_oi.py::test_carried_local_line_skipped` - confirm a different line on an order whose earlier decided line is local: the carried local line still raises nothing.
 - AC-2.19 `test_confirm_local_buy_no_oi.py::test_scm_demand_sees_no_local_buy` - after AC-2.15's confirm, the demand query for that product returns no project demand from that line.
 - AC-2.20 `tests/scm/test_borrow_candidate_location.py::test_candidate_carries_location_in_cell_shape` - board contribution `borrow_candidates[0].location` has the BoardCellLocation keys and its figures equal the Grid Location row for the same warehouse in the same request; `/supply` line likewise.

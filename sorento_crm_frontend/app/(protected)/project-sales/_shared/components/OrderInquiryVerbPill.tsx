@@ -82,7 +82,10 @@ export function OrderInquiryVerbPill({ verb }: { verb: string }) {
   );
 }
 
-const STATE_LABEL: Record<string, string> = {
+// Exported (AC-OH-61): the worklist's own State filter labels its options with these
+// SAME words, off `summary.by_state`'s keys - one map, so the pill on a row and the
+// option that filters to it never say the state two different ways.
+export const STATE_LABEL: Record<string, string> = {
   raised: 'Raised',
   actioned: 'Actioned',
   cancelled: 'Cancelled',
