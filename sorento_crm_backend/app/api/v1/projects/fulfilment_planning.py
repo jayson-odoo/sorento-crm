@@ -341,6 +341,7 @@ def get_planning_board(
             as_of=as_of,
             day_window_start=day_window,
             preview_policy=preview_policy,
+            actor_user_id=_user.get("id") if _user else None,
         )
         db.commit()
         return body

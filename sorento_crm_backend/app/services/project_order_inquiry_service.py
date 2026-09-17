@@ -2140,6 +2140,7 @@ class ProjectOrderInquiryService:
         revision_no: int,
         lines: List[Dict[str, Any]],
         actor_user_id: Optional[str],
+        headline: str = "UNDONE",
     ) -> None:
         """Queue one `order_inquiry_undone` email (`PLAN-board-undo-last-confirm.md`
         "The email"), fired post-commit by `_fire_pending_undo` - copied from
@@ -2151,6 +2152,11 @@ class ProjectOrderInquiryService:
         `lines` is built by the caller (`undo_last_confirm`) from the journal's OWN
         order inquiry row entries, read BEFORE replay deletes or overwrites them - by
         the time this method runs, those rows may already be gone.
+
+        `headline` (AC-R2-31h, S5): `project_supply_undo_reconstruct_service.
+        reconstruct_undo` is this method's OTHER caller and passes `"RECONSTRUCTED"`,
+        so the email purchasing gets says plainly that this is a best-effort restore
+        of a journal-less revision, not a journalled replay.
         """
         facts = self._handover_order_facts(pso_id) if pso_id else {}
         from app.services.automation_triggers import build_order_inquiry_link
@@ -2164,6 +2170,7 @@ class ProjectOrderInquiryService:
                 "project": facts.get("project"),
                 "revision_no": revision_no,
                 "lines": lines,
+                "headline": headline,
                 "link": build_order_inquiry_link(so_number),
                 "actor": self._handover_actor(actor_user_id),
                 #: Which savepoint this was earned under (C2, `_notify_purchasing`'s
@@ -7579,6 +7586,7 @@ def _build_undo_context(
             "project": item.get("project"),
             "revision_no": item.get("revision_no"),
             "lines": item.get("lines"),
+            "headline": item.get("headline"),
             "link": item.get("link"),
         },
         "actor": item.get("actor"),

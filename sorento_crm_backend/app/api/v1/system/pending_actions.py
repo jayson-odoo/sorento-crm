@@ -114,27 +114,98 @@ def _assert_required_payload(action_key: str, payload: dict) -> None:
             raise handle_validation_error(f"{key!r} is required for {action_key!r}.")
 
 
-def _assert_undo_not_refused(db: Session, action_key: str, entity_id: str) -> None:
-    """`project_sales_order.undo_confirm`'s own `linked`/`actioned` refusal,
-    checked at PARK time too (review round, follow-up), not only when the
-    countdown lapses several seconds later - a raw API call must get the same
-    synchronous 409 the disabled gear entry already implies. The commit-time
-    check inside `undo_last_confirm` stays: a link or an actioned row can still
-    land purchasing's way DURING the window, and that is caught there.
+def _assert_undo_not_refused(
+    db: Session,
+    action_key: str,
+    entity_id: str,
+    payload: Optional[dict] = None,
+    actor_id: Optional[str] = None,
+) -> None:
+    """`project_sales_order.undo_confirm`'s own refusals, checked at PARK time too
+    (review round, follow-up), not only when the countdown lapses several seconds
+    later - a raw API call must get the same synchronous 409/403 the disabled gear
+    entry already implies. The commit-time check inside `undo_last_confirm` /
+    `reconstruct_undo` stays: a link or an actioned row can still land purchasing's
+    way DURING the window, and that is caught there.
 
     The order is loaded under the requester's own company scope
     (`ProjectSupplyService.get_order`), so a foreign company's order 404s here
     exactly as it would at commit time, before anything is parked.
+
+    S5 (AC-R2-34/35, `PLAN-scm-oi-handover-r2-undo.md`): `payload["mode"]` names
+    which path this park is for - `"journal"` (the default, for an old caller that
+    never sends the key) or `"reconstructed"`. A `mode` that does not match the
+    order's active decision's own journal state refuses 409 `mode_mismatch` before
+    anything else is checked; `"reconstructed"` additionally refuses 403 unless the
+    requester's role is `superadmin`/`admin` (AC-R2-35) - hand-crafting the payload
+    past a gear entry the board never showed them gets no further than this.
     """
     if action_key != "project_sales_order.undo_confirm":
         return
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
     from app.services.project_supply_service import ProjectSupplyService
     from app.services.project_supply_undo_service import (
         _REFUSAL_MESSAGES,
+        _decision_is_journalled,
         refusal_for_order_with_detail,
     )
 
     order = ProjectSupplyService(db).get_order(entity_id)
+    mode = (payload or {}).get("mode") or "journal"
+
+    decision = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.state == DECISION_ACTIVE,
+        )
+        .first()
+    )
+    is_journalled = decision is not None and _decision_is_journalled(decision)
+
+    if mode == "reconstructed":
+        if is_journalled:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                message="This confirm carries a journal; use the journal undo.",
+                code="mode_mismatch",
+            )
+        if decision is None:
+            # Nothing active at all - `no_journal` is the execute-time answer,
+            # same as today; there is no decision here to gate by role against.
+            return
+        from app.services.user_service import UserPermissionService
+
+        role_slugs = (
+            UserPermissionService(db).get_user_role_slugs(actor_id) if actor_id else set()
+        )
+        if not (role_slugs & {"superadmin", "admin"}):
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message="Only an admin can run a reconstructed undo.",
+                code="FORBIDDEN",
+            )
+        from app.services.project_supply_undo_reconstruct_service import (
+            _REFUSAL_MESSAGES as _RECONSTRUCT_REFUSAL_MESSAGES,
+            reconstruct_refusal,
+        )
+
+        refusal = reconstruct_refusal(db, decision)
+        if refusal:
+            raise AppException(
+                status_code=status.HTTP_409_CONFLICT,
+                message=_RECONSTRUCT_REFUSAL_MESSAGES[refusal],
+                code=refusal,
+            )
+        return
+
+    # mode == "journal"
+    if decision is not None and not is_journalled:
+        raise AppException(
+            status_code=status.HTTP_409_CONFLICT,
+            message=_REFUSAL_MESSAGES["no_journal"],
+            code="no_journal",
+        )
     refusal, refusal_detail = refusal_for_order_with_detail(db, str(order.id))
     if refusal:
         message = _REFUSAL_MESSAGES[refusal]
@@ -276,7 +347,7 @@ async def create_pending_action(
     actor_id = (current_user or {}).get("id")
     _assert_permission(db, actor_id, action.permission)
     _assert_required_payload(body.action_key, body.payload)
-    _assert_undo_not_refused(db, body.action_key, body.entity_id)
+    _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
     try:
         service = FormActionService(db)

@@ -1681,11 +1681,50 @@ def _undo_confirm(db: Session, payload: dict):
     written during the countdown makes a DIFFERENT decision the newest by the time the
     window lapses, and `undo_last_confirm` refuses `superseded` rather than undoing the
     wrong revision (AC-UC-28).
+
+    `mode` (AC-R2-34, S5, `PLAN-scm-oi-handover-r2-undo.md`) routes to `reconstruct_
+    undo` instead when the gear entry was a reconstructed one - re-checked here
+    against the CURRENT active decision's own journal state (a park-time 409/403
+    already refused a mismatch or a non-admin caller; this is the same guard run
+    again at commit, the same belt-and-braces `undo_last_confirm`'s own `superseded`
+    check already is for the journal path).
     """
     from app.services.project_supply_service import ProjectSupplyService
-    from app.services.project_supply_undo_service import undo_last_confirm
+    from app.services.project_supply_undo_service import _decision_is_journalled, undo_last_confirm
 
     order = ProjectSupplyService(db).get_order(_entity_id(payload))
+    mode = payload.get("mode") or "journal"
+
+    if mode == "reconstructed":
+        from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+        from app.services.error_handler import AppException
+        from app.services.project_supply_undo_reconstruct_service import reconstruct_undo
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .first()
+        )
+        if decision is None or _decision_is_journalled(decision):
+            raise AppException(
+                status_code=409,
+                message="This confirm carries a journal; use the journal undo.",
+                code="mode_mismatch",
+            )
+        expected_decision_id = payload.get("decision_id")
+        if expected_decision_id and str(decision.id) != str(expected_decision_id):
+            raise AppException(
+                status_code=409,
+                message="A newer confirm has already replaced this one.",
+                code="superseded",
+            )
+        return reconstruct_undo(
+            db, order, decision, actor_user_id=payload.get("requested_by_id")
+        )
+
     return undo_last_confirm(
         db,
         order,

@@ -1190,7 +1190,10 @@ def _trimmed_journal_entries(db: Session, decision_ids: List[str]) -> Dict[str, 
 
 
 def board_undo_map(
-    db: Session, adopted_by_so: Dict[str, Optional[str]]
+    db: Session,
+    adopted_by_so: Dict[str, Optional[str]],
+    *,
+    actor_user_id: Optional[str] = None,
 ) -> Dict[str, Optional[Dict[str, Any]]]:
     """One `undo` per selected order, keyed the same way `adopted_by_so` is - by the
     CORE `sales_orders.id` - so `project_fulfilment_board_service.py` can read it
@@ -1206,12 +1209,23 @@ def board_undo_map(
     review round has Postgres extract exactly those three, via `jsonb_path_query_
     array`, rather than deserialising the whole journal into Python only to filter
     it there. `undo_last_confirm` still loads the full journal - it replays it.
+
+    S5 (AC-R2-30, `PLAN-scm-oi-handover-r2-undo.md`): an order whose ACTIVE decision
+    carries NO journal at all (a pre-lane revision, or one minted outside the board's
+    own confirm routes) gets a SECOND pass - a best-effort `reconstructed` entry,
+    ADMIN-GATED. `actor_user_id` is the requester; omitted (or a non-admin/
+    superadmin role), no journal-less order ever gets an `undo` here, same as one
+    with no active decision at all. No `_grouped_refusals` run for these: nothing
+    here has ever been "linked since the confirm" in the journal's own sense -
+    AC-R2-32's `linked`/`actioned` refusal is a PARK/EXECUTE-time check on the
+    reconstruct service itself, not a board-read one.
     """
     from app.models.user import User
 
+    out: Dict[str, Optional[Dict[str, Any]]] = {so_id: None for so_id in adopted_by_so}
     pso_ids = {pso_id for pso_id in adopted_by_so.values() if pso_id}
     if not pso_ids:
-        return {so_id: None for so_id in adopted_by_so}
+        return out
 
     scalar_rows = (
         db.query(
@@ -1228,44 +1242,85 @@ def board_undo_map(
         )
         .all()
     )
-    if not scalar_rows:
-        return {so_id: None for so_id in adopted_by_so}
+    if scalar_rows:
+        decision_ids = [row.id for row in scalar_rows]
+        trimmed_journal_by_id = _trimmed_journal_entries(db, decision_ids)
+        decision_stand_ins = [
+            _JournalStandIn(
+                id=row.id,
+                project_sales_order_id=row.project_sales_order_id,
+                confirmed_at=row.confirmed_at,
+                undo_journal=trimmed_journal_by_id.get(row.id, []),
+            )
+            for row in scalar_rows
+        ]
+        refusal_by_decision = _grouped_refusals(db, decision_stand_ins)
 
-    decision_ids = [row.id for row in scalar_rows]
-    trimmed_journal_by_id = _trimmed_journal_entries(db, decision_ids)
-    decision_stand_ins = [
-        _JournalStandIn(
-            id=row.id,
-            project_sales_order_id=row.project_sales_order_id,
-            confirmed_at=row.confirmed_at,
-            undo_journal=trimmed_journal_by_id.get(row.id, []),
-        )
-        for row in scalar_rows
-    ]
-    refusal_by_decision = _grouped_refusals(db, decision_stand_ins)
+        by_pso = {row.project_sales_order_id: row for row in scalar_rows}
+        user_ids = {row.confirmed_by for row in scalar_rows if row.confirmed_by}
+        names: Dict[str, str] = {}
+        if user_ids:
+            names = dict(db.query(User.id, User.name).filter(User.id.in_(user_ids)).all())
 
-    by_pso = {row.project_sales_order_id: row for row in scalar_rows}
-    user_ids = {row.confirmed_by for row in scalar_rows if row.confirmed_by}
-    names: Dict[str, str] = {}
-    if user_ids:
-        names = dict(db.query(User.id, User.name).filter(User.id.in_(user_ids)).all())
+        for so_id, pso_id in adopted_by_so.items():
+            row = by_pso.get(pso_id) if pso_id else None
+            if row is None:
+                continue
+            out[so_id] = {
+                "revision_no": row.revision_no,
+                "confirmed_at": row.confirmed_at,
+                "confirmed_by_name": names.get(row.confirmed_by),
+                "refusal": refusal_by_decision.get(row.id),
+                "decision_id": str(row.id),
+                "mode": "journal",
+            }
 
-    out: Dict[str, Optional[Dict[str, Any]]] = {}
-    for so_id, pso_id in adopted_by_so.items():
-        row = by_pso.get(pso_id) if pso_id else None
-        if row is None:
-            out[so_id] = None
-            continue
-        out[so_id] = {
-            "revision_no": row.revision_no,
-            "confirmed_at": row.confirmed_at,
-            "confirmed_by_name": names.get(row.confirmed_by),
-            "refusal": refusal_by_decision.get(row.id),
-            "decision_id": str(row.id),
-            # AC-R2-27: every entry this loop builds carries a real journal (the
-            # `_journalled_decision_clause()` filter above), so `mode` is always
-            # `journal` here. S5 adds a SECOND pass for journal-less decisions,
-            # admin-gated, which sets `reconstructed` instead.
-            "mode": "journal",
-        }
+    missing_pso_ids = {
+        pso_id
+        for so_id, pso_id in adopted_by_so.items()
+        if pso_id and out.get(so_id) is None
+    }
+    if missing_pso_ids and actor_user_id:
+        from app.services.user_service import UserPermissionService
+
+        role_slugs = UserPermissionService(db).get_user_role_slugs(actor_user_id)
+        if role_slugs & {"superadmin", "admin"}:
+            reconstructable_rows = (
+                db.query(
+                    SOSupplyDecision.id,
+                    SOSupplyDecision.project_sales_order_id,
+                    SOSupplyDecision.revision_no,
+                    SOSupplyDecision.confirmed_at,
+                    SOSupplyDecision.confirmed_by,
+                )
+                .filter(
+                    SOSupplyDecision.project_sales_order_id.in_(missing_pso_ids),
+                    SOSupplyDecision.state == DECISION_ACTIVE,
+                    SOSupplyDecision.confirmed_at.isnot(None),
+                    ~_journalled_decision_clause(),
+                )
+                .all()
+            )
+            if reconstructable_rows:
+                r_by_pso = {row.project_sales_order_id: row for row in reconstructable_rows}
+                r_user_ids = {
+                    row.confirmed_by for row in reconstructable_rows if row.confirmed_by
+                }
+                r_names: Dict[str, str] = {}
+                if r_user_ids:
+                    r_names = dict(
+                        db.query(User.id, User.name).filter(User.id.in_(r_user_ids)).all()
+                    )
+                for so_id, pso_id in adopted_by_so.items():
+                    row = r_by_pso.get(pso_id) if pso_id else None
+                    if row is None:
+                        continue
+                    out[so_id] = {
+                        "revision_no": row.revision_no,
+                        "confirmed_at": row.confirmed_at,
+                        "confirmed_by_name": r_names.get(row.confirmed_by),
+                        "refusal": None,
+                        "decision_id": str(row.id),
+                        "mode": "reconstructed",
+                    }
     return out
