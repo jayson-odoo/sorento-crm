@@ -478,12 +478,17 @@ class TestOneHeaderPerSO:
         """AC-OH-34: the data migration - loaded by path and exercised as `_fold`, the
         artifact that actually ships (Opus review round 1, S3: the migration must not
         import live service code) - moves a `planning_change_batch` header's rows onto
-        the order's null header, re-points a `ProjectTask` still naming the folded
-        header (reviewer S4), keeps link `row_id`s untouched, deletes the emptied
+        the order's null header, keeps link `row_id`s untouched, deletes the emptied
         header and its synthetic amendment, and leaves the null header's own
         `raised_by` alone since it already existed. Re-run a second time to prove
         idempotence (`sorento_oioh_ci`, real data verification is a separate pass on a
         copy - see the plan's own S3 section).
+
+        The survivor here (`null_header`, from `_raise_one_row`'s own real confirm)
+        already carries its OWN `ProjectTask` - review round 2 item 2: the batch
+        header's task must be DELETED, not re-pointed onto it, or the survivor would
+        carry two. The plain re-point path (survivor has no task of its own yet) is
+        `test_migration_repoints_task_when_target_has_none_review_round_2` below.
         """
         migration = _load_oioh_migration()
         _client, world = api
@@ -501,6 +506,20 @@ class TestOneHeaderPerSO:
         )
         original_raised_by = null_header.raised_by
         assert original_raised_by is not None, "fixture sanity: the null header must be raised by somebody"
+
+        survivor_task = (
+            db.query(ProjectTask)
+            .filter(
+                ProjectTask.linked_entity_type == TASK_LINK_ORDER_INQUIRY,
+                ProjectTask.linked_entity_id == null_header.id,
+            )
+            .one()
+        )
+        survivor_task_id = survivor_task.id
+        assert survivor_task_id is not None, (
+            "fixture sanity: _raise_one_row's own confirm must have handed off a task "
+            "for the survivor already"
+        )
 
         other_user = _user(db, "ZZT Other Confirmer")
         amendment = SOAmendment(
@@ -569,9 +588,10 @@ class TestOneHeaderPerSO:
         db.add(link)
         db.flush()
 
-        # Reviewer S4: a purchasing task `_hand_to_purchasing` raised off the batch
-        # header, before this migration ever runs - it must survive the fold pointing
-        # at the SURVIVING header, not a deleted id.
+        # Reviewer S4 / round 2 item 2: a purchasing task `_hand_to_purchasing` raised
+        # off the batch header itself, before this migration ever runs - since the
+        # SURVIVOR already carries its own (survivor_task, above), this one must be
+        # deleted rather than re-pointed, or the survivor would carry two.
         task = ProjectTask(
             id=_uid(),
             company_id=order.company_id,
@@ -614,26 +634,235 @@ class TestOneHeaderPerSO:
             "the null header already existed, so its own raised_by must not be overwritten"
         )
 
-        db.refresh(task)
-        assert str(task.linked_entity_id) == str(null_header.id), (
-            "a task still naming the folded header must be re-pointed at the survivor"
+        # Review round 2 item 2: the batch header's OWN task is deleted, since the
+        # survivor already had one of its own - never re-pointed onto a header that
+        # would then carry two.
+        assert db.query(ProjectTask).filter(ProjectTask.id == task_id).first() is None, (
+            "the folded header's own task must be deleted when the survivor already "
+            "has one, not re-pointed onto it"
         )
-        assert str(task.id) == str(task_id), "the task itself is not recreated, only re-pointed"
+        db.refresh(survivor_task)
+        assert str(survivor_task.id) == str(survivor_task_id), (
+            "the survivor's own pre-existing task is untouched - same row, not "
+            "recreated"
+        )
+        assert str(survivor_task.linked_entity_id) == str(null_header.id)
 
         # Idempotence (S3): re-run against the SAME connection - a second pass finds no
         # planning_change_batch header left and changes nothing.
         row1_inquiry_after_first = row1.order_inquiry_id
         row2_inquiry_after_first = row2.order_inquiry_id
-        task_target_after_first = task.linked_entity_id
+        survivor_task_target_after_first = survivor_task.linked_entity_id
         refolded = migration._fold(db.connection())
         db.commit()
         assert refolded == 0
         db.refresh(row1)
         db.refresh(row2)
-        db.refresh(task)
+        db.refresh(survivor_task)
         assert row1.order_inquiry_id == row1_inquiry_after_first
         assert row2.order_inquiry_id == row2_inquiry_after_first
-        assert task.linked_entity_id == task_target_after_first
+        assert survivor_task.linked_entity_id == survivor_task_target_after_first
+
+    def test_migration_repoints_task_when_target_has_none_review_round_2(self, api):
+        """Review round 2 item 2, the OTHER half: when the survivor does NOT already
+        carry a task of its own, the folded header's task IS re-pointed onto it -
+        never dropped just because the collision case (above) exists. Built off the
+        same fixture as the AC-OH-34 test, with the survivor's own confirm-raised task
+        removed first, to isolate this path from that one."""
+        migration = _load_oioh_migration()
+        _client, world = api
+        db = world.db
+        fixture = _raise_one_row(api, qty="40")
+        order = fixture["order"]
+        line = fixture["line"]
+        null_header = (
+            db.query(OrderInquiry)
+            .filter(
+                OrderInquiry.project_sales_order_id == order.id,
+                OrderInquiry.amendment_id.is_(None),
+            )
+            .one()
+        )
+        # Isolate the re-point path: the survivor must carry NO task of its own here.
+        db.query(ProjectTask).filter(
+            ProjectTask.linked_entity_type == TASK_LINK_ORDER_INQUIRY,
+            ProjectTask.linked_entity_id == null_header.id,
+        ).delete()
+        db.flush()
+
+        other_user = _user(db, "ZZT Repoint Confirmer")
+        amendment = SOAmendment(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            from_version_kind="planning_change_batch",
+            from_version_id=_uid(),
+            verb_summary={"DELAY": 1},
+            status=AMENDMENT_PUBLISHED,
+            published_at=datetime.utcnow(),
+        )
+        db.add(amendment)
+        db.flush()
+        batch_header = OrderInquiry(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            amendment_id=amendment.id,
+            state=INQUIRY_RAISED,
+            raised_by=other_user,
+        )
+        db.add(batch_header)
+        db.flush()
+        row = OrderInquiryRow(
+            id=_uid(),
+            company_id=order.company_id,
+            order_inquiry_id=batch_header.id,
+            so_line_id=line.id,
+            item_code=world.product.product_code,
+            qty=Decimal("20"),
+            delivery_date=date(2027, 1, 1),
+            verb=IV_DELAY,
+            state=INQUIRY_RAISED,
+            ack_state=ACK_ACKNOWLEDGED,
+            acknowledged_by=other_user,
+            acknowledged_at=datetime.utcnow(),
+        )
+        db.add(row)
+        db.flush()
+        task = ProjectTask(
+            id=_uid(),
+            company_id=order.company_id,
+            project_id=world.project.id,
+            name="Order inquiry ZZT-BATCH-REPOINT",
+            task_phase=TASK_PHASE_DELIVERY,
+            category="Purchasing",
+            linked_entity_type=TASK_LINK_ORDER_INQUIRY,
+            linked_entity_id=batch_header.id,
+        )
+        db.add(task)
+        db.flush()
+        db.commit()
+
+        task_id = task.id
+        folded = migration._fold(db.connection())
+        db.commit()
+        assert folded == 1
+
+        db.refresh(task)
+        assert str(task.id) == str(task_id), "the task itself is not recreated, only re-pointed"
+        assert str(task.linked_entity_id) == str(null_header.id), (
+            "with no task already on the survivor, the folded header's own task is "
+            "re-pointed rather than deleted"
+        )
+
+    def test_migration_mints_header_and_copies_its_fields_review_round_2(self, api):
+        """Review round 2 item 1: `_fold` on an order whose ONLY header is a
+        `planning_change_batch` one (no `amendment_id IS NULL` header at all - the
+        same fixture shape AC-OH-31 uses) mints one, copies `company_id`/`state`/
+        `raised_by`/`raised_at` off the batch header being folded, stamps its own
+        `inquiry_no`, moves the rows onto it, and folds exactly one."""
+        migration = _load_oioh_migration()
+        _client, world = api
+        db = world.db
+        core_so = _core_so(db, world.company_id)
+        core_line = _core_line(
+            db, core_so, world.product, world.warehouse, qty_ordered="30",
+            required_date=WAS,
+        )
+        order = _project_so(
+            db, world.project, so_id=core_so.id, autocount_doc_no=core_so.so_number
+        )
+        line = _project_line(
+            db, order, line_no=1, product=world.product, core_line=core_line
+        )
+        db.commit()
+
+        pre_existing = (
+            db.query(OrderInquiry)
+            .filter(OrderInquiry.project_sales_order_id == order.id)
+            .count()
+        )
+        assert pre_existing == 0, "fixture sanity: no header at all yet"
+
+        other_user = _user(db, "ZZT Mint Confirmer")
+        amendment = SOAmendment(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            from_version_kind="planning_change_batch",
+            from_version_id=_uid(),
+            verb_summary={"DELAY": 1},
+            status=AMENDMENT_PUBLISHED,
+            published_at=datetime.utcnow(),
+        )
+        db.add(amendment)
+        db.flush()
+        batch_header = OrderInquiry(
+            id=_uid(),
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            amendment_id=amendment.id,
+            state=INQUIRY_RAISED,
+            raised_by=other_user,
+        )
+        db.add(batch_header)
+        db.flush()
+        db.refresh(batch_header)
+        row = OrderInquiryRow(
+            id=_uid(),
+            company_id=order.company_id,
+            order_inquiry_id=batch_header.id,
+            so_line_id=line.id,
+            item_code=world.product.product_code,
+            qty=Decimal("30"),
+            delivery_date=date(2027, 1, 1),
+            verb=IV_DELAY,
+            state=INQUIRY_RAISED,
+            ack_state=ACK_ACKNOWLEDGED,
+            acknowledged_by=other_user,
+            acknowledged_at=datetime.utcnow(),
+        )
+        db.add(row)
+        db.flush()
+        db.commit()
+
+        original_state = batch_header.state
+        original_raised_by = batch_header.raised_by
+        original_raised_at = batch_header.raised_at
+        batch_header_id = batch_header.id
+        amendment_id = amendment.id
+        row_id_before = row.id
+
+        folded = migration._fold(db.connection())
+        db.commit()
+        assert folded == 1
+
+        minted = (
+            db.query(OrderInquiry)
+            .filter(
+                OrderInquiry.project_sales_order_id == order.id,
+                OrderInquiry.amendment_id.is_(None),
+            )
+            .one()
+        )
+        assert minted.inquiry_no is not None and minted.inquiry_no.startswith("OI-")
+        assert str(minted.raised_by) == str(original_raised_by)
+        assert minted.state == original_state
+        assert minted.raised_at == original_raised_at
+
+        header_count = (
+            db.query(OrderInquiry)
+            .filter(OrderInquiry.project_sales_order_id == order.id)
+            .count()
+        )
+        assert header_count == 1, "the batch header is gone, exactly one survivor remains"
+
+        db.refresh(row)
+        assert str(row.order_inquiry_id) == str(minted.id)
+        assert str(row.id) == str(row_id_before), "the row is moved, not recreated"
+
+        assert db.query(OrderInquiry).filter(OrderInquiry.id == batch_header_id).first() is None
+        assert db.query(SOAmendment).filter(SOAmendment.id == amendment_id).first() is None
 
     def test_one_task_and_one_notification_per_shared_header_AC_OH_35(self, api):
         """S1 (Opus review round 1, AC-OH-35): a batch that both confirms (raising an
