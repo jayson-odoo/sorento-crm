@@ -1,6 +1,6 @@
 # Order inquiries: one header per SO, hide cancelled, Was/Now after a redirect, cascade skips used rows, raised-by per row - acceptance criteria
 
-Status: contract
+Status: shipped (PR #992)
 Plan: `PLAN-oi-worklist-one-header.md`
 
 ## Journey
