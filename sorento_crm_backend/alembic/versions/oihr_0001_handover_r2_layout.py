@@ -31,7 +31,7 @@ automation.py`` byte for byte, not re-derived), so a rollback returns the exact 
 DB on that revision would show.
 
 Revision ID: oihr_0001_handover_r2_layout
-Revises: oioh_0001_one_header_per_so
+Revises: oicf_0001_board_rows_to_confirm
 Create Date: 2026-09-18
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ from alembic import op
 
 
 revision = "oihr_0001_handover_r2_layout"
-down_revision = "oioh_0001_one_header_per_so"
+down_revision = "oicf_0001_board_rows_to_confirm"
 branch_labels = None
 depends_on = None
 
