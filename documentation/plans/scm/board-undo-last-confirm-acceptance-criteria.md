@@ -1,6 +1,6 @@
 # UAC - Undo last confirm on the fulfilment planning board
 
-Plan: `PLAN-board-undo-last-confirm.md`. Status: PLANNED, 17 Sep 2026, owner aligned on the Lavish page. Backlog row BL-063.
+Plan: `PLAN-board-undo-last-confirm.md`. Status: PR #985 OPEN, 17 Sep 2026. Backlog row BL-063.
 
 ## Journey
 

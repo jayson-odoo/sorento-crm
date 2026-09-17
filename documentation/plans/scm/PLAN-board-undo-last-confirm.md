@@ -1,6 +1,6 @@
 # PLAN - Undo last confirm on the fulfilment planning board
 
-Status: BUILDING, 17 Sep 2026, owner aligned on the Lavish page (Q1 no rewind, Q2 restore); tickets #977 to #981; branch `feat/board-undo-last-confirm`. UAC: `board-undo-last-confirm-acceptance-criteria.md`. Backlog BL-063. Research: `research-board-confirm-write-set-17sep.md`.
+Status: PR #985 OPEN, 17 Sep 2026 (branch `feat/board-undo-last-confirm`, issues #977 to #981; reviewed twice, evidence committed, merged with main after #973 #975 #976; awaiting owner test on the :3080 lane stack and merge go). UAC: `board-undo-last-confirm-acceptance-criteria.md`. Backlog BL-063. Research: `research-board-confirm-write-set-17sep.md`.
 Domain: SCM, fulfilment planning / order inquiries. Branch: from `feat/oi-replan-received-links` (#973) until it merges, then re-based onto main.
 
 ## The problem, measured
