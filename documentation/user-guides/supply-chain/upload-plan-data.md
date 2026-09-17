@@ -95,7 +95,7 @@ Click **Filters** to open the popover: **Location**, **Agent**, **SO month**, **
 **Clear filters** resets every one of them. On a short screen the popover's own content scrolls,
 so every field stays reachable even when there isn't room to show them all at once.
 
-A cancelled row no longer shows on the list by default.
+A cancelled row no longer shows on the list by default. Filters > State = Cancelled shows them.
 
 **Raised by** names whoever raised that particular row - not simply whoever most recently pressed
 Confirm on the sales order. A row raised well before the order's last confirm still names its own
