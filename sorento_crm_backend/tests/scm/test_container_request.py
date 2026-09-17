@@ -35,6 +35,7 @@ from app.models.supplier_notice import SupplierNoticeLine
 from app.services.scm import supplier_notice_service
 from tests.scm.conftest import as_user, requires_pg, seed_user
 from tests.scm.test_container_request_universe import _place as place_on_po
+from tests.scm.test_container_request_universe import _place_spo as place_on_spo
 from tests.scm.test_container_request_universe import _project_need as project_need
 from tests.scm.test_loading_plan import World
 from tests.scm.test_outstanding_import_routes import as_company_user
@@ -603,12 +604,13 @@ def test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand(sc
     supply sides - this pins the known, accepted residue rather than a bug this test is
     blessing by accident (see `_stock_context`'s docstring for the record of it).
 
-    `_project_open_need` nets a project line's demand by what CS has already placed on a PO
-    (R15) - a fully placed line leaves NOTHING in `open_so_need` for it. The widened `on_hand`
-    does not ask what a bin's stock is FOR: once that placement lands as received stock in the
-    project's own bin, this screen counts it anyway. The stock is therefore counted with its
-    own matching demand already gone, and it nets instead against whatever OTHER (retail)
-    demand for the SAME product is still open.
+    AC-P8 (`PLAN-loading-plan-project-spo-only.md`, owner 18 Sep 2026): the placement that
+    nets a project line's demand to zero is an SPO, not a PO (R1) - a PO tells the supplier
+    what was bought, not what is coming to be shipped. The widened `on_hand` does not ask
+    what a bin's stock is FOR: once that placement lands as received stock in the project's
+    own bin, this screen counts it anyway. The stock is therefore counted with its own
+    matching demand already gone, and it nets instead against whatever OTHER (retail) demand
+    for the SAME product is still open.
     """
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
@@ -618,9 +620,10 @@ def test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand(sc
     # Retail demand, still fully open - the only thing this screen has left to ask for.
     _so(db, w, "A", 100, demand_class="retail")
 
-    # A project line CS has already placed IN FULL - `_project_open_need` nets it to zero.
+    # A project line CS has already placed IN FULL, on an SPO - `_project_open_need` nets
+    # only an SPO placement to zero (R1); a PO placement would leave it open.
     project_line = project_need(db, w, "A", 30)
-    place_on_po(db, w, project_line, 30)
+    place_on_spo(db, w, project_line, 30)
 
     # That placement has since landed: the stock sits in the project's own bin.
     group = _warehouse(db, segment="project")

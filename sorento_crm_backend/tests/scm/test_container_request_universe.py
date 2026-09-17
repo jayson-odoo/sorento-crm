@@ -113,20 +113,30 @@ def _project_need(db, w: World, key: str, qty: float, *, required=None) -> Sales
     return line
 
 
-def _place(db, w: World, line: SalesOrderLine, qty: float) -> None:
-    """CS puts `qty` of a project SO line on a purchase order - the netting R15 subtracts.
+def _place_chain(db, w: World, line: SalesOrderLine) -> OrderInquiryRow:
+    """The project mirror of a core line and the Order Inquiry row raised against it - the
+    chain BOTH `_place` and `_place_spo` attach their link to.
 
-    The whole chain, because that is the chain the netting walks: the project mirror of the
-    order (`projects.sales_orders` / `projects.sales_order_lines`, reconciled to the core line
-    by `core_sales_order_line_id`), the Order Inquiry row CS raised against that mirror line,
-    and the `projects.order_inquiry_links` row the placement wrote. A link is what says "this
-    requirement is already bought"; anything short of one leaves the line asking to be packed.
+    Split out so a single line can carry two placements, one of each kind (AC-P3: 30 on an
+    SPO, 70 on a PO) - the same line CS would split across two documents. Reused rather than
+    rebuilt on a second call for the SAME line: `projects.sales_order_lines` is unique on
+    `core_sales_order_line_id`, and a core order has at most one `projects.sales_orders` row
+    (`uq_projects_so_core_order`), so a second chain for a line already placed once would
+    violate both.
     """
-    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
-    from app.models.project_so import (
-        OrderInquiryLink,
-        ProjectSalesOrderLine,
+    from app.models.project_so import ProjectSalesOrderLine
+
+    existing = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.core_sales_order_line_id == line.id)
+        .first()
     )
+    if existing is not None:
+        return (
+            db.query(OrderInquiryRow)
+            .filter(OrderInquiryRow.so_line_id == existing.id)
+            .one()
+        )
 
     # The company the PRODUCT was stamped with, which is the caller's - not a constant.
     product = db.query(Product).filter(Product.id == line.product_id).one()
@@ -174,6 +184,23 @@ def _place(db, w: World, line: SalesOrderLine, qty: float) -> None:
     )
     db.add(row)
     db.flush()
+    return row
+
+
+def _place(db, w: World, line: SalesOrderLine, qty: float) -> None:
+    """CS puts `qty` of a project SO line on a purchase order.
+
+    R1 of `PLAN-loading-plan-project-spo-only.md` (owner, 18 Sep 2026): a PO tells the
+    supplier what was bought, not what is on its way to be shipped - so THIS placement no
+    longer nets the loading plan's Project column (see `_place_spo` for the one that does).
+    It still writes the same chain and the same kind of link `order_inquiry_links.po_line_id`
+    always has, because `demand.py` / `scm.committed_v` / the fulfilment board keep netting a
+    PO placement (R2) and this helper is shared with tests of those screens too.
+    """
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+    from app.models.project_so import OrderInquiryLink
+
+    row = _place_chain(db, w, line)
     po = PurchaseOrder(
         id=_uid(),
         po_number=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
@@ -196,10 +223,53 @@ def _place(db, w: World, line: SalesOrderLine, qty: float) -> None:
     db.add(
         OrderInquiryLink(
             id=_uid(),
-            company_id=company_id,
+            company_id=row.company_id,
             row_id=row.id,
             po_line_id=po_line.id,
             document=po.po_number,
+            qty=qty,
+        )
+    )
+    db.flush()
+
+
+def _place_spo(db, w: World, line: SalesOrderLine, qty: float) -> None:
+    """CS puts `qty` of a project SO line on a shipping order (SPO) - the ONLY placement the
+    loading plan's Project column nets (R1 of `PLAN-loading-plan-project-spo-only.md`, owner
+    18 Sep 2026). Same mirror chain as `_place`; the link targets a freshly allocated
+    `SPOAllocation` on an in-transit `InboundShipment` (`spo_allocation_id`, not
+    `po_line_id`) - the model in `test_container_request_drill.py`'s
+    `_open_spo_with_container`.
+    """
+    from app.models.procurement import InboundShipment, SPOAllocation
+    from app.models.project_so import OrderInquiryLink
+
+    row = _place_chain(db, w, line)
+    ship = InboundShipment(
+        id=_uid(),
+        shipment_number=f"{MARKER}-SH-{uuid.uuid4().hex[:8]}",
+        supplier_id=w.supplier.id,
+        shipment_date=date(2026, 1, 1),
+        shipment_status="in_transit",
+    )
+    db.add(ship)
+    db.flush()
+    spo = SPOAllocation(
+        id=_uid(),
+        spo_number=f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}",
+        inbound_shipment_id=ship.id,
+        product_id=line.product_id,
+        allocated_quantity=qty,
+    )
+    db.add(spo)
+    db.flush()
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=row.company_id,
+            row_id=row.id,
+            spo_allocation_id=spo.id,
+            document=spo.spo_number,
             qty=qty,
         )
     )
@@ -489,14 +559,31 @@ def test_an_open_project_sales_order_line_is_project_need():
         assert row["open_so_need"] == 25
 
 
-def test_a_partly_placed_project_line_counts_only_its_remainder():
-    # 30 of the 100 is already on a purchase order, so 70 is what is left to ask for. The
-    # netting is per LINE and per link quantity, never per row state.
+def test_a_po_placed_project_line_still_counts_in_full():
+    # AC-P1. R1 (owner, 18 Sep 2026): a PO tells the supplier what was bought, not what is on
+    # its way to be shipped, so a PO placement is not supply the loading plan may subtract -
+    # the line is still fully open demand.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
         line = _project_need(db, w, "A", 100)
-        _place(db, w, line, 30)
+        _place(db, w, line, 100)
+
+        row = _row(_build(db, w), w, "A")
+
+        assert row["project_qty"] == 100
+        assert row["open_so_need"] == 100
+
+
+def test_a_partly_placed_project_line_counts_only_its_remainder():
+    # AC-P4. 30 of the 100 is already on an SPO - the ONLY placement the loading plan nets
+    # (R1) - so 70 is what is left to ask for. The netting is per LINE and per link quantity,
+    # never per row state.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        line = _project_need(db, w, "A", 100)
+        _place_spo(db, w, line, 30)
 
         row = _row(_build(db, w), w, "A")
 
@@ -505,13 +592,113 @@ def test_a_partly_placed_project_line_counts_only_its_remainder():
 
 
 def test_a_fully_placed_project_line_counts_nothing():
+    # AC-P2. All 100 on an SPO leaves nothing to ask for, and with no other demand the
+    # product has no row at all.
     with pg_session() as db:
         w = World(db)
         _linked(db, w, "A")
         line = _project_need(db, w, "A", 100)
-        _place(db, w, line, 100)
+        _place_spo(db, w, line, 100)
 
         assert _build(db, w)["rows"] == []
+
+
+def test_a_line_split_between_an_spo_and_a_po_nets_only_the_spo_part():
+    # AC-P3. The same line carries both kinds of placement, the way CS can split one
+    # requirement across two documents - only the SPO's 30 reduces the ask; the PO's 70 does
+    # not, so 70 is still open.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        line = _project_need(db, w, "A", 100)
+        _place_spo(db, w, line, 30)
+        _place(db, w, line, 70)
+
+        row = _row(_build(db, w), w, "A")
+
+        assert row["project_qty"] == 70
+        assert row["open_so_need"] == 70
+
+
+def test_include_lines_lists_the_open_qty_and_the_spo_netted_balance():
+    # AC-P5. The popup lists a line at its FULL open qty (`open_qty`) beside the balance
+    # still to ship after SPO placements (`qty`), so the number that opened the dialog (the
+    # Project column, R3) and what is inside it still agree. A line whose SPO links reach its
+    # open qty in full has balance 0 and is not listed at all (AC-P2's case).
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+
+        split = _project_need(db, w, "A", 100)
+        _place_spo(db, w, split, 30)
+        _place(db, w, split, 70)
+        split_so = db.query(SalesOrder.so_number).filter(
+            SalesOrder.id == split.sales_order_id
+        ).scalar()
+
+        po_only = _project_need(db, w, "A", 100)
+        _place(db, w, po_only, 100)
+        po_only_so = db.query(SalesOrder.so_number).filter(
+            SalesOrder.id == po_only.sales_order_id
+        ).scalar()
+
+        fully_spo = _project_need(db, w, "A", 100)
+        _place_spo(db, w, fully_spo, 100)
+        fully_spo_so = db.query(SalesOrder.so_number).filter(
+            SalesOrder.id == fully_spo.sales_order_id
+        ).scalar()
+
+        out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
+        by_so = {ln["so_number"]: ln for ln in out["lines"]}
+
+        assert by_so[split_so]["open_qty"] == 100
+        assert by_so[split_so]["qty"] == 70
+        assert by_so[po_only_so]["open_qty"] == 100
+        assert by_so[po_only_so]["qty"] == 100
+        assert fully_spo_so not in by_so
+
+
+def test_the_invariant_holds_over_po_placed_spo_placed_unplaced_and_retail_lines():
+    # AC-P6. `sum(qty)` over the lines behind a product still foots to `open_so_need` with an
+    # SPO-placed line, a PO-placed one (no longer netted) and an unplaced one in the mix, and
+    # a retail line carries `open_qty == qty` - it has no placements to be netted by.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        _retail_need(db, w, "A", 40)
+        po_line = _project_need(db, w, "A", 100)
+        _place(db, w, po_line, 100)
+        spo_line = _project_need(db, w, "A", 50)
+        _place_spo(db, w, spo_line, 20)
+        _project_need(db, w, "A", 15)
+
+        out = svc.build(db, supplier_id=str(w.supplier.id), include_lines=True)
+
+        row = _row(out, w, "A")
+        product_lines = [ln for ln in out["lines"] if ln["product_id"] == row["product_id"]]
+        assert sum(ln["qty"] for ln in product_lines) == row["open_so_need"]
+        retail_line = next(ln for ln in product_lines if ln["demand_class"] == "retail")
+        assert retail_line["open_qty"] == retail_line["qty"]
+
+
+def test_the_horizon_excludes_a_po_placed_line_past_the_cutoff():
+    # AC-P7. A PO placement no longer nets the ask (R1), but the "Plan until" cutoff still
+    # applies to a project line exactly as it always did, PO-placed or not.
+    with pg_session() as db:
+        w = World(db)
+        _linked(db, w, "A")
+        late = _project_need(db, w, "A", 25, required=date(2027, 6, 1))
+        _place(db, w, late, 10)
+
+        out = svc.build(
+            db,
+            supplier_id=str(w.supplier.id),
+            plan_horizon_date=date(2026, 12, 31),
+            include_lines=True,
+        )
+
+        assert out["rows"] == []
+        assert out["lines"] == []
 
 
 def test_an_inquiry_row_with_no_sales_order_line_is_not_loading_plan_demand():

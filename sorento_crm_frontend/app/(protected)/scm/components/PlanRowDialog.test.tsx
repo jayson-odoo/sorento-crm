@@ -265,6 +265,7 @@ const LINES: PlanDemandLineRow[] = [
     project: 'Taman Sri Bayu Ph2',
     agent: 'SEAN',
     price: 318,
+    open_qty: 1200,
     qty: 1200,
     required_date: '2026-09-30',
   },
@@ -274,6 +275,7 @@ const LINES: PlanDemandLineRow[] = [
     project: 'Bandar Rimbayu',
     agent: 'LCL',
     price: 312,
+    open_qty: 900,
     qty: 900,
     required_date: '2026-10-15',
   },
@@ -294,6 +296,42 @@ describe('ProjectRetailTabs', () => {
     expect(screen.getByText('Taman Sri Bayu Ph2')).toBeTruthy();
     expect(screen.getByText('Total')).toBeTruthy();
     expect(screen.getByText('2,100')).toBeTruthy();
+  });
+
+  it('shows an Open column and a Balance column where Qty was, in that order, before Required, with no Qty header (AC-F1)', () => {
+    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    expect(headers).toEqual([
+      'Sales order',
+      'Customer',
+      'Project',
+      'Agent',
+      'Price',
+      'Open',
+      'Balance',
+      'Required',
+    ]);
+    expect(screen.queryByRole('columnheader', { name: 'Qty' })).toBeNull();
+  });
+
+  it('renders both the open figure and the balance figure on a partly SPO-placed line (AC-F3)', () => {
+    const split: PlanDemandLineRow[] = [{ ...LINES[0], open_qty: 234, qty: 134 }];
+    renderWithClient(<ProjectRetailTabs channel="project" lines={split} history={[]} />);
+
+    expect(screen.getByText('234')).toBeTruthy();
+    expect(screen.getByText('134')).toBeTruthy();
+  });
+
+  it('foots Balance to the tab total and leaves the Open footer blank (AC-F2)', () => {
+    renderWithClient(<ProjectRetailTabs channel="project" lines={LINES} history={HISTORY} />);
+
+    const footerRow = document.querySelector('tfoot tr') as HTMLElement;
+    const cells = within(footerRow).getAllByRole('cell');
+    // Sales order(0)=Total label, Customer(1), Project(2), Agent(3), Price(4), Open(5),
+    // Balance(6)=2,100, Required(7).
+    expect(cells[6].textContent).toBe('2,100');
+    expect(cells[5].textContent).toBe('');
   });
 
   it('names the cut-off in the open tab when a horizon is set (S3, AC-C1)', () => {
