@@ -848,44 +848,47 @@ def test_re_acknowledging_a_changed_row_returns_it_and_links_the_remainder(api):
 
 
 def test_a_supersede_of_an_acknowledged_row_raises_its_replacement_acknowledged(api):
-    """AC-H9, superseded by AC-1.2/G4: a reconfirm that cannot settle in place still owes
-    purchasing the fact that this line is one they had already taken on - `changed_at` is
-    stamped on the replacement - but there is no manual confirm left to wait on, so the
-    replacement is immediately acknowledged again rather than left sitting on `changed`.
-
-    Walked WITH a document in the book (review round 28 Aug): the purchase order lands
-    after the acknowledgement, so the row purchasing confirmed carries no link and IS
-    superseded, and the replacement is linked firmly onto the new order by the raise-time
-    cascade. Both halves matter - the handshake stamp AND the document - because the two
-    rules meet on this one press.
+    """AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2, captain ruling 18 Sep) replaces
+    the old supersede expectation this test pinned: a NAMED line at the SAME qty, its
+    only live row a plain `raised` ORDER row with no links, is now read as the SAME
+    instruction restated, not a fresh one - the widened settle-in-place gate keeps
+    the row's own id. Its acknowledgement travels untouched (no `changed_at` stamp,
+    since nothing about the row's own qty/date moved) - there is no supersede left
+    to record. The raise-time cascade still runs independently of that gate, so the
+    purchase order that landed after the acknowledgement still links onto THIS row
+    (state `placed`), not a fresh replacement's.
     """
     _client, world = api
     fixture = _raise_one_row(api)
     row = fixture["row"]
+    original_row_id = row.id
 
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
     world.db.commit()
+    stamped_by, stamped_at = row.acknowledged_by, row.acknowledged_at
 
     # The book gains a purchase order for the item AFTER purchasing took the line on.
     po, _line = _open_po_line(world, qty=50)
 
-    # A plain reconfirm of the same line: no settle-in-place seam, so the row is
-    # superseded and a fresh one is raised in its place.
+    # A plain reconfirm of the SAME line at the SAME qty (AC-R2-10's own shape).
     response = _confirm(
         _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="10")]
     )
     assert response.status_code == 200, response.text
     world.db.commit()
 
-    world.db.refresh(row)
-    assert row.state == INQUIRY_CANCELLED, "the old row was superseded"
-    replacement = _order_row(world, fixture["line"])
-    assert str(replacement.id) != str(row.id)
-    assert replacement.ack_state == ACK_ACKNOWLEDGED
-    assert replacement.changed_at is not None, "the supersede itself is still on record"
-    assert [link.document for link in _links_of(world, replacement)] == [po.po_number], (
-        "the replacement is linked firmly onto the document the raise could reach"
+    world.db.expire_all()
+    kept = _order_row(world, fixture["line"])
+    assert str(kept.id) == str(original_row_id), (
+        "AC-R2-10: the row keeps its own id, it is not superseded"
+    )
+    assert kept.ack_state == ACK_ACKNOWLEDGED
+    assert str(kept.acknowledged_by) == str(stamped_by)
+    assert kept.acknowledged_at == stamped_at
+    assert kept.changed_at is None, "nothing about the row's own qty/date moved"
+    assert [link.document for link in _links_of(world, kept)] == [po.po_number], (
+        "the raise-time cascade still links this row onto the document that landed"
     )
 
 
@@ -932,15 +935,16 @@ def _raise_two_rows(api, *, first_qty="10", second_qty="6"):
 
 
 def test_confirming_one_line_leaves_the_other_lines_acknowledgement_alone(api):
-    """B1 (review). Both rows are acknowledged; CS then re-confirms line 2 alone.
-
-    Line 2 is a change and reads as one. Line 1 was CARRIED - this confirmation said
-    nothing about it - so its row must come out the far side still Acknowledged, with the
-    same person and the same time on it. It did not: the carry cancels and re-raises the
-    row, and the re-raise read the acknowledgement off rows it had just cancelled and
-    promoted every one of them to `changed` - so every confirm of any other line of the
-    order told the buyer that a row they had read had moved, with no Was and no Now,
-    because nothing had.
+    """B1 (review), narrowed by AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2,
+    captain ruling 18 Sep). Both rows are acknowledged; CS then re-confirms line 2
+    alone, AT THE SAME qty its own row already carries - the widened settle-in-place
+    gate now reads that as the same instruction restated, not a change, so line 2's
+    own acknowledgement travels untouched too (no `changed_at` stamp - there is
+    nothing to say moved). The test's own subject stays line 1: CARRIED, this
+    confirmation said nothing about it, so its row must come out the far side still
+    Acknowledged, with the same person and the same time on it - the carry must
+    never read the acknowledgement off a row it has just cancelled and promote it to
+    `changed`, the defect this test was written against.
     """
     _client, world = api
     fixture = _raise_two_rows(api)
@@ -953,11 +957,17 @@ def test_confirming_one_line_leaves_the_other_lines_acknowledgement_alone(api):
     assert response.status_code == 200, response.text
     world.db.commit()
     world.db.refresh(first_row)
+    world.db.refresh(second_row)
     stamped_by, stamped_at = first_row.acknowledged_by, first_row.acknowledged_at
     assert stamped_by and stamped_at
+    second_stamped_by, second_stamped_at = (
+        second_row.acknowledged_by,
+        second_row.acknowledged_at,
+    )
+    assert second_stamped_by and second_stamped_at
 
-    # CS confirms line 2 again, and names nothing else. (The same quantity: what makes
-    # line 2 a change here is that this revision restates it, not the figure.)
+    # CS confirms line 2 again, naming nothing else, at the SAME qty its own row
+    # already carries (AC-R2-10's own shape).
     response = _confirm(
         _client, fixture["order"].id, [_line_payload(fixture["second"]["line"].id, buy_qty="6")]
     )
@@ -972,9 +982,17 @@ def test_confirming_one_line_leaves_the_other_lines_acknowledgement_alone(api):
     assert carried.acknowledged_at == stamped_at
     assert carried.changed_at is None
 
-    amended = _order_row(world, fixture["second"]["line"])
-    assert amended.ack_state == ACK_ACKNOWLEDGED, "auto-acknowledged rather than left changed"
-    assert amended.changed_at is not None, "the line that DID change still says so"
+    restated = _order_row(world, fixture["second"]["line"])
+    assert str(restated.id) == str(second_row.id), (
+        "AC-R2-10: the restated line keeps its own row id too"
+    )
+    assert restated.ack_state == ACK_ACKNOWLEDGED
+    assert str(restated.acknowledged_by) == str(second_stamped_by)
+    assert restated.acknowledged_at == second_stamped_at
+    assert restated.changed_at is None, (
+        "AC-R2-10: nothing about the row's own qty/date moved, so it is never "
+        "promoted to changed either"
+    )
 
 
 def test_a_carried_line_that_nobody_manually_acknowledged_keeps_its_born_stamp(api):

@@ -22,13 +22,11 @@ nothing is borrowed from an existing table.
 """
 from __future__ import annotations
 
-import importlib.util
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-import sqlalchemy as sa
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 from app.models.project_so import (
@@ -53,12 +51,7 @@ from app.models.stock_transfer import (
 )
 from app.services.error_handler import AppException
 
-from ._pg_fixture import blank_session
-from .test_board_undo_email import (
-    _load_undo_seed_migration,
-    _run_downgrade as _run_undo_downgrade,
-    _run_upgrade as _run_undo_upgrade,
-)
+from .test_board_undo_email import _load_undone_headline_migration
 from .test_so_supply_confirmation import (  # noqa: F401  (api is a fixture)
     BASE,
     _core_line,
@@ -398,6 +391,25 @@ def test_reconstruct_undo_step_g_writes_no_draft(api):
     assert after == 0
 
 
+def _undone_template_stand_in():
+    """The `oihr_0002_undone_headline` migration's OWN post-migration subject/body
+    constants, read straight off the loaded module rather than applied to the DB
+    (CI xdist fix, `--dist loadfile`): a different worker running `test_board_undo_
+    email.py` at the same wall-clock moment writes the SAME `email_templates` row
+    (`code='order_inquiry_undone_default'`), so this test must never touch it -
+    that migration's own idempotency/downgrade contract is pinned once, in
+    `test_board_undo_email.py`, next to the seed migration it extends. A
+    `SimpleNamespace` stands in for the `EmailTemplate` row: `EmailTemplateService.
+    render` only ever reads `.subject` / `.body_html` / `.body_text` off whatever it
+    is given."""
+    module = _load_undone_headline_migration()
+    return SimpleNamespace(
+        subject=module._SUBJECT,
+        body_html=module._BODY_HTML,
+        body_text=module._BODY_TEXT,
+    )
+
+
 def test_reconstruct_undo_step_h_sends_reconstructed_headline_email(api, monkeypatch):
     """(h) an `order_inquiry_undone` email is sent with headline `RECONSTRUCTED` and one
     line per row removed or restored."""
@@ -433,27 +445,14 @@ def test_reconstruct_undo_step_h_sends_reconstructed_headline_email(api, monkeyp
     assert undo_ctx.get("lines"), "one line per row removed or restored"
 
     # B3 (review round 1): the dispatched CONTEXT carrying `headline` is not enough -
-    # the SEEDED template itself must actually print the RECONSTRUCTED word somewhere,
-    # not silently drop it. Render the real `order_inquiry_undone_default` template
-    # (seeded into this same scratch schema) against the exact context this dispatch
-    # produced.
-    from app.models.email_template import EmailTemplate
+    # the migration's own body must actually print the RECONSTRUCTED word somewhere,
+    # not silently drop it. Rendered from the migration module's own constants (no
+    # DB write - see `_undone_template_stand_in`'s own docstring for why).
     from app.services.email_template_service import EmailTemplateService
 
-    undo_seed = _load_undo_seed_migration()
-    _run_undo_upgrade(undo_seed, db)
-    # The base undo_0002 seed alone never carries the RECONSTRUCTED distinction -
-    # the coder's own follow-up migration (`oihr_0002_undone_headline`) is what
-    # teaches the template the word, and it has to run too before this render
-    # means anything (review round 1 fix round: this step was missing it).
-    headline_migration = _load_undone_headline_migration()
-    _run_upgrade(headline_migration, db)
-    template = (
-        db.query(EmailTemplate)
-        .filter(EmailTemplate.code == "order_inquiry_undone_default")
-        .one()
+    rendered = EmailTemplateService(db).render(
+        _undone_template_stand_in(), matches[-1]["context"]
     )
-    rendered = EmailTemplateService(db).render(template, matches[-1]["context"])
     rendered_text = (
         (rendered.get("subject") or "")
         + (rendered.get("body_html") or "")
@@ -461,7 +460,7 @@ def test_reconstruct_undo_step_h_sends_reconstructed_headline_email(api, monkeyp
     )
     assert "RECONSTRUCTED" in rendered_text, (
         "B3: the RECONSTRUCTED headline must actually render somewhere in the "
-        "seeded template, not just sit in the dispatched context"
+        "migration's own template, not just sit in the dispatched context"
     )
 
 
@@ -469,7 +468,6 @@ def test_journal_undo_renders_without_the_reconstructed_word(api, monkeypatch):
     """B3 (review round 1): a JOURNAL undo's own email (headline the plain default,
     not RECONSTRUCTED) must never print the word - the template's own headline
     branch must be genuinely conditional, not a static insertion."""
-    from app.models.email_template import EmailTemplate
     from app.services.email_template_service import EmailTemplateService
     from app.services.project_order_inquiry_service import (
         register_order_inquiry_post_commit_dispatch,
@@ -509,20 +507,13 @@ def test_journal_undo_renders_without_the_reconstructed_word(api, monkeypatch):
     undo_ctx = matches[-1]["context"].get("undo") or {}
     assert undo_ctx.get("headline") != "RECONSTRUCTED"
 
-    undo_seed = _load_undo_seed_migration()
-    _run_undo_upgrade(undo_seed, db)
-    # Apply the headline migration TOO, or this render is only ever against the
-    # word-free r1 body and proves nothing about the migration's own conditional -
-    # the real guard is that the CONDITIONAL branch stays silent for a journal
-    # headline, not that the word is merely absent from an unrelated body.
-    headline_migration = _load_undone_headline_migration()
-    _run_upgrade(headline_migration, db)
-    template = (
-        db.query(EmailTemplate)
-        .filter(EmailTemplate.code == "order_inquiry_undone_default")
-        .one()
+    # Rendered against the migration's own POST-migration constants (headline
+    # branch present) - or this render is only ever against a word-free body and
+    # proves nothing about the branch's own conditional. No DB write - see
+    # `_undone_template_stand_in`'s own docstring.
+    rendered = EmailTemplateService(db).render(
+        _undone_template_stand_in(), matches[-1]["context"]
     )
-    rendered = EmailTemplateService(db).render(template, matches[-1]["context"])
     rendered_text = (
         (rendered.get("subject") or "")
         + (rendered.get("body_html") or "")
@@ -531,116 +522,6 @@ def test_journal_undo_renders_without_the_reconstructed_word(api, monkeypatch):
     assert "RECONSTRUCTED" not in rendered_text, (
         "B3: a journal undo must never print the word RECONSTRUCTED"
     )
-
-
-def _find_undone_headline_migration_path() -> Path | None:
-    """Locate the coder's migration that teaches the already-seeded
-    `order_inquiry_undone_default` template to print the RECONSTRUCTED headline
-    distinctly (B3, review round 1) - name not fixed at brief time
-    (`oihr_0002_undone_headline`, or `undo_0002` extended in place), found by its
-    own data contract instead, the same way `_find_r2_migration_path` in
-    `test_order_inquiry_handover_automation.py` is."""
-    versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    for path in versions_dir.glob("*.py"):
-        try:
-            text = path.read_text()
-        except OSError:
-            continue
-        if "order_inquiry_undone_default" in text and "RECONSTRUCTED" in text:
-            return path
-    return None
-
-
-def _load_undone_headline_migration():
-    path = _find_undone_headline_migration_path()
-    assert path is not None, (
-        "no alembic migration teaching order_inquiry_undone_default to print the "
-        "RECONSTRUCTED headline was found under alembic/versions/ - the coder must "
-        "add one (review round 1, B3, PLAN-scm-oi-handover-r2-undo.md S5, AC-R2-31h)."
-    )
-    spec = importlib.util.spec_from_file_location("zzt_undone_headline_migration", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _run_upgrade(module, db) -> None:
-    from alembic.migration import MigrationContext
-    from alembic.operations import Operations
-
-    ctx = MigrationContext.configure(db.connection())
-    with Operations.context(ctx):
-        module.upgrade()
-
-
-def _run_downgrade(module, db) -> None:
-    from alembic.migration import MigrationContext
-    from alembic.operations import Operations
-
-    ctx = MigrationContext.configure(db.connection())
-    with Operations.context(ctx):
-        module.downgrade()
-
-
-def test_undone_headline_migration_updates_template_idempotently_and_downgrades():
-    """B3 (review round 1): the migration that teaches `order_inquiry_undone_default`
-    the RECONSTRUCTED distinction updates the template IN PLACE, idempotently, and
-    downgrade restores the pre-headline body verbatim - the same contract
-    `test_r2_migration_updates_template_in_place_and_is_idempotent`
-    (`test_order_inquiry_handover_automation.py`) pins for the handover template."""
-    undo_seed = _load_undo_seed_migration()
-    headline_migration = _load_undone_headline_migration()
-
-    with blank_session() as db:
-        _run_undo_upgrade(undo_seed, db)
-        original_body = db.execute(
-            sa.text(
-                "SELECT body_html FROM email_templates WHERE code = "
-                "'order_inquiry_undone_default'"
-            )
-        ).scalar()
-        assert "RECONSTRUCTED" not in original_body, (
-            "sanity: the seeded undo_0002 body has no headline branch yet"
-        )
-
-        _run_upgrade(headline_migration, db)
-        row = db.execute(
-            sa.text(
-                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
-                "'order_inquiry_undone_default'"
-            )
-        ).mappings().one()
-        rendered_text = (row["subject"] or "") + (row["body_html"] or "") + (row["body_text"] or "")
-        assert "RECONSTRUCTED" in rendered_text, (
-            "the migration must teach the template the RECONSTRUCTED word somewhere"
-        )
-        count = db.execute(
-            sa.text(
-                "SELECT count(*) FROM email_templates WHERE code = "
-                "'order_inquiry_undone_default'"
-            )
-        ).scalar()
-        assert count == 1
-
-        # Idempotent re-run.
-        _run_upgrade(headline_migration, db)
-        row_again = db.execute(
-            sa.text(
-                "SELECT body_html FROM email_templates WHERE code = "
-                "'order_inquiry_undone_default'"
-            )
-        ).scalar()
-        assert row_again == row["body_html"]
-
-        # Downgrade restores the pre-headline body verbatim.
-        _run_downgrade(headline_migration, db)
-        restored = db.execute(
-            sa.text(
-                "SELECT body_html FROM email_templates WHERE code = "
-                "'order_inquiry_undone_default'"
-            )
-        ).scalar()
-        assert restored == original_body
 
 
 # --------------------------------------------------------------------------- #

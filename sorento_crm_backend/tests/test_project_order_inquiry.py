@@ -447,9 +447,12 @@ def test_publishing_a_sales_order_writes_no_core_sales_order(seeded):
 
 
 def test_deriving_twice_does_not_double_the_rows(seeded):
-    """AC-I1 / AC-D05 idempotency: a second confirmation must not tell purchasing to buy
-    it twice. The superseded row is CANCELLED rather than deleted, so the count of rows
-    grows and the count of ACTIVE ones does not - the old instruction stays auditable.
+    """AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2, captain ruling 18 Sep) replaces
+    the old cancel-and-re-raise idempotency story this test pinned: a second
+    confirmation naming the SAME line at the SAME qty and date - `_confirmed_inquiry`'s
+    own default, `buy=None`, resolves to each line's full quantity both times - settles
+    the row IN PLACE rather than cancelling it and raising a fresh one. There is one
+    row, not a still-cancelled historical copy sitting beside an active replacement.
     """
     db, company_id, owner = seeded
     project = _project(db, company_id, owner)
@@ -462,7 +465,9 @@ def test_deriving_twice_does_not_double_the_rows(seeded):
     assert first.id == second.id
     active = [row for row in _rows(db, first.id) if row.state != INQUIRY_CANCELLED]
     assert len(active) == 1
-    assert len(_rows(db, first.id)) == 2
+    assert len(_rows(db, first.id)) == 1, (
+        "AC-R2-10: the unchanged row is settled in place, not cancelled and re-raised"
+    )
     assert (
         db.query(OrderInquiry)
         .filter(OrderInquiry.project_sales_order_id == order.id)
@@ -628,7 +633,9 @@ def test_publishing_an_amendment_derives_its_delta_in_purchasing_verbs(seeded):
         (IV_CANCEL_BALANCE, Decimal("30.0000")),
     ]
     # A verb on its own is not actionable: the row says what it moved from.
-    assert rows[0].note == "Was 2026-07-01"
+    # AC-R2-07 (`PLAN-scm-oi-handover-r2-undo.md` S1): every date reaching the
+    # handover email, this note included, is dd/mm/yyyy, not the old ISO spelling.
+    assert rows[0].note == "Was 01/07/2026"
     assert rows[0].delivery_date == date(2027, 1, 7)
     assert rows[1].note == "Was 600, now 570"
 
