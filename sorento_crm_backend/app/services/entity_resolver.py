@@ -2798,6 +2798,18 @@ TRGM_LIMIT = 15
 # nothing and n8n says "no similar products with stock". Tunable - adjust on replay.
 SUGGEST_FLOOR = 0.40
 
+# `resolve()`'s own per-token `alternatives` floor (a token that matched NOTHING at
+# all, read by the ENTITY-miss path - `turn_runtime.unplaced_alternatives`, R-c, owner
+# hand pass 6, 17 Sep 2026) - its OWN constant rather than `SUGGEST_FLOOR` above,
+# because that one gates a DIFFERENT caller (the data-miss substitute-product helper)
+# with pinned test fixtures at similarities between the two floors
+# (`tests/test_suggest_neighbours.py::test_ac_n4_below_floor_neighbours_yield_empty`,
+# ~0.31); sharing one constant would have moved that caller's floor as a side effect of
+# tuning this one. Measured, not guessed: "srttwc286" -> SRTWC286-SH scored 0.62
+# (already above 0.40), "strwc286" -> SRTWC286-SH scored 0.33 - a real typo the old
+# 0.40 floor silently dropped.
+ENTITY_MISS_SUGGEST_FLOOR = 0.30
+
 # Entity types `_trgm_lookup` can probe. Used as the default scope for resolve
 # "did you mean" alternatives when the caller passed no entity-type whitelist.
 _ALL_TRGM_TYPES = frozenset({"product", "customer", "customer_order", "promotion", "transporter"})
@@ -5067,7 +5079,9 @@ def resolve_references(
             }
             if member_uuids:
                 hits = [h for h in hits if str(h.uuid) not in member_uuids]
-        tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
+        tr.alternatives = [
+            h for h in hits if (h.similarity or 0.0) >= ENTITY_MISS_SUGGEST_FLOOR
+        ][:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)
 

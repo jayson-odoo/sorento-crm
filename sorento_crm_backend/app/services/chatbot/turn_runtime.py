@@ -470,6 +470,32 @@ def unplaced_tokens(entities: list[Any], resolved: Any) -> dict[str, str]:
     return {key: raw for key, raw in named.items() if key in missed}
 
 
+def unplaced_alternatives(entities: list[Any], resolved: Any) -> dict[str, list[dict[str, Any]]]:
+    """The resolver's own trigram neighbours for each unplaced token (R-c, owner hand
+    pass 6, 17 Sep 2026).
+
+    `resolved.resolutions[*].alternatives` is the SAME best-effort fuzzy scan
+    `entity_resolver.resolve` already runs for every token that matched nothing
+    (`ENTITY_MISS_SUGGEST_FLOOR`) - never read past that point before today. Keyed the
+    same way `unplaced_tokens` is, so a caller can join the two on the same key.
+    """
+    named: dict[str, str] = {}
+    for entity in jsc.array(entities):
+        raw = jsc.nullish_str(jsc.get(entity, "raw")).strip()
+        key = _token_key(raw)
+        if key and key not in named:
+            named[key] = raw
+    out: dict[str, list[dict[str, Any]]] = {}
+    for resolution in jsc.array(jsc.get(resolved, "resolutions")):
+        key = _token_key(jsc.get(resolution, "token"))
+        if key not in named:
+            continue
+        alts = [a for a in jsc.array(jsc.get(resolution, "alternatives")) if isinstance(a, dict)]
+        if alts:
+            out[key] = alts
+    return out
+
+
 def _without_guesses(
     compatible: list[dict[str, Any]], resolved: Any, unplaced: dict[str, str]
 ) -> list[dict[str, Any]]:
@@ -531,15 +557,18 @@ def resolve_kinds(
     dict[str, list[dict[str, Any]]],
     dict[str, str],
     bool,
+    dict[str, list[dict[str, Any]]],
 ]:
     """Ask the resolver what each named token actually IS (AC-1527).
 
     Returns `({raw: {kind: hits}}, compatible_entities, predicate, candidates_by_kind,
-    unplaced_tokens, spec_tier)`, where `unplaced_tokens` is `{folded token: the word the
-    customer typed}` for every token this message named that the resolver could not
-    place, and `spec_tier` is `spec_tier_matched(resolved)` - which tier of the ONE
-    product ladder answered, and therefore whether this turn renders as a counted set or
-    as a list.
+    unplaced_tokens, spec_tier, unplaced_alternatives)`, where `unplaced_tokens` is
+    `{folded token: the word the customer typed}` for every token this message named
+    that the resolver could not place, `spec_tier` is `spec_tier_matched(resolved)` -
+    which tier of the ONE product ladder answered, and therefore whether this turn
+    renders as a counted set or as a list - and `unplaced_alternatives` is
+    `{folded token: the resolver's own trigram neighbours}` for the SAME unplaced
+    tokens (R-c, owner hand pass 6, 17 Sep 2026; `make_tool_runner` is the one reader).
     The resolver and its gate are
     the KEPT ones (`lanes/business/resolve_gate.py`); what is dropped is its picker half,
     which `turn/narrow.py` now decides from the policy instead.
@@ -564,7 +593,7 @@ def resolve_kinds(
 
     entities = (jsc.get(jsc.get(ctx, "parse"), "output") or {}).get("entities") or []
     if not entities:
-        return {}, [], None, {}, {}, False
+        return {}, [], None, {}, {}, False, {}
     services = business_services.production_services(db)
     try:
         payload = resolve_gate.run(
@@ -578,7 +607,7 @@ def resolve_kinds(
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)
-        return {}, [], None, {}, {}, False
+        return {}, [], None, {}, {}, False, {}
 
     resolved = payload.get("resolved")
     by_token: dict[str, dict[str, int]] = {}
@@ -595,6 +624,7 @@ def resolve_kinds(
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     compatible = [e for e in jsc.array(gate.get("compatible_entities")) if isinstance(e, dict)]
     unplaced = unplaced_tokens(entities, resolved)
+    unplaced_alts = unplaced_alternatives(entities, resolved)
     compatible = _without_guesses(compatible, resolved, unplaced)
     # The attribute-first `predicate` block (AC-1534): the resolver counted the set the
     # question described, and the count is what the answer's own header says. It rides
@@ -679,6 +709,7 @@ def resolve_kinds(
         candidates_by_kind(stamps_from, compatible, customer_bases, product_stamp),
         unplaced,
         spec_tier_matched(resolved),
+        unplaced_alts,
     )
 
 
@@ -912,6 +943,7 @@ def make_tool_runner(
     dry_run: bool,
     turn_trace: Any,
     counted_set: bool = False,
+    unplaced_alternatives: dict[str, list[dict[str, Any]]] | None = None,
 ) -> Callable[[str, FetchSpec], dict[str, Any]]:
     """The ONE seam that reaches a tool: `run_fetch` calls it once per `FetchSpec`.
 
@@ -923,6 +955,8 @@ def make_tool_runner(
     from app.services.chatbot.lanes import business
     from app.services.chatbot.lanes.business import fetch as business_fetch
     from app.services.chatbot.lanes.business import services as business_services
+
+    alts_by_token = unplaced_alternatives or {}
 
     def runner(domain: str, spec: FetchSpec) -> dict[str, Any]:
         page_predicate: dict[str, Any] | None = None
@@ -949,6 +983,13 @@ def make_tool_runner(
             if page_predicate is not None
             else _entities_for(spec, compatible_entities)
         )
+        if alts_by_token:
+            # R-c (owner hand pass 6, 17 Sep 2026): a token the resolver could not
+            # place at all, but whose trigram neighbours all name the SAME product, is
+            # corrected silently rather than fetched with no filter - done BEFORE the
+            # tool call so the one real call already runs scoped, no second call
+            # needed.
+            entities = _resolve_dominant_neighbours(entities, alts_by_token)
         gate: dict[str, Any] = {"compatible_entities": entities}
         block = page_predicate if page_predicate is not None else predicate
         if block is not None:
@@ -979,6 +1020,14 @@ def make_tool_runner(
             fragment = {
                 "fetch": {"has_result": False, "response": business_fetch.NO_RESULT_INTRO}
             }
+            # R-c's other half: several neighbours, no single dominant one (a lone
+            # neighbour was already substituted above, before the call, and never
+            # reaches here unfiltered) - offered as a roster instead of a flat miss.
+            # "srttwc286" only ever had the one, so this is the AMBIGUOUS case R-c
+            # also names.
+            ask = _alternatives_ask(entities, alts_by_token)
+            if ask is not None:
+                fragment["fetch"]["alternatives_ask"] = ask
         return envelope_of(
             fragment,
             spec,
@@ -1261,6 +1310,85 @@ def _code_of(entity: dict[str, Any]) -> str:
     return jsc.js_string(entity.get("code") or entity.get("canonical_code") or entity.get("raw")).strip().lower()
 
 
+def _hint_of(entity: dict[str, Any]) -> str:
+    """The KIND a row is, whichever of the two names it spells it under (`hint` on a
+    parser entity, `entity_type` on a resolver/compatible row) - the same split
+    `_code_of` reads three ways for the same reason."""
+    return jsc.js_string(entity.get("hint") or entity.get("entity_type")).strip().lower()
+
+
+def _distinct_alt_codes(alts: list[dict[str, Any]], hint: str) -> dict[str, dict[str, Any]]:
+    """`alts` narrowed to the entity's OWN kind, one row per distinct code (first/best
+    similarity wins - the resolver already sorts its hits best-first)."""
+    out: dict[str, dict[str, Any]] = {}
+    for a in alts:
+        if hint and jsc.js_string(jsc.get(a, "entity_type")).strip().lower() != hint:
+            continue
+        code = jsc.nullish_str(jsc.get(a, "canonical_code")).strip().casefold()
+        if code and code not in out:
+            out[code] = a
+    return out
+
+
+def _resolve_dominant_neighbours(
+    entities: list[dict[str, Any]], alts_by_token: dict[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """R-c (owner hand pass 6, 17 Sep 2026): an unplaced token whose trigram
+    neighbours all name ONE code is corrected to it silently - "srttwc286" ->
+    SRTWC286-SH, no question asked. Two or more distinct codes are left unplaced for
+    `_alternatives_ask` to offer as a roster instead; a one-option roster naming the
+    customer's own typo back is no choice at all (the same rule `narrow.decide`'s
+    `unplaced_never_offered` already applies at the narrowing seam).
+    """
+    out: list[dict[str, Any]] = []
+    for entity in entities:
+        alts = alts_by_token.get(_code_of(entity))
+        distinct = _distinct_alt_codes(alts, _hint_of(entity)) if alts else {}
+        if len(distinct) != 1:
+            out.append(entity)
+            continue
+        dominant = next(iter(distinct.values()))
+        out.append(
+            {
+                **entity,
+                "canonical_code": jsc.get(dominant, "canonical_code"),
+                "uuid": jsc.get(dominant, "uuid"),
+                "confident": True,
+            }
+        )
+    return out
+
+
+def _alternatives_ask(
+    entities: list[dict[str, Any]], alts_by_token: dict[str, list[dict[str, Any]]]
+) -> dict[str, Any] | None:
+    """A roster over the resolver's own trigram neighbours, for the FIRST unplaced
+    entity that has two or more of them (R-c). `envelope_of`'s `lane_ask` reads this
+    the same way it already reads `outstanding_ask` / `forms_ask` - one lane, one
+    question per turn.
+    """
+    for entity in entities:
+        alts = alts_by_token.get(_code_of(entity))
+        if not alts:
+            continue
+        hint = _hint_of(entity) or "product"
+        distinct = _distinct_alt_codes(alts, hint)
+        if len(distinct) <= 1:
+            # Zero or one - a lone neighbour was already substituted before the call
+            # (`_resolve_dominant_neighbours`) and never reaches here unfiltered.
+            continue
+        rows = [
+            {
+                "idx": i + 1,
+                "label": jsc.get(a, "canonical_code"),
+                "value": jsc.get(a, "uuid") or jsc.get(a, "canonical_code"),
+            }
+            for i, a in enumerate(distinct.values())
+        ]
+        return {"kind": f"{hint}_pick", "last_result_set": rows, "filters": {}}
+    return None
+
+
 def _answered_unfiltered(
     fragment: dict[str, Any], entities: list[dict[str, Any]], unplaced: dict[str, str]
 ) -> bool:
@@ -1486,8 +1614,15 @@ def envelope_of(
         # `forms_ask` (item 1, 17 Sep 2026) is the same shape, armed by
         # `output_structurer` off a forms BROWSE with several rows - the two never both
         # carry a value on the same envelope (one tool per spec), so reading either is
-        # safe.
-        "lane_ask": fetched.get("outstanding_ask") or fetched.get("forms_ask"),
+        # safe. `alternatives_ask` (R-c, hand pass 6) is the third: the fuzzy roster
+        # `make_tool_runner.runner` arms over an entity miss's own trigram neighbours,
+        # armed only when the fetch never ran filtered - the same "one tool per spec"
+        # rule keeps the three from ever colliding.
+        "lane_ask": (
+            fetched.get("outstanding_ask")
+            or fetched.get("forms_ask")
+            or fetched.get("alternatives_ask")
+        ),
         # AC-1139: this reply already states the scope it searched, in its own words
         # and its own order (the report's four header lines, and the same four above
         # the scope question). The composer's generic `*orders* for <code>:` line would

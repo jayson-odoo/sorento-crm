@@ -1432,6 +1432,7 @@ def _run_stages(  # noqa: PLR0915
         resolved_candidates: dict[str, list[dict[str, Any]]] = {}
         unplaced_tokens: dict[str, str] = {}
         spec_tier = False
+        unplaced_alternatives: dict[str, list[dict[str, Any]]] = {}
         if plan.fetch or plan.ask is not None:
             # The RESOLVER's own ctx: a roster has to list things that exist, with the
             # stamps the picker probe measures ("SRTWC286-SH-NEW-P - has incoming"), and
@@ -1465,6 +1466,7 @@ def _run_stages(  # noqa: PLR0915
                 resolved_candidates,
                 unplaced_tokens,
                 spec_tier,
+                unplaced_alternatives,
             ) = (
                 turn_runtime.resolve_kinds(
                     db,
@@ -1630,6 +1632,7 @@ def _run_stages(  # noqa: PLR0915
                     dry_run=dry_run,
                     turn_trace=turn_trace,
                     counted_set=spec_tier and bool(turn_runtime.class_scope_terms(verdict)),
+                    unplaced_alternatives=unplaced_alternatives,
                 ),
                 granted_reveals=access.get("attributes"),
                 access_levels=list(verdict.get("access_levels") or []),
