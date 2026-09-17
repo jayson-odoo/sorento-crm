@@ -129,7 +129,9 @@ visible: 220 with the (i) icon, 182 `used` and greyed, directly below).
 tables `public.zz_bak_so314593_*` left in place for anyone who wants to inspect or restore
 them; not touched on any other environment).
 
-## AC-OH-61 - DEFECT: no State filter exists in the Filters popover
+## AC-OH-61 - PASS (was FAIL; the coder shipped the State field, commit `9dc1424f9`)
+
+### First pass (superseded) - DEFECT: no State filter existed
 
 Procurement > Supply Chain > Order Inquiries > searched `314593` > opened Filters. Read the
 full field list off the DOM (`label` elements) with the popover open: Location, Agent, SO
@@ -137,25 +139,40 @@ month, PO number, SPO number, Linked, Confirmed, Supplier, Project, Raised by, R
 **No "State" field.** The "Confirmed" field (options: Confirmed/Changed/Rejected) is `ack_state`,
 not `state` - it has no Cancelled option. Grepped
 `OrderInquiriesClient.tsx` for `state`/`Cancelled`: zero matches wired to a filter control (only
-an unrelated `row.state !== 'cancelled'` guard on row selection). The backend already has the
+an unrelated `row.state !== 'cancelled'` guard on row selection). The backend already had the
 capability (`order_inquiry_worklist_service.py` accepts a `state` query param and computes
-`by_state[cancelled]` per AC-OH-51/52), but nothing in the FE reads or writes it.
-
-**Observed:** Filters popover has no way to select State = Cancelled.
-**Expected (AC-OH-61):** Filters > State = Cancelled lists the cancelled rows for the SO.
+`by_state[cancelled]` per AC-OH-51/52), but nothing in the FE read or wrote it.
 
 Screenshot: `AC-OH-61-DEFECT-filters-popover-no-state-field.png` (full field list visible with
-the popover open).
+the popover open, no State).
 
-**Verdict: FAIL.** Frontend piece of this AC is not implemented.
+Wrote the RED test-first contract for this in `OrderInquiriesClient.test.tsx`
+(`describe('AC-OH-61: ...')`, 3 tests: label + option labels/counts off `by_state`, selecting
+sends `state=` to the worklist call, a URL-seeded value round-trips and clearing drops the
+param). Committed as `test(scm): red vitest for the worklist State filter (AC-OH-61)`
+(`d8e3c9a9a`).
 
-Per captain instruction, wrote the RED test-first contract for this in
-`OrderInquiriesClient.test.tsx` (`describe('AC-OH-61: ...')`, 3 tests: label + option
-labels/counts off `by_state`, selecting sends `state=` to the worklist call, a URL-seeded
-value round-trips and clearing drops the param) - not implemented. All 3 fail for the right
-reason (`Unable to find an element with the text: State`, not a setup bug); the other 42
-tests in the file still pass. Committed as `test(scm): red vitest for the worklist State
-filter (AC-OH-61)` (`d8e3c9a9a`).
+### Second pass - the coder shipped it (`9dc1424f9`), vitest green, re-walked in the browser
+
+`npx vitest run OrderInquiriesClient.test.tsx -t "AC-OH-61"`: all 3 tests that were red now
+pass; the full file (45 tests) is green, no regressions.
+
+Browser walk (HMR on `:3080`, no restart): Procurement > Supply Chain > Order Inquiries >
+searched `314593` > opened Filters > scrolled the popover to the **State** field, right after
+Confirmed as the contract asked for - `AC-OH-61-filters-state-field-present.png`. Opened its
+dropdown: `Raised (6)`, `Partly linked (1)`, `Actioned (1)`, `Cancelled (5)`, `Linked (5)` -
+the same state labels `OrderInquiryStatePill`'s `STATE_LABEL` map uses elsewhere, each with
+the live count for this SO (`AC-OH-61-state-dropdown-options.png`). Picked **Cancelled (5)**:
+the list narrowed to exactly 5 rows (`1 - 5 of 5`), the `MAR 27` tab count dropped to `(5)`,
+`Filters 1` badge appeared, and `network requests` confirmed both
+`GET .../project-sales/order-inquiries?...&state=cancelled` and the summary call carrying
+`state=cancelled` (`AC-OH-61-state-cancelled-5-rows.png`). Cleared it via the field's own "x"
+(`Clear selection`): the URL's `state=cancelled` param disappeared, the list returned to
+`1 - 13 of 13` with the same 12/1 month-tab split as before filtering
+(`AC-OH-61-state-cleared-13-rows.png`). No console/network errors at any step.
+
+**Verdict: PASS.** Selecting State = Cancelled shows the cancelled rows for the SO; clearing
+it makes them vanish, exactly as the brief describes.
 
 ## AC-OH-70 - PASS (the popover scrolls; "last field" wording has drifted, not a defect)
 
@@ -178,6 +195,13 @@ last field. The scroll mechanism still reaches whatever the actual last field is
 is stale.
 
 **Verdict: PASS.** Flagging the stale field name as a docs nit, not a defect.
+
+**Re-verified after State shipped (`9dc1424f9`):** at 375px, opened Filters, scrolled the same
+`max-h-[60vh] overflow-y-auto` container - Agent through Confirmed visible first, scrolling
+further reveals **State** cleanly between Confirmed and Supplier with nothing clipped or
+overlapping the page underneath (`AC-OH-61-AC-OH-63-375-filters-state-visible.png`, also
+covering AC-OH-63's 375px requirement for this popover). The new field did not break the
+scroll contract.
 
 ## AC-OH-01 / AC-OH-62 - PASS
 
@@ -226,11 +250,11 @@ no unexpected console output beyond routine `[debug] JWT token extracted success
 | AC-OH-01 | PASS |
 | AC-OH-02 | PASS |
 | AC-OH-60 | PASS - walked end to end on the scratch copy after two captain-authorized data repairs (`#985` undo_journal fix; the 16 Sep decision removed and B2154-NL confirmed alone) |
-| AC-OH-61 | FAIL (no State filter in the FE); red vitest committed `d8e3c9a9a` for the coder |
+| AC-OH-61 | PASS - was FAIL (no State filter in the FE, red vitest `d8e3c9a9a`); coder shipped it (`9dc1424f9`), vitest green, re-walked State = Cancelled / clear in the browser |
 | AC-OH-62 | PASS |
 | AC-OH-63 | PASS |
-| AC-OH-70 | PASS (AC text names a stale field, not a defect) |
+| AC-OH-70 | PASS (AC text names a stale field, not a defect); re-verified with the new State field in place, still scrolls cleanly |
 
-Coder HEAD at end of walk: `e080f68c4` (review round 2, in progress - none of the commits
-seen during this walk touched the Filters popover, Columns menu, the undo-journal query, or
-the fulfilment-planning board's Amend/Confirm flow).
+Coder HEAD at end of walk: `342df5d2a` (`9dc1424f9` feat + its guide-note commit; none of the
+commits since touched the fulfilment-planning board's Amend/Confirm flow or the undo-journal
+query exercised in AC-OH-60).
