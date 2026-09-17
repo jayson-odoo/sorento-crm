@@ -928,16 +928,23 @@ class ProjectOrderInquiryService:
             # call. `_settle_row_in_place` itself still declines two live rows or a verb
             # mismatch (its own `live` filter, `len(live) != 1`), so AC-R2-12's two shapes
             # (two live rows, a verb switch) fall through unchanged to the supersede path
-            # below.
+            # below. `carried` is gated explicitly: a line riding along only because a
+            # DIFFERENT line of the same order was named is not a restatement of anything,
+            # so its still-raised row keeps the ordinary cancel-and-re-raise
+            # (`tests/scm/test_confirm_local_buy_no_oi.py`).
             target_verb = IV_ORDER_BACK if order_back else IV_ORDER
-            named_raised = [
-                row
-                for row in rows
-                if row.verb == target_verb
-                and row.state == INQUIRY_RAISED
-                and not row.redirected_to_pool
-                and not drafted_links.get(str(row.id))
-            ]
+            named_raised = (
+                []
+                if entry.get("carried")
+                else [
+                    row
+                    for row in rows
+                    if row.verb == target_verb
+                    and row.state == INQUIRY_RAISED
+                    and not row.redirected_to_pool
+                    and not drafted_links.get(str(row.id))
+                ]
+            )
             if not drafted and len(named_raised) == 1:
                 drafted = named_raised
             # S4/AC-OH-40..42: every row this LINE already carried `redirected_to_pool` on,
