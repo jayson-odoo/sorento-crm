@@ -27,13 +27,27 @@ Contract pinned here (Phase 1 contract doc, `boardUndoMock.ts`; PLAN "The design
 
     board order.undo: null | {"revision_no": int, "confirmed_at": iso,
                                "confirmed_by_name": str,
-                               "refusal": null | "manual_link" | "actioned"}
+                               "refusal": null | "linked" | "actioned"}
+
+Review round (amended after S1/S2/S3 landed - reviewer + security-reviewer finding): the
+refusal code `manual_link` is renamed `linked` and its predicate is no longer a raw
+`auto=False AND linked_at > confirmed_at` timestamp comparison - `confirmed_at` is a
+PYTHON `datetime.utcnow()` captured once near the top of `_write_decision`, while
+`linked_at` is POSTGRES `now()` resolved at the link row's own INSERT, later in the same
+request; the two clocks are not the same instant, so a step-3 borrow's own `auto=False`
+link written milliseconds later in the SAME transaction could read `linked_at >
+confirmed_at` too and be wrongly refused. `linked` instead asks whether the link's own id
+is in THIS confirm's own journal insert set for `projects.order_inquiry_links` - if the
+confirm itself wrote it, it is not purchasing acting after the fact, whatever the clocks
+say.
 """
 from __future__ import annotations
 
+import pytest
 from datetime import date, timedelta
 from decimal import Decimal
 
+from app.models.audit import AuditLog
 from app.models.project_so import (
     INQUIRY_PLACED,
     IV_ORDER,
@@ -42,7 +56,9 @@ from app.models.project_so import (
     SOSupplyDecision,
     SOSupplyDecisionDraft,
 )
+from app.models.projects import ProjectCollaborator
 from app.services import project_line_draft_service
+from app.services.error_handler import AppException
 
 from .test_so_supply_confirmation import (  # noqa: F401  (api is a fixture)
     BASE,
@@ -628,6 +644,150 @@ def test_the_board_names_the_undoable_revision_and_its_refusal(api):
     undo_2 = by_so[core_so_2.so_number]["undo"]
     assert undo_2 is not None
     assert undo_2["revision_no"] == 1
-    assert undo_2["refusal"] == "manual_link"
+    assert undo_2["refusal"] == "linked"
 
     assert by_so[core_so_3.so_number]["undo"] is None
+
+
+# --------------------------------------------------------------------------- review round: composite primary key (contract F)
+
+
+def test_the_journal_refuses_a_composite_primary_key_table(api):
+    """Contract F (review round): `UndoJournal` must raise at capture rather than
+    silently join a composite primary key into one joined string - replay's own
+    `_pk_column` reads only the FIRST primary key column, so a captured composite-pk
+    row would replay a delete/insert/update against the wrong half of its own identity.
+
+    `projects.collaborators` (`ProjectCollaborator`, primary key `(project_id,
+    user_id)`) is one of the nine join tables `Base.metadata` carries with more than
+    one primary key column.
+    """
+    from app.services.project_supply_undo_service import UndoJournal
+
+    client, world = api
+    db = world.db
+    collaborator = ProjectCollaborator(
+        project_id=world.project.id, user_id=world.eling, granted_by=world.eling,
+    )
+    with pytest.raises(Exception):
+        with UndoJournal(db):
+            db.add(collaborator)
+            db.flush()
+
+
+# --------------------------------------------------------------------------- review round: attaching a journal clears the superseded one (contract H)
+
+
+def test_attaching_a_journal_clears_the_superseded_decisions_journal(api):
+    """Contract H (review round): confirming a NEW revision nulls the SUPERSEDED
+    decision's own `undo_journal` immediately, at confirm time - not only when it is
+    later reinstated by an undo (R3/AC-UC-22 is the separate, undo-side guarantee). A
+    superseded revision's journal replaying against a book state revision 2 has
+    already changed underneath it is not a journal anybody may ever safely replay.
+    """
+    client, world = api
+    db = world.db
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    order = _project_so(db, world.project, so_id=core_so.id)
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert first.status_code == 200, first.text
+    decision1 = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    assert decision1.undo_journal, "revision 1 must carry its own journal once confirmed"
+    decision1_id = decision1.id
+
+    second = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert second.status_code == 200, second.text
+
+    db.expire_all()
+    decision1 = db.query(SOSupplyDecision).filter(SOSupplyDecision.id == decision1_id).one()
+    decision2 = (
+        db.query(SOSupplyDecision)
+        .filter(
+            SOSupplyDecision.project_sales_order_id == order.id,
+            SOSupplyDecision.revision_no == 2,
+        )
+        .one()
+    )
+    assert decision1.undo_journal is None, (
+        "the superseded decision's journal is cleared at confirm time, not only on undo"
+    )
+    assert decision2.undo_journal, "the new active decision carries its own journal"
+
+
+# --------------------------------------------------------------------------- review round: refused confirm leaves no journal and no flush error (contract J)
+
+
+def test_a_refused_confirm_leaves_no_journal_and_no_flush_error(api):
+    """Contract J (review round): `UndoJournal.__exit__` must not flush when the
+    wrapped block raised - the route wraps the WHOLE confirm call in `UndoJournal(db):`,
+    and a business-logic refusal leaves the session mid-transaction; flushing anyway in
+    `__exit__`'s own `finally` clause can itself raise and turn a clean 409 into a 500.
+
+    Precedent: `tests/test_so_supply_confirmation.py:630`
+    (`test_a_second_confirmation_racing_an_already_active_decision_gets_a_conflict_with_no_partial_writes`),
+    driven the same way - patch `active_decision` to answer `None` while a winner is
+    already committed, so the loser's insert collides with the real partial unique
+    index.
+    """
+    from app.services.project_supply_service import ProjectSupplyService
+
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.pool_wh, on_hand=50)
+    order = _project_so(db, world.project, so_id=None)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="50")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    winner = SOSupplyDecision(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling, confirmed_at=None,
+    )
+    db.add(winner)
+    db.commit()
+
+    original = ProjectSupplyService.active_decision
+    try:
+        ProjectSupplyService.active_decision = lambda self, pso_id: None
+        response = client.post(
+            f"{BASE}/sales-orders/{order.id}/confirm",
+            json={
+                "lines": [
+                    _line_payload(
+                        line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "50"}]
+                    )
+                ]
+            },
+        )
+    finally:
+        ProjectSupplyService.active_decision = original
+
+    assert response.status_code == 409, response.text
+
+    remaining = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .all()
+    )
+    assert len(remaining) == 1, "the loser must not have written a second decision"
+    assert remaining[0].id == winner.id
+    assert remaining[0].undo_journal is None, (
+        "the loser never got far enough to attach a journal to anything"
+    )

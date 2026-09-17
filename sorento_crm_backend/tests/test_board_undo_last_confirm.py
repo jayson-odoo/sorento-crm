@@ -522,20 +522,22 @@ def test_after_an_undo_the_reinstated_revision_is_not_undoable(api):
     assert exc_info.value.code == "no_journal"
 
 
-# --------------------------------------------------------------------------- AC-UC-23/24/25
+# --------------------------------------------------------------------------- AC-UC-23/24/25 (review round: refusal rebuilt on the journal insert set, not raw timestamps)
 
 
 @pytest.mark.parametrize(
     "arm",
-    ["manual_link_after", "actioned_after", "step3_link_inside"],
+    ["linked_after", "auto_link_after", "actioned_after"],
 )
-def test_purchasing_action_after_the_confirm_refuses_the_undo_but_the_confirms_own_link_does_not(
-    api, arm
-):
-    """AC-UC-23/24/25, one rule at one seam over three arms: a manual link or an actioned
-    row written AFTER the confirm refuses undo; the confirm's OWN step-3 borrow link,
-    written inside the same transaction (`linked_at` not later than `confirmed_at`), does
-    not."""
+def test_purchasing_action_after_the_confirm_refuses_the_undo(api, arm):
+    """AC-UC-23/24 rebuilt for the review round: refusal code renamed `manual_link` ->
+    `linked`, and the `auto` flag is now IRRELEVANT to it (contract A) - a link purchasing
+    places with `place_on_po` (which the auto cascade also uses under the hood in some
+    paths) still refuses undo if it lands after the confirm, whatever `auto` reads. Both
+    arms insert a link the confirm's OWN journal never named (so it is not in the
+    journal's own insert set for `projects.order_inquiry_links`), timestamped after the
+    confirm.
+    """
     from app.models.project_so import INQUIRY_ACTIONED
 
     fixture = _confirm_linked_world(api, second_buy_qty="15")
@@ -551,7 +553,7 @@ def test_purchasing_action_after_the_confirm_refuses_the_undo_but_the_confirms_o
 
     from app.services.project_supply_undo_service import undo_last_confirm
 
-    if arm == "manual_link_after":
+    if arm == "linked_after":
         po, po_line = _po_line(db, world, qty=15)
         db.add(
             OrderInquiryLink(
@@ -564,8 +566,22 @@ def test_purchasing_action_after_the_confirm_refuses_the_undo_but_the_confirms_o
         with pytest.raises(AppException) as exc_info:
             undo_last_confirm(db, order, actor_user_id=world.eling)
         assert exc_info.value.status_code == 409
-        assert exc_info.value.code == "manual_link"
-    elif arm == "actioned_after":
+        assert exc_info.value.code == "linked"
+    elif arm == "auto_link_after":
+        po, po_line = _po_line(db, world, qty=15)
+        db.add(
+            OrderInquiryLink(
+                id=_uid(), company_id=world.company_id, row_id=row.id, po_line_id=po_line.id,
+                document=po.po_number, qty=Decimal("5"), linked_by=world.eling, auto=True,
+                linked_at=decision2.confirmed_at + timedelta(minutes=1),
+            )
+        )
+        db.commit()
+        with pytest.raises(AppException) as exc_info:
+            undo_last_confirm(db, order, actor_user_id=world.eling)
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.code == "linked", "auto=True must not exempt a post-confirm link"
+    else:
         row.state = INQUIRY_ACTIONED
         row.actioned_at = decision2.confirmed_at + timedelta(minutes=1)
         db.commit()
@@ -573,19 +589,124 @@ def test_purchasing_action_after_the_confirm_refuses_the_undo_but_the_confirms_o
             undo_last_confirm(db, order, actor_user_id=world.eling)
         assert exc_info.value.status_code == 409
         assert exc_info.value.code == "actioned"
-    else:
-        po, po_line = _po_line(db, world, qty=15)
-        db.add(
-            OrderInquiryLink(
-                id=_uid(), company_id=world.company_id, row_id=row.id, po_line_id=po_line.id,
-                document=po.po_number, qty=Decimal("5"), linked_by=world.eling, auto=False,
-                linked_at=decision2.confirmed_at,
-            )
+
+
+def test_the_confirms_own_step3_borrow_link_does_not_refuse(api):
+    """AC-UC-25, rebuilt off a REAL confirm that places a step-3 supply borrow, per the
+    review round finding: the OLD `linked_at not later than confirmed_at` timestamp test
+    is wrong at its root - `confirmed_at` is a PYTHON `datetime.utcnow()` captured near
+    the top of `_write_decision`, `linked_at` is POSTGRES `now()` resolved at the link
+    row's own INSERT moments later in the SAME request, so a genuine step-3 link can read
+    `linked_at > confirmed_at` under the old test and be wrongly refused - exactly what a
+    fabricated, forced-equal timestamp could never catch. `linked` (contract A) instead
+    checks the link's own id against the journal's insert set for
+    `projects.order_inquiry_links`: the confirm's own transaction wrote this link, so its
+    id IS in that set, whatever either clock reads.
+
+    Seed shape from `tests/test_project_supply_borrow_row_ack.py:37`: `_raise_one_row` +
+    `_open_po_line` give a real open document; the SECOND confirm (the one whose journal
+    is read) borrows the line's own residual off that document by its own `supply_key`,
+    which `_place_supply_borrows` places for real via `place_on_po_allocations` inside
+    the confirm's own transaction.
+    """
+    from app.services.project_supply_undo_service import undo_last_confirm
+    from .test_order_inquiry_handshake import _open_po_line, _raise_one_row
+
+    # `test_order_inquiry_handshake.api`/`.world` are pytest fixtures registered under
+    # those exact names (same reasoning as the batch helper above): replicate their
+    # bodies directly rather than importing the fixtures, to avoid colliding with this
+    # file's own `api`.
+    from app.models.base import company_scope
+    from app.services import project_seed_service
+    from app.services.project_service import register_project
+
+    from .test_order_inquiry_handshake import (
+        MARKER as HS_MARKER,
+        _client as hs_client,
+        _pin_the_plan_horizon,
+        _product as hs_product,
+        _real_db_session,
+        _restore as hs_restore,
+        _sorento as hs_sorento,
+        _uid as hs_uid,
+        _user as hs_user,
+        _warehouse as hs_warehouse,
+        CS,
+    )
+    from .test_order_inquiry_handshake import _World as HSWorld
+
+    with _real_db_session() as db:
+        company_id = hs_sorento(db)
+        project_seed_service.run(db, company_id=company_id)
+        cs_user = hs_user(db, f"{HS_MARKER} Eling")
+        buyer = hs_user(db, f"{HS_MARKER} Joey")
+        project = register_project(
+            db, company_id=company_id, actor_user_id=cs_user, developer_party_id=None,
+            title=f"{HS_MARKER} Undo Step3 World {hs_uid()[:8]}",
         )
+        product = hs_product(db)
+        warehouse = hs_warehouse(db, f"ZZT-IB-{hs_uid()[:4]}")
+        hs_warehouse(db, f"ZZT-IB-SIB-{hs_uid()[:4]}", pool_warehouse_id=warehouse.id)
+        _pin_the_plan_horizon(db, company_id)
+        db.flush()
         db.commit()
-        before = _snapshot(db)
-        result = undo_last_confirm(db, order, actor_user_id=world.eling)
-        assert result["revision_no"] == decision2.revision_no
+        world = HSWorld(db, company_id, cs_user, buyer, project, product, warehouse, None)
+
+        client, originals = hs_client(db, cs_user, CS)
+        try:
+            with company_scope(db, frozenset({company_id})):
+                api_pair = (client, world)
+                fixture = _raise_one_row(api_pair, qty="10")
+                order = fixture["order"]
+                line = fixture["line"]
+                _po, po_line = _open_po_line(world, qty=10)
+
+                second = client.post(
+                    f"{BASE}/sales-orders/{order.id}/confirm",
+                    json={
+                        "lines": [
+                            {
+                                "project_line_id": str(line.id),
+                                "timely_spo_qty": "0",
+                                "reserve": [],
+                                "buy_qty": "0",
+                                "borrow": [
+                                    {
+                                        "source": "other_location",
+                                        "warehouse_id": str(warehouse.id),
+                                        "qty": "10",
+                                        "reason": "Step 3 supply borrow off an open PO.",
+                                        "supply_key": f"po:{po_line.id}",
+                                    }
+                                ],
+                            }
+                        ]
+                    },
+                )
+                assert second.status_code == 200, second.text
+
+                decision = (
+                    db.query(SOSupplyDecision)
+                    .filter(SOSupplyDecision.project_sales_order_id == order.id)
+                    .order_by(SOSupplyDecision.revision_no.desc())
+                    .first()
+                )
+                assert decision.undo_journal, "the step-3 confirm must carry its own journal"
+
+                from app.services.project_supply_undo_service import board_undo_map
+
+                # `board_undo_map` keys by the CORE sales order id.
+                core_so_id = str(order.so_id)
+                undo_map = board_undo_map(db, {core_so_id: str(order.id)})
+                undo_map_refusal = undo_map[core_so_id]["refusal"]
+                assert undo_map_refusal is None, (
+                    f"the confirm's own step-3 link must not refuse its own undo, got {undo_map_refusal!r}"
+                )
+
+                result = undo_last_confirm(db, order, actor_user_id=cs_user)
+                assert result["revision_no"] == decision.revision_no
+        finally:
+            hs_restore(originals)
 
 
 # --------------------------------------------------------------------------- AC-UC-26
@@ -864,3 +985,438 @@ def test_another_companys_user_gets_404_on_undo():
             )
             assert untouched.state == "active"
             assert untouched.revision_no == 1
+
+
+# --------------------------------------------------------------------------- review round: new arms 4/5
+
+
+def test_an_actioned_row_before_the_confirm_on_an_untouched_line_does_not_refuse(api):
+    """New arm (review round, contract A): an already-actioned row on a line the
+    confirm never named must not refuse undo - only a row actioned AFTER the confirm,
+    or newly actioned BY it, blocks undo."""
+    from app.models.project_so import INQUIRY_ACTIONED, OrderInquiry
+
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    order = fixture["order"]
+    world = fixture["world"]
+    decision2 = fixture["decision2"]
+
+    other_core_so = _core_so(db, world.company_id)
+    other_core_line = _core_line(
+        db, other_core_so, world.product, world.own_wh, qty_ordered="5"
+    )
+    other_line = _project_line(
+        db, order, line_no=99, product=world.product, core_line=other_core_line
+    )
+    inquiry = (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.project_sales_order_id == order.id)
+        .first()
+    )
+    other_row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=other_line.id, item_code="ZZT-UNTOUCHED", qty=Decimal("5"),
+        verb=IV_ORDER, state=INQUIRY_ACTIONED, actioned_by=world.eling,
+        actioned_at=decision2.confirmed_at - timedelta(days=1),
+    )
+    db.add(other_row)
+    db.commit()
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    result = undo_last_confirm(db, order, actor_user_id=world.eling)
+    assert result["revision_no"] == decision2.revision_no
+
+
+def test_the_confirms_own_cascade_restamp_of_an_actioned_row_does_not_refuse(api):
+    """New arm (review round, contract A): a row already ACTIONED before this confirm,
+    whose `actioned_at` this confirm's own cascade re-stamps (the journal's own update
+    entry for it carries old state `actioned`), must not refuse undo - it was not newly
+    actioned by anyone AFTER the confirm, only re-touched by the confirm's own write.
+
+    Built directly against the decision + journal shape rather than hunting the exact
+    cascade code path that re-stamps an already-actioned row within one confirm - the
+    review round's own contract is stated at this boundary
+    (`_refusal_reason`/journal-old-state), and it reads exactly this shape regardless of
+    which caller produced it.
+    """
+    from app.models.project_so import INQUIRY_ACTIONED, OrderInquiry
+
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=order.id,
+        state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+    )
+    db.add(inquiry)
+    db.flush()
+    old_actioned_at = datetime.utcnow() - timedelta(days=1)
+    row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=inquiry.id,
+        so_line_id=line.id, item_code="ZZT-RESTAMP", qty=Decimal("20"),
+        verb=IV_ORDER, state=INQUIRY_ACTIONED, actioned_by=world.eling,
+        actioned_at=old_actioned_at,
+    )
+    db.add(row)
+    db.commit()
+
+    confirmed_at = datetime.utcnow()
+    # The confirm's own cascade re-stamps `actioned_at` on this SAME row, in the same
+    # transaction the decision below is minted in - a Python clock a few instants after
+    # `confirmed_at`, the exact clock-mismatch shape a raw timestamp check cannot read
+    # correctly (see the step-3 test above).
+    row.actioned_at = confirmed_at + timedelta(seconds=1)
+    db.flush()
+
+    decision_id = _uid()
+    decision = SOSupplyDecision(
+        id=decision_id, company_id=world.company_id, project_sales_order_id=order.id,
+        revision_no=1, state="active",
+        line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+        confirmed_by=world.eling, confirmed_at=confirmed_at,
+        undo_journal=[
+            {
+                "seq": 1, "op": "update", "table": "projects.order_inquiry_rows",
+                "pk": str(row.id),
+                "old": {"actioned_at": old_actioned_at.isoformat(), "state": "actioned"},
+            },
+            {
+                "seq": 1, "op": "insert", "table": "projects.so_supply_decisions",
+                "pk": decision_id, "old": None,
+            },
+        ],
+    )
+    db.add(decision)
+    db.commit()
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    result = undo_last_confirm(db, order, actor_user_id=world.eling)
+    assert result["revision_no"] == 1
+
+
+# --------------------------------------------------------------------------- review round: donor sweep
+
+
+def test_undo_refuses_when_purchasing_linked_a_donor_orders_row_after_the_confirm(api):
+    """Contract B (review round): the refusal sweep runs over EVERY order the journal
+    touched, donor orders included - a link purchasing places on the DONOR's own raised
+    row after a cross-project borrow confirm must refuse the BORROWER's own undo too,
+    since undoing it would silently reinstate the donor's superseded decision underneath
+    a placement purchasing has since made.
+
+    Precedent: `tests/test_so_supply_confirmation.py:957`
+    (`test_cross_project_borrow_writes_an_accepted_claim_directly_with_no_requested_state`).
+    """
+    from app.models.project_so import IV_ORDER
+    from app.services.project_service import register_project
+
+    client, world = api
+    db = world.db
+    donor_wh = _warehouse(db, f"ZZT-DNRX-{_suffix()}")
+    _stock(db, world.product, donor_wh, on_hand=100)
+    donor_project = register_project(
+        db, company_id=world.company_id, actor_user_id=world.eling, developer_party_id=None,
+        title=f"{MARKER} Donor Rights",
+    )
+    donor_core_so = _core_so(db, world.company_id)
+    donor_core_line_1 = _core_line(
+        db, donor_core_so, world.product, donor_wh, qty_ordered="40"
+    )
+    donor_core_line_2 = _core_line(
+        db, donor_core_so, world.product, donor_wh, qty_ordered="20"
+    )
+    donor_pso = _project_so(db, donor_project, so_id=donor_core_so.id)
+    donor_line_1 = _project_line(
+        db, donor_pso, line_no=10, product=world.product, core_line=donor_core_line_1
+    )
+    donor_line_2 = _project_line(
+        db, donor_pso, line_no=20, product=world.product, core_line=donor_core_line_2
+    )
+    db.commit()
+
+    donor_confirm = client.post(
+        f"{BASE}/sales-orders/{donor_pso.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    donor_line_1.id, reserve=[{"warehouse_id": donor_wh.id, "qty": "40"}]
+                ),
+                _line_payload(donor_line_2.id, buy_qty="20"),
+            ]
+        },
+    )
+    assert donor_confirm.status_code == 200, donor_confirm.text
+
+    borrower_order = _project_so(db, world.project)
+    borrower_core_so = _core_so(db, world.company_id)
+    borrower_core_line = _core_line(
+        db, borrower_core_so, world.product, world.own_wh, qty_ordered="15"
+    )
+    borrower_line = _project_line(
+        db, borrower_order, line_no=10, product=world.product, core_line=borrower_core_line
+    )
+    db.commit()
+
+    borrow_response = client.post(
+        f"{BASE}/sales-orders/{borrower_order.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    borrower_line.id,
+                    borrow=[
+                        {
+                            "source": "other_project",
+                            "warehouse_id": donor_wh.id,
+                            "donor_project_id": donor_project.id,
+                            "donor_core_line_id": donor_core_line_1.id,
+                            "qty": "15",
+                            "reason": "Donor Rights lending surplus.",
+                        }
+                    ],
+                )
+            ]
+        },
+    )
+    assert borrow_response.status_code == 200, borrow_response.text
+
+    borrower_decision = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == borrower_order.id)
+        .one()
+    )
+    donor_row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == donor_line_2.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, po_line = _po_line(db, world, qty=20)
+    db.add(
+        OrderInquiryLink(
+            id=_uid(), company_id=world.company_id, row_id=donor_row.id, po_line_id=po_line.id,
+            document=po.po_number, qty=Decimal("20"), linked_by=world.eling, auto=False,
+            linked_at=borrower_decision.confirmed_at + timedelta(minutes=1),
+        )
+    )
+    db.commit()
+
+    before = _snapshot(db)
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    with pytest.raises(AppException) as exc_info:
+        undo_last_confirm(db, borrower_order, actor_user_id=world.eling)
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.code == "linked"
+    assert _snapshot(db) == before, "a refused undo must change nothing"
+
+
+# --------------------------------------------------------------------------- review round: project rights
+
+
+def test_undo_requires_the_confirmers_project_rights(api):
+    """Contract C (review round): undo re-runs Confirm's own per-project authorisation
+    (`_assert_can_act_on` shape: `assert_can_edit_project`) at EXECUTE time, for the
+    user requesting the undo - not only at park time. A user who holds
+    `projects.projects.edit` globally but is neither the project's owner nor an
+    approved collaborator gets the same 403/404 Confirm itself would give, and nothing
+    changes.
+    """
+    from app.services.project_service import assert_can_edit_project, get_project_or_404
+
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    order = fixture["order"]
+    world = fixture["world"]
+
+    outsider = _user(db, f"{MARKER} Outsider")
+    db.commit()
+
+    # Sanity: Confirm's OWN check would refuse this exact user too - same project, no
+    # ownership, no collaboration.
+    project = get_project_or_404(db, world.project.id)
+    with pytest.raises(AppException) as confirm_exc:
+        assert_can_edit_project(db, project, outsider, {"projects.projects.edit"})
+    assert confirm_exc.value.status_code == 403
+
+    before = _snapshot(db)
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    with pytest.raises(AppException) as exc_info:
+        undo_last_confirm(db, order, actor_user_id=outsider)
+    assert exc_info.value.status_code in (403, 404)
+    assert _snapshot(db) == before
+
+
+# --------------------------------------------------------------------------- review round: audit never leaks the journal
+
+
+def test_the_journal_never_reaches_audit_logs(api):
+    """Contract D (review round): `undo_journal` must never appear in `audit_logs`,
+    neither on confirm (the decision's own CREATE/UPDATE audit rows) nor on undo (the
+    DELETE row AC-UC-29 pins) - the audit trail names WHAT happened, not a raw replay
+    script.
+
+    `register_audit_listeners()` is called explicitly: the TestClient here never runs
+    FastAPI's lifespan, so nothing guarantees the listener that writes `audit_logs` is
+    installed before this test runs (same note `test_order_inquiry_handover_automation.
+    py`'s `_register` makes for the post-commit dispatch listener); idempotent, so a
+    prior test in the same process having already called it changes nothing.
+    """
+    from app.models.audit import AuditLog
+    from app.services.audit_service import register_audit_listeners
+
+    register_audit_listeners()
+
+    fixture = _confirm_linked_world(api, second_buy_qty="15")
+    db = fixture["db"]
+    order = fixture["order"]
+    world = fixture["world"]
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    undo_last_confirm(db, order, actor_user_id=world.eling)
+    db.commit()
+
+    rows = (
+        db.query(AuditLog)
+        .filter(AuditLog.entity_type == "project_so_supply_decisions")
+        .all()
+    )
+    assert rows, "the decision's own audit trail must exist"
+    for row in rows:
+        for payload in (row.old_values, row.new_values):
+            if not payload:
+                continue
+            assert "undo_journal" not in payload, (
+                f"audit row {row.id} ({row.action}) leaked undo_journal"
+            )
+
+
+# --------------------------------------------------------------------------- review round: pass 2 skips a same-confirm insert+delete
+
+
+def test_a_link_created_and_removed_inside_one_confirm_does_not_come_back(api):
+    """Contract E (review round): pass 2 of replay must skip a pk this SAME confirm
+    both inserted and later deleted - re-inserting it would bring back a row that
+    never existed before this confirm at all.
+
+    Constructed directly against `UndoJournal` (rather than the exact rare business
+    path that both drafts and unlinks the SAME placement inside one write - the closest
+    natural precedents, `tests/test_order_inquiry_draft_links.py`'s raise-time cascade
+    plus `tests/test_fulfilment_board.py:7577`'s received-document redirect, both need
+    TWO separate confirms to reach a removal at all, never one): a link is added then
+    removed within the SAME `UndoJournal` block, exactly the shape one confirm's own
+    insert-then-delete of a placement would leave in the journal.
+    """
+    from app.services.project_supply_undo_service import UndoJournal, undo_last_confirm
+
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    first = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert first.status_code == 200, first.text
+    decision1 = (
+        db.query(SOSupplyDecision)
+        .filter(SOSupplyDecision.project_sales_order_id == order.id)
+        .one()
+    )
+    row = (
+        db.query(OrderInquiryRow)
+        .filter(OrderInquiryRow.so_line_id == line.id, OrderInquiryRow.verb == IV_ORDER)
+        .one()
+    )
+    po, po_line = _po_line(db, world, qty=20)
+
+    decision2_id = _uid()
+    with UndoJournal(db) as journal:
+        # The partial unique index (one ACTIVE decision per order) requires the
+        # supersede to flush BEFORE the new active row is inserted - the same order
+        # `_write_decision` itself uses.
+        decision1.state = "superseded"
+        decision1.superseded_at = datetime.utcnow()
+        decision1.superseded_reason = "Reconfirmed by CS."
+        db.flush()
+        decision2 = SOSupplyDecision(
+            id=decision2_id, company_id=world.company_id, project_sales_order_id=order.id,
+            revision_no=2, state="active",
+            line_snapshots=[{"line_no": 10, "project_line_id": line.id}],
+            confirmed_by=world.eling, confirmed_at=datetime.utcnow(),
+            supersedes_id=decision1.id,
+        )
+        db.add(decision2)
+        db.flush()
+        link = OrderInquiryLink(
+            id=_uid(), company_id=world.company_id, row_id=row.id, po_line_id=po_line.id,
+            document=po.po_number, qty=Decimal("20"), linked_by=world.eling, auto=True,
+        )
+        db.add(link)
+        db.flush()
+        link_id = link.id
+        db.delete(link)
+        db.flush()
+    journal.attach(decision2)
+    db.commit()
+
+    result = undo_last_confirm(db, order, actor_user_id=world.eling)
+    assert result["revision_no"] == 2
+
+    assert (
+        db.query(OrderInquiryLink).filter(OrderInquiryLink.id == link_id).first() is None
+    ), "a link this confirm both created and removed must not come back on undo"
+
+
+# --------------------------------------------------------------------------- review round: decision_id is required
+
+
+def test_the_undo_action_needs_a_decision_id(api):
+    """Contract G (review round): creating the pending action without
+    `payload.decision_id` is refused with 400, not parked - undo has nothing to check
+    `expected_decision_id` against otherwise (AC-UC-28's own guard)."""
+    client, world = api
+    db = world.db
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    confirm = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={"lines": [_line_payload(line.id, buy_qty="20")]},
+    )
+    assert confirm.status_code == 200, confirm.text
+
+    response = client.post(
+        "/api/v1/pending-actions",
+        json={
+            "action_key": "project_sales_order.undo_confirm",
+            "entity_type": "project_sales_order",
+            "entity_id": str(order.id),
+            "payload": {},
+        },
+    )
+    assert response.status_code == 400, response.text
+
+    from app.models.sla import SlaFormAction
+
+    assert (
+        db.query(SlaFormAction)
+        .filter(SlaFormAction.source_entity_id == str(order.id))
+        .count()
+        == 0
+    )

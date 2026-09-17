@@ -402,3 +402,87 @@ def test_the_undone_trigger_is_in_the_catalog():
     with blank_session() as db:
         matches = automation_triggers.fire(db, TRIGGER, {}, "Asia/Kuala_Lumpur")
     assert matches == [], "pull-mode evaluation yields nothing - this trigger is event-driven"
+
+
+# --------------------------------------------------------------------------- review round: the undone email never leaks a donor's rows (contract I)
+
+
+def test_the_undone_email_lists_only_this_orders_rows(api, monkeypatch):
+    """Contract I (review round): the undone email must list only the UNDONE order's own
+    rows, never a donor's - a cross-project borrow's journal also carries the donor's own
+    decision entries (`test_board_undo_journal.py`'s AC-UC-12 test proves this), and
+    `retire_supply_borrow_rows` can touch the donor's own OI rows too when the borrowed
+    line carried a step-3 placement. `_undo_email_lines` today filters the journal by
+    table alone, with no per-pso check, so a donor row entry sitting in the SAME journal
+    would leak into the borrower's own undo email.
+
+    The donor side is injected directly onto the real journal the confirm wrote (a real
+    donor project/order/OI row exists in the database; only the JOURNAL ENTRY naming it
+    is fabricated) rather than reproducing the rare step-3-covered-donor-borrow shape
+    end to end - the contract is the FILTER `_undo_email_lines` must apply, and it reads
+    the same journal shape regardless of which caller produced the entry.
+    """
+    _register()
+    calls = _captured_dispatches(monkeypatch)
+    fixture = _seed_undo_world(api)
+    db = fixture["db"]
+    order = fixture["order"]
+    world = fixture["world"]
+
+    from app.models.project_so import IV_ORDER, OrderInquiry
+    from app.services.project_service import register_project
+
+    donor_project = register_project(
+        db, company_id=world.company_id, actor_user_id=world.eling, developer_party_id=None,
+        title=f"{MARKER} Donor Email Leak Check",
+    )
+    donor_core_so = _core_so(db, world.company_id)
+    donor_core_line = _core_line(
+        db, donor_core_so, world.product, world.own_wh, qty_ordered="9"
+    )
+    donor_pso = _project_so(db, donor_project, so_id=donor_core_so.id)
+    donor_line = _project_line(
+        db, donor_pso, line_no=10, product=world.product, core_line=donor_core_line
+    )
+    donor_inquiry = OrderInquiry(
+        id=_uid(), company_id=world.company_id, project_sales_order_id=donor_pso.id,
+        state="raised", inquiry_no=f"ZZT-OI-{_uid()[:8]}",
+    )
+    db.add(donor_inquiry)
+    db.flush()
+    donor_row = OrderInquiryRow(
+        id=_uid(), company_id=world.company_id, order_inquiry_id=donor_inquiry.id,
+        so_line_id=donor_line.id, item_code="ZZT-DONOR-ONLY", qty=Decimal("9"),
+        delivery_date=date.today(), verb=IV_ORDER, state="cancelled",
+    )
+    db.add(donor_row)
+    db.commit()
+
+    db.expire_all()
+    decision2 = (
+        db.query(SOSupplyDecision).filter(SOSupplyDecision.id == fixture["decision2"].id).one()
+    )
+    journal = list(decision2.undo_journal)
+    journal.append(
+        {
+            "seq": 999, "op": "update", "table": "projects.order_inquiry_rows",
+            "pk": str(donor_row.id),
+            "old": {"qty": "9", "delivery_date": date.today().isoformat(), "state": "raised"},
+        }
+    )
+    decision2.undo_journal = journal
+    db.commit()
+
+    from app.services.project_supply_undo_service import undo_last_confirm
+
+    undo_last_confirm(db, order, actor_user_id=world.eling)
+    db.commit()
+
+    matches = _undo_calls(calls)
+    assert len(matches) == 1
+    lines = matches[0]["context"]["undo"]["lines"]
+    item_codes = {line["item_code"] for line in lines}
+    assert "ZZT-DONOR-ONLY" not in item_codes, (
+        "the donor's own row must never appear in the undone order's email"
+    )
+    assert item_codes, "the undone order's OWN rows must still be listed"
