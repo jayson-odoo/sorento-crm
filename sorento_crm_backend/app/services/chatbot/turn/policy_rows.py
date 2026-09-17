@@ -246,7 +246,13 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
         switch_words=[],
         # S6d (owner hand pass 2, item 3): the cost answer LISTS every variant, the way
         # inventory does - a family was a picker before the answer (turn 70be252c).
-        narrowing={"product": "list_all"},
+        # S8 (hand pass 6, item 6): "list_all" also ran with NO product at all - a
+        # "purchase cost" with nothing carried and nothing named reached the tool with
+        # no filter, and that tool refuses an unfiltered call. "narrow_by_type" keeps
+        # the family-list behaviour once a product is in play (its non-empty branch is
+        # the same pass-through `list_all` gives) and asks which product only when
+        # there is truly nothing to list.
+        narrowing={"product": "narrow_by_type"},
         # answer.DOMAIN_GRANT_REQUIRED["purchase_cost"]: the whole domain is refused
         # without it.
         reveal_key="purchase_orders.cost",

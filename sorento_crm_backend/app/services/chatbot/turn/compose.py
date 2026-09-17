@@ -386,6 +386,11 @@ _ASK_HEADERS: dict[str, str] = {
     "outstanding_detail": "Which list would you like?",
     "kind_pick": "Which one do you mean?",
     "attachment_type_ask": "Which kind of file do you need?",
+    # Defect 6 (hand pass 6, 17 Sep 2026): `narrow_by_type` over an empty "product"
+    # axis (purchase_cost's own narrowing, `chatbot_rearch_s8`) mints a `product_ask`
+    # with no options - the same header `product_pick` uses, since it is the same
+    # question asked with nothing yet to number.
+    "product_ask": "Which product do you mean?",
 }
 
 
