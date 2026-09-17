@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import {
   amendNeedsReason,
@@ -42,6 +43,10 @@ import { ReserveAddDialog } from './ReserveAddDialog';
  * R1's own 409 sentence (`project_line_draft_service.save_draft`), stated here before the
  * round trip rather than after it (R2): a covered line refuses a plain Save or Reject, so
  * the panel says so up front instead of sending a PUT the server would only refuse.
+ *
+ * Carried in a Radix `Tooltip`, never a bare `title` (review round 1, S1): the `Button`
+ * primitive disables `pointer-events` on a disabled button, so a `title` attribute there
+ * never reaches a real hover - the sentence has to live on a focusable wrapper instead.
  */
 const CONFIRMED_LINE_TITLE =
   'This line is already confirmed. Amend it to change the decision, or undo the confirmation.';
@@ -423,6 +428,20 @@ export function BoardLineDecisionPanel({
   const summary = amendSummary(
     decisionFromAmendDraft(draft, reason),
     contribution.fulfilment_location,
+  );
+
+  // Shared between the bare Save button and its tooltip-wrapped, disabled twin below, so the
+  // two never drift apart on what the button says.
+  const saveButtonLabel = saved ? (
+    <>
+      <CheckCircle2 className="size-4" aria-hidden />
+      Saved
+    </>
+  ) : (
+    <>
+      <Check className="size-4" aria-hidden />
+      Save decision
+    </>
   );
 
   /**
@@ -849,44 +868,92 @@ export function BoardLineDecisionPanel({
             </Button>
           ) : (
             <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                // Disabled ON the saved state too (D4): there is nothing left to save, and a
-                // live button under the word "Saved" invites a second write of the same row.
-                disabled={saved || alreadyConfirmed || (!approving && !canSave)}
-                title={alreadyConfirmed ? CONFIRMED_LINE_TITLE : undefined}
-                onClick={save}
-              >
-                {saved ? (
-                  <>
-                    <CheckCircle2 className="size-4" aria-hidden />
-                    Saved
-                  </>
-                ) : (
-                  <>
-                    <Check className="size-4" aria-hidden />
-                    Save decision
-                  </>
-                )}
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={covered || reason.trim().length === 0}
-                title={
-                  covered
-                    ? CONFIRMED_LINE_TITLE
-                    : reason.trim().length === 0
+              {covered ? (
+                // Wrapped for the LIFE of a covered line, not only while `alreadyConfirmed`
+                // is true: that flips as the draft moves (a tick, a composition edit), and
+                // swapping the wrapped Button for a bare one on that same flip would unmount
+                // and remount the button - the element a planner (or a test) is mid-focus or
+                // mid-click on. `disabled` and whether the tooltip carries the sentence are
+                // what move; the trigger itself does not.
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`save-decision-trigger-${contribution.key}`}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={saved || alreadyConfirmed || (!approving && !canSave)}
+                        // Belt and braces beside the Tooltip below: a `title` on a disabled
+                        // button never reaches a real hover (`disabled:pointer-events-none`),
+                        // but it still reaches anything that reads the DOM attribute directly
+                        // rather than a real pointer - keep both rather than pick one.
+                        title={alreadyConfirmed ? CONFIRMED_LINE_TITLE : undefined}
+                        onClick={save}
+                      >
+                        {saveButtonLabel}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {alreadyConfirmed && (
+                    <TooltipContent>{CONFIRMED_LINE_TITLE}</TooltipContent>
+                  )}
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  // Disabled ON the saved state too (D4): there is nothing left to save, and
+                  // a live button under the word "Saved" invites a second write of the same
+                  // row.
+                  disabled={saved || (!approving && !canSave)}
+                  onClick={save}
+                >
+                  {saveButtonLabel}
+                </Button>
+              )}
+              {covered ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      data-testid={`reject-decision-trigger-${contribution.key}`}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled
+                        title={CONFIRMED_LINE_TITLE}
+                        onClick={reject}
+                      >
+                        <X className="size-4" aria-hidden />
+                        Reject
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>{CONFIRMED_LINE_TITLE}</TooltipContent>
+                </Tooltip>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={reason.trim().length === 0}
+                  title={
+                    reason.trim().length === 0
                       ? 'Say why this line is being refused first.'
                       : undefined
-                }
-                onClick={reject}
-              >
-                <X className="size-4" aria-hidden />
-                Reject
-              </Button>
+                  }
+                  onClick={reject}
+                >
+                  <X className="size-4" aria-hidden />
+                  Reject
+                </Button>
+              )}
             </div>
           )}
         </div>

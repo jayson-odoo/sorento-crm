@@ -876,17 +876,30 @@ describe('BoardLineDecisionPanel: a covered line only saves a real amendment (R2
     buy_qty: '0',
   };
 
-  it('AC-F1: disables Save and Reject, both with the R1 sentence, while the draft still matches the frozen composition', () => {
+  /**
+   * A `title` attribute on a DISABLED button never reaches a real browser's hover: the
+   * Button primitive carries `disabled:pointer-events-none`, so no pointer event ever lands
+   * on it to trigger the native tooltip. The R1 sentence lives in a Radix Tooltip on a
+   * wrapper `<span>` around each disabled button instead - reached the same way
+   * `BoardCellBreakdownDialog.test.tsx`'s `sourceNoteOf` reaches one: `fireEvent.focus` the
+   * trigger (Radix calls the tooltip's own open handler directly on focus, unlike a pointer
+   * event jsdom cannot synthesize the way a real mouse would), then read the accessible
+   * `role="tooltip"` node's text.
+   */
+  it('AC-F1: Save and Reject are disabled, and each carries the R1 sentence in a tooltip, while the draft still matches the frozen composition', async () => {
     renderPanel({ covered: true, decision: frozen });
     fireEvent.click(screen.getByRole('button', { name: 'Amend' }));
 
     const save = screen.getByRole('button', { name: 'Save decision' });
     const reject = screen.getByRole('button', { name: 'Reject' });
-
     expect(save).toBeDisabled();
-    expect(save).toHaveAttribute('title', REFUSAL);
     expect(reject).toBeDisabled();
-    expect(reject).toHaveAttribute('title', REFUSAL);
+
+    fireEvent.focus(screen.getByTestId(`save-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
+
+    fireEvent.focus(screen.getByTestId(`reject-decision-trigger-${KEY}`));
+    expect((await screen.findByRole('tooltip')).textContent).toBe(REFUSAL);
   });
 
   it('AC-F2: enables Save once the draft differs from the frozen composition and a reason is typed', () => {

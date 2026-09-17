@@ -9,11 +9,13 @@ Plan: `PLAN-board-draft-on-confirmed-line.md`
 - AC-B3. Same request with verdict `amended` answers 200 and the row is written (the amend path is untouched).
 - AC-B4. Verdict `approved` on a line NO decision covers answers 200 (regression guard for the ordinary save).
 - AC-B5. A line whose only decision is SUPERSEDED is not covered: verdict `approved` answers 200.
+- AC-B7. A partly confirmed order: the active decision covers line 1 only, verdict `approved` on line 2 answers 200 and its row is written.
+- AC-B8. A covered line named by a PENDING planning-change row answers 200 to verdict `approved`; the same row once applied answers the 409.
 - AC-B6. The 409 message reads "This line is already confirmed. Amend it to change the decision, or undo the confirmation."
 
 ## Frontend (vitest)
 
-- AC-F1. `BoardLineDecisionPanel`: covered contribution, draft equal to the frozen composition. Save is disabled and carries the AC-B6 sentence as its title. Reject is disabled with the same title.
+- AC-F1. `BoardLineDecisionPanel`: covered contribution, draft equal to the frozen composition. Save is disabled and hovering it shows a tooltip with the AC-B6 sentence. Reject is disabled with the same tooltip.
 - AC-F2. `BoardLineDecisionPanel`: covered contribution, draft that differs from the frozen composition with a reason typed. Save is enabled.
 - AC-F3. `useConfirmManyMutation`: when the mutation rejects, the planning board and fulfilment-planning queries are invalidated.
 - AC-F4. `FulfilmentBoardPanel`: a board read where a contribution is `covered` with no server `draft`, while the local draft map holds an `approved` entry for its key, drops the local entry and the pill reads `Confirmed`.
