@@ -123,6 +123,12 @@ def _seed_undo_world(api):
     core_line_1 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
     core_line_2 = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="10")
     order = _project_so(db, world.project, so_id=core_so.id)
+    # `_handover_order_facts`-style resolution (this trigger's own method, "copied not
+    # adapted") reads `autocount_doc_no or provisional_ref` - an adopted order carries the
+    # former, and without it here `so_number` would resolve to the mirror's own
+    # `ZZT-PSO-...` ref rather than the core SO's `ZZT-CORE-...` number this test expects.
+    order.autocount_doc_no = core_so.so_number
+    db.flush()
     line_1 = _project_line(db, order, line_no=10, product=world.product, core_line=core_line_1)
     line_2 = _project_line(db, order, line_no=20, product=world.product, core_line=core_line_2)
     db.commit()
@@ -189,6 +195,11 @@ def test_an_undo_dispatches_one_undone_event_after_commit_with_the_lines(api, mo
     db = fixture["db"]
     order = fixture["order"]
     world = fixture["world"]
+    # Captured BEFORE the undo: it deletes this exact row by design (AC-UC-16/17/29), and
+    # `expire_on_commit` would otherwise SELECT a row that is already gone the moment
+    # either attribute is touched after `db.commit()` below (`ObjectDeletedError`).
+    expected_source_id = str(fixture["decision2"].id)
+    expected_revision_no = fixture["decision2"].revision_no
 
     from app.services.project_supply_undo_service import undo_last_confirm
 
@@ -201,7 +212,7 @@ def test_an_undo_dispatches_one_undone_event_after_commit_with_the_lines(api, mo
     assert len(matches) == 1, "exactly one dispatch per undo"
     call = matches[0]
     assert call["source_kind"] == TRIGGER
-    assert call["source_id"] == str(fixture["decision2"].id)
+    assert call["source_id"] == expected_source_id
 
     ctx = call["context"]
     assert set(ctx.keys()) >= {"undo", "actor", "today"}
@@ -209,7 +220,7 @@ def test_an_undo_dispatches_one_undone_event_after_commit_with_the_lines(api, mo
     for key in ("so_number", "customer", "project", "revision_no", "lines", "link"):
         assert key in undo_ctx, key
     assert undo_ctx["so_number"] == fixture["core_so"].so_number
-    assert undo_ctx["revision_no"] == fixture["decision2"].revision_no
+    assert undo_ctx["revision_no"] == expected_revision_no
 
     from app.services.automation_triggers import build_order_inquiry_link
 
