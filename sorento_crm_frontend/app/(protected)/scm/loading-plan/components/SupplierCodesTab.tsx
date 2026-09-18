@@ -1,9 +1,10 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
 import { getCoreRowModel, useReactTable, type ColumnDef } from '@tanstack/react-table';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Languages } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -491,14 +492,25 @@ export function SupplierCodesTab({
         </p>
         {/* One box over both tables (S1): the queue and the memory answer the same question
             about the same code, and two boxes would be two places to type it. */}
-        <ListSearchInput
-          value={search}
-          onChange={setSearch}
-          placeholder="Search code or supplier description"
-          aria-label="Search supplier codes"
-          className="w-full md:w-72"
-          data-testid="supplier-codes-search"
-        />
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <ListSearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search code or supplier description"
+            aria-label="Search supplier codes"
+            className="w-full md:w-72"
+            data-testid="supplier-codes-search"
+          />
+          {/* S4 (`PLAN-stock-list-bare-model-codes.md`) - the word list itself is edited on
+              the Import field aliases page, not here; this is a link out, pinned to the
+              word doc type so the tab it opens on is the one this button names. */}
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/system-management/import-field-aliases?doc_type=supplier_inventory_word">
+              <Languages className="size-4" />
+              Stock list words
+            </Link>
+          </Button>
+        </div>
       </div>
 
       <Card>

@@ -15,7 +15,7 @@ not to one of its operating companies.
 """
 import uuid
 
-from sqlalchemy import Column, DateTime, Index, String, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
@@ -44,9 +44,25 @@ class ImportFieldAlias(Base):
     # Advisory only: resolution never filters on locale, it is there so a human editing
     # the table can see why two aliases exist for one field.
     locale = Column(String(8), nullable=True)
+    # NULL = a SHARED row, answering for every supplier (D6, `PLAN-stock-list-bare-model-
+    # codes.md`). Set only for `supplier_inventory_word` rows so far - one supplier's own
+    # spelling of a word (`对冲` -> `SH` for DAFUYUAN) without touching what every other
+    # supplier's file resolves to. `ondelete="CASCADE"`: a deleted supplier's own word rows
+    # are that supplier's, not a shared row anything else depends on.
+    supplier_id = Column(
+        UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="CASCADE"), nullable=True
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
+        # The plain triple (migration 311), NOT widened to include `supplier_id` (review
+        # round 3): 22 call sites - every seeder, `scripts/bootstrap_env.py`, several scm
+        # tests - `INSERT ... ON CONFLICT (doc_type, field, alias) DO NOTHING` against this
+        # exact constraint by name, and rewriting them is not this column's call to make.
+        # It is also the right rule: a supplier's OVERRIDE of a word changes its TOKEN
+        # (`field`) for the same `alias`, which is a different triple and was never blocked;
+        # what the triple correctly refuses is a second row - shared or scoped - naming a
+        # (field, alias) pair a row already names, because that mapping already exists.
         UniqueConstraint("doc_type", "field", "alias", name="uq_import_field_alias_triple"),
         Index("ix_import_field_alias_doc_type_field", "doc_type", "field"),
     )
