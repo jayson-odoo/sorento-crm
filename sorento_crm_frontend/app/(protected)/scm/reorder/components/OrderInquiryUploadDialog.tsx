@@ -157,10 +157,13 @@ function InquirySummary({ data }: { data: OrderInquiryPreview }) {
   return (
     <div className="space-y-4">
       <div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-8">
           <CountTile label="Rows" value={data.rows} />
           <CountTile label="Will raise" value={data.rows_raised} />
           <CountTile label="Already raised" value={data.rows_already_raised} />
+          {/* Of "Already raised", not a separate count of rows: a migrated row's date
+              corrected to the sheet's own, never a new row (18 Sep reversal). */}
+          <CountTile label="Dates corrected" value={data.rows_delivery_date_updated} />
           <CountTile label="No SO line" value={data.rows_line_not_found} />
           {/* What Confirm does to the BOOK's neighbours, not only to the sheet: how many
               planning records it opens (security review SF2, AC-S2-8). */}

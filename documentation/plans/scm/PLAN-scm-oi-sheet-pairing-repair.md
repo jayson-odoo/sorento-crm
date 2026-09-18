@@ -445,6 +445,9 @@ Both are consequences of following the sales order line, which is what was asked
 the owner wants the near plan to keep them, the horizon rule is what to revisit, not the
 row's date.
 
+**REVERSED 18 Sep 2026** (owner: "we should have followed the sheet's date"), measured on
+SO314593. See `PLAN-oi-sheet-date-follow-sheet.md`.
+
 ## 8. Follow-up, 15 Sep: the remark leaves the match, the exact date wins the line pick, a cancelled purchase order line is never a target
 
 Status of this section: IMPLEMENTED 15 Sep 2026 (tests 84 + 12 green, copy replay 8,265 raised / 5,460 with a link / 0 cancelled, SO388822 exact), review pending. Owner go ("okay go"). Issue #915. Branch

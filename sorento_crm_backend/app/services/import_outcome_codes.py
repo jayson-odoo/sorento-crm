@@ -87,6 +87,13 @@ ALREADY_EXISTS = "already_exists"
 #: board or by an earlier upload. Left exactly as it is, links included: the sheet is a
 #: migration, not a second opinion about a row somebody has since worked on.
 ALREADY_RAISED = "already_raised"
+#: The sales order line this row names already carries a MIGRATED row, on the line's own
+#: date rather than the sheet's - the 18 Sep 2026 reversal of section 7.4. Re-uploading
+#: the same sheet, corrected, is how that date gets fixed: the migrated row's own
+#: `delivery_date` moves to the sheet's, and the fresh row beside it (raised for a later
+#: planning change) has its `previous_delivery_date` corrected too, so the Was/Now (i)
+#: stops printing the same wrong date twice. Rides on OUTCOME_UPDATED: the row WAS written.
+DELIVERY_DATE_UPDATED = "delivery_date_updated"
 ALREADY_RECEIVED_GUARD = "already_received_guard"
 #: Real money on the document with no product behind it (handling, transport, misc). Counted
 #: on the order and never written as a stock line: a quantity of 1 "HANDLING CHARGES" is not
@@ -171,6 +178,7 @@ LABELS: dict[str, str] = {
     DUPLICATE_IN_FILE: "The same row appears earlier in this file",
     ALREADY_EXISTS: "Already exists",
     ALREADY_RAISED: "Left alone: this line already carries an order inquiry",
+    DELIVERY_DATE_UPDATED: "Delivery date corrected to the sheet's own",
     ALREADY_RECEIVED_GUARD: "Blocked: quantity already received",
     CHARGE_LINE: "Charge line: money on the order, no product",
     DOCUMENT_OWNED_ELSEWHERE: "Left alone: another upload owns this document",

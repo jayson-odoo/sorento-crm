@@ -257,7 +257,8 @@ on. Completed history migrates too, so you can load the whole workbook, not just
   with.
 * The **DELIVERY DATE** cell may read `ORDER BACK` instead of a date. Both kinds of row are
   raised; the words only decide whether the row reads **ORDER BACK** or **ORDER** on the
-  worklist.
+  worklist. The row carries the sheet's own delivery date, and the sales order line's only
+  when the sheet gives none. A date typed as text such as `1.6.2026` counts too, day first.
 * The **REMARK** cell may name the PO or SPO the line waits on, several joined with `&`, for
   example `202606-S0024 & 202607-S0043`. `ORDER` on its own means nothing was ordered yet.
 * Every tab with a recognisable header row is read. The same row restated on several tabs
@@ -274,13 +275,14 @@ on. Completed history migrates too, so you can load the whole workbook, not just
 
 ### What the preview tells you
 
-Seven tiles:
+Eight tiles:
 
 | Tile | Reads |
 | --- | --- |
 | **Rows** | Every row read off every tab. |
 | **Will raise** | Rows that will become an order inquiry. |
 | **Already raised** | Rows whose sales order line already carries an order inquiry. Those lines are left exactly as they are, links included. |
+| **Dates corrected** | Of those, rows that will correct a migrated row's delivery date to the sheet's own - never a new row, and never a line CS or purchasing has since amended. |
 | **No SO line** | Rows no sales order line could be found for. |
 | **Orders adopted** | Sales orders this upload brings into planning for the first time. |
 | **Rows linked** | Rows that will be placed on at least one PO or SPO. |
@@ -313,7 +315,10 @@ that writes nothing.
 * **The upload never creates a sales order or a sales order line**, and never writes a location
   onto one. AutoCount owns the order book.
 * **A line that already carries an order inquiry is skipped**, whoever raised it. So
-  re-uploading the same sheet writes nothing new: every row comes back under **Already raised**.
+  re-uploading the same sheet writes nothing new: every row comes back under **Already
+  raised**, except that a corrected delivery date still fixes a migrated row's date and the
+  Was/Now of the row raised beside it, on any later sheet, not only the one that first
+  migrated it.
 * Each raised row carries the note **Migrated from order inquiry sheet** followed by the file
   name, so you can tell it from a row the board raised. Read it from the info icon in the
   **Instruction** column.
