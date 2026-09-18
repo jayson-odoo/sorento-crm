@@ -257,7 +257,8 @@ on. Completed history migrates too, so you can load the whole workbook, not just
   with.
 * The **DELIVERY DATE** cell may read `ORDER BACK` instead of a date. Both kinds of row are
   raised; the words only decide whether the row reads **ORDER BACK** or **ORDER** on the
-  worklist.
+  worklist. The row carries the sheet's own delivery date, and the sales order line's only
+  when the sheet gives none.
 * The **REMARK** cell may name the PO or SPO the line waits on, several joined with `&`, for
   example `202606-S0024 & 202607-S0043`. `ORDER` on its own means nothing was ordered yet.
 * Every tab with a recognisable header row is read. The same row restated on several tabs
@@ -313,7 +314,9 @@ that writes nothing.
 * **The upload never creates a sales order or a sales order line**, and never writes a location
   onto one. AutoCount owns the order book.
 * **A line that already carries an order inquiry is skipped**, whoever raised it. So
-  re-uploading the same sheet writes nothing new: every row comes back under **Already raised**.
+  re-uploading the same sheet writes nothing new: every row comes back under **Already raised**
+  - except a corrected delivery date, which fixes a migrated row's date and the Was/Now of the
+  row raised beside it.
 * Each raised row carries the note **Migrated from order inquiry sheet** followed by the file
   name, so you can tell it from a row the board raised. Read it from the info icon in the
   **Instruction** column.

@@ -525,6 +525,81 @@ def _already_raised(db: Session, core_lines: Sequence[SalesOrderLine]) -> set:
     return {core_by_mirror[str(mirror_id)] for (mirror_id,) in held if str(mirror_id) in core_by_mirror}
 
 
+def _mirror_of(db: Session, core_line_id: Any) -> Optional[str]:
+    """The mirror id for one core sales order line, or `None` if it was never adopted.
+
+    Read directly rather than through `_Raiser.record_for`: an already-raised line's mirror
+    already exists (that is what `already_raised` means), so there is nothing here that
+    needs the adoption service.
+    """
+    from app.models.project_so import ProjectSalesOrderLine
+
+    return (
+        db.query(ProjectSalesOrderLine.id)
+        .filter(ProjectSalesOrderLine.core_sales_order_line_id == str(core_line_id))
+        .scalar()
+    )
+
+
+def _repair_migrated_date(db: Session, mirror_id: str, row: Any) -> Optional[Any]:
+    """A re-upload corrects a MIGRATED row's delivery date to the sheet's own.
+
+    18 Sep 2026, reversing 7.4 ("we should have followed the sheet's date"). Section 7.4
+    wrote every migrated row's `delivery_date` from the sales order line, so a re-upload of
+    a sheet whose date was corrected did nothing: `_already_raised` skips a line that
+    already carries a row, and skipping is right - the row is not raised again - but the
+    date it already carries was stale.
+
+    Finds the MIGRATED row on this mirror line (`note` starts with `_MIGRATION_STAMP`,
+    same item code, same quantity as this sheet row - a different quantity means the sheet
+    is restating a DIFFERENT instruction, and is left alone) and moves its date. Then, for
+    the fresh row a later planning change raised beside it (the Was/Now pair the backfill
+    or `_settle_row_in_place` stamped from the migrated row's old figures), corrects
+    `previous_delivery_date` too, so the (i) stops printing the same wrong date twice.
+    Never touches links, qty, state or ack fields.
+
+    Returns the migrated row when it wrote a change, `None` otherwise (nothing to correct,
+    or already on the sheet's date - the idempotent case a second upload of the same file
+    hits).
+    """
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    if row.delivery_date is None:
+        return None
+    siblings = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == mirror_id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+        )
+        .all()
+    )
+    sheet_qty = _dec(row.qty)
+    migrated = next(
+        (
+            r for r in siblings
+            if r.note and r.note.startswith(_MIGRATION_STAMP)
+            and r.item_code == row.item_code
+            and _dec(r.qty) == sheet_qty
+        ),
+        None,
+    )
+    if migrated is None or migrated.delivery_date == row.delivery_date:
+        return None
+    old_date = migrated.delivery_date
+    migrated.delivery_date = row.delivery_date
+    for sibling in siblings:
+        if sibling.id == migrated.id:
+            continue
+        if (
+            sibling.previous_qty is not None
+            and _dec(sibling.previous_qty) == sheet_qty
+            and sibling.previous_delivery_date == old_date
+        ):
+            sibling.previous_delivery_date = row.delivery_date
+    return migrated
+
+
 def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     """Match every row, decide raise / skip / report. Pure: writes nothing."""
     plan = _Plan(parsed=parsed)
@@ -1142,11 +1217,16 @@ def _result(
     rows_raised: int,
     orders_adopted: int = 0,
     orders_stamped: int = 0,
+    rows_delivery_date_updated: int = 0,
 ) -> dict:
-    """The seventeen keys, and nothing else (AC-S1-22).
+    """The eighteen keys, and nothing else (AC-S1-22).
 
     The retired counters are GONE rather than zeroed: a screen that can print
     `lines_created` is a screen that can tell somebody this sheet wrote the book.
+
+    `rows_delivery_date_updated` joined them 18 Sep 2026: how many of the
+    `rows_already_raised` rows this run repaired to the sheet's own date, rather than only
+    leaving alone.
     """
     line_not_found = [
         {
@@ -1173,6 +1253,7 @@ def _result(
         "rows": plan.rows_expanded if plan.rows_expanded is not None else len(plan.parsed.rows),
         "rows_raised": rows_raised,
         "rows_already_raised": sum(1 for m in plan.matches if m.already_raised),
+        "rows_delivery_date_updated": rows_delivery_date_updated,
         "rows_line_not_found": len(line_not_found),
         "line_not_found": line_not_found[:_CAP],
         "sales_orders_not_found": plan.orders_not_found[:_CAP],
@@ -1231,6 +1312,8 @@ def validate(db: Session, file_data: bytes) -> dict:
          f"will not be raised") if out["rows_line_not_found"] else None,
         (f"{out['rows_already_raised']:,} rows are on a line that already carries an order "
          f"inquiry, and are left alone") if out["rows_already_raised"] else None,
+        (f"{out['rows_delivery_date_updated']:,} of those rows corrected a migrated row's "
+         f"delivery date to the sheet's own") if out["rows_delivery_date_updated"] else None,
         # Never fires since the remark stopped pairing anything (section 8):
         # `documents_not_linkable` comes back empty from every run, and `val.named(0, ...)`
         # is None. Kept beside the key it reads, which stays on the result because the
@@ -1455,16 +1538,17 @@ class _Raiser:
             so_line_id=mirror_id,
             item_code=row.item_code,
             qty=_dec(row.qty),
-            # The SALES ORDER LINE's own required date, and the sheet's only when the book
-            # promises none (7.4, owner: "we need to follow the sales order delivery date").
-            # SO325661 / SRTWT167 is required 01/01/2030 and its sheet row said 05/01/2026,
-            # so the worklist, the month grouping and the export all read a delivery nobody
-            # had promised. The sheet's date still decides which line the row matches and
-            # whether two rows restate one instruction; it stops being what the row REPORTS.
-            # An ORDER BACK row takes the line's date too - the words in the date cell are
-            # still never a date, and `verb` is what says the quantity is owed against
-            # something already ordered.
-            delivery_date=match.core_line.required_date or row.delivery_date,
+            # The SHEET's own date, and the sales order line's only when the sheet states
+            # none (18 Sep 2026, reversing 7.4: "we should have followed the sheet's date").
+            # SO314593's open AutoCount lines are 220 @ 01/03/2027 while the sheet said
+            # 182 @ 1.9.2026, and 7.4 wrote the LINE's date onto every migrated row, so the
+            # worklist read 01/03/2027 for a delivery purchasing was working to on
+            # 1.9.2026, and the Was/Now (i) printed the same wrong date twice. An ORDER
+            # BACK row still takes the line's date - the words in the date cell are never a
+            # date, and `verb` is what says the quantity is owed against something already
+            # ordered. The sheet's date still decides which line a row matches and whether
+            # two rows restate one instruction; that reading is unchanged.
+            delivery_date=row.delivery_date or match.core_line.required_date,
             stock_location=location or match.line_location,
             verb=IV_ORDER_BACK if row.order_back else IV_ORDER,
             # Never a citation any more (section 8): the remark neither picks the line nor
@@ -1576,6 +1660,7 @@ def apply(
     linked: List[Any] = []
     history: List[Any] = []
     raised = 0
+    delivery_dates_updated = 0
 
     for index, match in enumerate(plan.matches):
         row = match.row
@@ -1598,8 +1683,22 @@ def apply(
                          identity=identity, value=row.so_number)
             continue
         if match.already_raised:
-            outcome.skip(row=row.source_row, code=oc.ALREADY_RAISED,
-                         identity=identity, value=row.so_number)
+            # The line is not raised again (D2), but a re-upload of a corrected sheet is
+            # how a MIGRATED row's stale date gets fixed (18 Sep 2026 reversal of 7.4) -
+            # `_repair_migrated_date` finds nothing to do on any other shape and leaves the
+            # skip exactly as it read before.
+            mirror_id = _mirror_of(db, match.core_line.id)
+            migrated = (
+                _repair_migrated_date(db, mirror_id, row) if mirror_id is not None else None
+            )
+            if migrated is not None:
+                delivery_dates_updated += 1
+                outcome.updated(row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
+                                 identity=identity, value=row.so_number,
+                                 entity_type="order_inquiry_row", entity_id=migrated.id)
+            else:
+                outcome.skip(row=row.source_row, code=oc.ALREADY_RAISED,
+                             identity=identity, value=row.so_number)
             continue
 
         entry = raiser.raise_row(match, plan.orders[row.so_number], file_name=file_name)
@@ -1647,4 +1746,5 @@ def apply(
     _close_history(history, actor, now)
     db.flush()
     return _result(plan, links, not_linkable, rows_raised=raised,
-                   orders_adopted=raiser.adopted, orders_stamped=stamped)
+                   orders_adopted=raiser.adopted, orders_stamped=stamped,
+                   rows_delivery_date_updated=delivery_dates_updated)
