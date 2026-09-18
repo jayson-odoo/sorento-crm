@@ -37,8 +37,63 @@ def _load(name: str):
     return mod
 
 
-def _column_types(db) -> dict:
-    """`scm.committed_v`'s column names and their SQL types, straight from the catalogue.
+def _scratch_schemas(db) -> tuple[str, str]:
+    """This `blank_session`'s own copies of the `scm` and `projects` schemas."""
+    scratch = db.execute(text("select current_schema()")).scalar()
+    return f"{scratch}_scm", f"{scratch}_projects"
+
+
+def _rebind(sql: str, scm_schema: str, projects_schema: str) -> str:
+    """A frozen body with its schema prefixes moved onto this session's scratch schemas -
+    the same thing `schema_translate_map` does for the ORM."""
+    return (
+        sql.replace("scm.committed_v", f'"{scm_schema}".committed_v')
+           .replace("projects.", f'"{projects_schema}".')
+    )
+
+
+class _ScratchOperations(Operations):
+    """`alembic.op` for a `blank_session`, with every statement rebound onto the scratch
+    schemas.
+
+    A migration names `scm.committed_v` in full, so `search_path` cannot redirect it, and the
+    DDL round trips below used to replay against the REAL view. On the shared test database
+    that is live fire rather than a harmless rolled-back transaction: `DROP VIEW IF EXISTS
+    scm.committed_v CASCADE` takes `scm.net_position_v` with it and holds an
+    AccessExclusiveLock on BOTH for the length of the test, while every other xdist worker's
+    `reorder_run_service._planning_rows` reads exactly those two. The two take them in
+    opposite orders, so Postgres kills one - CI run 35293438670 reported "Process 447: DROP
+    VIEW IF EXISTS scm.committed_v CASCADE" deadlocked against the plan query, and because
+    `run_reorder` RECORDS a failure instead of raising, the victim
+    (`test_reorder_committed_universe.py`) read an empty plan and failed on its own
+    assertion with nothing on screen to point at the cause.
+
+    The migration function itself is still what runs; only where its SQL lands moves.
+    """
+
+    def __init__(self, migration_context, scm_schema: str, projects_schema: str):
+        super().__init__(migration_context)
+        self._scm_schema = scm_schema
+        self._projects_schema = projects_schema
+
+    def execute(self, sqltext, *args, **kwargs):  # noqa: ANN001
+        if isinstance(sqltext, str):
+            sqltext = _rebind(sqltext, self._scm_schema, self._projects_schema)
+        return super().execute(sqltext, *args, **kwargs)
+
+
+def _scratch_op(db) -> tuple[str, str]:
+    """Point `alembic.op` at this session's scratch schemas, and name them."""
+    import alembic.op as op_module
+
+    scm_schema, projects_schema = _scratch_schemas(db)
+    op_module._proxy = _ScratchOperations(
+        MigrationContext.configure(db.connection()), scm_schema, projects_schema)
+    return scm_schema, projects_schema
+
+
+def _column_types(db, scm_schema: str) -> dict:
+    """`committed_v`'s column names and their SQL types, straight from the catalogue.
 
     What `CREATE OR REPLACE VIEW` may not change, and therefore the thing a replacement has
     to keep identical.
@@ -47,9 +102,17 @@ def _column_types(db) -> dict:
         name: type_
         for name, type_ in db.execute(text(
             "SELECT column_name, data_type FROM information_schema.columns "
-            "WHERE table_schema = 'scm' AND table_name = 'committed_v'"
-        )).all()
+            "WHERE table_schema = :s AND table_name = 'committed_v'"
+        ), {"s": scm_schema}).all()
     }
+
+
+def _view_body(db, scm_schema: str):
+    """The installed body of `committed_v`, as Postgres reprints it."""
+    return db.execute(text(
+        "SELECT definition FROM pg_views "
+        "WHERE schemaname = :s AND viewname = 'committed_v'"
+    ), {"s": scm_schema}).scalar()
 
 
 def _normalize(sql: str) -> str:
@@ -208,30 +271,17 @@ def test_384_installs_the_line_rule_and_its_downgrade_puts_376_back():
     database would then be stamped at 376 while answering 384's question.
     """
     with blank_session() as db:
-        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
-        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
-
+        scm_schema, projects = _scratch_op(db)
         m376 = _load("376_scm_channel_read_model")
         m384 = _load("384_committed_v_line_decision")
-        db.execute(text(m376._AS_OF_376))
+        db.execute(text(_rebind(m376._AS_OF_376, scm_schema, projects)))
 
-        conn = db.connection()
-        ops = Operations(MigrationContext.configure(conn))
-        import alembic.op as op_module
-
-        op_module._proxy = ops
         m384.upgrade()
-        definition = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        definition = _view_body(db, scm_schema)
         assert definition and "core_line_id" in definition
 
         m384.downgrade()
-        restored = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        restored = _view_body(db, scm_schema)
         assert restored and "core_line_id" not in restored
         assert "dd.sales_order_id = so.id" in restored
 
@@ -246,32 +296,19 @@ def test_423_installs_the_form_leg_and_its_downgrade_puts_422_back():
     `products` on the row's own item code, which no earlier body makes.
     """
     with blank_session() as db:
-        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
-        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
-
+        scm_schema, projects = _scratch_op(db)
         m422 = _load("422_committed_v_link_netting")
         m423 = _load("423_committed_v_form_rows")
-        db.execute(text(m422._AS_OF_422))
+        db.execute(text(_rebind(m422._AS_OF_422, scm_schema, projects)))
 
-        conn = db.connection()
-        ops = Operations(MigrationContext.configure(conn))
-        import alembic.op as op_module
-
-        op_module._proxy = ops
         m423.upgrade()
-        definition = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        definition = _view_body(db, scm_schema)
         # Postgres reprints a view body with its own casts and parentheses, so the tell
         # is the ALIAS this leg introduces rather than the predicate as it was written.
         assert definition and "JOIN products fp" in definition
 
         m423.downgrade()
-        restored = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        restored = _view_body(db, scm_schema)
         assert restored and "JOIN products fp" not in restored
         # 422's own distinguishing feature, so a downgrade that installed some THIRD body
         # would not pass on the absence above alone.
@@ -294,43 +331,30 @@ def test_424_replaces_423_in_place_and_changes_no_column_type():
     a different name.
     """
     with blank_session() as db:
-        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
-        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
-
+        scm_schema, projects = _scratch_op(db)
         m423 = _load("423_committed_v_form_rows")
         m424 = _load("424_committed_v_project_oi_only")
-        db.execute(text(m423._AS_OF_423))
-        before = _column_types(db)
+        db.execute(text(_rebind(m423._AS_OF_423, scm_schema, projects)))
+        before = _column_types(db, scm_schema)
 
-        conn = db.connection()
-        ops = Operations(MigrationContext.configure(conn))
-        import alembic.op as op_module
-
-        op_module._proxy = ops
         # No DROP in between: this is the statement the captain runs.
         m424.upgrade()
-        assert _column_types(db) == before, "424 changed a column type"
+        assert _column_types(db, scm_schema) == before, "424 changed a column type"
         # And the newest link, over the body 424 leaves behind - same rule, same reason.
         _load("426_committed_v_form_leg_scope").upgrade()
 
-        assert _column_types(db) == before, (
+        assert _column_types(db, scm_schema) == before, (
             "the replacement changed a column type, which Postgres refuses on any database "
             "that already carries the view"
         )
-        definition = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        definition = _view_body(db, scm_schema)
         # The tell of the new body: the book leg no longer speaks for project class.
         assert definition and "scm_order_inquiry" not in definition
 
         _load("426_committed_v_form_leg_scope").downgrade()
         m424.downgrade()
-        assert _column_types(db) == before, "the downgrade changed a column type"
-        restored = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        assert _column_types(db, scm_schema) == before, "the downgrade changed a column type"
+        restored = _view_body(db, scm_schema)
         assert restored and "scm_order_inquiry" in restored
 
 
@@ -352,19 +376,12 @@ def test_the_form_leg_counts_a_row_with_no_line_and_never_one_that_has_one():
     """
     with blank_session() as db:
         # The view body under test, with its SCHEMA PREFIXES rebound onto this session's
-        # scratch schemas - the same thing `schema_translate_map` does for the ORM. The
-        # neighbours above drop and rebuild the REAL `scm.committed_v` inside a rolled-back
-        # transaction, which is fine for a DDL round trip and no use at all for a DATA one:
-        # the body would read the REAL `projects.order_inquiry_rows` and see none of the
-        # rows below. The SQL is the live body either way, which is what is being asserted.
-        scratch = db.execute(text("select current_schema()")).scalar()
-        projects = f"{scratch}_projects"
-        scm_schema = f"{scratch}_scm"
-        body = (
-            _load("423_committed_v_form_rows")._AS_OF_423
-            .replace("scm.committed_v", f'"{scm_schema}".committed_v')
-            .replace("projects.", f'"{projects}".')
-        )
+        # scratch schemas - the same thing `schema_translate_map` does for the ORM, and the
+        # same thing `_ScratchOperations` does for the DDL round trips above. Without it the
+        # body would read the REAL `projects.order_inquiry_rows` and see none of the rows
+        # below. The SQL is the live body either way, which is what is being asserted.
+        scm_schema, projects = _scratch_schemas(db)
+        body = _rebind(_load("423_committed_v_form_rows")._AS_OF_423, scm_schema, projects)
         db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
         db.execute(text(body))
 
@@ -433,30 +450,20 @@ def test_the_form_leg_counts_a_row_with_no_line_and_never_one_that_has_one():
 def test_replaying_340_then_346_on_a_339_shaped_schema():
     """The exact production failure path: 340 before demand_origin exists, then 346."""
     with blank_session() as db:
-        db.execute(text("CREATE SCHEMA IF NOT EXISTS scm"))
         # blank_session built today's model schema; put it back to the world as
         # migration 339 left it: the column 346 adds must not exist yet.
         db.execute(text("ALTER TABLE sales_orders DROP COLUMN IF EXISTS demand_origin"))
-        # `scm` is schema-qualified in the view DDL, so the replay lands on the REAL view
-        # (inside this rolled-back transaction). It has since grown the channel columns,
-        # and Postgres refuses a CREATE OR REPLACE that DROPS columns - so the world 339
-        # left needs the view genuinely absent, not merely out of date.
-        db.execute(text("DROP VIEW IF EXISTS scm.committed_v CASCADE"))
+        # `scm` is schema-qualified in the view DDL, so `search_path` cannot redirect it and
+        # the replay is rebound onto this session's scratch schema by hand. The scratch copy
+        # carries no views at all, so the world 339 left is already what is there.
+        scm_schema, _ = _scratch_op(db)
 
-        conn = db.connection()
-        ops = Operations(MigrationContext.configure(conn))
-        import alembic.op as op_module
-
-        op_module._proxy = ops
         _load("340_scm_committed_reads_the_decision").upgrade()
 
         # 346 adds demand_origin itself, then re-emits the view with the S13b clause.
         _load("346_scm_demand_origin_split").upgrade()
 
-        definition = db.execute(text(
-            "SELECT definition FROM pg_views "
-            "WHERE schemaname = 'scm' AND viewname = 'committed_v'"
-        )).scalar()
+        definition = _view_body(db, scm_schema)
         assert definition and "demand_origin" in definition
 
 
@@ -484,14 +491,9 @@ def test_a_form_row_and_the_line_it_names_are_counted_once_between_them(
     with blank_session() as db:
         # Same schema rebinding as its neighbour above, and for the same reason: this is a
         # DATA assertion, so the body has to read THIS session's rows.
-        scratch = db.execute(text("select current_schema()")).scalar()
-        projects = f"{scratch}_projects"
-        scm_schema = f"{scratch}_scm"
-        body = (
-            _load("426_committed_v_form_leg_scope")._AS_OF_426
-            .replace("scm.committed_v", f'"{scm_schema}".committed_v')
-            .replace("projects.", f'"{projects}".')
-        )
+        scm_schema, projects = _scratch_schemas(db)
+        body = _rebind(
+            _load("426_committed_v_form_leg_scope")._AS_OF_426, scm_schema, projects)
         db.execute(text(f'DROP VIEW IF EXISTS "{scm_schema}".committed_v CASCADE'))
         db.execute(text(body))
 
