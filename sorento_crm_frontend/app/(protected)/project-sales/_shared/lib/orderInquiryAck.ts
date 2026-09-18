@@ -5,9 +5,11 @@
  * the column, the filter and the bulk bar cannot come to disagree about what "Changed"
  * means. Nothing here explains the feature - the words are the answer, not a lesson.
  */
+import { formatDateInMalaysia } from '@/lib/helpers';
 import type {
   OrderInquiryAckFields,
   OrderInquiryAckState,
+  OrderInquiryBundledHostChange,
 } from '../types/orderInquiry.types';
 
 export const ACK_STATES: OrderInquiryAckState[] = [
@@ -112,4 +114,40 @@ export function movedNoteOf(row: { note?: string | null }): string | null {
   return note.includes('AutoCount moved') || note.includes('AutoCount removed')
     ? note
     : null;
+}
+
+/**
+ * The (i) for a BUNDLED row (`PLAN-oi-bundled-row-host-change.md`). A companion has no
+ * sheet row of its own, no PO of its own and no Was of its own - owner ruling, 19 Sep
+ * 2026: "it comes with the X and Y, so it should follow them, to have the same delay" -
+ * so its own (i) reads each HOST's own change instead, one line per host, in the order
+ * `bundled_host_changes` already carries (rule order, resolved server-side). Nothing is
+ * written to the companion row itself; this only reads what the server already sent.
+ *
+ * Three shapes, per host:
+ *   - a host with a Was of its own: "with X: Was 182 on 01/06/2026, now 280 on 01/03/2027"
+ *   - a host with a live row but no Was: "with X: 280 on 01/03/2027, no change"
+ *   - a host with no live row at all: "with X: no open row"
+ *
+ * `null` on a row that carries no `bundled_host_changes` at all - not a bundled row, or
+ * one whose rule resolved to nothing.
+ */
+export function bundledHostChangeLines(row: {
+  bundled_host_changes?: OrderInquiryBundledHostChange[] | null;
+}): string[] | null {
+  const entries = row.bundled_host_changes;
+  if (!entries || entries.length === 0) return null;
+  return entries.map((entry) => bundledHostChangeLine(entry));
+}
+
+function bundledHostChangeLine(entry: OrderInquiryBundledHostChange): string {
+  if (!entry.qty || !entry.delivery_date) {
+    return `with ${entry.item_code}: no open row`;
+  }
+  const now = `${entry.qty} on ${formatDateInMalaysia(entry.delivery_date)}`;
+  if (entry.previous_qty && entry.previous_delivery_date) {
+    const was = `${entry.previous_qty} on ${formatDateInMalaysia(entry.previous_delivery_date)}`;
+    return `with ${entry.item_code}: Was ${was}, now ${now}`;
+  }
+  return `with ${entry.item_code}: ${now}, no change`;
 }

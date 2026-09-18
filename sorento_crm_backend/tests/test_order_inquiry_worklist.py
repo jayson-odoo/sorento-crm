@@ -2052,3 +2052,207 @@ def test_another_companys_rows_are_not_on_this_companys_list(api):
 
     assert all(row["item_code"] != "ZZT-OTHER-ITEM" for row in body["data"])
     assert body["pagination"]["total"] == 3
+
+
+# ------------------------------------------------------- bundled_host_changes
+
+
+def _companion_rule(db, company_id, companion, hosts, *, supplier_id=None, ratio="1"):
+    """One active companion rule, hosts in the order they must read back in
+    (`PLAN-oi-bundled-row-host-change.md`: the (i) lists each host in RULE order).
+    """
+    from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+
+    rule = ProductCompanionRule(
+        id=_uid(),
+        company_id=company_id,
+        companion_product_id=companion.id,
+        supplier_id=supplier_id,
+        ratio=Decimal(ratio),
+        is_active=True,
+    )
+    db.add(rule)
+    db.flush()
+    for host in hosts:
+        db.add(ProductCompanionRuleHost(rule_id=rule.id, host_product_id=host.id))
+    db.flush()
+    return rule
+
+
+def test_a_bundled_row_lists_each_hosts_own_change_in_rule_order(api):
+    """A bundled row's (i) reads each HOST's own change, not the companion's own row
+    (the companion has none of its own: no sheet row, no PO, no Was). Host X carries a
+    Was (`previous_qty` 182, `previous_delivery_date` 2026-06-01, `qty` 280 @
+    2027-03-01); host Y has never changed. Both entries come back, in rule order,
+    values exact."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="280",
+        delivery_date=date(2027, 3, 1),
+        previous_qty=Decimal("182"),
+        previous_delivery_date=date(2026, 6, 1),
+    )
+    host_y_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="50",
+        delivery_date=date(2026, 5, 1),
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="2",
+        bundled_qty=Decimal("2"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"] == [
+        {
+            "item_code": host_x.product_code,
+            "qty": "280",
+            "delivery_date": "2027-03-01",
+            "previous_qty": "182",
+            "previous_delivery_date": "2026-06-01",
+        },
+        {
+            "item_code": host_y.product_code,
+            "qty": "50",
+            "delivery_date": "2026-05-01",
+            "previous_qty": None,
+            "previous_delivery_date": None,
+        },
+    ], row["bundled_host_changes"]
+    assert host_y_row.id  # host Y's row exists; only its VALUES are read, not its id
+
+
+def test_a_non_bundled_row_carries_no_host_changes(api):
+    """A row nobody's rule ever bundled reads `bundled_host_changes` null - never an
+    empty list, never a key error."""
+    client, _db, _company_id, seeded = api
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == seeded["authored_row"].id)
+
+    assert row["bundled_host_changes"] is None
+
+
+def test_a_host_with_no_row_at_all_still_gets_a_null_entry(api):
+    """A rule's second host has never had a row raised for it at all - the entry for
+    that host's item code still comes back, with every row field null (never a
+    shortened list)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y (never raised)")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="10",
+        delivery_date=date(2026, 4, 1),
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"][1] == {
+        "item_code": host_y.product_code,
+        "qty": None,
+        "delivery_date": None,
+        "previous_qty": None,
+        "previous_delivery_date": None,
+    }, row["bundled_host_changes"]
+
+
+def test_a_hosts_cancelled_and_redirected_rows_are_excluded(api):
+    """A host's own CANCELLED row and a REDIRECTED (back to the pool) row are both
+    excluded from `bundled_host_changes` - only a LIVE row of the host's own item code
+    counts, so a superseded or pooled row never reports as that host's current change."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    host_y = _product(db, f"ZZT-HOSTY-{_uid()[:6]}", f"{MARKER} host Y (no live row)")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x, host_y])
+
+    host_x_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_x.product_code,
+        qty="10",
+        delivery_date=date(2026, 4, 1),
+    )
+    # Host Y carries only a cancelled row and a redirected one - never a live row.
+    _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="5",
+        delivery_date=date(2026, 4, 5),
+        state="cancelled",
+    )
+    _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=host_y.product_code,
+        qty="7",
+        delivery_date=date(2026, 4, 7),
+        redirected_to_pool=True,
+    )
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_x_row.id,
+    )
+    db.commit()
+
+    body = client.get(LIST, params={"limit": 100}).json()
+    row = next(r for r in body["data"] if r["id"] == companion_row.id)
+
+    assert row["bundled_host_changes"][0]["item_code"] == host_x.product_code
+    assert row["bundled_host_changes"][1] == {
+        "item_code": host_y.product_code,
+        "qty": None,
+        "delivery_date": None,
+        "previous_qty": None,
+        "previous_delivery_date": None,
+    }, row["bundled_host_changes"]
