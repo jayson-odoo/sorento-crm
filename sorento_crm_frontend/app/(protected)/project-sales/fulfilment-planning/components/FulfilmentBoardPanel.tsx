@@ -512,7 +512,12 @@ export function FulfilmentBoardPanel({
       preMarkedBatchIds.current.add(batchId);
       setDraft((current) => {
         const next = { ...current };
-        for (const key of keys) if (!next[key]) next[key] = { verdict: 'approved' };
+        // `preMarked: true` (PLAN-board-change-proposed-pill, owner ruling 18 Sep 2026): what
+        // tells the pill and the Verdict column this entry is the board's OWN pre-mark, not a
+        // decision anybody has actually saved - `decide()` always writes a fresh object over
+        // this key, so the flag drops itself the moment a person acts on the line.
+        for (const key of keys)
+          if (!next[key]) next[key] = { verdict: 'approved', preMarked: true };
         return next;
       });
     }

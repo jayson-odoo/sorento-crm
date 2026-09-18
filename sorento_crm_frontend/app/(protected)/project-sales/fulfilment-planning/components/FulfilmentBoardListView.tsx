@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { BoardDecidedMarker, decidedRevisions } from './BoardDecidedMarker';
-import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { UnsavedDecisionPrompt, useDecisionRowExpansion } from './decisionRowExpansion';
 import { BoardChangeTable } from './BoardChangeTable';
@@ -482,7 +482,9 @@ export function FulfilmentBoardListView({
         cell: ({ row }) => {
           const contribution = row.original;
           const key = contribution.key;
-          const drafted = Boolean(draft[key]);
+          // No Undo on a bare pre-mark (PLAN-board-change-proposed-pill): nothing has actually
+          // been saved here yet, only the board's own suggestion.
+          const drafted = Boolean(draft[key]) && !isPreMarkOnly(contribution, draft[key] ?? null);
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={contribution} decision={draft[key] ?? null} />
