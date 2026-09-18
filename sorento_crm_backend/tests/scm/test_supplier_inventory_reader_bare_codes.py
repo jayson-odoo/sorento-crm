@@ -127,6 +127,50 @@ def test_ac_r2_a_covered_row_with_stock_and_a_merged_model_no_longer_complains()
     assert len(out.rows) == 2
 
 
+# AC-R4b (owner feedback round 5): the Supplier codes tab's "Supplier says" showed the
+# translated words but never the sheet's own 型号 - `InventoryRow.model_no` is the raw 型号
+# text, ALWAYS populated (never None), so the picker can show what the supplier actually
+# wrote beside what it was translated to.
+def test_ac_r4b_model_no_is_the_raw_型号_on_a_bare_row():
+    data = workbook([HEADER, ["8613", "连体马桶", "SORENTO", "150mm", 5, 0, 0.2, ""]])
+
+    out = read_workbook(data, resolver(), words=d7_words())
+
+    assert out.rows[0].item_code == "SRTWC8613-150"
+    assert out.rows[0].model_no == "8613"
+
+
+def test_ac_r4b_model_no_equals_item_code_on_a_letter_led_row():
+    data = workbook(
+        [HEADER, ["SRTWC8357-RL-250", "连体马桶", "SORENTO", "250", 5, 0, 0.2, ""]]
+    )
+
+    out = read_workbook(data, resolver(), words=d7_words())
+
+    assert out.rows[0].item_code == "SRTWC8357-RL-250"
+    assert out.rows[0].model_no == "SRTWC8357-RL-250"
+    assert out.rows[0].model_no == out.rows[0].item_code
+
+
+def test_ac_r4b_model_no_fills_through_a_merged_型号_on_every_covered_row():
+    # Same family as AC-R1: 型号/品名/商标 merged over two rows, 规格 each row's own - the
+    # covered row's model_no is the ANCHOR's raw text, same as the anchor's own, even though
+    # the two rows compose to different item_codes.
+    data = merged_workbook(
+        [
+            HEADER,
+            ["8613", "连体马桶", "SORENTO", "250mm", 5, 0, 0.2, ""],
+            [None, None, None, "横排180mm", 12, 0, None, None],
+        ],
+        merges=["A2:A3", "B2:B3", "C2:C3"],
+    )
+
+    out = read_workbook(data, resolver(), words=d7_words())
+
+    assert [r.item_code for r in out.rows] == ["SRTWC8613-250", "SRTWC8613-P-180"]
+    assert [r.model_no for r in out.rows] == ["8613", "8613"]
+
+
 def test_ac_r1_a_merge_anchored_on_the_header_never_fills_item_code():
     # The 型号 caption itself merged down into the first data rows - never a model's own
     # value, so those rows carry no model number at all.

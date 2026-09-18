@@ -113,6 +113,15 @@ def upgrade() -> None:
         ondelete="CASCADE",
     )
 
+    # `scm.supplier_inventory.model_no` (owner feedback round 5): the 型号 exactly as the
+    # supplier wrote it, alongside `item_code` which may be a COMPOSED guess for a bare
+    # model - "Supplier says" has to lead with what the sheet printed, not our derivation.
+    op.add_column(
+        "supplier_inventory",
+        sa.Column("model_no", sa.String(length=120), nullable=True),
+        schema="scm",
+    )
+
     seed_supplier_word_rows(bind)
 
 
@@ -129,6 +138,8 @@ def downgrade() -> None:
     # does not forbid it) is about to lose the column that scopes it - deleted rather than
     # silently unscoped.
     bind.execute(sa.text("DELETE FROM import_field_alias WHERE supplier_id IS NOT NULL"))
+
+    op.drop_column("supplier_inventory", "model_no", schema="scm")
 
     op.drop_constraint(
         "fk_import_field_alias_supplier_id", "import_field_alias", type_="foreignkey"

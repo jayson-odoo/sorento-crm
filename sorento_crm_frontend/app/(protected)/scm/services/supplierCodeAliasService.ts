@@ -73,6 +73,11 @@ export interface SupplierCodeAlias {
 /** One code the supplier sent that binds to nothing we hold. */
 export interface UnmatchedSupplierCode {
   item_code: string;
+  /** The 型号 exactly as the sheet printed it (owner feedback round 5) - `item_code` can be
+   *  OUR composed guess for a bare model, so "Supplier says" leads with this instead. `null`
+   *  on a row with no separate 型号 at all (a proforma line, or a row that predates this
+   *  column). */
+  model_no: string | null;
   /** The supplier's own words for the item - what the person matching it recognises. */
   product_name: string | null;
   brand: string | null;
