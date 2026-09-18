@@ -44,6 +44,7 @@ from app.models.project_so import (
     ACK_CHANGED,
     ACK_REJECTED,
     INQUIRY_CANCELLED,
+    INQUIRY_RAISED,
     IV_ORDER,
     OrderInquiryRow,
 )
@@ -813,6 +814,77 @@ def test_an_amend_after_acknowledgement_marks_changed_without_reacknowledging(ap
     # date" gave up the quantity as `10,`.
     assert Decimal(str(row.previous_qty)) == Decimal("10")
     assert row.previous_delivery_date == WAS
+
+
+def test_a_genuine_supersede_of_an_acknowledged_line_raises_its_replacement_changed(api):
+    """AC-H8/AC-H9, re-homed from #991 (`PLAN-oi-confirm-per-so.md`): the OLD supersede
+    expectation this test used to pin sat on a named line whose only live row was a
+    plain restated ORDER row at the same qty - AC-R2-10 (`PLAN-scm-oi-handover-r2-undo
+    .md` S2, captain ruling 18 Sep) now reads exactly that shape as the SAME
+    instruction restated and settles it in place (own id kept, acknowledgement
+    untouched, no `changed_at`) - see `test_a_supersede_of_an_acknowledged_row_raises_
+    its_replacement_acknowledged`, which pins that. A genuine supersede still exists
+    for the two shapes AC-R2-12 carves out of the widened gate: two live rows on the
+    named line (used here), or a verb switch. `_settle_row_in_place` declines both
+    (`len(live) != 1`), so the old cancel-and-raise path runs, and the replacement
+    must still be born `ACK_CHANGED` carrying the row purchasing had acknowledged's own
+    stamp - #991's original assertion, on a shape that still supersedes."""
+    _client, world = api
+    fixture = _raise_one_row(api, qty="10")
+    row_a = fixture["row"]
+
+    with _as_purchasing(world) as buyer:
+        assert buyer.post(ACK_URL, json={"row_ids": [str(row_a.id)]}).status_code == 200
+    world.db.commit()
+    world.db.refresh(row_a)
+    stamped_by, stamped_at = row_a.acknowledged_by, row_a.acknowledged_at
+    assert stamped_by and stamped_at
+
+    # A second live raised row on the SAME line (AC-R2-12: two live rows), so
+    # `_settle_row_in_place` declines and the genuine supersede path runs.
+    row_b = OrderInquiryRow(
+        company_id=world.company_id,
+        order_inquiry_id=row_a.order_inquiry_id,
+        so_line_id=fixture["line"].id,
+        item_code=row_a.item_code,
+        qty=Decimal("3"),
+        delivery_date=row_a.delivery_date,
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+    )
+    world.db.add(row_b)
+    world.db.commit()
+
+    # The book moves, and CS re-decides the line at its new need.
+    fixture["core_line"].qty_ordered = Decimal("8")
+    fixture["line"].qty = Decimal("8")
+    world.db.flush()
+    world.db.commit()
+
+    response = _confirm(
+        _client, fixture["order"].id, [_line_payload(fixture["line"].id, buy_qty="8")]
+    )
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    world.db.expire_all()
+    old_a = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_a.id).one()
+    old_b = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row_b.id).one()
+    assert old_a.state == INQUIRY_CANCELLED, "AC-R2-12: both still-owed rows are cancelled"
+    assert old_b.state == INQUIRY_CANCELLED, "AC-R2-12: both still-owed rows are cancelled"
+
+    replacement = _order_row(world, fixture["line"])
+    assert str(replacement.id) not in (str(row_a.id), str(row_b.id)), (
+        "a genuine supersede raises a fresh row, never reuses either old one"
+    )
+    assert replacement.ack_state == ACK_CHANGED
+    assert str(replacement.acknowledged_by) == str(stamped_by), (
+        "#991: the replacement carries the prior acknowledged_by"
+    )
+    assert replacement.acknowledged_at == stamped_at, (
+        "#991: the replacement carries the prior acknowledged_at"
+    )
+    assert replacement.changed_at is not None, "#991: a genuine supersede stamps changed_at"
 
 
 def test_the_previous_value_reaches_the_wire_as_two_figures(api):
