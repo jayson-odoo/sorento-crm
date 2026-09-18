@@ -41,6 +41,8 @@ from app.schemas.project_order_inquiry import (
     RejectRowRequest,
     RejectRowsRequest,
     RejectRowsResult,
+    UnacknowledgeResult,
+    UnacknowledgeRowsRequest,
     UnlinkRequest,
     UnplaceAllPreview,
     UnplaceAllRequest,
@@ -80,6 +82,8 @@ WorklistSort = Literal[
     "qty",
     "delivery_date",
     "project_customer",
+    "customer_name",
+    "project_title",
     "supplier",
     "po_number",
     "state",
@@ -594,6 +598,44 @@ async def acknowledge_order_inquiry_rows(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/order-inquiries/unacknowledge", response_model=UnacknowledgeResult)
+async def unacknowledge_order_inquiry_rows(
+    payload: UnacknowledgeRowsRequest,
+    current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
+    db: Session = Depends(get_db),
+):
+    """Unconfirm (N) (PLAN-oi-worklist-split-customer-project.md, Slice 3, owner 18 Sep
+    2026) - the Actions menu's own reverse of Confirm, for a row taken on by mistake or a
+    reconfirm CS has not actually made yet. Same `ACKNOWLEDGE` grant as Confirm itself:
+    whoever can take a row on can also put it back.
+
+    Reversible (a plain Confirm undoes it), so this refuses nothing the way Confirm's own
+    guards do: a row already `awaiting`/`rejected`, cancelled, or outside this company's
+    scope is counted on `skipped`, never a 404 or a 422 for the whole batch."""
+    try:
+        # The CANONICAL (lowercased) id, not the caller's own casing (security review
+        # round 1): the service's own lookup is a plain string equality, so a
+        # mixed-case id that still passes `validate_uuid_path`'s format check would
+        # silently miss the row and count as `skipped` instead of being acted on.
+        canonical_ids = [
+            validate_uuid_path(row_id, resource="Order inquiry row")
+            for row_id in payload.row_ids
+        ]
+        body = ProjectOrderInquiryService(db).unacknowledge_rows(
+            canonical_ids, actor_user_id=current_user["id"]
+        )
+        db.commit()
+        return body
+    except Exception as exc:
+        db.rollback()
+        # Security review round 1: `str(exc)` on an exception the app never meant a
+        # client to see (a DB error, a driver message) is the same reconnaissance leak
+        # `app/main.py`'s own global handler exists to close - never pass it through.
+        # An `AppException` the service raised on purpose (its own message is already
+        # safe) still passes through unchanged.
+        raise exc if hasattr(exc, "status_code") else handle_internal_error()
 
 
 @router.post("/order-inquiries/reject", response_model=RejectRowsResult)

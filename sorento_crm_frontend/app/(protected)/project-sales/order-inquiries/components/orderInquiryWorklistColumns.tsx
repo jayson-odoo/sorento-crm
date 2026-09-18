@@ -716,22 +716,35 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
-        accessorKey: 'project_customer',
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Project / customer" column={column} />
-        ),
-        size: 260,
-        meta: {
-          headerTitle: 'Project / customer',
-          skeleton: <Skeleton className="h-4 w-40" />,
-        },
+        // PLAN-oi-worklist-split-customer-project.md (owner, 18 Sep: "here need to
+        // split the customer and project out"): Customer and Project, two columns
+        // where the combined `project_customer` used to print. `project_customer`
+        // itself stays on the row for the Excel export and the search box, unchanged.
+        accessorKey: 'customer_name',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
+        size: 150,
+        meta: { headerTitle: 'Customer', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) =>
-          row.original.project_customer ? (
-            <span className="block truncate" title={row.original.project_customer}>
-              {row.original.project_customer}
+          row.original.customer_name ? (
+            <span className="block truncate" title={row.original.customer_name}>
+              {row.original.customer_name}
             </span>
           ) : (
             <Muted>Not attributed</Muted>
+          ),
+      },
+      {
+        accessorKey: 'project_title',
+        header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
+        size: 180,
+        meta: { headerTitle: 'Project', skeleton: <Skeleton className="h-4 w-32" /> },
+        cell: ({ row }) =>
+          row.original.project_title ? (
+            <span className="block truncate" title={row.original.project_title}>
+              {row.original.project_title}
+            </span>
+          ) : (
+            <Muted>No project</Muted>
           ),
       },
       {
@@ -1018,16 +1031,51 @@ export function useOrderInquiryWorklistColumns({
         // naive UTC stamp.
         accessorKey: 'raised_at',
         header: ({ column }) => <DataGridColumnHeader title="Raised at" column={column} />,
-        size: 170,
+        // 190, not 170 (N6, review round 1): the date/time plus the new info icon no
+        // longer fit the old width without crowding the icon against the next column.
+        size: 190,
         meta: { headerTitle: 'Raised at', skeleton: <Skeleton className="h-4 w-24" /> },
-        cell: ({ row }) =>
-          row.original.raised_at ? (
-            <span className="whitespace-nowrap">
+        // PLAN-oi-worklist-split-customer-project.md: a re-confirm cancels a carried line's row
+        // and raises a fresh one, so this cell's own date moves on - the info icon is
+        // where the earlier raise(s) still show, same Info + Tooltip pattern as the
+        // Instruction column's "why this instruction" above.
+        cell: ({ row }) => {
+          const history = row.original.raise_history ?? [];
+          return row.original.raised_at ? (
+            <span className="flex min-w-0 items-center gap-1 whitespace-nowrap">
               {formatDateTimeInMalaysia(row.original.raised_at)}
+              {history.length > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      mode="icon"
+                      variant="ghost"
+                      size="sm"
+                      aria-label="Previously raised"
+                      className="size-5 shrink-0 text-muted-foreground"
+                    >
+                      <Info className="size-3.5" aria-hidden />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs break-words">
+                    <p className="font-medium">Previously raised</p>
+                    {history.map((entry, index) => (
+                      <p key={`${entry.raised_at}-${index}`}>
+                        {entry.raised_at
+                          ? formatDateTimeInMalaysia(entry.raised_at)
+                          : 'Unknown'}
+                        {entry.raised_by_name ? ` · ${entry.raised_by_name}` : ''}
+                      </p>
+                    ))}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </span>
           ) : (
             <Muted>Unknown</Muted>
-          ),
+          );
+        },
       },
       // No Confirmed column (S1, AC-1.5): there is no manual confirm left to report on,
       // and the two facts that column existed to carry - a rejection and a settle-in-place

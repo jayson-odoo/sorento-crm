@@ -23,6 +23,7 @@ import {
   rejectOrderInquiryRows,
   placeOrderInquiryRowOnPo,
   placeOrderInquiryRowOnPoAllocations,
+  unacknowledgeOrderInquiryRows,
   unplaceAllOrderInquiryRows,
   unplaceOrderInquiryRow,
 } from '../services/orderInquiryService';
@@ -479,5 +480,25 @@ export function useOrderInquiryHandshake() {
     onError: (error: Error) => toast.error(error.message),
   });
 
-  return { acknowledge, reject, rejectRows, linkNow };
+  // PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026: reversible (a plain Confirm undoes
+  // it), so it invalidates the same families Confirm does and asks for no confirmation
+  // dialog of its own.
+  const unacknowledge = useMutation({
+    mutationFn: (rowIds: string[]) => unacknowledgeOrderInquiryRows(rowIds),
+    onSuccess: (result) => {
+      invalidate();
+      const rows = `${result.updated} row${result.updated === 1 ? '' : 's'}`;
+      // N4 (review round 1): the same warn/success split `rejectRows` above uses for a
+      // partial outcome - a batch that skipped something is not silently the same as
+      // one that did not.
+      if (result.skipped > 0) {
+        toast.warning(`${rows} back to To confirm, ${result.skipped} skipped`);
+      } else {
+        toast.success(`${rows} back to To confirm`);
+      }
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
+  return { acknowledge, reject, rejectRows, linkNow, unacknowledge };
 }
