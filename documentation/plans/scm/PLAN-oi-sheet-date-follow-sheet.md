@@ -233,8 +233,43 @@ formatting byte for byte, so reusing it is what keeps the two paths from driftin
 `filter(OrderInquiryRow.id.in_(...))`, keyed by id in a dict the loop reads from - five
 lines, replacing the per-row `db.get` the loop used to make.
 
+## Round 4: text dates in the book (19 Sep 2026, found running the real book through the
+lane stack)
+
+`JAN - DEC 2026 ORDERabc.xlsx` run end to end: SO314593's rows were skipped as
+`ALREADY_RAISED`, not repaired. Root cause is UPSTREAM of every change above, in
+`app/services/project_order_inquiry_reader.py`'s `_as_date` (line ~104 before this round):
+it answers `None` for anything that is not already a Python `datetime`/`date` object, and
+the real book stores some `DELIVERY DATE` cells as literal TEXT rather than an Excel date.
+SO314593's own JUNE rows write the cell as the string `1.6.2026`, so `row.delivery_date`
+was already `None` at the ORIGINAL migration (the line's date fallback fired regardless of
+7.4 - this plan's own reversal never touched that path) and is still `None` today - an
+undated row correctly claims nothing (AC-10), so the repair correctly declined it, on a
+row that was never given a date to compare against in the first place.
+
+Measured over all 38 tabs of the real file's `DELIVERY DATE` column: 15,833 real Excel
+dates; text shapes `1.3.2026` (67 cells, d.m.yyyy), `1.12.2026` (14, d.mm.yyyy),
+`30-04-2026` (11, dd-mm-yyyy), and one `27/10//2026` typo (a doubled slash); non-dates that
+must stay `None`: the existing `ORDER BACK ...` variants, `MARCH - APRIL 2026` (31, a
+range, not a date), `ASAP` (5), `WAREHOUSE MISSING`, `STOCK TAKE ADJUST`.
+
+**Change (reader only):** `_as_date` now also parses a TEXT cell as a DAY-FIRST date when
+it matches `^\s*(\d{1,2})[./-](\d{1,2})[./-]+(\d{4})\s*$` - the trailing `+` tolerates the
+`//` typo. Day-first because every one of the measured cells reads that way (`1.3.2026` is
+1 March, never 3 January), and a two-digit year is not matched since none appears in the
+book. An impossible date (e.g. month 13) still answers `None` rather than raising. The
+same helper serves `so_date`, so a text SO DATE cell parses the same way. Nothing in the
+importer (`project_order_inquiry_import_service.py`) changes - a text-dated row now simply
+carries a real `delivery_date`, so this plan's own matcher and repair rules apply to it
+exactly as they do to an Excel-dated row: `_line_sort_key`'s "line whose `required_date`
+equals the sheet's" term and `_restates` both now see it. The whole importer family (200
+tests: everything this plan's fix rounds 1-3 touch, plus the reader's own suite) was
+re-run to confirm nothing pairs differently.
+
 ## Files touched
 
+* `app/services/project_order_inquiry_reader.py` - `_as_date` parses a day-first text date
+  (round 4).
 * `app/services/project_order_inquiry_import_service.py` - the delivery-date assignment;
   `_already_raised` (now also returns the mirror map), `_resolve_line_repairs`,
   `_resolve_delivery_date_repairs` (S8 as a Python comparison per S13, S10's other three
@@ -243,8 +278,10 @@ lines, replacing the per-row `db.get` the loop used to make.
   snapshot, N8's bulk preload); the `_result` / `validate` summary line. `_mirror_of` and
   the first round's `_repair_migrated_date` are gone, superseded by the above.
 * `app/services/import_outcome_codes.py` - `DELIVERY_DATE_UPDATED` code + label.
-* `tests/test_oi_sheet_date_follow_sheet.py` (new, round 1; extended rounds 2 and 3) - AC-1
-  to AC-16, plus two DB-free unit tests for `_resolve_line_repairs`.
+* `tests/test_project_order_inquiry_import_reader.py` - `_as_date` text-date parametrize
+  (AC-17, round 4).
+* `tests/test_oi_sheet_date_follow_sheet.py` (new, round 1; extended rounds 2, 3 and 4) -
+  AC-1 to AC-18, plus two DB-free unit tests for `_resolve_line_repairs`.
 * `tests/test_oi_sheet_pairing_repair.py` - `test_ac_r_37_...` rewritten for the reversed
   rule.
 * `tests/test_project_order_inquiry_import_migration.py` - `RESULT_KEYS` gains
@@ -252,6 +289,8 @@ lines, replacing the per-row `db.get` the loop used to make.
 * `sorento_crm_frontend/app/(protected)/scm/reorder/services/orderInquiryService.ts` -
   `OrderInquiryPreview.rows_delivery_date_updated` (fix round 1).
 * `sorento_crm_frontend/app/(protected)/scm/reorder/components/OrderInquiryUploadDialog.tsx`
-  - the "Dates corrected" tile (fix round 1, untouched round 2 per N6).
+  - the "Dates corrected" tile (fix round 1, untouched since per N6).
 * `sorento_crm_frontend/app/(protected)/scm/reorder/components/OrderInquiryUploadDialog.test.tsx`
   - fixture + tile-count assertions updated for the eighth tile (fix round 1).
+* `documentation/user-guides/supply-chain/upload-plan-data.md` - the DELIVERY DATE bullet
+  gained the text-date clause (round 4).

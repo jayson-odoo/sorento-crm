@@ -101,11 +101,32 @@ def _number(value: Any) -> Optional[float]:
         return None
 
 
+#: A day-first date typed as TEXT rather than an Excel date (round 4, 19 Sep 2026,
+#: `JAN - DEC 2026 ORDERabc.xlsx`): SO314593's own JUNE rows say `1.6.2026` as a STRING, so
+#: `_as_date` answered `None` for them regardless of anything 7.4 or this fix's own
+#: reversal did. Measured across all 38 tabs of that file: `1.3.2026` (67 cells, d.m.yyyy),
+#: `1.12.2026` (14, d.mm.yyyy), `30-04-2026` (11, dd-mm-yyyy) and one `27/10//2026` typo
+#: (the trailing `+` tolerates the double slash). Day-first because every one of those
+#: cells reads that way - `1.3.2026` is 1 March, never 3 January - and none of them needs a
+#: two-digit year, so that shape is not matched. Never mistaken for `MARCH - APRIL 2026` (a
+#: range, not a date), `ASAP`, or any other prose cell: none of those has three digit groups
+#: in this shape at all.
+_TEXT_DATE = re.compile(r"^\s*(\d{1,2})[./-](\d{1,2})[./-]+(\d{4})\s*$")
+
+
 def _as_date(value: Any) -> Optional[date]:
     if isinstance(value, datetime):
         return value.date()
     if isinstance(value, date):
         return value
+    if isinstance(value, str):
+        match = _TEXT_DATE.match(value)
+        if match:
+            day, month, year = (int(part) for part in match.groups())
+            try:
+                return date(year, month, day)
+            except ValueError:
+                return None
     return None
 
 

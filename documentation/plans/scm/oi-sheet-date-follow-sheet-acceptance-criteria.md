@@ -113,6 +113,25 @@ Two DB-free unit tests pin `_resolve_line_repairs`'s own pure-function contract 
 pass 1 settles exact item/quantity/date matches before pass 2 ever runs, regardless of that
 order.
 
+## AC-17 to AC-18: round 4, text dates in the book (19 Sep 2026, found on the real book)
+
+`_as_date` (`app/services/project_order_inquiry_reader.py`) answered `None` for a DELIVERY
+DATE cell the book stores as literal TEXT rather than an Excel date - SO314593's own JUNE
+rows write `1.6.2026` this way, so no date ever reached the importer for those rows.
+
+* **AC-17** Given a text cell, when `_as_date` reads it, then: `1.3.2026` -> 2026-03-01;
+  `1.12.2026` -> 2026-12-01; `30-04-2026` -> 2026-04-30; `27/10//2026` (a doubled-slash
+  typo) -> 2026-10-27; `MARCH - APRIL 2026` (a range, not a date) -> `None`; `ASAP`,
+  `WAREHOUSE MISSING`, `STOCK TAKE ADJUST` -> `None`; `13.13.2026` (an impossible month)
+  -> `None`; `ORDER BACK BRW-BB` -> `None` for `_as_date` while `_ORDER_BACK`'s own regex
+  still matches it, unaffected.
+* **AC-18 (end to end)** Given a sheet whose DELIVERY DATE cell is the literal text
+  `"1.6.2026"` against a line required 2026-06-01, when raised, then the row's
+  `delivery_date` is 2026-06-01 (the AC-1 shape, now reachable from a text cell); when a
+  LATER sheet whose cell reads the text `"15.7.2026"` is uploaded naming the same line,
+  then the migrated row repairs to 2026-07-15 (the AC-4 shape, now reachable from a text
+  cell on both sides).
+
 Never touched by any of the above: links, quantities (except the untouched sibling
 assertion above), state, or ack fields - except AC-9's settled row, which keeps exactly
 what the planning change itself wrote, and AC-14a's unrelated sibling, which keeps exactly

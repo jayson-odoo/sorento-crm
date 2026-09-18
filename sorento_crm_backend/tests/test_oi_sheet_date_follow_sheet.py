@@ -1,7 +1,7 @@
 """The order inquiry sheet's raised row takes the SHEET's own delivery date.
 
 Contract: `documentation/plans/scm/oi-sheet-date-follow-sheet-acceptance-criteria.md`,
-AC-1 to AC-16. `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
+AC-1 to AC-18. `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
 have followed the sheet's date") REVERSES section 7.4 of
 `PLAN-scm-oi-sheet-pairing-repair.md`. Measured on prod: SO314593's open AutoCount lines
 are 220 @ 01/03/2027 while the sheet said 182 @ 1.9.2026 - 7.4 wrote the LINE's date onto
@@ -40,6 +40,15 @@ AC-14a (S12: a matched sibling whose OWN note also carries an "AutoCount moved .
 sibling's quantity; a near-miss sibling sharing only its date) and moved S8's equality out
 of SQL into a plain Python comparison for performance (S13) with no change to the
 criterion AC-15 pins.
+
+Round 4 (19 Sep 2026, found running the real book `JAN - DEC 2026 ORDERabc.xlsx` through
+the lane stack) added AC-18: SO314593's rows were skipped as already-raised rather than
+repaired because `_as_date` (`project_order_inquiry_reader.py`) answered `None` for a
+DELIVERY DATE cell written as TEXT - the book stores some as literal strings - so
+`row.delivery_date` was `None` at migration (the LINE's date fallback fired regardless of
+7.4) and stayed `None` on re-upload (an undated row correctly claims nothing, per AC-10).
+The root cause is upstream of this plan's own change and is fixed in the reader, not the
+importer; `test_project_order_inquiry_import_reader.py` carries the reader-level reds.
 
 Postgres only (`tests/_pg_fixture.py`, via `world()`). The world, sheet and apply builders
 are IMPORTED from `tests/test_project_order_inquiry_import_migration.py` and
@@ -864,3 +873,38 @@ def test_ac_16_the_eligible_query_orders_by_created_at_then_id():
         assert inserted_first.delivery_date == required, (
             "the row with the LATER created_at must stay untouched"
         )
+
+
+def test_ac_18_a_text_date_cell_is_read_and_repaired():
+    """AC-18 (round 4, 19 Sep 2026), end to end: `JAN - DEC 2026 ORDERabc.xlsx` stores some
+    DELIVERY DATE cells as literal TEXT rather than an Excel date - SO314593's own JUNE
+    rows say `1.6.2026` this way, which is why `row.delivery_date` was `None` at the reader
+    layer regardless of anything this fix or its reversal did (round 4 root cause).
+
+    Raised (AC-1 shape): a sheet whose cell reads the text `"1.6.2026"` raises a row dated
+    2026-06-01. Re-uploaded with a corrected text date (AC-4 shape): the migrated row
+    repairs to the new one."""
+    text_date = date(2026, 6, 1)
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="50", required_date=text_date)
+        migration_sheet = sheet([
+            (order.so_number, w.product.product_code, 30, "1.6.2026",
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        raised = _apply(w, migration_sheet, file_name="2026-08 order inquiry.xlsx")
+
+        assert raised["rows_raised"] == 1, raised
+        migrated = w.one_row()
+        assert migrated.delivery_date == text_date, "the text date cell was not parsed"
+
+        corrected_sheet = sheet([
+            (order.so_number, w.product.product_code, 30, "15.7.2026",
+             w.warehouse.warehouse_code, ""),
+        ])
+        result = _apply(w, corrected_sheet, file_name="2026-09 corrected.xlsx")
+
+        assert result["rows_delivery_date_updated"] == 1, result
+        w.db.refresh(migrated)
+        assert migrated.delivery_date == date(2026, 7, 15)

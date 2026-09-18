@@ -258,7 +258,7 @@ on. Completed history migrates too, so you can load the whole workbook, not just
 * The **DELIVERY DATE** cell may read `ORDER BACK` instead of a date. Both kinds of row are
   raised; the words only decide whether the row reads **ORDER BACK** or **ORDER** on the
   worklist. The row carries the sheet's own delivery date, and the sales order line's only
-  when the sheet gives none.
+  when the sheet gives none. A date typed as text such as `1.6.2026` counts too, day first.
 * The **REMARK** cell may name the PO or SPO the line waits on, several joined with `&`, for
   example `202606-S0024 & 202607-S0043`. `ORDER` on its own means nothing was ordered yet.
 * Every tab with a recognisable header row is read. The same row restated on several tabs
