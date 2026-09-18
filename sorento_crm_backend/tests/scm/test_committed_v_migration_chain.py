@@ -200,7 +200,32 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     assert _normalize(m512._AS_OF_511) == _normalize(m511._AS_OF_511)
 
 
+# ---------------------------------------------------------------------------
+# The four DDL round trips in this file, and why they carry `serial_ddl`.
+# (The three immediately below, plus `test_replaying_340_then_346_on_a_339_
+# shaped_schema` further down.)
+#
+# `scm` is schema-qualified in every frozen view body, and a schema-qualified
+# name ignores the search_path `blank_session` pins - so `DROP VIEW IF EXISTS
+# scm.committed_v CASCADE` and the `CREATE OR REPLACE` that follows it land on
+# the REAL, SHARED view, inside this transaction, until it rolls back. That is
+# deliberate and it is the only way to test a migration's own `upgrade()`
+# without doctoring the body it froze (the two DATA tests further down rebind
+# the prefixes instead, because they need to read THIS session's rows).
+#
+# It also means the test holds an AccessExclusiveLock on `scm.committed_v` and
+# on every view CASCADE reaches, for as long as it runs. `--dist loadfile`
+# serializes the tests of ONE file and does nothing about another xdist
+# worker's reorder run reading those same views: PR #973 run 35150767560,
+# PR #985 run 35176172055 (twice) and PR #1001 run 35292962581 all died of the
+# resulting deadlock, three times on the reading side in
+# `reorder_run_service._planning_rows` and once here on the DDL side. So these
+# run outside the pool - see .github/workflows/deploy.yml.
+# ---------------------------------------------------------------------------
+
+
 @requires_pg
+@pytest.mark.serial_ddl
 def test_384_installs_the_line_rule_and_its_downgrade_puts_376_back():
     """Both directions, against a real database, inside a rolled-back transaction.
 
@@ -237,6 +262,7 @@ def test_384_installs_the_line_rule_and_its_downgrade_puts_376_back():
 
 
 @requires_pg
+@pytest.mark.serial_ddl
 def test_423_installs_the_form_leg_and_its_downgrade_puts_422_back():
     """The leg that counts an instruction with no sales-order line, both directions.
 
@@ -279,6 +305,7 @@ def test_423_installs_the_form_leg_and_its_downgrade_puts_422_back():
 
 
 @requires_pg
+@pytest.mark.serial_ddl
 def test_424_replaces_423_in_place_and_changes_no_column_type():
     """CREATE OR REPLACE over the view that is ALREADY there, which is the only way to
     catch the failure this test exists for.
@@ -430,6 +457,7 @@ def test_the_form_leg_counts_a_row_with_no_line_and_never_one_that_has_one():
 
 
 @requires_pg
+@pytest.mark.serial_ddl
 def test_replaying_340_then_346_on_a_339_shaped_schema():
     """The exact production failure path: 340 before demand_origin exists, then 346."""
     with blank_session() as db:

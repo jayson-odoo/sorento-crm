@@ -399,12 +399,44 @@ jobs:
         working-directory: sorento_crm_backend
         run: python -m scripts.bootstrap_env
 
+      # `-m "not serial_ddl"` is the SCM half of the same rule the `test-backend`
+      # job states below for tests/test_migration_*.py, and it is not an
+      # optimization either.
+      #
+      # A handful of tests here run DDL against the REAL, SHARED `scm` relations
+      # rather than a scratch schema, because that is the only way to exercise a
+      # migration's own frozen `upgrade()` body: `scm` is schema-qualified in
+      # that SQL, so it ignores the search_path `blank_session` pins and lands on
+      # the live view. `DROP VIEW IF EXISTS scm.committed_v CASCADE` then holds an
+      # AccessExclusiveLock on `committed_v` and on every view CASCADE reaches
+      # (`net_position_v` first) until the test's transaction rolls back, while
+      # another worker's reorder run reads those same views in the opposite
+      # order. That is a lock cycle and Postgres kills one side of it.
+      #
+      # Four hits, issue #987: PR #973 run 35150767560, PR #985 run 35176172055
+      # (twice) - all three inside `reorder_run_service._planning_rows`, killed on
+      # the READING side - and PR #1001 run 35292962581, killed on the DDL side in
+      # tests/scm/test_committed_v_migration_chain.py. Reproduced locally at
+      # `-n 4 --dist loadfile`: `committed_v` vs `net_position_v`, exactly that
+      # cycle. `--dist loadfile` serializes the tests of ONE file and can do
+      # nothing about two files on two workers.
+      #
+      # The marked set is a few seconds of test time, so it runs in a second pass
+      # with the pool drained and nothing else on the database.
       - name: Run SCM backend suite (executing gate)
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s)"
-          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 $IGNORES tests/scm/
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus the serial_ddl tests"
+          python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
+            -m "not serial_ddl" $IGNORES tests/scm/
+
+      - name: Run SCM view-DDL tests serially (executing gate)
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
+            -m serial_ddl $IGNORES tests/scm/
 
   # The executing backend gate, run in parallel under pytest-xdist `-n auto`.
   #
@@ -548,7 +580,8 @@ jobs:
       # Everything except tests/ci_excluded.txt - see that file for why each entry
       # is out (they assert against business data a fresh database has no reason
       # to contain) - MINUS tests/scm, which `test-backend-scm` runs in parallel,
-      # MINUS tests/test_migration_*.py, which the serial step below runs alone.
+      # MINUS tests/test_migration_*.py, which the serial step below runs alone,
+      # MINUS anything marked `serial_ddl`, which the step after that runs alone.
       #
       # `--durations=30` prints the 30 slowest tests of the run. It is the only
       # per-test timing this job produces, and reviewers are pointed at it by
@@ -558,10 +591,11 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm and tests/test_migration_*.py; shard ${{ matrix.shard }} of 4"
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm, tests/test_migration_*.py and the serial_ddl tests; shard ${{ matrix.shard }} of 4"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             --splits 4 --group ${{ matrix.shard }} \
             --ignore-glob='tests/test_migration_*.py' \
+            -m "not serial_ddl" \
             $IGNORES --ignore=tests/scm tests/
 
       # Migration tests run serially, outside the xdist pool, on one shard only.
@@ -586,6 +620,26 @@ jobs:
         run: |
           python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
             tests/test_migration_*.py
+
+      # The same hazard outside the `test_migration_*.py` naming, which is why the
+      # marker exists alongside the glob: `tests/test_ingest_contract_v2.py`'s
+      # TestMigration473WidensTheSourceCheck holds an AccessExclusiveLock on the
+      # SHARED `scm.order_link_claim` (DROP CONSTRAINT / ADD CONSTRAINT on a plain
+      # `engine.connect()`), and nothing about its filename says so. Same cycle as
+      # issue #987, same treatment, no shard but this one.
+      #
+      # `-m serial_ddl` over the whole tree rather than a path list: a future test
+      # that marks itself is picked up without anyone remembering to register it
+      # here. Collection of tests/ costs about 25 seconds, and shard 2 has the
+      # headroom.
+      - name: Run view/DDL tests serially (executing gate)
+        if: matrix.shard == 2
+        working-directory: sorento_crm_backend
+        run: |
+          IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
+          python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
+            -m serial_ddl --ignore-glob='tests/test_migration_*.py' \
+            $IGNORES --ignore=tests/scm tests/
 
   validate-frontend:
     name: Validate frontend (vitest)
