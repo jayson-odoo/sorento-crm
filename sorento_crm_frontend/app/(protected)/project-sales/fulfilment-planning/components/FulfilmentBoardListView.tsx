@@ -59,6 +59,7 @@ export function FulfilmentBoardListView({
   onDecideMany,
   annotations,
   externalSearch,
+  pageResetKey,
 }: {
   contributions: BoardContribution[];
   draft: BoardDraft;
@@ -82,6 +83,14 @@ export function FulfilmentBoardListView({
    * any more, so there is no second box to type into.
    */
   externalSearch?: string;
+  /**
+   * Resets `PanelDataGrid`'s page on a change - `externalSearch` on its own, unless the
+   * caller narrows `contributions` by something else too (`FulfilmentBoardPanel`'s kind
+   * filter, on top of its own search): that caller passes its OWN composite key instead,
+   * since a `contributions` array that changed only because of THAT filter would otherwise
+   * leave the reader on whatever page 3 now shows instead of the top of the new list.
+   */
+  pageResetKey?: string;
 }) {
   /**
    * Which rows are open - the same STATE the cell breakdown keeps, and the same panel inside
@@ -535,6 +544,7 @@ export function FulfilmentBoardListView({
       columns={columns}
       rows={filteredContributions}
       getRowId={(row) => row.key}
+      pageResetKey={pageResetKey ?? externalSearch}
       listingKey="projects.projects.view::project-fulfilment-board-list-v1"
       emptyTitle="Nothing is outstanding on this board"
       rowSelection={rowSelection}

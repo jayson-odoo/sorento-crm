@@ -1195,6 +1195,7 @@ export function BoardCellBreakdownDialog({
                 // agent - never a second fetch, `cell.contributions` is already the whole cell.
                 rows={filteredContributions}
                 getRowId={(row) => row.key}
+                pageResetKey={linesSearch.debouncedValue}
                 listingKey="projects.projects.view::project-board-cell-breakdown"
                 sortable
                 expanded={expanded}

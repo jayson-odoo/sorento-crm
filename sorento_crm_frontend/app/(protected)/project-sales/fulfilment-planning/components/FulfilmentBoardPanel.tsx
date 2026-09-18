@@ -1830,6 +1830,11 @@ export function FulfilmentBoardPanel({
                 // beside the title, drives Grid and List alike - the panel's own search
                 // box is gone, so there is no second box to disagree with this one.
                 externalSearch={productSearch}
+                // `visibleListContributions` also narrows by `kindFilter` (above), which
+                // is not part of `externalSearch` - so the reset key carries both, or
+                // toggling a kind card while on page 3 would leave the list showing
+                // whatever landed there instead of the top of the narrowed set.
+                pageResetKey={`${productSearch}|${kindFilter ?? ''}`}
               />
             ) : (
               <>
