@@ -43,6 +43,8 @@ Plan: PLAN-loading-plan-project-spo-only.md (18 Sep 2026)
   Project popup lists SO414033 three times (14/09, 05/10, 19/10) with Open 234 and
   Balance 233 / 234 / 234; footer = Project cell.
 - AC-B2: The popup total equals the Project cell on the row, and To request moved by the
+  same amount as Project. (Verified 18 Sep on the 0915_1900 copy: Project 1,308, SQL 1,308;
+  the 503 in the owner screenshot is prod, whose other-SO baseline differs.) Original text:
   same amount as Project versus the pre-change figure (503 -> 1,204 on the 16 Sep copy:
   233 + 234 + 234 = 701, since the 14/09 line carries 1 on an SPO).
 - AC-B3: Usable at 375px and 1280px; the two new columns do not clip.

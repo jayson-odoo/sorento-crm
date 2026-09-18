@@ -9,11 +9,12 @@ they are both about a screen that used to go blank:
   what customers are owed, plus whatever their stock list or their newest un-converted
   proforma names.
 * Project demand on THIS screen is the open project sales-order book, less what CS has
-  already placed on a purchase order or an SPO (R15, captain 27 Aug). It read
-  `projects.order_inquiry_rows` alone for one day (R1), and on the dev copy 22,238 open
-  project SO lines carry no inquiry row at all, so purchasing was shown nothing to ask for.
-  The fulfilment board keeps P3 - `demand.py` and `scm.committed_v` are untouched - and only
-  the loading plan reads the book for project class.
+  already placed on a SHIPPING ORDER (R15, captain 27 Aug; narrowed to SPO-only by R1 of
+  `PLAN-loading-plan-project-spo-only.md`, owner 18 Sep 2026 - a PO placement does not net
+  it). It read `projects.order_inquiry_rows` alone for one day (a since-superseded R1), and
+  on the dev copy 22,238 open project SO lines carry no inquiry row at all, so purchasing was
+  shown nothing to ask for. The fulfilment board keeps P3 - `demand.py` and `scm.committed_v`
+  are untouched - and only the loading plan reads the book for project class.
 
 Postgres, marker-prefixed, every chain seeded here (CI's database is empty).
 """

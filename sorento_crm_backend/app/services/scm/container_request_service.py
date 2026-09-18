@@ -49,7 +49,10 @@ Two moves, two functions:
   gross, because it explains the NEED, not the netted ask. `include_lines=True` additionally
   returns the open SO lines behind every demand row, flat, so a caller can bucket them by
   date (a schedule matrix) or show "which order does this cover" beside the aggregate - see
-  the invariant on `build`.
+  the invariant on `build`. Each line carries both `open_qty` (gross, before any placement is
+  netted) and `qty` (the balance after SPO placements - a PO placement does not reduce it, R1
+  of `PLAN-loading-plan-project-spo-only.md`); a retail line has no placements to be netted
+  by, so `open_qty == qty` on it always.
 * `send` - hands the reviewed lines to `supplier_notice_service.request_and_notify`, which is
   the S8 notice machinery (document, email, outbox row) with the wording this stage needs and
   no Loading Plan behind it.
@@ -1500,12 +1503,15 @@ def build(
 
     INVARIANT this endpoint guarantees when `include_lines` is set: for every demand row,
     `sum(l["qty"] for l in lines if l["product_id"] == row["product_id"]) == row["open_so_need"]`.
-    The flat lines are the sales-order BOOK, and since R15 both channels are read off it - a
-    project requirement is a sales-order line again, listed at the remainder the Project column
-    counts. It footed to `retail_qty` alone for one day (R1, when project need was the Order
-    Inquiry and had no book line to list). Every number still comes off the identical predicate
-    (`_open_need` / `_project_open_need` aggregate it, `_open_lines` emits it at line grain),
-    and the horizon does not disturb it: every side applies it identically.
+    The invariant is on `qty` (the balance after SPO placements), never `open_qty` (the gross
+    figure a line also carries) - `open_so_need` is itself already net of SPO placements
+    (`_project_open_need`), so only `qty` can foot to it. The flat lines are the sales-order
+    BOOK, and since R15 both channels are read off it - a project requirement is a sales-order
+    line again, listed at the remainder the Project column counts. It footed to `retail_qty`
+    alone for one day (a since-superseded R1, when project need was the Order Inquiry and had
+    no book line to list). Every number still comes off the identical predicate (`_open_need` /
+    `_project_open_need` aggregate it, `_open_lines` emits it at line grain), and the horizon
+    does not disturb it: every side applies it identically.
     """
     _supplier(db, supplier_id)
     as_of, stock, proforma, on_file = _statement(db, supplier_id, plan)

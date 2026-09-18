@@ -711,7 +711,8 @@ export interface ContainerRequestRow {
   /** Everything the pool predicate excluded, as one muted line. */
   group_locations: ContainerRequestGroupLocations;
   /** Gross split - explains the NEED, not the netted `suggested_qty`. `project_qty` is the
-   *  open project SO book net of what CS placed on a PO or an SPO (R15). */
+   *  open project SO book net of what CS placed on a shipping order (R1, `PLAN-loading-plan-
+   *  project-spo-only.md`; a PO placement does not net it). */
   project_qty: number;
   retail_qty: number;
   unclassified_qty: number;

@@ -55,27 +55,6 @@ before the `coder` (one agent, kept alive for the whole lane) makes them green; 
 `reviewer` + `security-reviewer` + browser verification (`tester`) in parallel, once per lane.
 Running a step in the wrong seat is a process violation.
 
-### Small fix track (owner ruling, 18 Sep 2026)
-
-A change that is **one seam, under ~50 lines of app code, no migration, no new endpoint,
-no auth or scoping change** skips the full pipeline. The captain names the track in the
-plan's Status line ("Track: small fix") and it runs as:
-
-1. Plan + UAC still written (short: the ruling, the seam, the ACs). No journey, no grill.
-2. **No private DB clone.** Tests run on the shared dev DB, touched files only, named in the
-   brief (never bare pytest, never the whole `tests/scm` tree). A lane DB is for migrations
-   and full sweeps, not fixes.
-3. **One coder, no separate tester.** The coder writes the red tests and the fix in one
-   pass, tests first in the same message. Reds are still shown red before green.
-4. **One reviewer.** `security-reviewer` only when the diff touches auth, RBAC, ingest,
-   uploads or multi-company scoping. Kill test still runs.
-5. **Browser pass only when a screen changed**, scoped to that screen, on whichever stack
-   is already up (main or a lane's). No stack boot for a backend-only fix.
-6. Guide line if the user-visible rule changed, then PR. CI is the full gate.
-
-Anything that grows past the definition mid-lane moves to the full track; say so in the
-plan. The full track stays mandatory for features.
-
 0. **Guided user experience FIRST - design the journey before the system.** Before any entity,
    table, endpoint or status graph is discussed, write the **guided journey**: who the actor is,
    what they see on the very first screen, what the system already knows (so they are never asked
@@ -141,6 +120,29 @@ plan. The full track stays mandatory for features.
    feature loop.
 6. **Branch** per feature; merge only after review. The user codes concurrently in the main
    checkout - `git status` before ANY branch/commit op; never assume the tree is clean.
+
+## Small fix track (owner ruling, 18 Sep 2026)
+
+A change that is **one seam, under ~50 lines of app code, no migration, no new endpoint,
+no auth or scoping change** skips the full pipeline. The captain names the track in the
+plan's Status line ("Track: small fix") and it runs as:
+
+1. Plan + UAC still written (short: the ruling, the seam, the ACs). No journey, no grill.
+2. **No private DB clone.** Tests run on the shared dev DB, touched files only, named in the
+   brief (never bare pytest, never the whole `tests/scm` tree). Safe only because those
+   files use `pg_session` rollback or the `blank_session` scratch schema; a test that
+   builds schema or truncates against a served copy is not a small-fix test. A lane DB is
+   for migrations and full sweeps, not fixes.
+3. **One coder, no separate tester.** The coder writes the red tests and the fix in one
+   pass, tests first in the same message. Reds are still shown red before green.
+4. **One reviewer.** `security-reviewer` only when the diff touches auth, RBAC, ingest,
+   uploads or multi-company scoping. Kill test still runs.
+5. **Browser pass only when a screen changed**, scoped to that screen, on whichever stack
+   is already up (main or a lane's). No stack boot for a backend-only fix.
+6. Guide line if the user-visible rule changed, then PR. CI is the full gate.
+
+Anything that grows past the definition mid-lane moves to the full track; say so in the
+plan. The full track stays mandatory for features.
 
 ## Modular architecture - classify core vs module FIRST (before UAC)
 

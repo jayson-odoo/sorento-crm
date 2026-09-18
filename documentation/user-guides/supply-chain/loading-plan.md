@@ -100,6 +100,11 @@ plan shows both columns as plain text.
   * **Total supply** is On hand + SPO + Incoming PL.
 * Clicking the **SPO** or **Incoming PL** figure opens a lightbox listing the shipments behind
   it; the rows sum to exactly the number you clicked.
+* **Need**, **Project**, and **Retail** are the open sales-order demand behind a row - Need is
+  Project plus Retail together. Clicking any of them opens the sales orders behind the figure.
+  Project counts open project lines before the cut-off, less what is already on a shipping
+  order; a purchase order does not reduce it. The popup shows each line's Open quantity and the
+  Balance still to ship.
 
 ### Viewing the uploaded file
 

@@ -239,7 +239,7 @@ export function ContainerRequestRowDialog({
                     <tr className="text-muted-foreground">
                       <th className="py-1 text-start font-medium">Order</th>
                       <th className="py-1 text-start font-medium">Customer</th>
-                      <th className="py-1 text-end font-medium">Qty</th>
+                      <th className="py-1 text-end font-medium">Balance</th>
                       <th className="py-1 text-end font-medium">Delivery</th>
                     </tr>
                   </thead>

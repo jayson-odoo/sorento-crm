@@ -1,10 +1,10 @@
 # PLAN: Loading plan - Project column nets SPO placements only, not PO
 
-Status: APPROVED - owner rulings 18 Sep 2026; building. Track: small fix (switched mid-lane, 18 Sep; tester already ran, so second reviewer + lane DB are what it saves here)
+Status: PR OPEN (draft) - owner rulings 18 Sep 2026; reviewed, browser verified 18 Sep. Track: small fix (switched mid-lane, 18 Sep; tester already ran, so second reviewer + lane DB are what it saves here)
 Domain: scm
 Branch: feat/loading-plan-project-spo-only
 Worktree: ../sorento_crm-lp-project-spo-only
-Test DB: sorento_lpsp_ci
+Test DB: none (small fix track: touched files on the shared copy; sorento_lpsp_ci was created before the track switch and is dropped at lane close)
 UAC: loading-plan-project-spo-only-acceptance-criteria.md
 Owner feedback: 18 Sep 2026, loading plan d7192c99 (CHAOZHOU JINBAICHUAN), CWB242, SO414033.
 

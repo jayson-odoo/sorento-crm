@@ -34,7 +34,6 @@ from app.models.scm import PriorityPolicy
 from app.models.supplier_notice import SupplierNoticeLine
 from app.services.scm import supplier_notice_service
 from tests.scm.conftest import as_user, requires_pg, seed_user
-from tests.scm.test_container_request_universe import _place as place_on_po
 from tests.scm.test_container_request_universe import _place_spo as place_on_spo
 from tests.scm.test_container_request_universe import _project_need as project_need
 from tests.scm.test_loading_plan import World
@@ -1300,11 +1299,13 @@ def test_send_requires_the_write_permission(scm_app):
 
 
 def test_build_open_need_ignores_a_redirected_rows_placement(scm_app):
-    """AC-RL-16e (S5, code review 17 Sep): `_PLACED_ON_LINE_SQL` sums EVERY link on
+    """AC-RL-16e (S5, code review 17 Sep): `_SPO_PLACED_ON_LINE_SQL` sums EVERY link on
     the core line's project mirror with no `redirected_to_pool` exclusion - a
     redirected row's placement (goods that already shipped to another order,
     AC-RL-10) still nets the loading plan's own open need down, so purchasing
-    reads less to buy than the line genuinely still needs."""
+    reads less to buy than the line genuinely still needs. Placed on an SPO, not a
+    PO (R1, `PLAN-loading-plan-project-spo-only.md`): a PO placement never nets
+    here at all, so only an SPO placement exercises the exclusion this test guards."""
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -1314,7 +1315,7 @@ def test_build_open_need_ignores_a_redirected_rows_placement(scm_app):
     w.stock("A", packed=1, cbm=0.1)
 
     project_line = project_need(db, w, "A", 30)
-    place_on_po(db, w, project_line, 30)
+    place_on_spo(db, w, project_line, 30)
 
     from app.models.project_so import OrderInquiryRow, ProjectSalesOrderLine
     psl = (

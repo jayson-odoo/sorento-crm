@@ -188,7 +188,7 @@ export function ContainerRequestScheduleMatrix({
                     <Th>Customer</Th>
                     <Th>Class</Th>
                     <Th right>Ordered</Th>
-                    <Th right>Qty</Th>
+                    <Th right>Balance</Th>
                     <Th right>Needed</Th>
                   </tr>
                 </thead>
