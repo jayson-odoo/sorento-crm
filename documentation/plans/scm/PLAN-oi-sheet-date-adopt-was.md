@@ -58,6 +58,41 @@ rule itself:
   existing (correct) rule explicitly: a live row whose OWN `qty` happens to equal the
   sheet's quantity still adopts the Was when the date differs.
 
+## Review round 3 (19 Sep 2026, one more small round before merge)
+
+Three items closing the last gaps in review round 2's own coverage:
+
+* **`outcome = 'created'` is now its own red.** `_register_migrated` takes an `outcome`
+  parameter; `test_shape_c_sibling_identity_requires_outcome_created` registers a cancelled
+  row in `import_job_rows` with `outcome = "updated"` (never `"created"`) and asserts it
+  still does not qualify as a migrated sibling, closing the gap where a mutant dropping the
+  `outcome == oc.OUTCOME_CREATED` clause stayed green.
+* **`test_shape_c_pairs_by_sibling_identity_not_file_position` made deterministic.**
+  `created_at`'s own default is the transaction's `now()`, tied across every row one test
+  writes, so the two live rows' relative order in the query result was decided by a
+  randomly generated id, not by which was created first. `_live_row` now takes an optional
+  `created_at` override; the test sets two distinct values, with the WRONG answer for the
+  first sheet row created earlier, so an item only, first match mutant picks it every
+  single run rather than winning an id coin flip. Verified against the actual mutant
+  (temporarily reverted the qty first pairing to the old bare item match): failed 5 out of
+  5 runs; restored, the real fix passed 10 out of 10.
+* **Sibling identity's own dependency on `import_job_rows` retention.** Shape C's sibling
+  identity now depends entirely on `import_job_rows` staying populated. A scheduled task,
+  `prune_import_job_rows`, already exists in code and is driven by
+  `system_settings.import_job_rows_retention_days` (default 90 days), but no migration
+  seeds a `scheduled_tasks` row for it, so it does not run today. If it is ever turned on
+  with its default retention, a cancelled sibling whose own created record aged out of
+  `import_job_rows` would silently stop being recognised by shape C: the row would look
+  exactly like a plain cancelled board row, and the live row it replaced would simply never
+  adopt a Was, with no error, no warning and no test failure to say so, since the resolver
+  reads an expired record the same as "never a migrated sibling at all". Measured against a
+  3.97 million row `import_job_rows` table (a full sequential scan, since no index covers
+  `entity_type` and `entity_id`), the added lookup costs about 0.5 seconds per upload and
+  stays flat as the cancelled candidate count grows, so this is not a correctness risk
+  today, only a latent one for the day someone enables the prune task without also widening
+  shape C's own window or adding the missing index. An index on
+  `(entity_type, entity_id)` is filed as a follow up item, not built in this lane.
+
 ## What was measured (round 7, revised after a prod `SELECT`)
 
 The first cut of this plan (round 6) guessed the shape from the symptom alone: a migrated

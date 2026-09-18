@@ -181,12 +181,18 @@ def _settled_row(
     return row
 
 
-def _register_migrated(w: World, row: OrderInquiryRow) -> None:
+def _register_migrated(w: World, row: OrderInquiryRow, *, outcome: str = "created") -> None:
     """Stamps `row` into `import_job_rows` the way the importer's own
     `ImportOutcome.success(..., entity_type="order_inquiry_row", entity_id=entry.id)` does
     on every row it raises (S1, round 7 review round 2). Shape C's sibling identity reads
     THIS, never the row's own note - a cancel overwrites the note to "Superseded by
-    revision N", so the note can never be trusted once a row is superseded."""
+    revision N", so the note can never be trusted once a row is superseded.
+
+    `outcome`, default `"created"`: the identity check is `outcome = 'created'`
+    SPECIFICALLY, since only a row's own RAISE writes `entity_type="order_inquiry_row"` -
+    an `outcome="updated"` row (round 7 review round 3) is a repair `apply()` records
+    against an EXISTING row's own id, never a fresh one, so it must never itself qualify a
+    row as a migrated sibling."""
     from app.models.job import ImportJob, ImportJobRow
 
     job = ImportJob(
@@ -203,8 +209,8 @@ def _register_migrated(w: World, row: OrderInquiryRow) -> None:
             id=str(uuid.uuid4()),
             import_job_id=job.id,
             row_number=1,
-            outcome="created",
-            code="created",
+            outcome=outcome,
+            code=outcome,
             entity_type="order_inquiry_row",
             entity_id=str(row.id),
         )
@@ -256,11 +262,27 @@ def _cancelled_board_row(
     return row
 
 
-def _live_row(w: World, mirror, *, qty: str, delivery_date: date) -> OrderInquiryRow:
+def _live_row(
+    w: World,
+    mirror,
+    *,
+    qty: str,
+    delivery_date: date,
+    created_at: datetime | None = None,
+) -> OrderInquiryRow:
     """Shape C's own live row, round 7 (19 Sep 2026): the fresh row a reconfirm RAISED in
-    place of a cancelled migrated one - board-raised, no migration stamp, no Was at all."""
+    place of a cancelled migrated one - board-raised, no migration stamp, no Was at all.
+
+    `created_at` is an explicit override (review round 3, S2): the column's own default is
+    the database's `now()`, which is the SAME value for every row a single test transaction
+    writes (Postgres ties `now()` to the transaction, not the statement), so two live rows
+    this helper raises in the SAME test carry a TIED `created_at` and the query's
+    `order_by(created_at.asc(), id.asc())` falls back to comparing randomly-generated ids -
+    a test relying on creation ORDER to be deterministic must set this explicitly."""
     row = w.board_row(mirror, qty=qty)
     row.delivery_date = delivery_date
+    if created_at is not None:
+        row.created_at = created_at
     w.db.flush()
     return row
 
@@ -1415,6 +1437,41 @@ def test_ac_26_a_live_row_with_no_cancelled_sibling_is_left_alone():
         assert live.delivery_date == required
 
 
+def test_shape_c_sibling_identity_requires_outcome_created():
+    """S1 regression (round 7 review round 3). A cancelled row `import_job_rows` DOES
+    carry an entry for - but with `outcome = "updated"`, never `"created"` - is not a
+    migrated sibling. `apply()` writes an `"updated"` row against an EXISTING row's own id
+    every time it repairs one (shape A/B/C's own `outcome.updated(...)` calls); if the
+    identity check only tested "does `import_job_rows` carry ANY row for this id" rather
+    than `outcome = "created"` specifically, a row a PRIOR repair touched would wrongly
+    start qualifying as a migrated sibling too."""
+    required = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        sibling = _cancelled_board_row(w, mirror, qty="182")
+        _register_migrated(w, sibling, outcome="updated")
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_delivery_date_updated"] == 0, result
+        w.db.refresh(live)
+        assert live.previous_qty is None
+        assert live.delivery_date == required
+
+
 def test_ac_27_a_cancelled_siblings_mismatched_quantity_leaves_the_live_row_alone():
     """AC-27 (Shape C). A cancelled migrated sibling whose OWN `qty` AND `previous_qty`
     both differ from the sheet's quantity carries no identity match - the live row is
@@ -1541,8 +1598,8 @@ def test_ac_29_all_three_shapes_on_one_mirror_are_each_claimed_once():
 
 
 def test_shape_c_pairs_by_sibling_identity_not_file_position():
-    """Round 7 review (item 2), tightened round 7 review round 2 (S2): asserts WHICH live
-    row gets WHICH Was, not merely that both resolve - a bare item-code match on
+    """Round 7 review (item 2), tightened round 7 review round 2 (S2) and round 3: asserts
+    WHICH live row gets WHICH Was, not merely that both resolve - a bare item-code match on
     `unclaimed_live` is a coin flip whenever more than one candidate shares the item, and a
     test only checking the total count cannot tell a correct pairing from a lucky one.
 
@@ -1554,7 +1611,15 @@ def test_shape_c_pairs_by_sibling_identity_not_file_position():
     `qty` 220), never file/creation position: the 100 sheet row is the never-settled
     sibling's own quantity, so it must land on the live row whose `qty` is 100; the 182
     sheet row is the settled sibling's ORIGINAL quantity, so it must land on the live row
-    whose `qty` is 220."""
+    whose `qty` is 220.
+
+    Round 3: `live_220` (the WRONG answer for the FIRST sheet row processed) is created
+    SECOND, before `live_100` (the RIGHT one) - reversed - deliberately, with EXPLICIT,
+    distinct `created_at` values, so the old item-only-first-match bug picks `live_220`
+    every single run rather than winning the id tiebreak by chance: `created_at`'s own
+    default is the transaction's `now()`, tied across every row one test writes, so leaving
+    it to the default lets `order_by(created_at.asc(), id.asc())` fall back to comparing
+    randomly-generated ids - a coin flip the mutant could still pass by luck."""
     required = date(2027, 3, 1)
     sheet_date_100 = date(2026, 6, 1)
     sheet_date_182 = date(2026, 7, 1)
@@ -1571,8 +1636,17 @@ def test_shape_c_pairs_by_sibling_identity_not_file_position():
             w, mirror, qty="220", previous_qty="182", previous_delivery_date=required,
         )
         _cancelled_sibling(w, mirror, qty="100")
-        live_220 = _live_row(w, mirror, qty="220", delivery_date=required)
-        live_100 = _live_row(w, mirror, qty="100", delivery_date=required)
+        # `live_220` is the WRONG target for the sheet's FIRST row (qty 100) - given an
+        # EARLIER `created_at` than `live_100`, so an item-only-first-match mutant picks
+        # it deterministically, every run, never by an id coin flip.
+        live_220 = _live_row(
+            w, mirror, qty="220", delivery_date=required,
+            created_at=datetime(2026, 1, 1, 0, 0, 0),
+        )
+        live_100 = _live_row(
+            w, mirror, qty="100", delivery_date=required,
+            created_at=datetime(2026, 1, 1, 0, 0, 1),
+        )
 
         # Sheet states 100 FIRST, then 182 - the reverse of the siblings' own creation
         # order.
