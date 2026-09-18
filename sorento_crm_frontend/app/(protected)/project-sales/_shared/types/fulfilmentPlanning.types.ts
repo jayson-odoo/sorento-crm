@@ -1740,8 +1740,12 @@ export interface BoardAxisRow {
  * own journal stopped writing. Null when nothing blocks it. `linked`, not `manual_link` (review
  * round): the `auto` flag on the link is irrelevant - an AutoCount pairing purchasing's own
  * upload placed is purchasing's work as much as a hand click.
+ *
+ * `changed` (`PLAN-scm-oi-handover-r2-undo.md`, S4, AC-R2-24): a row the journal covers now
+ * holds a value another writer wrote after the confirm - undo would overwrite that write, so
+ * the park refuses instead of silently discarding it.
  */
-export type BoardUndoRefusal = 'linked' | 'actioned' | null;
+export type BoardUndoRefusal = 'linked' | 'actioned' | 'changed' | null;
 
 /**
  * What the board knows about undoing an order's newest confirm (`undo_0001`, S1, #978): the
@@ -1758,6 +1762,13 @@ export interface BoardUndo {
   /** Addressing only, never rendered: the pending action's payload, so a Confirm
    * written during the countdown is detected server-side (AC-UC-28). */
   decision_id: string;
+  /**
+   * `journal` replays the order's own journalled revision the normal way. `reconstructed`
+   * (`PLAN-scm-oi-handover-r2-undo.md`, S5, AC-R2-30) is a best-effort undo of a decision
+   * confirmed before the journal existed - the board only sets this for an admin/superadmin
+   * requester; every other role gets `undo: null` for that order and never sees the entry.
+   */
+  mode: 'journal' | 'reconstructed';
 }
 
 /** One selected order's standing, which is what makes the partial-decision reality visible. */

@@ -284,18 +284,47 @@ def test_a_refused_or_rolled_back_undo_dispatches_nothing(api, monkeypatch, arm)
 
 
 def _find_undo_seed_migration_path() -> Path | None:
-    """Locate the coder's seed migration by its data contract - the revision id is not
-    fixed at brief time, the same reasoning
-    `test_order_inquiry_handover_automation.py::_find_seed_migration_path` states."""
+    """Locate the coder's seed migration by its OWN revision id, not by content-
+    sniffing its body for the template code and trigger type - `oihr_0002_undone_
+    headline.py` (the follow-up migration in this same file that teaches this exact
+    template its RECONSTRUCTED distinction) contains BOTH `order_inquiry_undone_
+    default` and `order_inquiry_undone` too, so the old sniff matched two files and
+    returned whichever one `Path.glob` happened to yield first - unsorted, OS- and
+    filesystem-dependent order. CI shard 1 (run 35279796069) returned `oihr_0002`
+    first, so this "seed" migration actually ran the HEADLINE body: it seeded a
+    template with the RECONSTRUCTED branch already in it and no automation row at
+    all, failing this file's own sanity assertion and `assert 0 == 1` on the
+    automation count - while a local run, whose glob order happened to return
+    `undo_0002_seed_undone_automation.py` first, saw none of it. The revision id
+    (`revision = "undo_0002_seed_undone"`) is the ONE thing that is unique to this
+    file and never shared with a migration that extends it later."""
     versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
-    for path in versions_dir.glob("*.py"):
-        try:
-            text = path.read_text()
-        except OSError:
-            continue
-        if "order_inquiry_undone_default" in text and "order_inquiry_undone" in text:
-            return path
-    return None
+    matches = [
+        path
+        for path in versions_dir.glob("*.py")
+        if _file_declares_revision(path, "undo_0002_seed_undone")
+    ]
+    assert len(matches) <= 1, (
+        "more than one alembic migration under alembic/versions/ declares "
+        f"revision = \"undo_0002_seed_undone\": {[p.name for p in matches]}"
+    )
+    return matches[0] if matches else None
+
+
+def _file_declares_revision(path: Path, revision_id: str) -> bool:
+    """Whether THIS file is the migration whose own `revision` equals `revision_id` -
+    a bare `revision = "..."` LINE (module scope, no leading whitespace), never
+    `down_revision = "..."`: that variable name ends in the very same substring
+    (`revision = "..."`), so a plain `in text` check over the whole file matches a
+    CHILD migration naming this one as its parent too, which is exactly how the
+    first version of this fix over-matched `undo_0003_journal_sql_null.py` (its own
+    `down_revision = "undo_0002_seed_undone"`) alongside the real seed file."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return False
+    target = f'revision = "{revision_id}"'
+    return any(line.strip() == target for line in lines)
 
 
 def _load_undo_seed_migration():
@@ -379,6 +408,115 @@ def test_the_migration_seeds_an_enabled_automation_and_template_once():
             )
         ).scalar()
         assert automations_after == 0
+
+
+# --------------------------------------------------------------------------- B3 (review
+# round 1): oihr_0002_undone_headline, the follow-up migration that teaches the ALREADY-
+# seeded template the RECONSTRUCTED distinction. Kept in THIS file, next to the seed
+# migration's own test above, rather than in test_board_undo_reconstructed.py where it
+# was originally written - both tests write the SAME `email_templates` row
+# (code='order_inquiry_undone_default'), and under CI's `pytest-xdist --dist loadfile`
+# a different file can land on a different worker against the SAME database, so two
+# files racing to upgrade/downgrade one shared row is a real flake (CI run
+# 35276083512, PR #1001) even though every test here passes serially. One file, one
+# worker, one lock on the row - the fix is proximity, not a synchronisation primitive.
+
+
+def _find_undone_headline_migration_path() -> Path | None:
+    """Locate the coder's migration that teaches the already-seeded
+    `order_inquiry_undone_default` template to print the RECONSTRUCTED headline
+    distinctly (B3, review round 1) - by its OWN revision id, the same fix
+    `_find_undo_seed_migration_path` above needed: a content sniff over this
+    migration's own body text is exactly the same class of hazard even though this
+    particular pair of strings does not collide with `undo_0002_seed_undone_
+    automation.py` TODAY - the next migration that touches this template and
+    happens to mention RECONSTRUCTED (a downgrade note, a comment) would collide
+    silently, and CI's own glob order is not something to depend on either way."""
+    versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+    matches = [
+        path
+        for path in versions_dir.glob("*.py")
+        if _file_declares_revision(path, "oihr_0002_undone_headline")
+    ]
+    assert len(matches) <= 1, (
+        "more than one alembic migration under alembic/versions/ declares "
+        f"revision = \"oihr_0002_undone_headline\": {[p.name for p in matches]}"
+    )
+    return matches[0] if matches else None
+
+
+def _load_undone_headline_migration():
+    path = _find_undone_headline_migration_path()
+    assert path is not None, (
+        "no alembic migration teaching order_inquiry_undone_default to print the "
+        "RECONSTRUCTED headline was found under alembic/versions/ - the coder must "
+        "add one (review round 1, B3, PLAN-scm-oi-handover-r2-undo.md S5, AC-R2-31h)."
+    )
+    spec = importlib.util.spec_from_file_location("zzt_undone_headline_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_undone_headline_migration_updates_template_idempotently_and_downgrades():
+    """B3 (review round 1): the migration that teaches `order_inquiry_undone_default`
+    the RECONSTRUCTED distinction updates the template IN PLACE, idempotently, and
+    downgrade restores the pre-headline body verbatim - the same contract
+    `test_r2_migration_updates_template_in_place_and_is_idempotent`
+    (`test_order_inquiry_handover_automation.py`) pins for the handover template."""
+    undo_seed = _load_undo_seed_migration()
+    headline_migration = _load_undone_headline_migration()
+
+    with blank_session() as db:
+        _run_upgrade(undo_seed, db)
+        original_body = db.execute(
+            sa.text(
+                "SELECT body_html FROM email_templates WHERE code = "
+                "'order_inquiry_undone_default'"
+            )
+        ).scalar()
+        assert "RECONSTRUCTED" not in original_body, (
+            "sanity: the seeded undo_0002 body has no headline branch yet"
+        )
+
+        _run_upgrade(headline_migration, db)
+        row = db.execute(
+            sa.text(
+                "SELECT subject, body_html, body_text FROM email_templates WHERE code = "
+                "'order_inquiry_undone_default'"
+            )
+        ).mappings().one()
+        rendered_text = (row["subject"] or "") + (row["body_html"] or "") + (row["body_text"] or "")
+        assert "RECONSTRUCTED" in rendered_text, (
+            "the migration must teach the template the RECONSTRUCTED word somewhere"
+        )
+        count = db.execute(
+            sa.text(
+                "SELECT count(*) FROM email_templates WHERE code = "
+                "'order_inquiry_undone_default'"
+            )
+        ).scalar()
+        assert count == 1
+
+        # Idempotent re-run.
+        _run_upgrade(headline_migration, db)
+        row_again = db.execute(
+            sa.text(
+                "SELECT body_html FROM email_templates WHERE code = "
+                "'order_inquiry_undone_default'"
+            )
+        ).scalar()
+        assert row_again == row["body_html"]
+
+        # Downgrade restores the pre-headline body verbatim.
+        _run_downgrade(headline_migration, db)
+        restored = db.execute(
+            sa.text(
+                "SELECT body_html FROM email_templates WHERE code = "
+                "'order_inquiry_undone_default'"
+            )
+        ).scalar()
+        assert restored == original_body
 
 
 # --------------------------------------------------------------------------- AC-UC-35

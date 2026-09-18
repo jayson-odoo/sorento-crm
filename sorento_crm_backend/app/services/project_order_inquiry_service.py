@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -363,7 +364,14 @@ def handover_remark(
         if row.verb == IV_ORDER_BACK and getattr(row, "cited_document", None):
             label = f"{label} {row.cited_document}"
         note = getattr(row, "note", None)
-        if note:
+        # AC-R2-06: a `was` carrying `qty` or `delivery_date` means the r2 layout
+        # already prints the previous value in its own CHANGE TO columns, so the
+        # note's own ISO-dated sentence ("Was 2026-08-25") would only repeat it in a
+        # different format - the REMARK stays the bare verb. A CHANGE SO row's `was`
+        # carries `so_number`, not a date/qty, so its note (naming the source order)
+        # still prints.
+        skip_note = bool(was) and ("qty" in was or "delivery_date" in was)
+        if note and not skip_note:
             label = f"{label} - {note}"
         return label
     if kind == "settled":
@@ -912,6 +920,49 @@ class ProjectOrderInquiryService:
                 and self._cascade_only(drafted_links.get(str(row.id), []))
                 and not row.redirected_to_pool
             ]
+            # S2 (`PLAN-scm-oi-handover-r2-undo.md`, AC-R2-10/11): a NAMED line (not
+            # carried, not a planning-change settle) whose only live row is a plain
+            # `raised` ORDER/ORDER_BACK row, no links at all, not redirected, and whose
+            # verb equals the verb THIS confirm would raise - `target_verb` below - reads
+            # as the same instruction restated, not a fresh one. Widened alongside
+            # `drafted` above rather than folded into it: a placed/partly-linked row
+            # earned its slot by carrying only the cascade's OWN links (still a "draft"
+            # nobody has manually touched), where a raised row earns it by carrying NO
+            # links whatsoever - two different reasons to trust the same settle-in-place
+            # call. `_settle_row_in_place` itself still declines two live rows or a verb
+            # mismatch (its own `live` filter, `len(live) != 1`), so AC-R2-12's two shapes
+            # (two live rows, a verb switch) fall through unchanged to the supersede path
+            # below. `carried` is gated explicitly: a line riding along only because a
+            # DIFFERENT line of the same order was named is not a restatement of anything,
+            # so its still-raised row keeps the ordinary cancel-and-re-raise
+            # (`tests/scm/test_confirm_local_buy_no_oi.py`).
+            #
+            # A REFUSED row is excluded too (AC-H6, captain ruling on CI round 1):
+            # purchasing said no to that instruction, so re-deciding the line is a NEW
+            # instruction and has to be born acknowledged under its own id - settling the
+            # refused row in place would quietly re-open the very row purchasing declined,
+            # keeping its `rejected_by`/`rejected_at` stamp on a live instruction and
+            # leaving CS nothing to read the refusal off. The supersede path below is the
+            # right answer there: it cancels the refused row (the refusal stays readable
+            # on it) and raises a fresh one.
+            target_verb = IV_ORDER_BACK if order_back else IV_ORDER
+            named_raised = (
+                []
+                if entry.get("carried")
+                else [
+                    row
+                    for row in rows
+                    if row.verb == target_verb
+                    and row.state == INQUIRY_RAISED
+                    and not row.redirected_to_pool
+                    and not drafted_links.get(str(row.id))
+                    and row.ack_state != ACK_REJECTED
+                    and row.rejected_by is None
+                    and row.rejected_at is None
+                ]
+            )
+            if not drafted and len(named_raised) == 1:
+                drafted = named_raised
             # S4/AC-OH-40..42: every row this LINE already carried `redirected_to_pool` on,
             # before anything below touches it - a row an EARLIER decision released
             # (AC-OH-41) must never be re-read as "newly" released by this one. Whatever is
@@ -951,10 +1002,12 @@ class ProjectOrderInquiryService:
                     if row.verb in (IV_ORDER, IV_ORDER_BACK) and cancelled_owned_row is None:
                         cancelled_owned_row = row
                     if not carried:
-                        # AC-H23: a NAMED line superseded at a qty/date the settle
-                        # above declined to absorb in place is a genuine drop of the
-                        # old instruction, not the carry's silent cancel-and-re-raise -
-                        # purchasing has to be told the old row is gone, same as H19.
+                        # AC-H23, narrowed by AC-R2-12 (S2): a single-raised-row same-
+                        # verb line is caught by `named_raised` above now, so what
+                        # reaches here is only a genuine supersede - two still-owed
+                        # rows, or a verb switch the settle above will not absorb -
+                        # and purchasing has to be told the old row is gone, same as
+                        # H19.
                         self._record_handover(
                             row,
                             kind="cancelled",
@@ -1222,6 +1275,20 @@ class ProjectOrderInquiryService:
         # S1: the one-task-per-header guard is `_hand_to_purchasing`'s own now.
         if raised:
             self._hand_to_purchasing(order, inquiry, raised)
+        # AC-R2-16/17 (owner ruling Q4, 18 Sep), narrowed by S4 (captain ruling, review
+        # round 1): still-raised amendment rows ride along on THIS confirm's own email,
+        # appended after the confirm's own lines - but ONLY when this order actually
+        # queued at least one line of its own this commit. AC-R2-10's widened settle
+        # gate (S2) means a re-confirm can settle every named line SILENTLY (same id,
+        # no handover line at all), and appending the amendment rows onto a commit that
+        # said nothing of its own would dispatch an email whose only content purchasing
+        # already read on the amendment's own publish email.
+        queued_own_line = any(
+            item.get("pso_id") == str(order.id)
+            for item in self.db.info.get(_HANDOVER_PENDING_KEY, [])
+        )
+        if queued_own_line:
+            self._append_still_raised_amendment_rows(order, actor_user_id=actor_user_id)
         return {
             "inquiry": inquiry,
             "created": created,
@@ -2129,6 +2196,10 @@ class ProjectOrderInquiryService:
         }
         self.db.info.setdefault(_HANDOVER_PENDING_KEY, []).append(
             {
+                #: AC-R2-16: what `_append_still_raised_amendment_rows` dedups on, so a
+                #: row already queued (by whichever caller queued it first) never prints
+                #: twice inside the same commit's email.
+                "row_id": str(row.id),
                 "order_inquiry_id": str(row.order_inquiry_id),
                 "pso_id": pso_id,
                 "so_number": so_number,
@@ -2148,6 +2219,73 @@ class ProjectOrderInquiryService:
                 "tx": tx_chain[-1] if tx_chain else None,
             }
         )
+
+    def _amendment_row_was(self, row: OrderInquiryRow) -> Optional[Dict[str, Any]]:
+        """AC-R2-16: what a still-raised amendment row's own `was` is, read off the row
+        itself rather than re-derived - `previous_qty` / `previous_delivery_date` when a
+        later write set them (a settle this row never gets today, but the columns exist
+        and a future writer may), else parsed back out of the row's own note, which
+        `_change_note` writes as `Was dd/mm/yyyy` (AC-R2-07) for exactly this reason."""
+        was: Dict[str, Any] = {}
+        if row.previous_qty is not None:
+            was["qty"] = row.previous_qty
+        if row.previous_delivery_date is not None:
+            was["delivery_date"] = row.previous_delivery_date
+        if not was and row.note:
+            match = re.search(r"Was (\d{2})/(\d{2})/(\d{4})", row.note)
+            if match:
+                day, month, year = match.groups()
+                was["delivery_date"] = date(int(year), int(month), int(day))
+            else:
+                # S1 (review round 1): a PRE-LANE row's note is still in the ISO shape
+                # `_change_note` wrote before AC-R2-07's dd/mm/yyyy fix ("Was
+                # 2026-09-01") - every amendment row confirmed before that migration
+                # landed reads this way, SO314593/SO314594 included, and must still
+                # parse rather than fall through to `was = None`.
+                iso_match = re.search(r"Was (\d{4})-(\d{2})-(\d{2})", row.note)
+                if iso_match:
+                    year, month, day = iso_match.groups()
+                    was["delivery_date"] = date(int(year), int(month), int(day))
+        return was or None
+
+    def _append_still_raised_amendment_rows(
+        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
+    ) -> None:
+        """AC-R2-16/17 (owner ruling Q4, 18 Sep): a Confirm's own email also carries
+        every row this order's amendments raised (DELAY / ADVANCE / CANCEL BALANCE /
+        CHANGE SO) that is STILL `raised` - an amendment writes its own inquiry
+        (`amendment_id` set) and no `supply_decision_id`, so undo, journalled or
+        reconstructed, never touches these rows and a Confirm never re-derives them;
+        without this they would only ever have appeared on their own publish email,
+        which by the time purchasing reads a re-confirm may be long buried. Appended
+        AFTER the confirm's own lines (the caller queues those first), deduped by row
+        id against whatever THIS commit's queue already carries so a row already
+        recorded by another path in the same commit is never printed twice. A Confirm
+        on an order with no such rows appends nothing (AC-R2-17)."""
+        rows = (
+            self.db.query(OrderInquiryRow)
+            .join(OrderInquiry, OrderInquiryRow.order_inquiry_id == OrderInquiry.id)
+            .filter(
+                OrderInquiry.project_sales_order_id == order.id,
+                OrderInquiry.amendment_id.isnot(None),
+                OrderInquiryRow.state == INQUIRY_RAISED,
+            )
+            .all()
+        )
+        if not rows:
+            return
+        already_queued = {
+            item.get("row_id") for item in self.db.info.get(_HANDOVER_PENDING_KEY, [])
+        }
+        for row in rows:
+            if str(row.id) in already_queued:
+                continue
+            self._record_handover(
+                row,
+                kind="raised",
+                was=self._amendment_row_was(row),
+                actor_user_id=actor_user_id,
+            )
 
     def _handover_order_facts(self, pso_id: Optional[str]) -> Dict[str, Any]:
         """SO number / customer / project / SO date for ONE project sales order, kept
@@ -2227,6 +2365,7 @@ class ProjectOrderInquiryService:
         revision_no: int,
         lines: List[Dict[str, Any]],
         actor_user_id: Optional[str],
+        headline: str = "UNDONE",
     ) -> None:
         """Queue one `order_inquiry_undone` email (`PLAN-board-undo-last-confirm.md`
         "The email"), fired post-commit by `_fire_pending_undo` - copied from
@@ -2238,6 +2377,11 @@ class ProjectOrderInquiryService:
         `lines` is built by the caller (`undo_last_confirm`) from the journal's OWN
         order inquiry row entries, read BEFORE replay deletes or overwrites them - by
         the time this method runs, those rows may already be gone.
+
+        `headline` (AC-R2-31h, S5): `project_supply_undo_reconstruct_service.
+        reconstruct_undo` is this method's OTHER caller and passes `"RECONSTRUCTED"`,
+        so the email purchasing gets says plainly that this is a best-effort restore
+        of a journal-less revision, not a journalled replay.
         """
         facts = self._handover_order_facts(pso_id) if pso_id else {}
         from app.services.automation_triggers import build_order_inquiry_link
@@ -2251,6 +2395,7 @@ class ProjectOrderInquiryService:
                 "project": facts.get("project"),
                 "revision_no": revision_no,
                 "lines": lines,
+                "headline": headline,
                 "link": build_order_inquiry_link(so_number),
                 "actor": self._handover_actor(actor_user_id),
                 #: Which savepoint this was earned under (C2, `_notify_purchasing`'s
@@ -2545,6 +2690,16 @@ class ProjectOrderInquiryService:
                 if change in (CHANGE_DATE_LATER, CHANGE_DATE_EARLIER)
                 else (line.delivery_date if line else None)
             )
+            # AC-R2-06: the previous date, structured, for a DELAY/ADVANCE row - the
+            # value is already in the delta's own row dict, no lookup needed. Every
+            # other change carries no structured `was` yet (CHANGE SO's `was` is built
+            # separately, by the one caller that already knows the source order).
+            was = (
+                {"delivery_date": _as_date(row.get("from_value"))}
+                if change in (CHANGE_DATE_LATER, CHANGE_DATE_EARLIER)
+                and row.get("from_value")
+                else None
+            )
             demand.append(
                 DemandRow(
                     line_id=line.id if line else str(row.get("so_line_id") or ""),
@@ -2556,6 +2711,7 @@ class ProjectOrderInquiryService:
                     stock_location=self._stock_location(line.id) if line else None,
                     change=change,
                     note=self._change_note(change, row),
+                    was=was,
                 )
             )
         return self._write(order, amendment, demand, actor_user_id=actor_user_id)
@@ -2619,7 +2775,9 @@ class ProjectOrderInquiryService:
         after = row.get("to_value")
         if change in (CHANGE_DATE_LATER, CHANGE_DATE_EARLIER):
             moved = _as_date(before)
-            return f"Was {moved.isoformat()}" if moved else "No previous delivery date"
+            # AC-R2-07: dd/mm/yyyy, matching every other date this email and the OI
+            # worklist note print - `.isoformat()` was the one place still on ISO.
+            return f"Was {_handover_fmt_date(moved)}" if moved else "No previous delivery date"
         if change == CHANGE_REPOINT:
             return f"Moved to {after}" if after else None
         if change in (CHANGE_QTY_DECREASE, CHANGE_QTY_INCREASE):
@@ -2683,13 +2841,16 @@ class ProjectOrderInquiryService:
             self.db.add(plan_row)
             written.append(plan_row)
         self.db.flush()
-        # AC-H2/H6: an amendment/book-change row raises exactly like any other. `was` is
-        # deliberately NOT populated here - the delta this reads (`plan.note`) is a
-        # sentence for a person ("Was 2026-08-25"), not the structured previous value the
-        # PLAN's own section 6 flags as still to be discovered for CHANGE SO NO, and
-        # inventing a source-order lookup here is exactly what that section says not to do.
-        for plan_row in written:
-            self._record_handover(plan_row, kind="raised", actor_user_id=actor_user_id)
+        # AC-H2/H6: an amendment/book-change row raises exactly like any other.
+        # AC-R2-06 (S1): `plan.was` carries the structured previous value for a
+        # DELAY/ADVANCE row (threaded from `DemandRow.was`, built where the delta is
+        # read - `derive_for_amendment`); every other row's `was` stays `None` here,
+        # same as before - CHANGE SO NO's own source-order `was` is still built at the
+        # one caller that already knows it, per the PLAN's own section 6.
+        for plan, plan_row in zip(plans, written):
+            self._record_handover(
+                plan_row, kind="raised", was=plan.was, actor_user_id=actor_user_id
+            )
         self._hand_to_purchasing(order, inquiry, len(plans))
         return inquiry
 
@@ -8033,15 +8194,22 @@ def _build_handover_context(
         if so_number and so_number not in seen_so:
             seen_so.add(so_number)
             so_numbers.append(so_number)
-        locations.add((item.get("stock_location") or "").strip() or None)
+        # AC-R2-14/15 (S3, `PLAN-scm-oi-handover-r2-undo.md`): a BLANK location is
+        # ignored outright rather than counted as its own distinct value - a blank
+        # used to sit in this set as `None` and made "one named location, some blank"
+        # read as two locations (mixed) instead of one, so a mostly-local order's
+        # subject went bare when it should have named the one warehouse that mattered.
+        location = (item.get("stock_location") or "").strip()
+        if location:
+            locations.add(location)
         verb_keys.update(item.get("verb_keys") or ())
         lines.append(item["line"])
 
-    # AC-H7: one shared location -> "<location> @ <so list>"; mixed or none -> "<so list>".
+    # AC-H7 / AC-R2-14/15: one NAMED location (blanks ignored) -> "<location> @ <so
+    # list>"; two or more named, or none at all, -> bare "<so list>".
     so_list = " , ".join(so_numbers)
     if len(locations) == 1:
-        only = next(iter(locations))
-        subject_scope = f"{only} @ {so_list}" if only else so_list
+        subject_scope = f"{next(iter(locations))} @ {so_list}"
     else:
         subject_scope = so_list
 
@@ -8093,6 +8261,7 @@ def _build_undo_context(
             "project": item.get("project"),
             "revision_no": item.get("revision_no"),
             "lines": item.get("lines"),
+            "headline": item.get("headline"),
             "link": item.get("link"),
         },
         "actor": item.get("actor"),

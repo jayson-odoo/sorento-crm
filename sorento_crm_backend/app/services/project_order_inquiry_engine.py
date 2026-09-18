@@ -30,7 +30,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.models.project_so import (
     IV_ADVANCE,
@@ -99,6 +99,11 @@ class DemandRow:
     # The human half of an amendment instruction: the date a DELAY moved from, the sales
     # order a CHANGE SO points at. A verb on its own is not actionable.
     note: Optional[str] = None
+    # AC-R2-06 (`PLAN-scm-oi-handover-r2-undo.md` S1): the STRUCTURED previous value a
+    # DELAY/ADVANCE carries (`{"delivery_date": <date>}`) - `note` above is the same
+    # fact as a sentence for a person, this is what the handover email's own CHANGE TO
+    # column reads. `None` for every change that has no structured previous value yet.
+    was: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +140,9 @@ class InquiryRowPlan:
     spo_ref: Optional[str] = None
     covered_by: Optional[str] = None
     note: Optional[str] = None
+    # Threaded straight from `DemandRow.was` (AC-R2-06) - `_plans_for` copies it
+    # unchanged, there is nothing here to compute.
+    was: Optional[Dict[str, Any]] = None
 
 
 def verb_for(
@@ -262,6 +270,7 @@ def _plans_for(
                     row.change, COVERAGE_NONE, delivery_date=row.delivery_date, today=today
                 ),
                 note=row.note,
+                was=row.was,
             )
         ]
 

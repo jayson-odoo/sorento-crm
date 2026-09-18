@@ -4578,6 +4578,22 @@ def _apply_one_order(
                     r.result_json[key] = words
         else:
             r.result_json = {"board_link": r.board_link}
+        if revised:
+            # AC-R2-19a: WHICH REVISION THIS APPLY MINTED, so an undo of that revision can
+            # find its way back to this batch. The journal undo needs no such link - it
+            # replays `planning_change_*` like any other table - but the RECONSTRUCTED
+            # undo has no journal, and no way at all to tell "the revision I am undoing
+            # came from a batch apply" from "somebody pressed Confirm on the board": #992
+            # removed the last indirect link there was, the synthetic `so_amendments` row
+            # that carried `from_version_id = batch_id`.
+            #
+            # The REVISION NUMBER, not the decision id: `(project_sales_order_id,
+            # revision_no)` is UNIQUE on `so_supply_decisions` and this row already
+            # carries the order, so the pair is an exact address and reading it costs no
+            # extra query here. Stamped on EVERY row this apply applied for the order,
+            # cancelled ones included - the undo puts the whole batch back, and a row
+            # retired by this apply is as much its work as a confirmed one.
+            r.result_json["supply_decision_revision_no"] = revision_no
 
     # Purchasing is notified by `apply()`, AFTER this order's savepoint has committed, not
     # here: `NotificationService.create_with_channel_preferences` commits on its own, and

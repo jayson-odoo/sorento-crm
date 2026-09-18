@@ -26,11 +26,19 @@ fresh list). The dialog is titled **Plan a container**:
 With a document chosen, click **Test** to read the file without writing anything, then
 **Confirm and start plan**. With **No file**, click **Start plan** directly.
 
-If the supplier's stock list merges a cell such as 品名 (product name), 商标 (brand), 规格
-(spec), a remark, or 体积 (cbm per unit) across several model rows, every row in that block now
-reads the merged value, so **Supplier says** on the **Supplier codes** tab shows the full
-description instead of only what the top row held. A merged quantity, such as packed or
+If the supplier's stock list merges a cell such as 型号 (model), 品名 (product name), 商标
+(brand), 规格 (spec), a remark, or 体积 (cbm per unit) across several model rows, every row in
+that block now reads the merged value, so **Supplier says** on the **Supplier codes** tab shows
+the full description instead of only what the top row held. A merged quantity, such as packed or
 unfinished stock, still counts once, on the first row of the block, not once per row it covers.
+
+If a supplier writes a bare model number in 型号 (e.g. `8613`, `8066-PP`, `-7055`) instead of
+our own product code, the reader builds our code from that row's 商标 (brand), 品名 (product
+type), 型号 and 规格 (trap size) - for example SORENTO + 连体马桶 + 8613 + 150mm becomes
+`SRTWC8613-150` - and that built code is what **Supplier says** shows and what gets matched. A
+supplier who already writes our own codes is unaffected. If a word on the sheet isn't in the
+**Stock list words** list yet (see the **Supplier codes** tab below), the row is left as the raw
+text from the sheet and waits for a manual pick, the same as any other unmatched row.
 
 ## The four tabs
 
@@ -130,6 +138,10 @@ A plan started before this window existed keeps whatever **To** date it already 
 
 ## The Supplier codes tab
 
+A **Stock list words** link sits in the tab's toolbar - it opens **System Management → Import
+Column Mappings** to the word list a bare-model-number stock list is composed from (see "Start a
+plan" above). Add a missing word there, then re-upload the file to have it compose.
+
 A search box sits above the two tables (**Needs a decision** and **Remembered**). Type a code fragment,
 part of a product name, or brand name to narrow both tables to matching rows. Several words narrow further
 together - for example, typing `CWC 250` shows only rows matching both words. The table headings show the
@@ -155,3 +167,4 @@ when the box is cleared.
 * [Run a reorder plan](run-a-reorder-plan.md)
 * [Upload the data a reorder plan is built from](upload-plan-data.md)
 * [Print the order summary](print-the-order-summary.md)
+* [Import column mappings - Stock list words](../system-management/import-column-mappings.md)

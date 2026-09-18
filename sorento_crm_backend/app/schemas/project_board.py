@@ -1141,14 +1141,21 @@ class BoardUndo(BaseModel):
     confirmed_by_name: Optional[str] = None
     #: Set when purchasing has already acted on this order since the confirm - a
     #: PO link (`linked`, whatever `auto` reads - review round), or a row marked
-    #: actioned. Null when nothing blocks the undo.
-    refusal: Optional[Literal["linked", "actioned"]] = None
+    #: actioned - or when a journalled row's live value has drifted from what this
+    #: confirm's own journal entry wrote (`changed`, AC-R2-24, `PLAN-scm-oi-
+    #: handover-r2-undo.md` S4). Null when nothing blocks the undo.
+    refusal: Optional[Literal["linked", "actioned", "changed"]] = None
     #: Addressing only, never rendered (no UUIDs in the UI): the pending action's
     #: payload names the decision it was created against, so `undo_last_confirm`
     #: can tell a Confirm written during the countdown apart and refuse `superseded`
     #: (AC-UC-28) rather than undoing whatever happens to be newest by the time the
     #: window lapses.
     decision_id: str
+    #: `journal` replays this order's own journalled revision the normal way.
+    #: `reconstructed` (AC-R2-30, S5) is a best-effort undo of a decision confirmed
+    #: before the journal existed - `board_undo_map` sets this only for a requester
+    #: whose role is `superadmin`/`admin`. ALWAYS present once `undo` is present.
+    mode: Literal["journal", "reconstructed"]
 
 
 class BoardOrderStanding(BaseModel):

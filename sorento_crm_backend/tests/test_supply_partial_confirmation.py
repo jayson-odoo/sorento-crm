@@ -355,9 +355,14 @@ def test_a_line_the_next_confirmation_does_not_name_keeps_its_raised_buy(api):
     assert narrowed.status_code == 200, narrowed.text
     assert narrowed.json()["lines_decided"] == 2
     assert narrowed.json()["lines_undecided"] == 0
-    # Line 1 was decided again, so its row counts; line 2's row is carried under the new
-    # revision but purchasing already had it, and the toast must not say two rows again.
-    assert narrowed.json()["inquiry_rows_created"] == 1
+    # AC-R2-10 (`PLAN-scm-oi-handover-r2-undo.md` S2): line 1 is named again at the SAME
+    # qty and date its own raised row already carries, no links, so the widened settle-
+    # in-place gate keeps that row AS IS - it is not cancelled and nothing fresh is
+    # raised for it. Line 2's row is carried under the new revision the same as before,
+    # also not counted. Neither line contributes to `created`, so the toast must not
+    # say anything was raised - this replaces the old cancel-and-re-raise expectation
+    # ("line 1 was decided again, so its row counts").
+    assert narrowed.json()["inquiry_rows_created"] == 0
 
     db.expire_all()
     rows = (
