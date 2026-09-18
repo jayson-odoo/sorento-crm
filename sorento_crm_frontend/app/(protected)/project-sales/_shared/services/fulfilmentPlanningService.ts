@@ -432,7 +432,31 @@ export async function confirmSupply(
  * c.location)` instead of a second, narrower table of its own. Absent candidates fall back
  * to the plain `qty_on_hand` / `so_qty` / ... fields already on `BorrowCandidate`, which stay
  * on the wire for exactly that reason.
+ *
+ * ── BOARD UNDO MODE (`PLAN-scm-oi-handover-r2-undo.md`, S4/S5) ──────────────────────────────
+ *
+ * LIVE since S4/S5. `BoardOrderStanding.undo` (already live since `undo_0001`) carries one
+ * field and one enum member beyond the original `undo_0001` shape, both on `BoardUndo`:
+ *
+ *   BoardUndo.mode      'journal' | 'reconstructed'   ALWAYS present once `undo` is present.
+ *                        'journal' replays the order's own journalled revision, same as
+ *                        today. 'reconstructed' is a best-effort undo of a decision confirmed
+ *                        before the journal existed (`undo_journal IS NULL`); the board sets
+ *                        `undo` for one of these ONLY when the requester's role is
+ *                        `superadmin`/`admin` - every other role gets `undo: null` for that
+ *                        order, same as an order with no active decision.
+ *   BoardUndo.refusal   gains a third value, 'changed', alongside the existing 'linked' /
+ *                        'actioned': a journalled row now holds a value another writer wrote
+ *                        after the confirm, so replaying the journal would overwrite that
+ *                        write and the gear entry is disabled instead.
+ *
+ * `FulfilmentBoardPanel`'s payload for `project_sales_order.undo_confirm` carries
+ * `{decision_id, mode}` - the server 409s a `mode` that does not match the decision's own
+ * journal state (AC-R2-34) and 403s a `mode: "reconstructed"` payload from a non-admin
+ * (AC-R2-35). Phase 1's `NEXT_PUBLIC_BOARD_UNDO_MOCK` flag, `mockBoardUndo` and
+ * `MOCK_UNDO_ORDERS` are gone - every order's `undo` is the server's own now.
  */
+
 export async function getPlanningBoard(
   soNumbers: string[],
   granularity: BoardGranularity = 'week',

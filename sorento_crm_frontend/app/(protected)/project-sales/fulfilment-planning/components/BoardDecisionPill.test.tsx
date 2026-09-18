@@ -86,6 +86,18 @@ describe('BoardDecisionPill: the five labels (C3, R6)', () => {
   });
 });
 
+describe('BoardDecisionPill: a sheet-covered line reads Confirmed (AC-R2-19, owner ruling 18 Sep)', () => {
+  it('reads Confirmed for a line covered only by a live sheet-migrated inquiry row (no decision) - "With purchasing" was ruled confusing and dropped', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({ covered: true, decision: null })}
+        decision={null}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Confirmed');
+  });
+});
+
 describe('BoardDecisionPill: no "rev" (R6)', () => {
   it('never prints a revision number beside Confirmed', () => {
     render(
@@ -214,6 +226,10 @@ describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.
       <BoardDecisionPill
         contribution={contributionOf({
           covered: true,
+          // A revision actually confirmed this line - this fixture's own intent is the
+          // decision-covered case (a decision-less, sheet-covered line also reads
+          // Confirmed since the 18 Sep ruling, see the describe block above).
+          decision: { revision_no: 3, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
           draft: {
             decision: { verdict: 'amended' },
             saved_by: 'Eling',
