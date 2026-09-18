@@ -1,6 +1,6 @@
 # PLAN: local-supplier Buy routing behind a system setting, off by default
 
-Status: implemented (lane green 18 Sep 2026, awaiting review + PR)
+Status: built (lane green + reviewed 18 Sep 2026, browser pass pending a stack slot, PR pending)
 UAC: `local-buy-routing-toggle-acceptance-criteria.md`
 Domain: scm (touches system settings)
 Supersedes in part: `PLAN-local-supplier-oi-routing.md` decision 4 and 5 (#814, merged 10 Sep 2026)
@@ -25,10 +25,10 @@ needed.
 | --- | --- |
 | Origin resolver, ONE SQL statement per call | `app/services/scm/supply_origin.py` `buy_origin_by_product` |
 | Three callers, all default a missing key to `"overseas"` | `project_supply_service.py:1178` (sheet), `:5696` (confirm, checked + carried), `project_fulfilment_board_service.py:676` (board) |
-| Header-mint gate reads `origin != "local"` | `project_order_inquiry_service.py:540` |
-| Row-loop skip reads `origin == "local"` | `project_order_inquiry_service.py:576` |
-| Schema field | `schemas/project_board.py:714`, `schemas/project_supply.py:226`: `Optional[Literal["local","overseas"]]` |
-| FE pill, shown only when `buy_origin === 'local'` | `FulfilmentBoardListView.tsx:382,427`, `BoardLadderOptionsTable.tsx:92`, `BoardCellBreakdownDialog.tsx:795` |
+| Header-mint gate reads `origin != "local"` | `project_order_inquiry_service.py:739` |
+| Row-loop skip reads `origin == "local"` | `project_order_inquiry_service.py:792` |
+| Schema field | `schemas/project_board.py:730`, `schemas/project_supply.py:226`: `Optional[Literal["local","overseas"]]` |
+| FE pill, shown only when `buy_origin === 'local'` | `FulfilmentBoardListView.tsx:397,449`, `BoardLadderOptionsTable.tsx:93`, `BoardCellBreakdownDialog.tsx:795` |
 | Existing tests pinning the ON behaviour | `tests/scm/test_confirm_local_buy_no_oi.py` (7), `tests/scm/test_supply_origin.py` (2) |
 | Board statement-count bound | `tests/test_ladder_v5_edges.py::test_a_board_of_76_lines_does_not_scale_its_query_count_with_the_line_count`, bound 40 |
 | Boolean system setting precedent | `system_settings.chatbot_stock_denial_enabled` (model `app/models/user.py:553`, GET dict `settings.py:403`, defaults dict `:684`, update schema `:159`) |

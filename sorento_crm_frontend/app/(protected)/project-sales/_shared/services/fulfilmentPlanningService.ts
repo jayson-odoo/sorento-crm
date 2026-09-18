@@ -410,10 +410,12 @@ export async function confirmSupply(
  *
  * Two additive fields. LIVE on BOTH surfaces since S3/S4:
  *
- *   BoardContribution.buy_origin   'local' | 'overseas' | undefined
+ *   BoardContribution.buy_origin   'local' | 'overseas' | null | undefined
  *   SupplyLine.buy_origin          same shape, on the per-order sheet. `ProjectSupplyService.
  *                                  proposal_for` computes the origin map once for the whole
- *                                  sheet and stamps it on EVERY line, plannable or not.
+ *                                  sheet and stamps it on EVERY line, plannable or not. `null`
+ *                                  while `local_buy_routing_enabled` (System Settings) is off,
+ *                                  the shipped default (`PLAN-local-buy-routing-toggle.md`).
  *
  * Computed once per product for the whole request, off the primary `product_suppliers`
  * link, else the newest-PO supplier, else `overseas`. `local` iff that supplier's country

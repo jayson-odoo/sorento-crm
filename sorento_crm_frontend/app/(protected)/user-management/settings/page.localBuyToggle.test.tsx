@@ -158,9 +158,17 @@ describe('Settings - local supplier Buy routing toggle (AC-4)', () => {
   it('carries no description text under the switch (no on-screen explanation rule)', () => {
     wrap(<SettingsGeneralPage />);
 
-    // The label IS the whole UI - AC-4 says no description text under it.
-    expect(screen.queryByText(/skips? the order inquiry/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/order inquiries are still raised/i)).not.toBeInTheDocument();
+    // The label IS the whole UI - AC-4 says no description text under it. Asserted as
+    // a DOM relationship rather than the absence of hand-picked strings (a kill test
+    // found the string-based version stayed green with the whole Switch FormField
+    // deleted): walk up from the switch, by role + name, to its `FormItem` container
+    // (`components/ui/form.tsx` stamps `data-slot="form-item"` on it) and require that
+    // container to hold no `FormDescription` (`data-slot="form-description"`, the
+    // primitive every other field's helper text renders through).
+    const control = localBuySwitch();
+    const formItem = control.closest('[data-slot="form-item"]');
+    expect(formItem).not.toBeNull();
+    expect(formItem?.querySelector('[data-slot="form-description"]')).toBeNull();
   });
 
   it('sends local_buy_routing_enabled: true in the save body once toggled on', async () => {

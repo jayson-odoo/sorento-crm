@@ -106,25 +106,10 @@ def test_board_and_supply_carry_buy_origin():
     from app.schemas.project_board import BoardContribution
     from app.schemas.project_supply import SupplyLine
 
-    # PLAN-local-buy-routing-toggle.md (18 Sep 2026): this file's own dicts are
-    # hand-built and never read the setting, but the flag is set ON here anyway so
-    # this pin stays explicitly scoped to the ON behaviour like every other test below.
-    # The Core `.update({SystemSetting.local_buy_routing_enabled: True})` (rather than a
-    # plain `row.local_buy_routing_enabled = True` attribute set) is deliberate: a bare
-    # instance attribute for a column the model does not yet declare is silently accepted
-    # by plain Python and never reaches SQLAlchemy at all, which would leave this red for
-    # no reason once the column lands. Referencing the class attribute fails loudly
-    # (AttributeError) while it is still missing.
-    with blank_session() as db:
-        from app.models.user import SystemSetting
-
-        row = SystemSetting(id=_u())
-        db.add(row)
-        db.flush()
-        db.query(SystemSetting).filter(SystemSetting.id == row.id).update(
-            {SystemSetting.local_buy_routing_enabled: True}
-        )
-
+    # The column itself (default false) is pinned by
+    # test_local_buy_routing_toggle.py::test_setting_column_defaults_false. This test's
+    # own dicts are hand-built and never read the setting, so there is nothing to gate
+    # here - it only pins that both schemas still carry the `buy_origin` field.
     assert "buy_origin" in BoardContribution.model_fields
     assert "buy_origin" in SupplyLine.model_fields
 
@@ -497,11 +482,11 @@ def test_scm_demand_sees_no_local_buy():
         from tests.scm.test_project_supply_service_ladder import _group_sites
 
         # PLAN-local-buy-routing-toggle.md (18 Sep 2026): this test's `buy_lines` origin
-        # is still hand-built, not resolved, but the flag is set ON here so the pin stays
-        # explicitly scoped to the ON behaviour rather than relying on the (off) default.
-        # See `test_board_and_supply_carry_buy_origin` above for why this is a Core
-        # `.update({SystemSetting.local_buy_routing_enabled: ...})` rather than a plain
-        # attribute set: the latter is a silent no-op while the column does not exist.
+        # is hand-built, not resolved through `buy_origin_by_product`, so this flag write
+        # is NOT a gate on the test - flipping it back to False would not change the
+        # result. It is left here purely as documentation that this test's assertions
+        # describe the ON state (a local Buy is skipped), for a reader who lands here
+        # while auditing which tests pin ON versus OFF behaviour.
         from app.models.user import SystemSetting
 
         setting_row = db.query(SystemSetting).first()

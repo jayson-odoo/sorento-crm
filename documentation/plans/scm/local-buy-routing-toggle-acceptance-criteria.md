@@ -7,8 +7,10 @@ Owner ruling: 18 Sep 2026
 
 - AC-1 `system_settings.local_buy_routing_enabled` exists, boolean, not null, server default
   false. Migration `lbrt_0001_local_buy_toggle` adds it; downgrade drops it.
-- AC-2 GET `/api/v1/user-management/settings` returns `local_buy_routing_enabled` in the
-  settings block, from BOTH manual builders (row present, row absent). Default false.
+- AC-2 GET `/api/v1/user-management/settings` returns `local_buy_routing_enabled: false` in
+  the settings block when a row exists; with no row the whole settings block is null (existing
+  shape) and the FE's `createDefaultSettings` supplies false. The null-reset defaults dict also
+  carries the field so an explicit JSON null saves as false.
 - AC-3 POST `/api/v1/user-management/settings/general` with `local_buy_routing_enabled`
   saves it and the next GET reads it back.
 - AC-4 The general settings page shows one Switch with the accessible name
