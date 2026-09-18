@@ -1466,3 +1466,97 @@ describe('AC-RL-04 amended (17 Sep review round): a redirected row is visually m
     expect(dialog.textContent ?? '').not.toMatch(/\bRedirected\b/);
   });
 });
+
+describe('Customer and Project print as two columns (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026)', () => {
+  it('no column with id or accessorKey "project_customer" is on the list any more', () => {
+    const allColumns = columnDefs();
+    const ids = allColumns.map((column) => {
+      const withKeys = column as ColumnDef<OrderInquiryWorklistRow> & {
+        id?: string;
+        accessorKey?: string;
+      };
+      return withKeys.id ?? withKeys.accessorKey;
+    });
+    expect(ids).not.toContain('project_customer');
+    expect(ids).toContain('customer_name');
+    expect(ids).toContain('project_title');
+  });
+
+  it('a long customer name truncates with a title tooltip', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-customer-long',
+          customer_name: 'EXACO ENGINEERING AND CONSTRUCTION SDN BHD',
+        }),
+      ],
+      'customer_name',
+    );
+    const cell = screen.getByText('EXACO ENGINEERING AND CONSTRUCTION SDN BHD');
+    expect(cell.className).toContain('truncate');
+    expect(cell.getAttribute('title')).toBe('EXACO ENGINEERING AND CONSTRUCTION SDN BHD');
+  });
+
+  it('a row with no customer party attached prints the empty state, not a blank cell', () => {
+    renderRows([worklistRow({ id: 'row-customer-none', customer_name: null })], 'customer_name');
+    expect(screen.getByText('Not attributed')).toBeInTheDocument();
+  });
+
+  it('a pre-order project title carries its PRE-ORDER note, truncated with a title tooltip', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-project-preorder',
+          project_title: 'Bandar Puteri Phase 2 / PRE-ORDER',
+        }),
+      ],
+      'project_title',
+    );
+    const cell = screen.getByText('Bandar Puteri Phase 2 / PRE-ORDER');
+    expect(cell.className).toContain('truncate');
+    expect(cell.getAttribute('title')).toBe('Bandar Puteri Phase 2 / PRE-ORDER');
+  });
+
+  it('an adopted row with no project prints "No project", not a blank cell', () => {
+    renderRows([worklistRow({ id: 'row-project-none', project_title: null })], 'project_title');
+    expect(screen.getByText('No project')).toBeInTheDocument();
+  });
+});
+
+describe('the Raised at cell carries its own history in a tooltip (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep 2026)', () => {
+  it('a row with a prior raise shows the info icon, with "Previously raised" and one line per entry', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-raised-history',
+          raised_at: '2026-08-15T10:00:00',
+          raise_history: [
+            { raised_at: '2026-08-01T09:15:00', raised_by_name: 'ZZT Farah' },
+          ],
+        }),
+      ],
+      'raised_at',
+    );
+
+    const row = screen.getByTestId('row-row-raised-history');
+    expect(within(row).getByLabelText('Previously raised')).toBeInTheDocument();
+    expect(within(row).getByText('Previously raised')).toBeInTheDocument();
+    expect(within(row).getByText(/ZZT Farah/)).toBeInTheDocument();
+  });
+
+  it('a row with no history shows no info icon', () => {
+    renderRows(
+      [
+        worklistRow({
+          id: 'row-raised-no-history',
+          raised_at: '2026-08-15T10:00:00',
+          raise_history: [],
+        }),
+      ],
+      'raised_at',
+    );
+
+    const row = screen.getByTestId('row-row-raised-no-history');
+    expect(within(row).queryByLabelText('Previously raised')).not.toBeInTheDocument();
+  });
+});

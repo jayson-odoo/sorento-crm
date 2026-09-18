@@ -249,6 +249,16 @@ class OrderInquirySummary(BaseModel):
     cancelled: int = 0
 
 
+class OrderInquiryRaiseHistoryEntry(BaseModel):
+    """One PRIOR raise of the same SO line under the same inquiry
+    (PLAN-oi-worklist-split-customer-project.md) - the Raised at cell's own tooltip. A re-confirm
+    cancels the old row and raises a fresh one, so this is where the first raise's own
+    time and raiser still live once `raised_at` has moved on to the latest one."""
+
+    raised_at: Optional[datetime] = None
+    raised_by_name: Optional[str] = None
+
+
 class OrderInquiryWorklistRow(BaseModel):
     """One instruction on purchasing's own list, in the spreadsheet's columns.
 
@@ -272,6 +282,12 @@ class OrderInquiryWorklistRow(BaseModel):
     qty: str
     delivery_date: Optional[date] = None
     project_customer: Optional[str] = None
+    # PLAN-oi-worklist-split-customer-project.md: `project_customer` above stays for the
+    # export and search; the worklist screen itself prints these two split out into a
+    # Customer column and a Project column, in that position. `project_title` carries the
+    # PRE-ORDER note `project_customer` does, so a pre-order row still reads as one.
+    customer_name: Optional[str] = None
+    project_title: Optional[str] = None
     # Blank until the row traces to a placed purchase order. Never a guess at who would
     # supply it: purchasing reads a filled cell as a statement that an order exists.
     supplier: Optional[str] = None
@@ -318,6 +334,11 @@ class OrderInquiryWorklistRow(BaseModel):
     # Never the id either - the column is printed as it comes. Null when nobody was
     # recorded, or the user has since been removed.
     raised_by_name: Optional[str] = None
+    # The Raised at cell's own tooltip (PLAN-oi-worklist-split-customer-project.md,
+    # Slice 2): the CANCELLED predecessors on the same SO line, newest first - an open
+    # sibling row is a second live instruction, not history (review round 1, blocker
+    # B1). `[]` on a row with no SO line, or nothing prior. Never on the Excel export.
+    raise_history: List[OrderInquiryRaiseHistoryEntry] = []
     verb: str
     note: Optional[str] = None
 
@@ -556,7 +577,10 @@ class AcknowledgeRowsRequest(BaseModel):
     purchasing's work and the cascade runs for exactly them.
     """
 
-    row_ids: Optional[List[str]] = None
+    #: Capped at 500 (security review round 1) - the same guard rail a hand-typed batch
+    #: id list gets everywhere else on this route module, so a caller cannot force one
+    #: request to walk an unbounded id list.
+    row_ids: Optional[List[str]] = Field(None, min_length=1, max_length=500)
     #: "Select all N matching" (S2): resolved server-side against the SAME filters the
     #: worklist's own list/summary read, so the scope is never a stale or hand-rebuilt
     #: copy of what the buyer is looking at.
@@ -605,6 +629,35 @@ class AcknowledgeResult(BaseModel):
     #: Rows the `filter` matched but left untouched - rejected, already acknowledged, or
     #: cancelled (AC-CF-8, S2 `PLAN-oi-confirm-per-so.md`). Always 0 on a `row_ids` press,
     #: which still refuses such a row outright rather than quietly skipping it.
+    skipped: int = 0
+
+
+class UnacknowledgeRowsRequest(BaseModel):
+    """Purchasing takes a row back off its own plate
+    (PLAN-oi-worklist-split-customer-project.md, Slice 3, owner 18 Sep 2026) - the
+    reverse of Confirm, for a row taken on by mistake or a reconfirm that has not
+    actually happened yet.
+
+    `row_ids` only - no `filter` branch: Unconfirm always names exactly what the buyer
+    ticked, never "everything matching a scope" the way "Select all N matching" does for
+    Confirm.
+    """
+
+    #: At least one, capped at 500 (security review round 1) - the Actions menu names
+    #: exactly what is ticked, so an unbounded list here could only be a hand-built
+    #: request, never the UI's own.
+    row_ids: List[str] = Field(..., min_length=1, max_length=500)
+
+
+class UnacknowledgeResult(BaseModel):
+    """What one Unconfirm press did. No cascade runs, so there is nothing here like
+    `AcknowledgeResult`'s linking figures - just how many rows actually moved and how
+    many the press left alone."""
+
+    #: Rows that were `acknowledged`/`changed` and are now back to `awaiting`.
+    updated: int = 0
+    #: Rows named that were already `awaiting`, `rejected`, cancelled, or outside this
+    #: company's scope - never an error, always just left untouched (S1).
     skipped: int = 0
 
 

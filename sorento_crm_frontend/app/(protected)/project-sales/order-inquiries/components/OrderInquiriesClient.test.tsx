@@ -322,7 +322,10 @@ describe('OrderInquiriesClient: reading the page', () => {
       'Item code',
       'Qty',
       'Delivery date',
-      'Project / customer',
+      // Split into two columns, same position, where "Project / customer" used to be
+      // (PLAN-oi-worklist-split-customer-project.md, owner 18 Sep).
+      'Customer',
+      'Project',
       'Supplier',
       // Two columns since 14 Sep, side by side, where "Outstanding PO/SPO" used to be
       // (AC-R-31). The id behind the first is still `po_number`, so a saved layout keeps
