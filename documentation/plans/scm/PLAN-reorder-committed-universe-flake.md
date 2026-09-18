@@ -93,6 +93,17 @@ way two tests in that same file already did for their data assertions.
   (`m384.upgrade()`, `m424.upgrade()`, the 340-then-346 replay); only where its DDL lands moves.
   `scm.committed_v` is the only `scm`-qualified object any replayed body executes, and `projects.`
   the only other prefix, so the same two replacements cover it.
+- The proxy then ASSERTS that no `scm.` / `projects.` prefix survived the rewrite (`_UNREBOUND`,
+  whose lookbehind lets through what a rebind produces and what prose mentions). `_rebind` only
+  knows the two prefixes these six bodies use, and 376's `_NET_POSITION_V` (`scm.net_position_v`,
+  `scm.on_order_v`) is one statement away from being replayed here, so a migration added later that
+  names another real object fails loudly instead of quietly landing on the shared schema.
+  `test_the_proxy_refuses_a_statement_still_naming_the_shared_schema` pins it: disable the assert
+  and the statement reaches the real view, which Postgres refuses with "cannot drop columns from
+  view" - the proof that it was aimed there.
+- An autouse fixture restores `alembic.op._proxy` after every test (the attribute does not exist
+  until something sets it, so restoring can mean removing it again). Otherwise the next test in that
+  worker inherits a proxy bound to a closed connection and a dropped schema.
 - `_column_types(db, scm_schema)` and `_view_body(db, scm_schema)` read the catalogue at the scratch
   schema instead of `'scm'`.
 - The four `CREATE SCHEMA IF NOT EXISTS scm` / `DROP VIEW IF EXISTS scm.committed_v CASCADE` pairs
@@ -115,11 +126,12 @@ contract, and hiding a deadlock behind a retry would be the wrong repair for a t
 2. **Not vacuous.** The rebound round trip installs a real 3,926-character body with 7 columns in
    the scratch schema and leaves the real `scm.committed_v` in place, so the column-type and body
    assertions are still asserting something.
-3. `tests/scm/test_committed_v_migration_chain.py` 14 passed; `tests/scm/test_reorder_committed_universe.py`
+3. `tests/scm/test_committed_v_migration_chain.py` 15 passed; `tests/scm/test_reorder_committed_universe.py`
    15 passed.
 4. Three consecutive `-n 4 --dist loadfile tests/scm/` runs with CI's own ignore list, on the
    private database `sorento_xdist_local`: **3729 passed, 13 skipped, 13 xfailed, 0 failed** each
-   (42m21s, 12m26s, 13m20s).
+   (42m21s, 12m26s, 13m20s). A fourth after the review round, with the guard and its test:
+   **3730 passed, 13 skipped, 13 xfailed, 0 failed** (9m06s).
 5. One earlier run of the SAME command with the ignore list accidentally not applied (zsh does not
    word-split an unquoted `$IGNORES`, so all 4,099 tests ran including `test_m0_cp1_schema.py`,
    which drops the whole `scm` schema and four core tables) came back with 155 failures, every one

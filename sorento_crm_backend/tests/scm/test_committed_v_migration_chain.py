@@ -14,6 +14,7 @@ the old body. Two invariants pin the fix:
    code from one.
 """
 import importlib.util
+import re
 import uuid
 from pathlib import Path
 
@@ -52,6 +53,12 @@ def _rebind(sql: str, scm_schema: str, projects_schema: str) -> str:
     )
 
 
+#: A `scm.` / `projects.` prefix that survived `_rebind` - i.e. one still naming the SHARED
+#: schema. The lookbehind lets through what a rebind produces (`"..._scm".committed_v`, the
+#: quote) and what prose mentions (`app.services.scm.demand`, the dot).
+_UNREBOUND = re.compile(r'(?<!["\w.])(scm|projects)\.')
+
+
 class _ScratchOperations(Operations):
     """`alembic.op` for a `blank_session`, with every statement rebound onto the scratch
     schemas.
@@ -69,6 +76,12 @@ class _ScratchOperations(Operations):
     assertion with nothing on screen to point at the cause.
 
     The migration function itself is still what runs; only where its SQL lands moves.
+
+    `_rebind` moves the two prefixes every body replayed here actually uses, so the guard
+    below is what keeps that true: a migration added to this file later that names any OTHER
+    real object fails loudly instead of quietly landing on the shared schema. 376's
+    `_NET_POSITION_V` (`scm.net_position_v`, `scm.on_order_v`) is the live counter-example,
+    a statement away from being replayed here.
     """
 
     def __init__(self, migration_context, scm_schema: str, projects_schema: str):
@@ -79,6 +92,10 @@ class _ScratchOperations(Operations):
     def execute(self, sqltext, *args, **kwargs):  # noqa: ANN001
         if isinstance(sqltext, str):
             sqltext = _rebind(sqltext, self._scm_schema, self._projects_schema)
+            assert not _UNREBOUND.search(sqltext), (
+                "this statement still names the SHARED schema, which is the deadlock this "
+                f"file was repaired for - teach `_rebind` about it: {sqltext[:200]}"
+            )
         return super().execute(sqltext, *args, **kwargs)
 
 
@@ -90,6 +107,28 @@ def _scratch_op(db) -> tuple[str, str]:
     op_module._proxy = _ScratchOperations(
         MigrationContext.configure(db.connection()), scm_schema, projects_schema)
     return scm_schema, projects_schema
+
+
+@pytest.fixture(autouse=True)
+def _restore_alembic_proxy():
+    """`alembic.op` holds its Operations object in a MODULE-level `_proxy`, so a test that
+    points it at a scratch schema has to put it back, or every later test in this worker
+    inherits a proxy bound to a closed connection and a schema that no longer exists. The
+    attribute does not exist until something sets it, so putting it back can mean removing
+    it again.
+    """
+    import alembic.op as op_module
+
+    missing = object()
+    before = getattr(op_module, "_proxy", missing)
+    try:
+        yield
+    finally:
+        if before is missing:
+            if hasattr(op_module, "_proxy"):
+                del op_module._proxy
+        else:
+            op_module._proxy = before
 
 
 def _column_types(db, scm_schema: str) -> dict:
@@ -261,6 +300,31 @@ def test_every_downgrade_copy_matches_the_revision_it_restores():
     assert _normalize(m498._AS_OF_428) == _normalize(m428._AS_OF_428)
     assert _normalize(m511._AS_OF_498) == _normalize(m498._AS_OF_498)
     assert _normalize(m512._AS_OF_511) == _normalize(m511._AS_OF_511)
+
+
+@requires_pg
+def test_the_proxy_refuses_a_statement_still_naming_the_shared_schema():
+    """`_rebind` knows two prefixes, and the round trips below are only safe while every
+    statement they replay uses one of them.
+
+    376's `_NET_POSITION_V` is the live counter-example, a statement away from being
+    replayed here: it names `scm.net_position_v` and `scm.on_order_v`, which `_rebind` does
+    not move, so it would rebuild the SHARED view and take the AccessExclusiveLock that
+    deadlocked a concurrent plan read (CI run 35293438670). The proxy refuses it instead of
+    running it, and the refusal names the statement so the fix is obvious.
+    """
+    with blank_session() as db:
+        _scratch_op(db)
+        import alembic.op as op
+
+        with pytest.raises(AssertionError, match=r"scm\.net_position_v"):
+            op.execute("CREATE OR REPLACE VIEW scm.net_position_v AS SELECT 1 AS one")
+
+        # Refused BEFORE it ran: the shared view is whatever it already was.
+        assert db.execute(text(
+            "SELECT definition FROM pg_views "
+            "WHERE schemaname = 'scm' AND viewname = 'net_position_v'"
+        )).scalar(), "the guard let the statement through to the real schema"
 
 
 @requires_pg
