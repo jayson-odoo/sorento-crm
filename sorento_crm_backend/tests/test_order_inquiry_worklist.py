@@ -851,6 +851,116 @@ def test_the_order_is_total_so_paging_neither_repeats_nor_drops_a_row(api):
     assert len(seen) == len(set(seen)) == 3
 
 
+# ------------------------------------------------ SPO / Agent / Instruction sort keys
+
+
+@pytest.mark.parametrize("field", ["spo_number", "agent_code", "verb"])
+@pytest.mark.parametrize("direction", ["asc", "desc"])
+def test_sorting_by_the_three_worklist_columns_that_draw_a_sort_arrow_is_accepted(
+    api, field, direction
+):
+    """AC-1: SPO, Agent and Instruction are sortable columns on the worklist (they draw
+    a sort arrow in `orderInquiryWorklistColumns.tsx`), so `sort` must accept the same
+    ids those columns are keyed by - `spo_number`, `agent_code`, `verb`."""
+    client, _db, _company_id, _seeded = api
+
+    response = client.get(LIST, params={"sort": field, "dir": direction})
+
+    assert response.status_code == 200, response.text
+
+
+def test_spo_sort_orders_by_the_rows_own_link_then_by_spo_ref_blanks_last(api):
+    """AC-2: the SPO column prints the row's own first linked SPO number ahead of a bare
+    `spo_ref`, so the sort reads in the same order - own link, earliest `linked_at`,
+    then `spo_ref` for a row with no link at all, and a row with neither trails last in
+    BOTH directions (the generic `.nulls_last()` every sort field already gets)."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    warehouse = Warehouse(
+        id=_uid(),
+        company_id=company_id,
+        warehouse_code=f"ZZT{_uid()[:6]}",
+        warehouse_name=f"{MARKER} SPO sort WH",
+    )
+    db.add(warehouse)
+    db.flush()
+    allocation = SPOAllocation(
+        id=_uid(),
+        company_id=company_id,
+        spo_number="ZZT-SPO-SORT-0100",
+        product_id=_product(db, f"ZZT-P-{_uid()[:6]}", f"{MARKER} spo sort product").id,
+        warehouse_id=warehouse.id,
+        allocated_quantity=Decimal("10"),
+    )
+    db.add(allocation)
+    db.flush()
+
+    linked_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=11)
+    linked_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=linked_line.id,
+        item_code=f"{MARKER}-SPOSORT-LINKED",
+        qty="10",
+        state="partly_linked",
+        delivery_date=date(2026, 4, 11),
+    )
+    db.add(
+        OrderInquiryLink(
+            id=_uid(),
+            company_id=company_id,
+            row_id=linked_row.id,
+            spo_allocation_id=allocation.id,
+            document=allocation.spo_number,
+            qty=Decimal("10"),
+        )
+    )
+
+    ref_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=12)
+    ref_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=ref_line.id,
+        item_code=f"{MARKER}-SPOSORT-REF",
+        qty="10",
+        delivery_date=date(2026, 4, 12),
+        spo_ref="ZZT-SPO-SORT-0200",
+    )
+
+    blank_line = _line_on_authored_order(db, company_id, seeded, qty="10", day=13)
+    blank_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=blank_line.id,
+        item_code=f"{MARKER}-SPOSORT-BLANK",
+        qty="10",
+        delivery_date=date(2026, 4, 13),
+    )
+    db.commit()
+
+    ascending = client.get(
+        LIST, params={"sort": "spo_number", "dir": "asc", "query": "SPOSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in ascending] == [
+        linked_row.id,
+        ref_row.id,
+        blank_row.id,
+    ]
+
+    descending = client.get(
+        LIST, params={"sort": "spo_number", "dir": "desc", "query": "SPOSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in descending] == [
+        ref_row.id,
+        linked_row.id,
+        blank_row.id,
+    ]
+
+
 # ------------------------------------------------------------------- summary
 
 

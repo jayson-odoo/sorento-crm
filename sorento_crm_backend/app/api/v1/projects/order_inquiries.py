@@ -87,6 +87,13 @@ WorklistSort = Literal[
     "raised_by_name",
     "location",
     "agent",
+    # The three columns the worklist grid draws a sort arrow on under a DIFFERENT id
+    # than an existing key, or under no key at all (18 Sep 2026 bug report): the FE
+    # sends its own column id verbatim as `sort`, so the id is what has to be accepted
+    # here, not a renaming of it.
+    "spo_number",
+    "agent_code",
+    "verb",
 ]
 
 WORKLIST_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
