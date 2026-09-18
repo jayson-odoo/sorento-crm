@@ -11,12 +11,14 @@ matches the Was quantity.**
 * **AC-19** Given a migrated row restated IN PLACE (the SRTWCX8605-S-RL-PJ / CB2806A-DIY /
   SRTWB245 shape: `qty` 280, `delivery_date` 2027-03-01 (the line's `required_date`, its
   Now), `previous_qty` 182, `previous_delivery_date` 2027-03-01 (the Was, 7.4's mistake),
-  note carrying `"...; Linked to 202603-S0109 (...), expected 2026-06-01; auto: autocount
-  linkage; Was 182 on 2027-03-01"`), and the sheet says 182 @ 1.6.2026, when `preview` is
-  called, then it forecasts `rows_delivery_date_updated == 1`; when `apply` is then called
-  on the same file, then: `previous_delivery_date` moves to 2026-06-01; `delivery_date`,
-  `qty` and `previous_qty` are all untouched; the note's `"AutoCount ...; Linked to ...,
-  expected ..."` prose survives verbatim and only the `"Was 182 on ..."` fragment moves to
+  note carrying `"...; Linked to 202603-S0109 (...), expected 2027-03-01; auto: autocount
+  linkage; Was 182 on 2027-03-01"` - the SAME old date in both the "expected" clause and
+  the "Was" fragment, so an unanchored replace and the correct anchored one would diverge
+  (S15, round 4 review)), and the sheet says 182 @ 1.6.2026, when `preview` is called, then
+  it forecasts `rows_delivery_date_updated == 1`; when `apply` is then called on the same
+  file, then: `previous_delivery_date` moves to 2026-06-01; `delivery_date`, `qty` and
+  `previous_qty` are all untouched; the note's `"AutoCount ...; Linked to ..., expected
+  2027-03-01"` prose survives verbatim and only the `"Was 182 on ..."` fragment moves to
   `"Was 182 on 2026-06-01"`; the outcome reports `DELIVERY_DATE_UPDATED`.
 * **AC-20** Given a settled row whose `previous_delivery_date` already differs from the
   line's `required_date` (already corrected, or never carried 7.4's mistake), when the
@@ -34,6 +36,13 @@ matches the Was quantity.**
   row's `delivery_date` moves), the settled row's `previous_delivery_date` is untouched,
   and `rows_delivery_date_updated == 1` - one sheet row claims one row only, deterministically
   (exact match first, then shape A, then shape B).
+* **AC-24 (S14, round 4 review)** Given a settled row whose `previous_delivery_date`
+  already equals the SHEET's own date (which, by the fingerprint, is also the line's
+  `required_date`), when `preview` is called, then it forecasts
+  `rows_delivery_date_updated == 0`; when `apply` is called (twice, and `preview` again
+  afterwards), then every one reports `rows_delivery_date_updated == 0` and the row is
+  untouched - a settled row already on the sheet's date is a no-op, claimed but never
+  repaired-and-counted, not a phantom repeated repair.
 
 Never touched by any of the above: `qty`, `state`, `changed_at`, `ack_state`, links - shape
 B's own row's `delivery_date` included, since only its Was side ever moves.

@@ -551,10 +551,11 @@ def _already_raised(
 
 def _resolve_line_repairs(
     dated_rows: Sequence[Tuple[int, Any]], migrated_rows: Sequence[Any]
-) -> Dict[int, str]:
+) -> Tuple[Dict[int, str], set]:
     """B1, 19 Sep 2026: which migrated row (if any) each dated sheet row of ONE already-
-    raised line would repair. Pure and deterministic - no database access - so the same
-    inputs always resolve the same way.
+    raised line would repair, and which rows pass 1 settled as an exact no-op (N10, round 4
+    review: returned rather than re-derived by `_resolve_shape_b_repairs`). Pure and
+    deterministic - no database access - so the same inputs always resolve the same way.
 
     A migrated row's own item code and quantity is not a unique key: a sheet that splits
     one line's quantity across several dated rows (100 @ 2026-09-01 + 100 @ 2026-10-01, one
@@ -600,12 +601,12 @@ def _resolve_line_repairs(
                 unclaimed.remove(candidate)
                 repairs[index] = str(candidate.id)
                 break
-    return repairs
+    return repairs, settled
 
 
 def _resolve_shape_b_repairs(
     dated_rows: Sequence[Tuple[int, Any]],
-    shape_a_candidates: Sequence[Any],
+    shape_a_exact_matched: set,
     shape_a_repairs: Dict[int, str],
     settled_rows: Sequence[Any],
 ) -> Dict[int, str]:
@@ -619,32 +620,38 @@ def _resolve_shape_b_repairs(
     mistake) - the sheet says 182 @ 1.6.2026, which describes the row's WAS state, not a
     fresh instruction.
 
-    Pure and deterministic, same claim-once contract as `_resolve_line_repairs`, over
-    `previous_qty` instead of `qty` - but only for sheet rows shape A left with nothing to
-    do: "exact match first, shape A, then shape B" (round 5 review), so a row shape A
-    already claimed - whether repaired or settled as an exact no-op match - is never also
-    handed to shape B. Re-derives shape A's own pass-1 exact-match set rather than reading
-    it off `_resolve_line_repairs` (which returns only the pass-2 repairs, unchanged since
-    round 1 so its own DB-free unit tests keep pinning exactly that contract).
+    Pure and deterministic, over `previous_qty` instead of `qty` - but only for sheet rows
+    shape A left with nothing to do: "exact match first, shape A, then shape B" (round 5
+    review), so a row shape A already claimed - whether repaired or settled as an exact
+    no-op match (`shape_a_exact_matched`, `_resolve_line_repairs`'s own second return value,
+    N10 round 4 review) - is never also handed to shape B.
+
+    Its OWN pass 1 (S14, round 4 review): a settled candidate whose `previous_delivery_date`
+    already equals the sheet's date needs no repair - claimed as a no-op, same as shape A's,
+    so it is not ALSO reported `DELIVERY_DATE_UPDATED` and counted on every further run while
+    nothing actually changes.
     """
-    exact_matched: set = set()
-    remaining_a = list(shape_a_candidates)
+    shape_a_claimed = shape_a_exact_matched | set(shape_a_repairs)
+    unclaimed = list(settled_rows)
+    settled_b: set = set()
+
     for index, row in dated_rows:
+        if index in shape_a_claimed:
+            continue
         qty = _dec(row.qty)
-        for candidate in remaining_a:
+        for candidate in unclaimed:
             if (
                 candidate.item_code == row.item_code
-                and _dec(candidate.qty) == qty
-                and candidate.delivery_date == row.delivery_date
+                and _dec(candidate.previous_qty) == qty
+                and candidate.previous_delivery_date == row.delivery_date
             ):
-                remaining_a.remove(candidate)
-                exact_matched.add(index)
+                unclaimed.remove(candidate)
+                settled_b.add(index)
                 break
 
-    unclaimed = list(settled_rows)
     repairs: Dict[int, str] = {}
     for index, row in dated_rows:
-        if index in exact_matched or index in shape_a_repairs:
+        if index in shape_a_claimed or index in settled_b:
             continue
         qty = _dec(row.qty)
         for candidate in unclaimed:
@@ -781,13 +788,13 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
 
     for mirror_id, dated_rows in dated_rows_by_mirror.items():
         shape_a_candidates = shape_a_by_mirror.get(mirror_id, [])
-        repairs_a = _resolve_line_repairs(dated_rows, shape_a_candidates)
+        repairs_a, exact_matched_a = _resolve_line_repairs(dated_rows, shape_a_candidates)
         for index, migrated_id in repairs_a.items():
             plan.matches[index].repair_row_id = migrated_id
             plan.matches[index].repair_shape = "A"
 
         repairs_b = _resolve_shape_b_repairs(
-            dated_rows, shape_a_candidates, repairs_a, shape_b_by_mirror.get(mirror_id, [])
+            dated_rows, exact_matched_a, repairs_a, shape_b_by_mirror.get(mirror_id, [])
         )
         for index, migrated_id in repairs_b.items():
             plan.matches[index].repair_row_id = migrated_id

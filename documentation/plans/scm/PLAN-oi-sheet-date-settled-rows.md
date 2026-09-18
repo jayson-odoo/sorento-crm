@@ -57,10 +57,40 @@ inside `_plan`) and written in `apply`, alongside the existing one:
 
 **Claim-once, same ordering as shape A extends to:** a sheet row claims at most one row -
 exact match first (shape A's own pass 1), then shape A's general repair (pass 2), then
-shape B. `_resolve_shape_b_repairs` re-derives shape A's own pass-1 exact-match set (rather
-than changing `_resolve_line_repairs`'s return shape, which would break its own DB-free
-unit tests from round 2) so a row shape A already claimed - repaired OR settled as a no-op
-exact match - is never also handed to shape B.
+shape B's own pass 1 (a settled candidate already on the sheet's Was date - a no-op, not a
+repair), then shape B's own general repair. `_resolve_shape_b_repairs` takes
+`_resolve_line_repairs`'s second return value (`exact_matched`, N10 below) so a row shape A
+already claimed - repaired OR settled as a no-op exact match - is never also handed to
+shape B.
+
+## Review round (19 Sep 2026, READY with two should-fixes)
+
+**S14, a phantom repair.** Shape B's first cut had no date comparison of its own: a sheet
+row whose date already equalled the settled row's `previous_delivery_date` (which, by the
+fingerprint, IS the line's `required_date`) was counted and reported
+`DELIVERY_DATE_UPDATED` on EVERY run while nothing ever changed. Fixed by giving shape B
+its own pass-1 no-op claim, exactly mirroring shape A's: a settled candidate whose
+`previous_delivery_date` already equals the sheet's date is claimed (excluded from the
+repair pass) rather than repaired-and-counted. Red: `test_ac_24_...` - a settled row where
+the sheet's date already equals `required_date` reports `rows_delivery_date_updated == 0`
+on `preview`, the first `apply`, a second `apply`, and a preview taken again afterwards.
+
+**S15, an anchor test that could not actually distinguish anchored from unanchored.**
+AC-19's note put the OLD date in only ONE place (the `"Was ... on"` fragment) - the
+`"Linked to ...; expected ..."` clause already used the SHEET's date, so an unanchored
+bare-date replace and the correct anchored replace produced the IDENTICAL final note,
+and the mutant survived undetected. Fixed by giving the `"expected ..."` clause the SAME
+old date as the `"Was ..."` fragment, so the two implementations now diverge: an unanchored
+replace would wrongly touch `"expected ..."` too. AC-14a (shape A, round 3) was checked
+against the same gap and found already compliant - its `matched` sibling's
+`"AutoCount moved ... on <date>"` clause has carried the SAME old date as its own
+`"Was ..."` fragment since round 3, so no fixture edit was needed there.
+
+**N10 (optional, taken).** `_resolve_line_repairs` now returns `(repairs, exact_matched)`
+instead of just `repairs`, so `_resolve_shape_b_repairs` reads shape A's own pass-1 result
+instead of re-deriving it - removing the duplicated pass-1 loop shape B's first cut carried.
+Its two DB-free unit tests (round 2) were adjusted to unpack the tuple and assert the
+second element too.
 
 **Outcome code.** Reuses `DELIVERY_DATE_UPDATED` with a per-row `message` of "Was date
 corrected to the sheet's own" (shape A's own call passes no message, so it falls back to
@@ -77,10 +107,13 @@ SAME code without a second one. `rows_delivery_date_updated` in `_result` alread
 ## Files touched
 
 * `app/services/project_order_inquiry_import_service.py` - `_Match.repair_shape` (new
-  field, `"A"` or `"B"`); `_resolve_shape_b_repairs` (new); `_resolve_delivery_date_repairs`
-  rewritten to query both shapes in one statement and orchestrate them; `apply()`'s
-  already-raised branch gains the shape-B write path; `validate()`'s warning text is now
-  shape-neutral ("date" rather than "delivery date").
-* `tests/test_oi_sheet_date_follow_sheet.py` - `_settled_row` helper (new); AC-19 to AC-23.
+  field, `"A"` or `"B"`); `_resolve_line_repairs` now returns `(repairs, exact_matched)`
+  (N10); `_resolve_shape_b_repairs` (new, its own pass-1 no-op claim per S14);
+  `_resolve_delivery_date_repairs` rewritten to query both shapes in one statement and
+  orchestrate them; `apply()`'s already-raised branch gains the shape-B write path;
+  `validate()`'s warning text is now shape-neutral ("date" rather than "delivery date").
+* `tests/test_oi_sheet_date_follow_sheet.py` - `_settled_row` helper (new); AC-19 to AC-24;
+  AC-19's note fixture carries the old date twice (S15); the two `_resolve_line_repairs`
+  DB-free unit tests (round 2) adjusted for the tuple return (N10).
 * `documentation/user-guides/supply-chain/upload-plan-data.md` - one clause on the
   re-upload sentence.
