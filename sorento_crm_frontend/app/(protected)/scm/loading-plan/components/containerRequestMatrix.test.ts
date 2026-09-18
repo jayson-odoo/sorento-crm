@@ -20,6 +20,7 @@ function soLine(over: Partial<ContainerRequestSoLine> = {}): ContainerRequestSoL
     demand_class: 'project',
     order_date: '2026-08-01',
     required_date: '2026-08-19',
+    open_qty: 10,
     qty: 10,
     ...over,
   };

@@ -313,6 +313,10 @@ export interface PlanDemandLineRow {
   agent: string | null;
   /** What the customer pays, in ringgit. Null when the line carries no price. */
   price: number | null;
+  /** Gross open qty before SPO netting (R1, `PLAN-loading-plan-project-spo-only.md`); `qty`
+   *  is the balance still to ship. Equal to `qty` on a retail line, which has no SPO
+   *  placements to be netted by. */
+  open_qty: number;
   qty: number;
   required_date: string | null;
   /** The sales order's own page, when the caller can name one. */
@@ -489,8 +493,15 @@ export function ProjectRetailTabs({
         meta: RIGHT,
       },
       {
+        id: 'open_qty',
+        header: 'Open',
+        cell: ({ row }) => fmtInt(row.original.open_qty),
+        size: 90,
+        meta: RIGHT,
+      },
+      {
         id: 'qty',
-        header: 'Qty',
+        header: 'Balance',
         cell: ({ row }) => fmtInt(row.original.qty),
         footer: () => fmtInt(total),
         size: 90,

@@ -226,6 +226,11 @@ kept alive for the whole lane, makes them green; pytest + vitest land here, neve
 Skipping or reordering a phase is a process violation; if a phase genuinely cannot be done, say so
 in the PR description.
 
+**Small fix track** (`PRINCIPLES.md` "Small fix track", owner ruling 18 Sep 2026): one seam,
+under ~50 lines, no migration, no auth change - no DB clone, one coder writing tests + fix,
+one reviewer, browser pass only for a changed screen. Name the track in the plan's Status
+line.
+
 ## Lane merge discipline (standing rule, 2026-09-02)
 
 - **One lane = one branch = one PR.** A feature lane's slices land as commits on the lane branch,
