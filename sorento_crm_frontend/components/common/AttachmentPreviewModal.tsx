@@ -39,6 +39,20 @@ async function defaultFetchBytes(item: AttachmentPreviewItem): Promise<Response>
   return apiFetch(item.downloadUrl as string);
 }
 
+/** The actual browser download, given bytes already in hand - the tail end of
+ *  `downloadItem`, pulled out so `openItem` can reuse it on an already-fetched
+ *  blob instead of fetching the same bytes twice. */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 /**
  * A plain `<a href download>` to /download sends no auth header → 401 ("File
  * wasn't available on site"), so fetch the bytes via `fetchBytes` and save the
@@ -49,17 +63,75 @@ async function downloadItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes)
   try {
     const resp = await fetchBytes(item);
     if (!resp.ok) throw new Error('Download failed');
-    const blob = await resp.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = item.name;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    saveBlob(await resp.blob(), item.name);
   } catch {
     toast.error(`Could not download ${item.name}`);
+  }
+}
+
+/**
+ * A blob url inherits the app's own origin and carries no `Content-Disposition`, so an
+ * uploaded file of any OTHER type opened inline would run as this staff user (an HTML or
+ * SVG attachment executing script - review round 1, security blocker). Only these render
+ * safely IN THE TAB `openItem` opens; anything else - `image/svg+xml` included,
+ * deliberately, and an `xlsx` (fix round 2) - closes that tab and downloads instead, rather
+ * than handing a browser a mime type it would execute, script, or simply sit blank on.
+ */
+const OPEN_INLINE_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'text/plain',
+]);
+
+function mimeOf(blob: Blob): string {
+  return (blob.type || '').split(';')[0].trim().toLowerCase();
+}
+
+/**
+ * Same fix as `downloadItem` (D10, `PLAN-stock-list-bare-model-codes.md`): an item with no
+ * CDN url has no `<a href target=_blank>` that could carry auth, so a plain anchor to the
+ * same-origin `/download` route sent no Bearer token and 401ed with a raw JSON page. Open
+ * fetches the bytes the same way Download does, then opens the resulting blob in a new tab.
+ *
+ * `targetWindow` is opened SYNCHRONOUSLY in the click handler, before this async function
+ * ever runs - a `window.open` called after an `await` is a background tab a popup blocker
+ * drops, since it is no longer inside the click's own call stack. `null` here means the
+ * popup was blocked: nothing to navigate, so this falls back to `downloadItem` instead of
+ * silently doing nothing.
+ */
+async function openItem(item: AttachmentPreviewItem, fetchBytes: FetchBytes, targetWindow: Window | null) {
+  if (!item.downloadUrl) return;
+  if (!targetWindow) {
+    toast.error(`Could not open ${item.name} in a new tab - downloading instead`);
+    await downloadItem(item, fetchBytes);
+    return;
+  }
+  try {
+    const resp = await fetchBytes(item);
+    if (!resp.ok) throw new Error('Open failed');
+    const blob = await resp.blob();
+    if (!OPEN_INLINE_MIME_TYPES.has(mimeOf(blob))) {
+      // A blank tab with nothing safe to show it (an xlsx, a docx, ...) is a dead tab, not a
+      // preview - close it and fall back to the same download the button beside Open runs,
+      // reusing the bytes already fetched rather than fetching them twice.
+      targetWindow.close();
+      saveBlob(blob, item.name);
+      toast.success(`Downloaded ${item.name} - this file type cannot be shown in a tab`);
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    targetWindow.location.href = url;
+    // The tab has to finish loading the blob before revoking it would be safe, and there is
+    // no load event to hang that off across an opaque `location.href` navigation - a fixed
+    // delay is the same trade `downloadItem`'s synchronous click makes, just longer because
+    // this crosses a tab boundary instead of a same-document anchor click.
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch {
+    targetWindow.close();
+    toast.error(`Could not open ${item.name}`);
   }
 }
 
@@ -134,6 +206,9 @@ export default function AttachmentPreviewModal({
   const [api, setApi] = useState<CarouselApi>();
   const [current, setCurrent] = useState(startIndex);
   const [zoom, setZoom] = useState(1);
+  // Which item's Open fetch is in flight - disables that item's own Open button and shows a
+  // spinner, the same busy pattern the Add-mapping dialogs use for their submit button.
+  const [openingItemId, setOpeningItemId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -179,11 +254,12 @@ export default function AttachmentPreviewModal({
   if (!open || items.length === 0) return null;
   const activeItem = items[current] ?? items[0];
   const activeIsImage = kindOf(activeItem?.name ?? '') === 'image';
-  // Open-in-new-tab target: the cacheable CDN url if we have one, else the
-  // same-origin download route.
-  const openUrl = activeItem?.url?.startsWith('http')
-    ? activeItem.url
-    : activeItem?.downloadUrl;
+  // Open-in-new-tab target: the cacheable CDN url if we have one - a plain link, unchanged
+  // (AC-F3). Without one, a plain `<a href=/download target=_blank>` sends no auth header and
+  // 401s (D10), so Open becomes a button that fetches the bytes and opens the resulting blob
+  // instead (AC-F2/AC-F4).
+  const openUrl = activeItem?.url?.startsWith('http') ? activeItem.url : undefined;
+  const canOpenViaFetch = !openUrl && !!activeItem?.downloadUrl;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -213,6 +289,37 @@ export default function AttachmentPreviewModal({
                     <ExternalLink className="size-4 mr-1" />
                     Open
                   </a>
+                </Button>
+              )}
+              {canOpenViaFetch && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={openingItemId === activeItem.id}
+                  onClick={() => {
+                    // Opened HERE, synchronously inside the click - a `window.open` after the
+                    // `await` in `openItem` runs outside the click's own call stack, which a
+                    // popup blocker treats as an unsolicited new tab and drops.
+                    //
+                    // No `noopener` argument (fix round 2, item 1): passing it as a WINDOW
+                    // FEATURE makes `window.open` itself return `null` even when the popup
+                    // opens fine, per spec - there is then no handle to navigate later. The
+                    // same "the new tab cannot reach back into this one" property is set by
+                    // hand on the returned reference instead.
+                    const targetWindow = window.open('', '_blank');
+                    if (targetWindow) targetWindow.opener = null;
+                    setOpeningItemId(activeItem.id);
+                    void openItem(activeItem, resolvedFetchBytes, targetWindow).finally(() => {
+                      setOpeningItemId((id) => (id === activeItem.id ? null : id));
+                    });
+                  }}
+                >
+                  {openingItemId === activeItem.id ? (
+                    <LoaderCircle className="size-4 mr-1 animate-spin" />
+                  ) : (
+                    <ExternalLink className="size-4 mr-1" />
+                  )}
+                  Open
                 </Button>
               )}
               {activeItem?.downloadUrl && (

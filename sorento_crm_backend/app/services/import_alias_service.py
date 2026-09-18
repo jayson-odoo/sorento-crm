@@ -155,6 +155,10 @@ def canonical_fields(doc_type: str) -> list[str]:
 
         classes = (PackingLine, PackingBlock)
     else:
+        # `supplier_inventory_word` included (review round 1, item 4): its field is an OPEN,
+        # shape-validated vocabulary (`supplier_code_composer.WORD_TOKEN_RE`), not a reader's
+        # dataclass fields at all - `_assert_known_field` validates it by shape instead of
+        # reading this list.
         return []
 
     seen: set[str] = set()

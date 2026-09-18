@@ -814,6 +814,7 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
       demand_class: 'project',
       order_date: '2026-05-01',
       required_date: '2026-08-19',
+      open_qty: 6,
       qty: 6,
       ...over,
     };
@@ -872,7 +873,7 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     const dialog = openFigure('Open project sales orders');
 
     expect(dialog).toHaveTextContent('Project · ITEM-1');
-    for (const header of ['Sales order', 'Customer', 'Project', 'Agent', 'Price', 'Qty', 'Required']) {
+    for (const header of ['Sales order', 'Customer', 'Project', 'Agent', 'Price', 'Open', 'Balance', 'Required']) {
       expect(within(dialog).getByText(header)).toBeInTheDocument();
     }
     expect(within(dialog).getByText('SO-PROJ')).toBeInTheDocument();
@@ -1246,6 +1247,7 @@ describe('ContainerRequestSection - search (AC-N3)', () => {
           demand_class: 'retail',
           order_date: '2026-05-01',
           required_date: null,
+          open_qty: 5,
           qty: 5,
         },
         {
@@ -1259,6 +1261,7 @@ describe('ContainerRequestSection - search (AC-N3)', () => {
           demand_class: 'retail',
           order_date: '2026-05-01',
           required_date: null,
+          open_qty: 8,
           qty: 8,
         },
       ],

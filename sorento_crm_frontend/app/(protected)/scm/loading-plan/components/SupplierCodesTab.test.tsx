@@ -537,3 +537,17 @@ describe('SupplierCodesTab - Remembered', () => {
     });
   });
 });
+
+// S4 (`PLAN-stock-list-bare-model-codes.md`) - the word list is edited on the Import field
+// aliases page, never here; this tab only links out to it, pinned to the word doc type.
+describe('SupplierCodesTab - Stock list words link (AC-F5)', () => {
+  it('renders a link to the import field aliases page, pinned to the word doc type', () => {
+    renderTab();
+
+    const link = screen.getByRole('link', { name: /stock list words/i });
+    expect(link).toHaveAttribute(
+      'href',
+      '/system-management/import-field-aliases?doc_type=supplier_inventory_word',
+    );
+  });
+});
