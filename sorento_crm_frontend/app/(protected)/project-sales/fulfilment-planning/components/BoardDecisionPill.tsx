@@ -45,12 +45,6 @@ const VERDICT_PILL: Record<string, string> = {
   // Outlined rather than filled: it is in the DATABASE, not a verdict given on this board,
   // and a solid green beside a solid green approval said the two were the same thing.
   confirmed: 'border border-emerald-400 text-emerald-700',
-  // AC-R2-19: covered, but by an INSTRUCTION rather than a revision. Outlined like
-  // `confirmed` because it is equally a fact in the database and equally not a verdict
-  // given here, and slate rather than any green because nobody confirmed anything - the
-  // two must not read as the same state at a glance, which is the whole defect this
-  // answers.
-  with_purchasing: 'border border-slate-400 text-slate-700',
   // S4/AC-4.4: the line was saved against a suggestion the engine no longer makes. Amber,
   // the same warning tone the rest of the board uses for "look at this before you trust it".
   stale: 'bg-amber-100 text-amber-800',
@@ -67,11 +61,6 @@ const VERDICT_LABEL: Record<string, string> = {
   // NO REVISION NUMBER (R6). "Confirmed rev 3" told a planner the record had been written
   // three times, which is not a question anybody asks of this column.
   confirmed: 'Confirmed',
-  // AC-R2-19 (owner hand test, 18 Sep): purchasing holds a live instruction for this line
-  // and no revision covers it - nine lines of SO314594 read "Confirmed" with zero
-  // decisions in the database, which is the board claiming a promise nobody made. One
-  // constant, so a rename is one edit.
-  with_purchasing: 'With purchasing',
   stale: 'Suggestion changed',
   cancelled: 'Cancelled',
 };
@@ -118,16 +107,7 @@ export function BoardDecisionPill({
   if (contribution.cancelled) {
     verdict = 'cancelled';
   } else if (covered) {
-    // TWO WAYS TO BE COVERED, AND THEY ARE NOT THE SAME PROMISE (AC-R2-19, owner hand
-    // test 18 Sep). A REVISION covering the line is "Confirmed": somebody decided where
-    // the stock comes from and the composition is on the record beside it. A live order
-    // inquiry row covering it is not - the server sends `decision: null` for exactly that
-    // case (`project_fulfilment_board_service._Row.covered`: "`decision` stays null,
-    // which is how the screen tells the two apart") - and printing "Confirmed" over it
-    // told nine lines of SO314594 they were decided when the order had no decision left
-    // at all. `contribution.decision`, not the draft `decision` above: this asks what the
-    // DATABASE holds, not what this session has ticked.
-    verdict = contribution.decision ? 'confirmed' : 'with_purchasing';
+    verdict = 'confirmed';
   } else if (draftSource?.verdict === 'rejected') {
     verdict = 'rejected';
   } else if (stale) {
