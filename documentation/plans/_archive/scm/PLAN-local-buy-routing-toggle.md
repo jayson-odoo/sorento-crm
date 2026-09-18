@@ -1,6 +1,6 @@
 # PLAN: local-supplier Buy routing behind a system setting, off by default
 
-Status: built (lane green + reviewed 18 Sep 2026, browser pass pending a stack slot, PR pending)
+Status: shipped (#1006 merged 18 Sep 2026, head reparent #1009, deployed run 35301663740)
 UAC: `local-buy-routing-toggle-acceptance-criteria.md`
 Domain: scm (touches system settings)
 Supersedes in part: `PLAN-local-supplier-oi-routing.md` decision 4 and 5 (#814, merged 10 Sep 2026)
