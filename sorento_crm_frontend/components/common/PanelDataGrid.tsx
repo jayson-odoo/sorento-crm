@@ -65,6 +65,7 @@ export function PanelDataGrid<TRow extends object>({
   pageSize = 10,
   paginate = true,
   scrollerMaxHeight,
+  pageResetKey,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -157,6 +158,20 @@ export function PanelDataGrid<TRow extends object>({
    * default bounded, sticky-header scroller like every other list.
    */
   scrollerMaxHeight?: string | false;
+  /**
+   * Reset the page to 1 when this value changes.
+   *
+   * OPTIONAL, for a caller that filters `rows` itself before handing them
+   * here (no `searchOf`): this grid's own search box resets the page on
+   * every keystroke, but a parent-side filter changes `rows`' CONTENTS, not
+   * a value this component can see, so typing on page 3 would otherwise show
+   * whatever landed on page 3 of the new matches instead of the top ones.
+   * Pass the parent's own filter key (its search text, its dropdown value,
+   * or both joined) and a change resets the page the same way. Omit it for a
+   * grid with no external filter, or one that filters through `searchOf`,
+   * which already resets itself.
+   */
+  pageResetKey?: string;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -171,13 +186,52 @@ export function PanelDataGrid<TRow extends object>({
     return rows.filter((row) => searchOf(row).toLowerCase().includes(needle));
   }, [rows, search, searchOf]);
 
+  const pageCount = paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1;
+  // Clamped for THIS render, not in an effect: a row removal (a save, a
+  // Confirm refetch) can leave `pageIndex` past the last page that still
+  // exists, and an effect would still commit one paint at the stale index
+  // first - showing "No data available" before it lands.
+  const lastPageIndex = Math.max(0, pageCount - 1);
+  const tablePagination: PaginationState = paginate
+    ? { ...pagination, pageIndex: Math.min(pagination.pageIndex, lastPageIndex) }
+    : pagination;
+
+  // The render clamp above is only a PAINT: `pagination` (the real state
+  // `table.previousPage()`/`nextPage()` step from) is still left at the
+  // stale index, so a previous-page press after a shrink computes its new
+  // page from the wrong number and looks like a dead click. Persist the
+  // same clamp into state once the render settles, so they agree again.
+  React.useEffect(() => {
+    if (!paginate) return;
+    if (pagination.pageIndex > lastPageIndex) {
+      setPagination((current) => ({ ...current, pageIndex: lastPageIndex }));
+    }
+  }, [paginate, lastPageIndex, pagination.pageIndex]);
+
+  // A parent-side filter (see `pageResetKey`'s doc) resets the page by
+  // changing this value instead of `rows`. Skips the render that mounts it,
+  // since page 0 is already where a fresh mount starts.
+  const isFirstPageResetRender = React.useRef(true);
+  React.useEffect(() => {
+    if (isFirstPageResetRender.current) {
+      isFirstPageResetRender.current = false;
+      return;
+    }
+    setPagination((current) => ({ ...current, pageIndex: 0 }));
+  }, [pageResetKey]);
+
   const table = useReactTable({
     columns: columns as ColumnDef<TRow, unknown>[],
     data: filtered,
-    pageCount: paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1,
+    pageCount,
     getRowId,
+    // TanStack's own default resets `pageIndex` to 0 on every new `data`
+    // reference (a draft save, a Confirm refetch) even though the reader
+    // never touched the page - see PLAN-panel-datagrid-keep-page.md. The
+    // render-time clamp above is the only reset this grid wants for that.
+    autoResetPageIndex: false,
     state: {
-      pagination,
+      pagination: tablePagination,
       ...(sortable ? { sorting } : {}),
       ...(rowSelection ? { rowSelection } : {}),
       ...(expanded === undefined ? {} : { expanded }),
