@@ -192,6 +192,12 @@ class _Match:
     #: repairing, whether because it is not already-raised, it states no date, or every
     #: candidate is already on the sheet's date.
     repair_row_id: Optional[str] = None
+    #: Which repair `repair_row_id` needs (round 5, 19 Sep 2026, prod feedback after #1004
+    #: deployed): `"A"` writes the row's own `delivery_date` (untouched since migration);
+    #: `"B"` writes `previous_delivery_date` instead - a row a planning change already
+    #: restated IN PLACE, whose Now (`qty`/`delivery_date`) is correct but still carries
+    #: 7.4's mistake on its Was side. `None` when `repair_row_id` is `None`.
+    repair_shape: Optional[str] = None
 
     @property
     def raisable(self) -> bool:
@@ -597,38 +603,101 @@ def _resolve_line_repairs(
     return repairs
 
 
+def _resolve_shape_b_repairs(
+    dated_rows: Sequence[Tuple[int, Any]],
+    shape_a_candidates: Sequence[Any],
+    shape_a_repairs: Dict[int, str],
+    settled_rows: Sequence[Any],
+) -> Dict[int, str]:
+    """Shape B, round 5 (19 Sep 2026, prod feedback after #1004 deployed): a migrated row a
+    planning change already restated IN PLACE keeps its Now (`qty`/`delivery_date` - what
+    purchasing works to) correct, but can still carry 7.4's mistake on its WAS side
+    (`previous_qty`/`previous_delivery_date` - the line's own `required_date`, exactly as
+    shape A's own fingerprint, just read off the other pair of columns). SO314593's own
+    SRTWCX8605-S-RL-PJ / CB2806A-DIY / SRTWB245 rows: qty 280, `delivery_date` 2026-06-01
+    (correct, the book's date), `previous_qty` 182, `previous_delivery_date` 2027-03-01 (the
+    mistake) - the sheet says 182 @ 1.6.2026, which describes the row's WAS state, not a
+    fresh instruction.
+
+    Pure and deterministic, same claim-once contract as `_resolve_line_repairs`, over
+    `previous_qty` instead of `qty` - but only for sheet rows shape A left with nothing to
+    do: "exact match first, shape A, then shape B" (round 5 review), so a row shape A
+    already claimed - whether repaired or settled as an exact no-op match - is never also
+    handed to shape B. Re-derives shape A's own pass-1 exact-match set rather than reading
+    it off `_resolve_line_repairs` (which returns only the pass-2 repairs, unchanged since
+    round 1 so its own DB-free unit tests keep pinning exactly that contract).
+    """
+    exact_matched: set = set()
+    remaining_a = list(shape_a_candidates)
+    for index, row in dated_rows:
+        qty = _dec(row.qty)
+        for candidate in remaining_a:
+            if (
+                candidate.item_code == row.item_code
+                and _dec(candidate.qty) == qty
+                and candidate.delivery_date == row.delivery_date
+            ):
+                remaining_a.remove(candidate)
+                exact_matched.add(index)
+                break
+
+    unclaimed = list(settled_rows)
+    repairs: Dict[int, str] = {}
+    for index, row in dated_rows:
+        if index in exact_matched or index in shape_a_repairs:
+            continue
+        qty = _dec(row.qty)
+        for candidate in unclaimed:
+            if candidate.item_code == row.item_code and _dec(candidate.previous_qty) == qty:
+                unclaimed.remove(candidate)
+                repairs[index] = str(candidate.id)
+                break
+    return repairs
+
+
 def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     """B1/S1/S3/S8/S10/S13, 19 Sep 2026: decide, ONCE and read-only, which already-raised
     sheet rows would repair which migrated row - so `preview` can forecast
     `rows_delivery_date_updated` and `apply` writes exactly what was forecast, never
     recomputing the decision.
 
-    **B2, purchasing's own work is never touched.** Eligible migrated rows carry
-    `previous_qty IS NULL AND previous_delivery_date IS NULL AND changed_at IS NULL` - no
-    planning change has restated this row since the sheet raised it. A row a change HAS
-    settled (5,793 of 11,810 migrated rows on the 15 Sep prod copy carry a link; SO314593's
-    own rows are linked, received, some redirected to the pool) keeps the change's own
-    date: this is a repair of the MIGRATION's mistake, not a second opinion about a decision
-    purchasing has since made, and it writes no handshake stamp of its own (no `changed_at`,
-    no ack flip) for the same reason - purchasing already works to the sheet's date.
+    **B2, purchasing's own work is never touched by shape A.** Shape A's eligible migrated
+    rows carry `previous_qty IS NULL AND previous_delivery_date IS NULL AND changed_at
+    IS NULL` - no planning change has restated this row since the sheet raised it. A row a
+    change HAS settled in place keeps its own Now (`qty`/`delivery_date`); shape B (below)
+    still corrects the mistake it can carry on its WAS side.
 
-    **S8, confined to 7.4's own artefacts.** Eligible only when the migrated row's
-    `delivery_date` still equals its CORE LINE's `required_date` - that is exactly what 7.4
-    wrote and nothing else does. A row that already carries a date the line does not (a
-    sheet date raised under this fix, or one a person edited) is never rewritten by a later
-    sheet: the sheet is a migration, not a second opinion. Compared in PYTHON against
-    `required_date_by_mirror`, not one `OR`-of-per-line-equality clause in SQL (S13, 19 Sep
-    2026 perf round): `delivery_date` is not indexed, so at prod scale (11,500 already-raised
-    mirrors on a full book re-upload) that clause is an 1.1 MB statement forcing a Seq Scan
+    **S8, confined to 7.4's own artefacts.** Shape A is eligible only when the migrated
+    row's `delivery_date` still equals its CORE LINE's `required_date` - that is exactly
+    what 7.4 wrote and nothing else does. A row that already carries a date the line does
+    not (a sheet date raised under this fix, or one a person edited) is never rewritten by a
+    later sheet: the sheet is a migration, not a second opinion. Compared in PYTHON against
+    `required_date_by_mirror`, not a SQL clause (S13, 19 Sep 2026 perf round): `delivery_date`
+    is not indexed, so at prod scale (11,500 already-raised mirrors on a full book
+    re-upload) an `OR`-of-per-line-equality clause is an 1.1 MB statement forcing a Seq Scan
     (measured 753 ms) where `so_line_id.in_(mirror_ids)` alone still uses the index.
 
-    Repairs are resolved per LINE (`_resolve_line_repairs`), never per row, and grouped by
-    MIRROR so every already-raised line's migrated siblings are loaded in ONE query (S3),
-    selecting only the columns the resolver (and the S8 comparison) read (S10) rather than
-    hydrating full rows - 233 migrated rows shared a `(mirror, item, qty)` group on the 15
-    Sep prod copy alone, and a book re-upload can touch all of `scm.order_inquiry_row`'s
-    ~11.8k migrated rows.
+    **Shape B, round 5 (19 Sep 2026, prod feedback after #1004 deployed).** A migrated row a
+    planning change already restated IN PLACE (`_settle_row_in_place`) keeps its Now
+    correct but can still carry 7.4's mistake on its WAS side - `previous_qty` /
+    `previous_delivery_date` are the migration's own figures, never touched by the settle
+    except to be overwritten by it, so they carry the SAME fingerprint shape A looks for on
+    the other pair of columns: `previous_delivery_date == required_date`, and the sheet's
+    quantity is compared against `previous_qty`, not the row's current `qty`. Written by
+    `_resolve_shape_b_repairs`; see `apply()` for what actually moves (only
+    `previous_delivery_date` and the note's own "Was ... on" fragment - the row's Now,
+    `changed_at` and `ack_state` are all untouched).
+
+    Repairs are resolved per LINE, never per row, both shapes together in
+    `_resolve_line_repairs` (A) then `_resolve_shape_b_repairs` (B, only for sheet rows A
+    left unclaimed), and grouped by MIRROR so every already-raised line's migrated rows -
+    both shapes - are loaded in ONE query (S3), selecting only the columns either resolver
+    (or the S8-style comparison) reads (S10) rather than hydrating full rows - 233 migrated
+    rows shared a `(mirror, item, qty)` group on the 15 Sep prod copy alone, and a book
+    re-upload can touch all of `scm.order_inquiry_row`'s ~11.8k migrated rows.
     """
+    from sqlalchemy import and_, or_
+
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
     # Every already-raised line's mirror id and its own required_date (S8), keyed by
@@ -647,6 +716,9 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     if not mirror_ids:
         return
 
+    # ONE query for both shapes: shape A's fingerprint is on `previous_qty` /
+    # `previous_delivery_date` being NULL, shape B's is on them being SET - the two are
+    # mutually exclusive by construction, so no row can ever answer to both.
     rows = (
         db.query(OrderInquiryRow)
         .with_entities(
@@ -655,28 +727,43 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
             OrderInquiryRow.item_code,
             OrderInquiryRow.qty,
             OrderInquiryRow.delivery_date,
+            OrderInquiryRow.previous_qty,
+            OrderInquiryRow.previous_delivery_date,
         )
         .filter(
             OrderInquiryRow.so_line_id.in_(mirror_ids),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
-            OrderInquiryRow.previous_qty.is_(None),
-            OrderInquiryRow.previous_delivery_date.is_(None),
-            OrderInquiryRow.changed_at.is_(None),
             OrderInquiryRow.note.like(f"{_MIGRATION_STAMP}%"),
+            or_(
+                and_(
+                    OrderInquiryRow.previous_qty.is_(None),
+                    OrderInquiryRow.previous_delivery_date.is_(None),
+                    OrderInquiryRow.changed_at.is_(None),
+                ),
+                and_(
+                    OrderInquiryRow.previous_qty.isnot(None),
+                    OrderInquiryRow.previous_delivery_date.isnot(None),
+                ),
+            ),
         )
         .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
         .all()
     )
-    migrated_by_mirror: Dict[str, List[Any]] = {}
+    shape_a_by_mirror: Dict[str, List[Any]] = {}
+    shape_b_by_mirror: Dict[str, List[Any]] = {}
     for candidate in rows:
         mirror_id = str(candidate.so_line_id)
         # S8, done here rather than in SQL (S13): a required_date of `None` matches
         # nothing - a migrated row's `delivery_date` is never `None` - so a line with no
-        # required date of its own is correctly never a repair candidate.
+        # required date of its own is correctly never a repair candidate, either shape.
         required = required_date_by_mirror.get(mirror_id)
-        if required is None or candidate.delivery_date != required:
+        if required is None:
             continue
-        migrated_by_mirror.setdefault(mirror_id, []).append(candidate)
+        if candidate.previous_qty is None:
+            if candidate.delivery_date == required:
+                shape_a_by_mirror.setdefault(mirror_id, []).append(candidate)
+        elif candidate.previous_delivery_date == required:
+            shape_b_by_mirror.setdefault(mirror_id, []).append(candidate)
 
     dated_rows_by_mirror: Dict[str, List[Tuple[int, Any]]] = {}
     for index, match in enumerate(plan.matches):
@@ -693,9 +780,18 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
         dated_rows_by_mirror.setdefault(mirror_id, []).append((index, match.row))
 
     for mirror_id, dated_rows in dated_rows_by_mirror.items():
-        repairs = _resolve_line_repairs(dated_rows, migrated_by_mirror.get(mirror_id, []))
-        for index, migrated_id in repairs.items():
+        shape_a_candidates = shape_a_by_mirror.get(mirror_id, [])
+        repairs_a = _resolve_line_repairs(dated_rows, shape_a_candidates)
+        for index, migrated_id in repairs_a.items():
             plan.matches[index].repair_row_id = migrated_id
+            plan.matches[index].repair_shape = "A"
+
+        repairs_b = _resolve_shape_b_repairs(
+            dated_rows, shape_a_candidates, repairs_a, shape_b_by_mirror.get(mirror_id, [])
+        )
+        for index, migrated_id in repairs_b.items():
+            plan.matches[index].repair_row_id = migrated_id
+            plan.matches[index].repair_shape = "B"
 
 
 def _redirected_earliest_and_qty(
@@ -1494,9 +1590,11 @@ def validate(db: Session, file_data: bytes) -> dict:
          f"will not be raised") if out["rows_line_not_found"] else None,
         (f"{left_alone:,} rows are on a line that already carries an order inquiry, and "
          f"are left alone") if left_alone else None,
+        # "date" rather than "delivery date" since round 5: a migrated row a planning
+        # change already restated is corrected on its Was date instead (shape B).
         (f"{out['rows_delivery_date_updated']:,} rows are on a line that already carries "
-         f"an order inquiry; the migrated row's delivery date will be corrected to the "
-         f"sheet's own") if out["rows_delivery_date_updated"] else None,
+         f"an order inquiry; the migrated row's date will be corrected to the sheet's "
+         f"own") if out["rows_delivery_date_updated"] else None,
         # Never fires since the remark stopped pairing anything (section 8):
         # `documents_not_linkable` comes back empty from every run, and `val.named(0, ...)`
         # is None. Kept beside the key it reads, which stays on the result because the
@@ -1891,6 +1989,28 @@ def apply(
             # actually does cannot drift apart.
             if match.repair_row_id is not None:
                 migrated = repaired_rows[match.repair_row_id]
+                if match.repair_shape == "B":
+                    # Shape B, round 5 (19 Sep 2026, prod feedback): the row's Now
+                    # (`qty`/`delivery_date`) is a planning change's own settle and is
+                    # never touched here - only its WAS side, which still carries 7.4's
+                    # mistake. No sibling resync (that reads `redirected_to_pool` rows'
+                    # own `delivery_date`, which this never moves) and no handshake stamp
+                    # (`changed_at`/`ack_state` untouched) - this is the same data repair
+                    # shape A is, just on the other pair of columns.
+                    from app.services.project_order_inquiry_service import _qty_str
+
+                    old_was = migrated.previous_delivery_date
+                    migrated.previous_delivery_date = row.delivery_date
+                    qty_str = _qty_str(_dec(migrated.previous_qty))
+                    old_fragment = f"Was {qty_str} on {old_was.isoformat()}"
+                    new_fragment = f"Was {qty_str} on {row.delivery_date.isoformat()}"
+                    if migrated.note and old_fragment in migrated.note:
+                        migrated.note = migrated.note.replace(old_fragment, new_fragment, 1)
+                    outcome.updated(row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
+                                     identity=identity, value=row.so_number,
+                                     entity_type="order_inquiry_row", entity_id=migrated.id,
+                                     message="Was date corrected to the sheet's own")
+                    continue
                 mirror_id = str(migrated.so_line_id)
                 if mirror_id not in repaired_mirrors:
                     # The FIRST repair on this mirror this run - snapshot before anything

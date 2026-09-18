@@ -1,7 +1,7 @@
 """The order inquiry sheet's raised row takes the SHEET's own delivery date.
 
 Contract: `documentation/plans/scm/oi-sheet-date-follow-sheet-acceptance-criteria.md`,
-AC-1 to AC-18. `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
+AC-1 to AC-23. `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
 have followed the sheet's date") REVERSES section 7.4 of
 `PLAN-scm-oi-sheet-pairing-repair.md`. Measured on prod: SO314593's open AutoCount lines
 are 220 @ 01/03/2027 while the sheet said 182 @ 1.9.2026 - 7.4 wrote the LINE's date onto
@@ -49,6 +49,18 @@ DELIVERY DATE cell written as TEXT - the book stores some as literal strings - s
 7.4) and stayed `None` on re-upload (an undated row correctly claims nothing, per AC-10).
 The root cause is upstream of this plan's own change and is fixed in the reader, not the
 importer; `test_project_order_inquiry_import_reader.py` carries the reader-level reds.
+
+Round 5 (19 Sep 2026, found on prod after #1004 deployed and the owner ran the real book)
+added AC-19 to AC-23, a second repair shape. SO314593's SRTWCX8605-S-RL-PJ / CB2806A-DIY /
+SRTWB245 rows were skipped as already-raised rather than repaired: the MIGRATED row itself
+had been restated IN PLACE by a planning change (no fresh sibling), so its Now
+(`qty`/`delivery_date`) is a change's own correct figure, but its Was
+(`previous_qty`/`previous_delivery_date`) still carried 7.4's mistake - the sheet's row
+describes the row's WAS state, not a fresh instruction, and shape A's own rule (B2's
+`previous_*` NULL markers, plus the qty match against the row's CURRENT `qty`) excludes it
+by design. Shape B repairs `previous_delivery_date` instead, matching the sheet's quantity
+against `previous_qty`, leaving the row's Now, `changed_at` and `ack_state` untouched -
+`_resolve_shape_b_repairs`, run only for sheet rows shape A leaves unclaimed.
 
 Postgres only (`tests/_pg_fixture.py`, via `world()`). The world, sheet and apply builders
 are IMPORTED from `tests/test_project_order_inquiry_import_migration.py` and
@@ -106,6 +118,31 @@ def _fresh_row(
     row.previous_delivery_date = previous_delivery_date
     if note is not None:
         row.note = note
+    w.db.flush()
+    return row
+
+
+def _settled_row(
+    w: World,
+    mirror,
+    *,
+    qty: str,
+    delivery_date: date,
+    previous_qty: str,
+    previous_delivery_date: date,
+    note: str,
+) -> OrderInquiryRow:
+    """Shape B, round 5 (19 Sep 2026, prod feedback after #1004 deployed): the MIGRATED row
+    itself, restated IN PLACE by a planning change - its Now (`qty`/`delivery_date`) is the
+    change's own correct figure, and its Was (`previous_qty`/`previous_delivery_date`) can
+    still carry 7.4's mistake. There is no fresh sibling for this shape - the migrated row
+    carries both pairs itself. `note` still starts with the migration stamp:
+    `_settle_row_in_place` APPENDS to the row's own note rather than replacing it."""
+    row = w.board_row(mirror, qty=qty)
+    row.delivery_date = delivery_date
+    row.previous_qty = Decimal(previous_qty)
+    row.previous_delivery_date = previous_delivery_date
+    row.note = note
     w.db.flush()
     return row
 
@@ -908,3 +945,198 @@ def test_ac_18_a_text_date_cell_is_read_and_repaired():
         assert result["rows_delivery_date_updated"] == 1, result
         w.db.refresh(migrated)
         assert migrated.delivery_date == date(2026, 7, 15)
+
+
+def test_ac_19_a_settled_rows_was_date_is_corrected_delivery_date_untouched():
+    """AC-19 (Shape B, round 5, 19 Sep 2026 - the SO314593 SRTWCX8605-S-RL-PJ / CB2806A-DIY
+    / SRTWB245 shape, found on prod after #1004 deployed). The MIGRATED row itself was
+    restated IN PLACE by a planning change: qty 280, delivery_date 2027-03-01 (the book's
+    Now, correct), previous_qty 182, previous_delivery_date 2027-03-01 (7.4's mistake, on
+    the Was side). The sheet says 182 @ 1.6.2026 - describing the row's WAS state, not a
+    fresh instruction. Only the Was date and its note fragment move."""
+    required = date(2027, 3, 1)
+    sheet_date = date(2026, 6, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        note = (
+            "Migrated from order inquiry sheet JAN - DEC 2026 ORDERabc.xlsx; "
+            "Linked to 202603-S0109 (SPO-2026/03-0109), expected 2026-06-01; "
+            "auto: autocount linkage; Was 182 on 2027-03-01"
+        )
+        settled = _settled_row(
+            w, mirror, qty="280", delivery_date=required,
+            previous_qty="182", previous_delivery_date=required, note=note,
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        preview = importer.preview(w.db, data)
+        assert preview["rows_delivery_date_updated"] == 1, preview
+
+        outcome_recorder = ImportOutcome(None, persist=False)
+        result = _apply(w, data, outcome=outcome_recorder)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_delivery_date_updated"] == 1, result
+        w.db.refresh(settled)
+        assert settled.previous_delivery_date == sheet_date, "the Was date did not move"
+        assert settled.delivery_date == required, "the Now date must stay untouched"
+        assert Decimal(str(settled.qty)) == Decimal("280"), "the Now quantity moved"
+        assert Decimal(str(settled.previous_qty)) == Decimal("182"), "previous_qty moved"
+        assert settled.note == (
+            "Migrated from order inquiry sheet JAN - DEC 2026 ORDERabc.xlsx; "
+            "Linked to 202603-S0109 (SPO-2026/03-0109), expected 2026-06-01; "
+            "auto: autocount linkage; Was 182 on 2026-06-01"
+        ), "only the Was fragment should move; the AutoCount/Linked prose must survive"
+        seen_codes = {entry["code"] for entry in outcome_recorder.breakdown()["successful"]}
+        assert seen_codes == {oc.DELIVERY_DATE_UPDATED}, seen_codes
+
+
+def test_ac_20_a_settled_row_not_on_the_lines_date_is_never_repaired():
+    """AC-20 (Shape B). A settled row whose `previous_delivery_date` already differs from
+    the line's `required_date` does not carry 7.4's mistake any more - never touched,
+    whatever the sheet says."""
+    required = date(2027, 3, 1)
+    already_fixed = date(2026, 1, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        settled = _settled_row(
+            w, mirror, qty="280", delivery_date=required,
+            previous_qty="182", previous_delivery_date=already_fixed,
+            note=f"Migrated from order inquiry sheet x.xlsx; Was 182 on {already_fixed.isoformat()}",
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_delivery_date_updated"] == 0, result
+        w.db.refresh(settled)
+        assert settled.previous_delivery_date == already_fixed
+
+
+def test_ac_21_a_settled_row_with_a_different_was_quantity_is_never_repaired():
+    """AC-21 (Shape B). The sheet's quantity does not match the row's Was quantity - a
+    different instruction, left alone."""
+    required = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        settled = _settled_row(
+            w, mirror, qty="280", delivery_date=required,
+            previous_qty="182", previous_delivery_date=required,
+            note=f"Migrated from order inquiry sheet x.xlsx; Was 182 on {required.isoformat()}",
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 100, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_delivery_date_updated"] == 0, result
+        w.db.refresh(settled)
+        assert settled.previous_delivery_date == required
+
+
+def test_ac_22_shape_b_reupload_is_idempotent():
+    """AC-22 (Shape B). Running AC-19's upload a second time changes nothing: once
+    repaired, the settled row's Was date no longer matches the line's `required_date`, so
+    the second run finds no candidate at all."""
+    required = date(2027, 3, 1)
+    sheet_date = date(2026, 6, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        settled = _settled_row(
+            w, mirror, qty="280", delivery_date=required,
+            previous_qty="182", previous_delivery_date=required,
+            note=f"Migrated from order inquiry sheet x.xlsx; Was 182 on {required.isoformat()}",
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        first = _apply(w, data)
+        assert first["rows_delivery_date_updated"] == 1, first
+
+        second = _apply(w, data)
+
+        assert second["rows_raised"] == 0, second
+        assert second["rows_delivery_date_updated"] == 0, second
+        assert second["rows_already_raised"] == 1, second
+        w.db.refresh(settled)
+        assert settled.previous_delivery_date == sheet_date
+        assert settled.delivery_date == required
+
+
+def test_ac_23_shape_a_wins_over_shape_b_deterministically():
+    """AC-23 (round 5). A line carrying BOTH an untouched migrated row (shape A) and a
+    settled row (shape B) sharing the SAME quantity: with only one sheet row of that
+    quantity, shape A is resolved first (exact match, then shape A, then shape B) - the
+    untouched row is repaired, the settled row's Was date is left exactly as it was, and
+    the one sheet row claims one row only."""
+    required = date(2027, 3, 1)
+    new_date = date(2026, 6, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+
+        untouched = _migrated_row(w, mirror, qty="150", delivery_date=required)
+        settled = _settled_row(
+            w, mirror, qty="90", delivery_date=required,
+            previous_qty="150", previous_delivery_date=required,
+            note=f"Migrated from order inquiry sheet x.xlsx; Was 150 on {required.isoformat()}",
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 150, new_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_delivery_date_updated"] == 1, result
+        w.db.refresh(untouched)
+        w.db.refresh(settled)
+        assert untouched.delivery_date == new_date, "shape A should have been repaired"
+        assert settled.previous_delivery_date == required, (
+            "shape B must not also claim the same sheet row"
+        )
