@@ -1,6 +1,6 @@
 # PLAN: Stock list - bare model codes composed from brand, type and trap size
 
-Status: BUILDING - owner go 17 Sep 2026 ("okay can"); D7 seed only, owner adds other words in the UI; Supplier codes tab links to the words page
+Status: IN REVIEW - PR #1000 ready 18 Sep 2026, CI green, browser pass done on :3086; awaiting owner hand test + merge go
 Domain: scm
 Branch: feat/stock-list-bare-model-codes
 UAC: stock-list-bare-model-codes-acceptance-criteria.md

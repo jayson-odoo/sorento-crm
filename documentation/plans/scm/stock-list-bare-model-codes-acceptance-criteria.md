@@ -89,16 +89,29 @@ Plan: PLAN-stock-list-bare-model-codes.md (r2, 17 Sep 2026)
 
 ## Browser (S5)
 
+Evidence 18 Sep 2026 on the :3086/:8086 lane stack (restored 0915_1900 copy):
+`documentation/plans/scm/evidence/stock-list-bare-model-codes/`. AC-B1 PASS, AC-B2 partial
+(see note), AC-B3 PASS, AC-B4 UI blocked + AC-S4 measured by SQL, AC-B5 PASS, AC-B6 PASS,
+AC-F4b PASS, AC-F5 PASS. Not a lane defect, backlog: an unmerged `合计：` total row with SUM
+cells reads as an unmatched code, pre-existing for any text-led 型号 with a quantity.
+
 - AC-B1: From the sidebar, Loading plan for DAFUYUAN, upload `SORENTO库存表20260914.xlsx`:
   the upload summary counts every stock row (no "no model number on a row with stock" for
   row 25); Supplier codes tab lists `SRTWC8613-P-180`, `SRTWC8613-150`, `SRTWC8613-200` as
   separate rows with 品名 · 商标 beside them.
-- AC-B2: Lines tab shows the composed binds (at least `SRTWB7055`, `SRTWB888`, `SRTWCY8605`)
-  with their quantities.
+- AC-B2: Lines tab shows the composed binds (at least `SRTWB7055`, `SRTWB888`) with their
+  quantities. Browser pass 18 Sep: `SRTWB7055` bound (1,238), `SRTWB888` bound; `SRTWCY8605`
+  did NOT auto-bind because the sheet's `8605-RL` composes to `SRTWCY8605-RL` and the catalogue
+  code is `SRTWCY8605-PJ` (glued suffix, human pick by the matcher's own rule). The plan's
+  example was wrong against the real catalogue, the behaviour is right.
 - AC-B3: Pick a product for `SRTWC8613-P-180` in the Supplier codes tab, re-upload the same
   file: the row is bound on the second upload without a pick.
 - AC-B4: Re-upload the JINBAICHUAN 14/09 stock list on its plan: Lines and Supplier codes
-  counts identical to before the change (AC-S4 in the UI).
+  counts identical to before the change (AC-S4 in the UI). Browser pass 18 Sep: the UI has no
+  re-upload onto an EXISTING plan (Upload always creates a plan), so the UI half is blocked by
+  design; AC-S4 was measured by re-applying the stored file in-process on the copy: 118 rows
+  before and after, 122 (code, product) qty groups, 121 byte-identical, the one difference is
+  `MWB247` gaining an exact-match bind with unchanged quantities. No quantity inflated.
 - AC-B5: Open on the stock list attachment opens the sheet in a new tab, no JSON error page.
 - AC-B6: System management > Import field aliases > Stock list words at 375px and 1280px:
   the seed rows list with a blank Supplier cell; add one DAFUYUAN row; it shows the supplier
