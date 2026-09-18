@@ -419,10 +419,12 @@ export interface SupplyLine {
   /**
    * Whether the product's supplier sits in the home country (S3,
    * `PLAN-local-supplier-oi-routing.md`). A `local` Buy raises no Order Inquiry row on
-   * confirm - the sheet marks it with a `Local` pill and nothing else changes. Absent on a
-   * server that has not wired origin resolution yet.
+   * confirm - the sheet marks it with a `Local` pill and nothing else changes. `null`
+   * while `local_buy_routing_enabled` (System Settings) is off, the shipped default
+   * (`PLAN-local-buy-routing-toggle.md`) - every Buy then reaches Order Inquiries and
+   * no pill renders. Absent on a server that has not wired origin resolution yet.
    */
-  buy_origin?: 'local' | 'overseas';
+  buy_origin?: 'local' | 'overseas' | null;
   required_date?: string | null;
   /**
    * Warehouse CODE of the line's fulfilment location, read off the CORE sales-order line's
@@ -1348,10 +1350,12 @@ export interface BoardContribution {
    * Whether the product's supplier sits in the home country (S3,
    * `PLAN-local-supplier-oi-routing.md`), computed once per product for the whole board. A
    * `local` Buy raises no Order Inquiry row on confirm; the List view and the ladder options
-   * table mark it with a `Local` pill. Absent on a server that has not wired origin
-   * resolution yet.
+   * table mark it with a `Local` pill. `null` while `local_buy_routing_enabled` (System
+   * Settings) is off, the shipped default (`PLAN-local-buy-routing-toggle.md`) - every Buy
+   * then reaches Order Inquiries and no pill renders. Absent on a server that has not wired
+   * origin resolution yet.
    */
-  buy_origin?: 'local' | 'overseas';
+  buy_origin?: 'local' | 'overseas' | null;
 }
 
 /** What the engine suggested for one line, in the same shape a source is stated in. */

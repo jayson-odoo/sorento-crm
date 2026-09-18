@@ -231,6 +231,17 @@ def test_supply_sheet_line_carries_buy_origin_and_candidate_location(api):
     client, world = api
     db = world.db
 
+    # PLAN-local-buy-routing-toggle.md: the resolver now reads the setting first, off
+    # by default, so it must be ON here for this test's "local" pin to hold.
+    from app.models.user import SystemSetting
+
+    setting_row = db.query(SystemSetting).first() or SystemSetting(id=_suffix())
+    db.add(setting_row)
+    db.flush()
+    db.query(SystemSetting).filter(SystemSetting.id == setting_row.id).update(
+        {SystemSetting.local_buy_routing_enabled: True}
+    )
+
     home = _country(db, "MY", "Malaysia")
     supplier = _supplier(db, f"ZZT local sdn bhd {_suffix()}")
     supplier.country_id = home.id
