@@ -35,15 +35,20 @@ Backend only (`app/api/v1/projects/order_inquiries.py` `WorklistSort` Literal,
    by. `agent` is kept too - the Schedule matrix axis and any other caller may still
    name it.
 2. `verb` -> `OrderInquiryRow.verb`.
-3. `spo_number` -> the first SPO number the row's own SPO cell prints: a row's own
-   link through `spo_allocations`, ordered the same way `OrderInquiryLink` rows are
-   read elsewhere (`linked_at` then `id`, ascending - "first" is an order in time),
-   falling back to the row's own `spo_ref` when it has no such link. Built as a
-   correlated scalar subquery in the style of `_LINKED_PO_ID`, with an explicit
+3. `spo_number` -> the row's own first linked SPO number: a real link through
+   `spo_allocations`, ordered the same way `OrderInquiryLink` rows are read elsewhere
+   (`linked_at` then `id`, ascending - "first" is an order in time), falling back to
+   the row's own `spo_ref` when it has no such link. Built as a correlated scalar
+   subquery in the style of `_LINKED_PO_ID`, with an explicit
    `.correlate(OrderInquiryRow)` (mandatory - see the comment above `_LINKED_PO_ID`).
    The derived-SPO leg (a PO link whose PO has an open SPO allocation for the same
    product, `_SPO_LINKED_PO_ID`'s sibling reasoning) is deliberately NOT folded into
-   the sort: own link then `spo_ref` is the rule for this key.
+   the sort: own link then `spo_ref` is the rule for this key. This key does NOT match
+   what the SPO cell itself prints - measured against a prod copy (18 Sep 2026): the
+   cell additionally shows a synthetic "via PO" derived entry this key ignores (33
+   rows), and never reads a bare `spo_ref` at all, which this key falls back to (10
+   rows). Both are an accepted, known difference from the cell, not a defect to fix
+   here.
 
 No frontend change: the FE column ids (`spo_number`, `agent_code`, `verb`) are sent
 unchanged, so no saved column layout (personalisation is keyed by column id) is
@@ -54,11 +59,16 @@ orphaned.
 `sorento_crm_backend/tests/test_order_inquiry_worklist.py`, beside the existing sort
 tests (~line 786-845):
 
-- Parametrized over `("spo_number", "agent_code", "verb")` x `("asc", "desc")`: the
-  list endpoint accepts the sort and returns 200.
+- Parametrized over `("asc", "desc")`, looping the three ids inside: the list endpoint
+  accepts `spo_number`, `agent_code` and `verb` and returns 200 in both directions.
 - `spo_number` orders rows by their own linked SPO number first, then by `spo_ref` for
   a row with no link; a row with neither sorts last (nulls last, both directions - the
   generic `.nulls_last()` ordering already applied to every sort field).
+- `agent_code` orders two rows with distinct agents correctly and returns the same row
+  sequence as the pre-existing `sort=agent` (same underlying expression) - a kill test
+  for a sort key quietly pointed at the wrong column.
+- `verb` orders two rows with distinct verbs (`ORDER` vs `DELAY`) correctly - the same
+  kill-test shape.
 - The two existing agreement tests
   (`test_the_route_and_the_service_agree_on_the_sortable_set`,
   `test_every_advertised_sort_column_answers`) stay green with the widened set.
@@ -71,5 +81,5 @@ this track.
 - Renaming any FE column id (would orphan saved column layouts, personalisation is
   keyed by column id).
 - Folding the derived-SPO leg (a PO's own open SPO allocation, `_SPO_LINKED_PO_ID`)
-  into the `spo_number` sort - the rule stated above is own link then `spo_ref`, same
-  as the SPO cell's first-priority read.
+  into the `spo_number` sort - the rule stated above is own link then `spo_ref`. This
+  is a known, accepted difference from what the SPO cell prints, not a target to match.

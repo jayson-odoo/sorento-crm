@@ -44,6 +44,7 @@ from app.models.project_so import (
     INQUIRY_PLACED,
     INQUIRY_RAISED,
     IV_ALREADY_INBOUND,
+    IV_DELAY,
     IV_ORDER,
     SO_STATUS_DRAFT,
     OrderInquiry,
@@ -854,19 +855,20 @@ def test_the_order_is_total_so_paging_neither_repeats_nor_drops_a_row(api):
 # ------------------------------------------------ SPO / Agent / Instruction sort keys
 
 
-@pytest.mark.parametrize("field", ["spo_number", "agent_code", "verb"])
 @pytest.mark.parametrize("direction", ["asc", "desc"])
 def test_sorting_by_the_three_worklist_columns_that_draw_a_sort_arrow_is_accepted(
-    api, field, direction
+    api, direction
 ):
     """AC-1: SPO, Agent and Instruction are sortable columns on the worklist (they draw
     a sort arrow in `orderInquiryWorklistColumns.tsx`), so `sort` must accept the same
-    ids those columns are keyed by - `spo_number`, `agent_code`, `verb`."""
+    ids those columns are keyed by - `spo_number`, `agent_code`, `verb` - in both
+    directions. One fixture per direction rather than per id x direction (review round
+    1): the same six checks, a third of the setup cost."""
     client, _db, _company_id, _seeded = api
 
-    response = client.get(LIST, params={"sort": field, "dir": direction})
-
-    assert response.status_code == 200, response.text
+    for field in ("spo_number", "agent_code", "verb"):
+        response = client.get(LIST, params={"sort": field, "dir": direction})
+        assert response.status_code == 200, f"{field} {direction}: {response.text}"
 
 
 def test_spo_sort_orders_by_the_rows_own_link_then_by_spo_ref_blanks_last(api):
@@ -959,6 +961,134 @@ def test_spo_sort_orders_by_the_rows_own_link_then_by_spo_ref_blanks_last(api):
         linked_row.id,
         blank_row.id,
     ]
+
+
+def test_agent_code_sort_matches_agent_sort_and_is_not_secretly_item_code(api):
+    """Kill test (review round 1): a `sort=agent_code` that quietly pointed at
+    `item_code` would still return 200 and would still print SOMETHING, so the AC-1
+    "not a 422" check alone cannot catch it. Two rows with DIFFERENT agents, sorted
+    ascending, must print their agent codes non-decreasing - and `agent_code` is the
+    SAME underlying expression (`SalesAgent.sales_agent`) `agent` already sorts by, so
+    the two must return the identical row sequence."""
+    client, db, company_id, seeded = api
+    customer = seeded["customer"]
+
+    def _row_with_agent(agent_code: str, suffix: str, day: int) -> OrderInquiryRow:
+        core = SalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            so_number=f"ZZTSO{_uid()[:8]}",
+            customer_id=customer.id,
+            order_date=date(2026, 5, day),
+        )
+        agent = SalesAgent(
+            id=_uid(),
+            company_id=company_id,
+            sales_agent=agent_code,
+            person_label=f"{MARKER} {agent_code}",
+        )
+        db.add_all([core, agent])
+        db.flush()
+        core.sales_agent_id = agent.id
+        db.add(core)
+        project_order = ProjectSalesOrder(
+            id=_uid(),
+            company_id=company_id,
+            project_id=None,
+            so_id=core.id,
+            provisional_ref=core.so_number,
+            autocount_doc_no=core.so_number,
+            status="adopted",
+        )
+        db.add(project_order)
+        db.flush()
+        product = _product(db, f"ZZT-AGSORT-{_uid()[:6]}", f"{MARKER} agent sort product")
+        line = ProjectSalesOrderLine(
+            id=_uid(),
+            company_id=company_id,
+            project_sales_order_id=project_order.id,
+            line_no=1,
+            product_id=product.id,
+            description=f"{MARKER} agent sort",
+            qty=Decimal("5"),
+            uom="UNIT",
+            unit_price=Decimal("10.00"),
+            amount=Decimal("50.00"),
+            delivery_date=date(2026, 5, day),
+        )
+        db.add(line)
+        db.flush()
+        inquiry = _inquiry_for(db, company_id, project_order)
+        return _row(
+            db,
+            company_id,
+            inquiry,
+            so_line_id=line.id,
+            item_code=f"{MARKER}-AGENTSORT-{suffix}",
+            qty="5",
+            delivery_date=date(2026, 5, day),
+        )
+
+    # `item_code` is deliberately the OPPOSITE order of `agent_code` here (row_a's
+    # item_code sorts last, row_b's sorts first): a sort key that quietly pointed at
+    # `item_code` would print `[row_b, row_a]`, not `[row_a, row_b]` - the two orders
+    # can only agree below if the key actually reads the agent.
+    row_a = _row_with_agent("ZZT-AGENT-A", "ZLAST", 1)
+    row_b = _row_with_agent("ZZT-AGENT-B", "AFIRST", 2)
+    db.commit()
+
+    by_agent_code = client.get(
+        LIST, params={"sort": "agent_code", "dir": "asc", "query": "AGENTSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in by_agent_code] == [row_a.id, row_b.id]
+    codes = [row["agent_code"] for row in by_agent_code if row["agent_code"] is not None]
+    assert codes == sorted(codes)
+
+    by_agent = client.get(
+        LIST, params={"sort": "agent", "dir": "asc", "query": "AGENTSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in by_agent] == [row["id"] for row in by_agent_code]
+
+
+def test_verb_sort_is_non_decreasing_across_two_distinct_verbs(api):
+    """Kill test (review round 1): the same "not a 422" gap as `agent_code` above, for
+    `verb`. Two rows with different verbs (`DELAY` sorts before `ORDER`), sorted
+    ascending, must print in that order. `item_code` is deliberately the OPPOSITE order
+    (the `DELAY` row's item_code sorts last, the `ORDER` row's sorts first) - a sort key
+    that quietly pointed at `item_code` would print the pair reversed."""
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+
+    delay_line = _line_on_authored_order(db, company_id, seeded, qty="5", day=21)
+    delay_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=delay_line.id,
+        item_code=f"{MARKER}-VERBSORT-ZLATE",
+        qty="5",
+        verb=IV_DELAY,
+        delivery_date=date(2026, 4, 21),
+    )
+    order_line = _line_on_authored_order(db, company_id, seeded, qty="5", day=22)
+    order_row = _row(
+        db,
+        company_id,
+        inquiry,
+        so_line_id=order_line.id,
+        item_code=f"{MARKER}-VERBSORT-AFIRST",
+        qty="5",
+        verb=IV_ORDER,
+        delivery_date=date(2026, 4, 22),
+    )
+    db.commit()
+
+    ascending = client.get(
+        LIST, params={"sort": "verb", "dir": "asc", "query": "VERBSORT"}
+    ).json()["data"]
+    assert [row["id"] for row in ascending] == [delay_row.id, order_row.id]
+    verbs = [row["verb"] for row in ascending]
+    assert verbs == sorted(verbs)
 
 
 # ------------------------------------------------------------------- summary

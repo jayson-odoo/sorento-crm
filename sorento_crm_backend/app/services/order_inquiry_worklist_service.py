@@ -258,12 +258,22 @@ _PLACED_PO_ID = func.coalesce(
     _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
 )
 
-# The row's OWN first linked SPO number - what the SPO column itself prints first
-# (`documentsOf(row, 'spo')[0]`, `orderInquiryWorklistColumns.tsx`), ordered the same
-# way every other "first link" reader here is: earliest `linked_at` then `id`. The sort
-# key for `spo_number` (18 Sep 2026 bug report), NOT the derived leg
-# (`_SPO_LINKED_PO_ID`'s sibling reasoning, a PO link whose PO carries its own open SPO
-# allocation) - own link then `spo_ref` is the rule this key follows, same as the cell.
+# The row's OWN first linked SPO number - a REAL link only
+# (`OrderInquiryLink.spo_allocation_id`), ordered the same way every other "first link"
+# reader here is: earliest `linked_at` then `id`. The sort key for `spo_number` (18 Sep
+# 2026 bug report).
+#
+# This does NOT match what the SPO cell itself prints (measured against a prod copy, 18
+# Sep 2026: 33 rows differ one way, 10 the other). The cell also shows a SYNTHETIC
+# `derived: true` entry - a PO link whose PO carries its own open SPO allocation for the
+# same product, marked "via PO" (`OrderInquiryLinkOut.derived`, S5/R-E) - which this key
+# ignores, and the cell never reads a bare `spo_ref` at all, which this key falls back to
+# when the row has no own link. Both are ACCEPTED, KNOWN differences, not a bug to fix
+# here: folding the derived leg in would sort the row by a placement never actually made
+# ON it (`_SPO_LINKED_PO_ID`'s sibling reasoning), and dropping the `spo_ref` fallback
+# would sort a row raised before links existed as blank. The rule is "own SPO link
+# first, then `spo_ref`, blanks last" - stated on its own terms, not as a match to the
+# cell.
 _OWN_LINKED_SPO_NUMBER = (
     select(SPOAllocation.spo_number)
     .select_from(OrderInquiryLink)
