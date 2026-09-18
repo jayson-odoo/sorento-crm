@@ -184,6 +184,59 @@ describe('BoardDecisionPill: the warning flag (C10)', () => {
   });
 });
 
+describe('PLAN-board-change-proposed-pill: a pre-mark reads "Change proposed", not "Saved"', () => {
+  it('reads "Change proposed" for a session draft the board pre-marked itself (no server-saved draft)', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf()}
+        decision={{ verdict: 'approved', preMarked: true }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent(
+      'Change proposed',
+    );
+  });
+
+  it('reads "Saved" once the line carries a real server-saved draft, pre-mark flag or not', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          draft: {
+            decision: { verdict: 'approved' },
+            saved_by: 'Eling',
+            saved_at: '2026-09-03T01:00:00',
+          },
+        })}
+        // The pre-mark flag survives on the session's own entry until a real write REPLACES
+        // it (`decide()` writes a fresh object) - the server draft arriving first, on the
+        // SAME key, is exactly the shape `isPreMarkOnly` has to see through: `preMarked: true`
+        // present AND a real `contribution.draft` present both at once.
+        decision={{ verdict: 'approved', preMarked: true }}
+      />,
+    );
+    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('Saved');
+  });
+
+  it('shows no warning flag for a pre-mark, even when the frozen decision behind it was flagged (unchanged: the draft wins outright)', () => {
+    render(
+      <BoardDecisionPill
+        contribution={contributionOf({
+          decision: {
+            revision_no: 1,
+            timely_spo_qty: '0',
+            reserve: [],
+            borrow: [],
+            buy_qty: '10',
+            suspected_system_issue: true,
+          },
+        })}
+        decision={{ verdict: 'approved', preMarked: true }}
+      />,
+    );
+    expect(screen.queryByTestId(`decision-flag-${KEY}`)).not.toBeInTheDocument();
+  });
+});
+
 describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.4)', () => {
   it('reads "Suggestion changed" rather than Saved', () => {
     render(

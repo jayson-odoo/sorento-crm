@@ -52,7 +52,7 @@ import type { SuggestionRow } from '../../_shared/lib/supplyVocabulary';
 import { LADDER_VERSION } from '../../_shared/lib/supplyVocabulary';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
 import { canQuickSave } from '../../_shared/lib/boardAmend';
-import { BoardDecisionPill } from './BoardDecisionPill';
+import { BoardDecisionPill, isPreMarkOnly } from './BoardDecisionPill';
 import { BoardLineDecisionPanel } from './BoardLineDecisionPanel';
 import { BoardTrailPopover, ItemFlagChips } from './BoardTrailPopover';
 import {
@@ -474,9 +474,11 @@ export function BoardCellBreakdownDialog({
             ? 'This line is already confirmed. Amend it to change what was decided.'
             : row.original.unplannable
               ? 'This line cannot be decided here: its sales order states no fulfilment location.'
-              : draft[row.original.key]
-                ? 'Already saved. Undo it before saving it again.'
-                : undefined,
+              : isPreMarkOnly(row.original, draft[row.original.key] ?? null)
+                ? "This line's change is proposed, not saved. Open the row to decide it."
+                : draft[row.original.key]
+                  ? 'Already saved. Undo it before saving it again.'
+                  : undefined,
         rowLabel: (row) =>
           `Select ${row.original.so_number} line ${row.original.line_no}`,
       }),
@@ -878,7 +880,10 @@ export function BoardCellBreakdownDialog({
         // line is saved, only the choice to unsave it.
         cell: ({ row }) => {
           const key = row.original.key;
-          const drafted = Boolean(draft[key]);
+          // No Undo on a bare pre-mark (PLAN-board-change-proposed-pill): nothing has actually
+          // been saved here yet, only the board's own suggestion.
+          const drafted =
+            Boolean(draft[key]) && !isPreMarkOnly(row.original, draft[key] ?? null);
           return (
             <div className="flex min-w-0 items-center gap-1">
               <BoardDecisionPill contribution={row.original} decision={draft[key] ?? null} />

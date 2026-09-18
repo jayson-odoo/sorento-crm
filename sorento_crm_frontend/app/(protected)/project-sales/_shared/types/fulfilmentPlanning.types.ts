@@ -1998,6 +1998,18 @@ export interface BoardDecision {
    * stores it beside `amend_reason` and counts it in the result.
    */
   suspected_system_issue?: boolean;
+  /**
+   * Seeded by the board's OWN pre-mark effect (`preMarkedKeys`, `FulfilmentBoardPanel`), never
+   * chosen by a person and never posted to the server - "Nothing is written here" until Confirm
+   * or an explicit Save/Amend/Reject replaces this whole entry with one a person actually gave
+   * (`decide()` always writes a fresh object, so an act on a pre-mark drops the flag on its own).
+   *
+   * PLAN-board-change-proposed-pill (owner ruling 18 Sep 2026): distinguishes the pill's
+   * "Change proposed" from "Saved" - a pre-mark with no server-saved `contribution.draft` yet is
+   * not an autosave, and the Verdict column reads it to withhold the Undo arrow too (nothing has
+   * actually been saved here to undo).
+   */
+  preMarked?: boolean;
 }
 
 /**

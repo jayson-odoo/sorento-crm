@@ -2196,6 +2196,41 @@ describe('BoardCellBreakdownDialog: quick save as suggested and per-line undo', 
     expect(onDecide).toHaveBeenCalledTimes(1);
     expect(onDecide).toHaveBeenCalledWith('so-a|1|WESERP10B|2026-08-31', null);
   });
+
+  /**
+   * PLAN-board-change-proposed-pill, fix round: the grid's own "Contributing lines" table
+   * carries the same rule the List view's Verdict column does - this is the dialog the grid
+   * opens the contributing-lines table inside, so the two must agree.
+   */
+  it('a pre-marked line reads "Change proposed" and offers no Undo; a saved line still reads "Saved" with its Undo', () => {
+    const draft: BoardDraft = {
+      'so-a|1|WESERP10B|2026-08-31': { verdict: 'approved', preMarked: true },
+      'so-b|2|WESERP10B|2026-08-31': { verdict: 'approved' },
+    };
+    renderDialog(
+      [
+        demand({ line_no: 1, so_number: 'SO000001', sales_order_id: 'so-a' }),
+        demand({ line_no: 2, so_number: 'SO000002', sales_order_id: 'so-b' }),
+      ],
+      {},
+      draft,
+    );
+    openLines();
+
+    expect(
+      screen.getByTestId('decision-pill-so-a|1|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Change proposed');
+    expect(
+      screen.queryByRole('button', { name: 'Undo SO000001 line 1' }),
+    ).not.toBeInTheDocument();
+
+    expect(
+      screen.getByTestId('decision-pill-so-b|2|WESERP10B|2026-08-31'),
+    ).toHaveTextContent('Saved');
+    expect(
+      screen.getByRole('button', { name: 'Undo SO000002 line 2' }),
+    ).toBeInTheDocument();
+  });
 });
 
 /**

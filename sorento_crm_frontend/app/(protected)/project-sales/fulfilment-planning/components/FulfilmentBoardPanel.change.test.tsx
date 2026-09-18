@@ -469,13 +469,15 @@ describe('the pre-marked decision, and Confirm', () => {
     fireEvent.mouseDown(linesTab);
     fireEvent.click(linesTab);
 
-    // Saved (S4, R-F), not Approved: the pre-marked verdict is a decision like any other.
+    // "Change proposed" (PLAN-board-change-proposed-pill, owner ruling 18 Sep 2026), not
+    // "Saved": nothing has actually been written yet, only the board's own pre-mark. A real
+    // Save on this line, or a Confirm, would read "Saved"/"Confirmed" as before.
     await waitFor(() => {
       expect(
         screen.getByTestId(
           'decision-pill-so-381895|1|SRTWCX7405-RL-S-PJ|2026-08-17',
         ),
-      ).toHaveTextContent('Saved');
+      ).toHaveTextContent('Change proposed');
     });
   });
 
@@ -510,6 +512,10 @@ describe('the pre-marked decision, and Confirm', () => {
     expect(body.orders[0].lines).toHaveLength(1);
     // AC-P3-4: the batch the board was opened on rides on the confirm body.
     expect(body.batch_id).toBe('pcb-so381895');
+    // The pre-mark flag is SESSION-ONLY (PLAN-board-change-proposed-pill): it tells the pill
+    // and the Verdict column this entry has nothing saved behind it yet, and it must never
+    // ride along in the write that saves it.
+    expect(body.orders[0].lines[0]).not.toHaveProperty('preMarked');
   });
 
   /**
