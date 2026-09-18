@@ -1,6 +1,6 @@
 # PLAN: local supplier routing to Order Inquiry, countries master, borrow source table
 
-Status: in review (PR open 10 Sep 2026; Phases 1-3 complete, reviewed, browser verified; owner runs the supplier country backfill on prod after deploy)
+Status: implemented (#814, 10 Sep 2026); decisions 4, 5, 9 gated off by default by PLAN-local-buy-routing-toggle (18 Sep 2026)
 UAC: `local-supplier-oi-routing-acceptance-criteria.md`
 Domain: scm (touches master-data, procurement)
 Owner decisions: 10 Sep 2026, four grill rounds. Branch `feat/local-supplier-oi-routing`.

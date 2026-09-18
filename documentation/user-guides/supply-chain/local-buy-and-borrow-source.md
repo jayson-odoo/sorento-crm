@@ -12,10 +12,15 @@ line has been raised there.
 
 ## The Local pill
 
-A product is **Local** when the supplier it's bought from sits in Malaysia - the supplier
-linked to the product directly, or if there is none, the supplier on its most recent purchase
-order. Everything else (no known supplier, or a supplier outside Malaysia) is treated as
-overseas.
+The **Local** pill is off unless an admin turns it on under **System Settings → General**,
+**Local supplier Buys skip Order Inquiries**. Shipped off, so by default there is no pill
+anywhere on the board and every Buy reaches Order Inquiries and counts toward reorder demand,
+whatever supplier the product is bought from.
+
+When the setting is turned on, a product is **Local** when the supplier it's bought from sits
+in Malaysia - the supplier linked to the product directly, or if there is none, the supplier on
+its most recent purchase order. Everything else (no known supplier, or a supplier outside
+Malaysia) is treated as overseas. With it on:
 
 * On the List view, a local line's **Suggested** cell reads its verdict followed by a **Local**
   badge, for example "Buy 50 Local". The **Decided** cell carries the same badge once the line
@@ -27,8 +32,12 @@ overseas.
 
 ## What happens on confirm
 
-Confirming a Buy works exactly as before - nothing new to click. The difference is what it
-does afterwards:
+Confirming a Buy works exactly as before - nothing new to click. While **Local supplier Buys
+skip Order Inquiries** is off (the shipped state), every Buy is raised on
+[Order Inquiries](/project-sales/order-inquiries) under its own Order Inquiry header and counts
+toward reorder demand for that product, whatever supplier it's bought from.
+
+Turning the setting on brings back the earlier behaviour:
 
 * **A local Buy is recorded on the decision, same as any Buy, but raises nothing on
   [Order Inquiries](/project-sales/order-inquiries).** It does not reach purchasing's overseas

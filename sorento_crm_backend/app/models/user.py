@@ -551,6 +551,9 @@ class SystemSetting(Base):
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # PLAN-local-buy-routing-toggle.md (18 Sep 2026): local-supplier Buy routing is a
+    # switch, not a hard rule. Default off, since off is the shipped state the owner ruled.
+    local_buy_routing_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
     # AC-304 (D5): the ONE list the owner has actually changed, so it is a column and not
     # a table. `not_supported` is decided against this instead of the two literals the JS
     # carries. A6 (chatbot-growth-r1, AC-911, migration 488) removed `spo_allocation` from

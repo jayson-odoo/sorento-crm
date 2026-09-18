@@ -1,28 +1,33 @@
 """Where a product is bought from (S3, `PLAN-local-supplier-oi-routing.md`).
 
-`local` iff the product's supplier's country matches `HOME_COUNTRY_CODE` - a local Buy
-raises no Order Inquiry on confirm (`project_order_inquiry_service.refresh_for_decision`).
-The supplier is the primary `product_suppliers` link, else the newest-PO supplier
-(same tiebreak `summary_order_service._last_po_supplier_map` (S15) uses:
-`purchase_orders.issue_date DESC NULLS LAST, created_at DESC`) - the primary link wins
-when both exist (decision 3 / AC-2.13), because it is what a buyer states on purpose and
-a PO history entry can be a one-off. No supplier, or a supplier with no country, is
-`overseas`.
+The rule is a switch, off by default (`PLAN-local-buy-routing-toggle.md`, owner ruling 18
+Sep 2026): a local supplier does not mean CS buys it themselves, purchasing still raises the
+Buy and buys overseas anyway, so hard-wiring the skip broke the handoff. While the switch is
+off this resolver answers `None` for every id and runs no origin SQL at all; on, it answers
+`local` iff the product's supplier's country matches `HOME_COUNTRY_CODE` - a local Buy raises
+no Order Inquiry on confirm (`project_order_inquiry_service.refresh_for_decision`). The
+supplier is the primary `product_suppliers` link, else the newest-PO supplier (same tiebreak
+`summary_order_service._last_po_supplier_map` (S15) uses: `purchase_orders.issue_date DESC
+NULLS LAST, created_at DESC`) - the primary link wins when both exist (decision 3 / AC-2.13),
+because it is what a buyer states on purpose and a PO history entry can be a one-off. No
+supplier, or a supplier with no country, is `overseas`.
 """
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Iterable, Optional
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.models.user import SystemSetting
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.scm.money import HOME_COUNTRY_CODE
 
 
-def buy_origin_by_product(db: Session, product_ids: Iterable[str]) -> dict[str, str]:
-    """``{product_id: "local" | "overseas"}`` for every id given, in ONE statement for the
-    whole call regardless of how many products are asked about.
+def buy_origin_by_product(db: Session, product_ids: Iterable[str]) -> dict[str, Optional[str]]:
+    """``{product_id: "local" | "overseas" | None}`` for every id given, in ONE statement
+    for the whole call regardless of how many products are asked about (setting on), or
+    NO statement at all (setting off, the default).
 
     One statement rather than two (CI fix round): the board runs this once per build, and
     `tests/test_ladder_v5_edges.py`'s statement-count pin counts every round trip a board
@@ -30,10 +35,18 @@ def buy_origin_by_product(db: Session, product_ids: Iterable[str]) -> dict[str, 
     `NOT EXISTS` is the chain itself - a product whose primary link is stated answers off
     that link even when the linked supplier has no country (so it reads `overseas`, and a
     newer PO from a Chinese supplier does NOT override it, AC-2.13).
+
+    Every caller already reads `origin_by_product.get(pid, "overseas")`, and `dict.get`
+    returns the stored `None` when the key is present, so answering `None` here (setting
+    off) is the whole gate: no caller change, no OI-service change, no FE board change.
     """
     ids = sorted({str(pid) for pid in product_ids if pid})
     if not ids:
         return {}
+
+    enabled = db.query(SystemSetting.local_buy_routing_enabled).first()
+    if not (enabled and enabled[0]):
+        return {pid: None for pid in ids}
 
     co_ps, co_ps_params = company_sql_predicate(db, "ps.company_id", param_prefix="origps")
     co_po, co_po_params = company_sql_predicate(db, "pol.company_id", param_prefix="originpo")

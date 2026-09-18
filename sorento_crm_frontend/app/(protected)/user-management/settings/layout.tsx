@@ -89,6 +89,9 @@ export function mapSettingsFromApi(
         ? raw.price_tag_auto_collect_days
         : AUTO_COLLECT_DAYS_DEFAULT,
     planGrain: raw.plan_grain === 'location' ? 'location' : 'product',
+    // A new settings column reaches the FE only if it is in this manual mapper too
+    // (PLAN-local-buy-routing-toggle.md). Off by default.
+    localBuyRoutingEnabled: Boolean(raw.local_buy_routing_enabled),
     purchaseRequestDefaultApproverUserId:
       (raw.purchase_request_default_approver_user_id as string | null) ?? null,
     purchaseRequestDefaultApproverName:
@@ -208,6 +211,7 @@ function createDefaultSettings(): SystemSetting {
     deferredActionSeconds: 5,
     priceTagAutoCollectDays: AUTO_COLLECT_DAYS_DEFAULT,
     planGrain: 'product',
+    localBuyRoutingEnabled: false,
     purchaseRequestDefaultApproverUserId: null,
     purchaseRequestDefaultApproverName: null,
     purchaseRequestDefaultApproverEmail: null,

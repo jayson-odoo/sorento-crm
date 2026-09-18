@@ -261,6 +261,8 @@ export default function Page() {
       settings?.priceTagAutoCollectDays ?? AUTO_COLLECT_DAYS_DEFAULT,
     // The rollout default (plan 5.1) when the blob carries no value yet.
     planGrain: settings?.planGrain ?? 'product',
+    // Off is the shipped state (PLAN-local-buy-routing-toggle.md).
+    localBuyRoutingEnabled: Boolean(settings?.localBuyRoutingEnabled),
     priceTagGuardedClasses: settings?.priceTagGuardedClasses ?? [],
     purchaseRequestDefaultApproverUserId:
       settings?.purchaseRequestDefaultApproverUserId &&
@@ -323,6 +325,7 @@ export default function Page() {
       priceTagAutoCollectDays:
         settings.priceTagAutoCollectDays ?? AUTO_COLLECT_DAYS_DEFAULT,
       planGrain: settings.planGrain ?? 'product',
+      localBuyRoutingEnabled: Boolean(settings.localBuyRoutingEnabled),
       priceTagGuardedClasses: settings.priceTagGuardedClasses ?? [],
       purchaseRequestDefaultApproverUserId:
         settings.purchaseRequestDefaultApproverUserId &&
@@ -368,6 +371,7 @@ export default function Page() {
         // r9 D10.
         price_tag_auto_collect_days: values.priceTagAutoCollectDays,
         plan_grain: values.planGrain,
+        local_buy_routing_enabled: values.localBuyRoutingEnabled,
         price_tag_guarded_classes: values.priceTagGuardedClasses,
         purchase_request_default_approver_user_id:
           values.purchaseRequestDefaultApproverUserId ===
@@ -1082,6 +1086,28 @@ export default function Page() {
                     <FormDescription>
                       Applies to runs created afterwards.
                     </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name="localBuyRoutingEnabled"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormControl>
+                      <div className="flex items-center space-x-2 rounded-lg bg-accent/60 p-4">
+                        <Switch
+                          id="local-buy-routing-enabled"
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                        <Label htmlFor="local-buy-routing-enabled">
+                          Local supplier Buys skip Order Inquiries
+                        </Label>
+                      </div>
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
