@@ -186,6 +186,12 @@ class _Match:
     already_raised: bool = False
     #: An earlier row of this same upload says exactly this, on this tab or another (D7).
     duplicate: bool = False
+    #: The id of the MIGRATED `OrderInquiryRow` this row's own delivery date would repair,
+    #: decided once in `_plan` (`_resolve_delivery_date_repairs`, B1/S1, 19 Sep 2026) so
+    #: `preview` and `apply` read the same answer. `None` when nothing on the line needs
+    #: repairing, whether because it is not already-raised, it states no date, or every
+    #: candidate is already on the sheet's date.
+    repair_row_id: Optional[str] = None
 
     @property
     def raisable(self) -> bool:
@@ -224,6 +230,10 @@ class _Plan:
     #: `_empty`'s unreadable-file / no-actor shapes - where `_result` falls back to
     #: `len(plan.parsed.rows)`, the only count there is to report.
     rows_expanded: Optional[int] = None
+    #: Mirror id per core line id, for every already-adopted line the named orders carry -
+    #: the SAME map `_already_raised` builds internally (S3, 19 Sep 2026), stashed here so
+    #: `_resolve_delivery_date_repairs` does not re-query it.
+    mirror_by_core_line: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -491,20 +501,24 @@ def _match_row(
     return found, None
 
 
-def _already_raised(db: Session, core_lines: Sequence[SalesOrderLine]) -> set:
-    """The core lines whose MIRROR already carries a non-cancelled order inquiry row (D2).
+def _already_raised(
+    db: Session, core_lines: Sequence[SalesOrderLine]
+) -> Tuple[set, Dict[str, str]]:
+    """The core lines whose MIRROR already carries a non-cancelled order inquiry row (D2),
+    and the core-line-id -> mirror-id map that answer was read off (S3, 19 Sep 2026):
+    `_resolve_delivery_date_repairs` needs the same map and must not re-query it.
 
     Read off the state BEFORE this upload, once, and for every line the named orders carry
     rather than only the matched ones, because the matcher consults it as it goes: the
     answer decides whether a matched line's quantity is charged to this file's ledger.
 
     Two rows of the same file may still both land on one line - nothing here changes as the
-    file is read - while a re-upload of that file raises nothing.
+    file is read - while a re-upload of that file raises nothing new.
     """
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow, ProjectSalesOrderLine
 
     if not core_lines:
-        return set()
+        return set(), {}
     core_ids = [str(line.id) for line in core_lines]
     mirrors = (
         db.query(ProjectSalesOrderLine.id, ProjectSalesOrderLine.core_sales_order_line_id)
@@ -512,8 +526,9 @@ def _already_raised(db: Session, core_lines: Sequence[SalesOrderLine]) -> set:
         .all()
     )
     if not mirrors:
-        return set()
+        return set(), {}
     core_by_mirror = {str(mirror_id): str(core_id) for mirror_id, core_id in mirrors}
+    mirror_by_core = {core_id: mirror_id for mirror_id, core_id in core_by_mirror.items()}
     held = (
         db.query(OrderInquiryRow.so_line_id)
         .filter(
@@ -522,50 +537,153 @@ def _already_raised(db: Session, core_lines: Sequence[SalesOrderLine]) -> set:
         )
         .all()
     )
-    return {core_by_mirror[str(mirror_id)] for (mirror_id,) in held if str(mirror_id) in core_by_mirror}
+    raised = {
+        core_by_mirror[str(mirror_id)] for (mirror_id,) in held if str(mirror_id) in core_by_mirror
+    }
+    return raised, mirror_by_core
 
 
-def _mirror_of(db: Session, core_line_id: Any) -> Optional[str]:
-    """The mirror id for one core sales order line, or `None` if it was never adopted.
+def _resolve_line_repairs(
+    dated_rows: Sequence[Tuple[int, Any]], migrated_rows: Sequence[Any]
+) -> Dict[int, str]:
+    """B1, 19 Sep 2026: which migrated row (if any) each dated sheet row of ONE already-
+    raised line would repair. Pure and deterministic - no database access - so the same
+    inputs always resolve the same way.
 
-    Read directly rather than through `_Raiser.record_for`: an already-raised line's mirror
-    already exists (that is what `already_raised` means), so there is nothing here that
-    needs the adoption service.
+    A migrated row's own item code and quantity is not a unique key: a sheet that splits
+    one line's quantity across several dated rows (100 @ 2026-09-01 + 100 @ 2026-10-01, one
+    line) leaves several migrated rows sharing both (116 `(mirror, item, qty)` groups /
+    233 migrated rows on the 15 Sep prod copy alone). Resolving row-by-row with no ordering
+    let an unchanged re-upload overwrite September's row with October's date and flip the
+    pair back on every further run, converging on nothing.
+
+    Two passes fix that, both reading `migrated_rows` in the SAME fixed order
+    (`created_at`, `id` - the caller's job) and `dated_rows` in file order:
+
+    * **Pass 1** lets a sheet row claim, as a no-op, a migrated row that ALREADY carries its
+      exact item, quantity AND date - settling every row a re-upload of an unchanged sheet
+      would otherwise fight over before pass 2 ever runs.
+    * **Pass 2** lets each sheet row pass 1 left unsettled claim the first STILL-unclaimed
+      migrated row with the same item and quantity (whatever its date) and repair it.
+
+    A migrated row is claimed at most once per run, by at most one sheet row, so two
+    same-qty rows can never both point at the row pass 1 or 2 already gave to the other.
     """
-    from app.models.project_so import ProjectSalesOrderLine
+    unclaimed = list(migrated_rows)
+    settled: set = set()
 
-    return (
-        db.query(ProjectSalesOrderLine.id)
-        .filter(ProjectSalesOrderLine.core_sales_order_line_id == str(core_line_id))
-        .scalar()
-    )
+    for index, row in dated_rows:
+        qty = _dec(row.qty)
+        for candidate in unclaimed:
+            if (
+                candidate.item_code == row.item_code
+                and _dec(candidate.qty) == qty
+                and candidate.delivery_date == row.delivery_date
+            ):
+                unclaimed.remove(candidate)
+                settled.add(index)
+                break
+
+    repairs: Dict[int, str] = {}
+    for index, row in dated_rows:
+        if index in settled:
+            continue
+        qty = _dec(row.qty)
+        for candidate in unclaimed:
+            if candidate.item_code == row.item_code and _dec(candidate.qty) == qty:
+                unclaimed.remove(candidate)
+                repairs[index] = str(candidate.id)
+                break
+    return repairs
 
 
-def _repair_migrated_date(db: Session, mirror_id: str, row: Any) -> Optional[Any]:
-    """A re-upload corrects a MIGRATED row's delivery date to the sheet's own.
+def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
+    """B1/S1/S3, 19 Sep 2026: decide, ONCE and read-only, which already-raised sheet rows
+    would repair which migrated row - so `preview` can forecast `rows_delivery_date_updated`
+    and `apply` writes exactly what was forecast, never recomputing the decision.
 
-    18 Sep 2026, reversing 7.4 ("we should have followed the sheet's date"). Section 7.4
-    wrote every migrated row's `delivery_date` from the sales order line, so a re-upload of
-    a sheet whose date was corrected did nothing: `_already_raised` skips a line that
-    already carries a row, and skipping is right - the row is not raised again - but the
-    date it already carries was stale.
+    **B2, purchasing's own work is never touched.** Eligible migrated rows are filtered to
+    `previous_qty IS NULL AND previous_delivery_date IS NULL AND changed_at IS NULL` - no
+    planning change has restated this row since the sheet raised it. A row a change HAS
+    settled (5,793 of 11,810 migrated rows on the 15 Sep prod copy carry a link; SO314593's
+    own rows are linked, received, some redirected to the pool) keeps the change's own
+    date: this is a repair of the MIGRATION's mistake, not a second opinion about a decision
+    purchasing has since made, and it writes no handshake stamp of its own (no `changed_at`,
+    no ack flip) for the same reason - purchasing already works to the sheet's date.
 
-    Finds the MIGRATED row on this mirror line (`note` starts with `_MIGRATION_STAMP`,
-    same item code, same quantity as this sheet row - a different quantity means the sheet
-    is restating a DIFFERENT instruction, and is left alone) and moves its date. Then, for
-    the fresh row a later planning change raised beside it (the Was/Now pair the backfill
-    or `_settle_row_in_place` stamped from the migrated row's old figures), corrects
-    `previous_delivery_date` too, so the (i) stops printing the same wrong date twice.
-    Never touches links, qty, state or ack fields.
-
-    Returns the migrated row when it wrote a change, `None` otherwise (nothing to correct,
-    or already on the sheet's date - the idempotent case a second upload of the same file
-    hits).
+    Repairs are resolved per LINE (`_resolve_line_repairs`), never per row, and grouped
+    by MIRROR so every already-raised line's migrated siblings are loaded in one query
+    (S3) rather than one `SELECT` per row.
     """
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
-    if row.delivery_date is None:
-        return None
+    already_raised_lines = {
+        str(match.core_line.id)
+        for match in plan.matches
+        if match.already_raised and match.core_line is not None
+    }
+    mirror_ids = sorted({
+        plan.mirror_by_core_line[core_id]
+        for core_id in already_raised_lines
+        if core_id in plan.mirror_by_core_line
+    })
+    if not mirror_ids:
+        return
+
+    eligible = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id.in_(mirror_ids),
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.previous_qty.is_(None),
+            OrderInquiryRow.previous_delivery_date.is_(None),
+            OrderInquiryRow.changed_at.is_(None),
+        )
+        .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
+        .all()
+    )
+    migrated_by_mirror: Dict[str, List[Any]] = {}
+    for candidate in eligible:
+        if not (candidate.note or "").startswith(_MIGRATION_STAMP):
+            continue
+        migrated_by_mirror.setdefault(str(candidate.so_line_id), []).append(candidate)
+
+    dated_rows_by_line: Dict[str, List[Tuple[int, Any]]] = {}
+    for index, match in enumerate(plan.matches):
+        if not match.already_raised or match.core_line is None:
+            continue
+        # S2, 19 Sep 2026: an undated row (ORDER BACK, or a blank cell) states nothing
+        # about a migrated row's date, so it never claims one and never writes NULL over
+        # one either - it is simply left out of the resolution entirely.
+        if match.row.delivery_date is None:
+            continue
+        dated_rows_by_line.setdefault(str(match.core_line.id), []).append((index, match.row))
+
+    for core_id, dated_rows in dated_rows_by_line.items():
+        mirror_id = plan.mirror_by_core_line.get(core_id)
+        if mirror_id is None:
+            continue
+        repairs = _resolve_line_repairs(dated_rows, migrated_by_mirror.get(mirror_id, []))
+        for index, migrated_id in repairs.items():
+            plan.matches[index].repair_row_id = migrated_id
+
+
+def _resync_sibling_was_now(db: Session, mirror_id: str) -> None:
+    """S5, 19 Sep 2026: bring every sibling row's Was/Now back into agreement once a repair
+    has moved a migrated row's date on this mirror.
+
+    `ProjectOrderInquiryService`'s own writer (~1093-1098, AC-OH-40..42) stamps a fresh
+    row's `previous_qty` as the SUM of the rows a redirect released and
+    `previous_delivery_date` as the EARLIEST of their dates. A repair never changes what a
+    row replaced - `previous_qty` is left exactly as it was - only recomputes the EARLIEST
+    date over the mirror's migrated rows that are currently `redirected_to_pool`, using
+    their (possibly just-repaired) dates, and writes it onto every non-cancelled sibling
+    that already carries a `previous_delivery_date`. The note's own prose ("Was 182 on
+    2027-03-01") is corrected the same way, so the Instruction icon and the Was/Now table
+    never disagree.
+    """
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
     siblings = (
         db.query(OrderInquiryRow)
         .filter(
@@ -574,30 +692,22 @@ def _repair_migrated_date(db: Session, mirror_id: str, row: Any) -> Optional[Any
         )
         .all()
     )
-    sheet_qty = _dec(row.qty)
-    migrated = next(
-        (
-            r for r in siblings
-            if r.note and r.note.startswith(_MIGRATION_STAMP)
-            and r.item_code == row.item_code
-            and _dec(r.qty) == sheet_qty
-        ),
-        None,
-    )
-    if migrated is None or migrated.delivery_date == row.delivery_date:
-        return None
-    old_date = migrated.delivery_date
-    migrated.delivery_date = row.delivery_date
+    redirected_dates = [
+        sibling.delivery_date
+        for sibling in siblings
+        if sibling.redirected_to_pool and (sibling.note or "").startswith(_MIGRATION_STAMP)
+        and sibling.delivery_date is not None
+    ]
+    if not redirected_dates:
+        return
+    earliest = min(redirected_dates)
     for sibling in siblings:
-        if sibling.id == migrated.id:
+        old = sibling.previous_delivery_date
+        if old is None or old == earliest:
             continue
-        if (
-            sibling.previous_qty is not None
-            and _dec(sibling.previous_qty) == sheet_qty
-            and sibling.previous_delivery_date == old_date
-        ):
-            sibling.previous_delivery_date = row.delivery_date
-    return migrated
+        sibling.previous_delivery_date = earliest
+        if sibling.note:
+            sibling.note = sibling.note.replace(f"on {old.isoformat()}", f"on {earliest.isoformat()}")
 
 
 def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
@@ -626,7 +736,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     plan.matches = [_Match(row=row) for row in expanded]
     plan.rows_expanded = len(expanded)
 
-    raised_already = _already_raised(
+    raised_already, plan.mirror_by_core_line = _already_raised(
         db, [held[0] for group in lines.values() for held in group]
     )
     #: Which candidate lines the book BOUGHT for, over every line of every order the sheet
@@ -677,6 +787,7 @@ def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
     plan.orders_to_adopt = _unadopted(
         db, [plan.orders[number] for number in plan.orders_in_play]
     )
+    _resolve_delivery_date_repairs(db, plan)
     return plan
 
 
@@ -1217,7 +1328,6 @@ def _result(
     rows_raised: int,
     orders_adopted: int = 0,
     orders_stamped: int = 0,
-    rows_delivery_date_updated: int = 0,
 ) -> dict:
     """The eighteen keys, and nothing else (AC-S1-22).
 
@@ -1225,8 +1335,11 @@ def _result(
     `lines_created` is a screen that can tell somebody this sheet wrote the book.
 
     `rows_delivery_date_updated` joined them 18 Sep 2026: how many of the
-    `rows_already_raised` rows this run repaired to the sheet's own date, rather than only
-    leaving alone.
+    `rows_already_raised` rows this run repairs to the sheet's own date, rather than only
+    leaving alone. Read off `plan.matches` rather than passed in (S1, 19 Sep 2026): the
+    decision was already made, read-only, in `_resolve_delivery_date_repairs`, so `preview`
+    forecasts the exact number `apply` writes rather than a caller-supplied count the two
+    could drift apart on.
     """
     line_not_found = [
         {
@@ -1253,7 +1366,7 @@ def _result(
         "rows": plan.rows_expanded if plan.rows_expanded is not None else len(plan.parsed.rows),
         "rows_raised": rows_raised,
         "rows_already_raised": sum(1 for m in plan.matches if m.already_raised),
-        "rows_delivery_date_updated": rows_delivery_date_updated,
+        "rows_delivery_date_updated": sum(1 for m in plan.matches if m.repair_row_id),
         "rows_line_not_found": len(line_not_found),
         "line_not_found": line_not_found[:_CAP],
         "sales_orders_not_found": plan.orders_not_found[:_CAP],
@@ -1274,7 +1387,7 @@ def _result(
 
 
 def _empty(parsed: OrderInquiryResult) -> dict:
-    """The same fifteen keys for a file that could not be read (AC-S1-25)."""
+    """The same eighteen keys for a file that could not be read (AC-S1-25)."""
     return _result(_Plan(parsed=parsed), {}, [], rows_raised=0)
 
 
@@ -1302,6 +1415,9 @@ def validate(db: Session, file_data: bytes) -> dict:
     calls a 400-row book a failure over 3 rows is a panel nobody reads.
     """
     out = preview(db, file_data)
+    # Left alone excludes what will be repaired (S1, 19 Sep 2026): a row counted in both
+    # lines would read as "left alone" AND "corrected", which is not what either means.
+    left_alone = out["rows_already_raised"] - out["rows_delivery_date_updated"]
     warnings = [
         val.named(
             len(out["sales_orders_not_found"]), out["sales_orders_not_found"],
@@ -1310,10 +1426,11 @@ def validate(db: Session, file_data: bytes) -> dict:
         ),
         (f"{out['rows_line_not_found']:,} rows name no sales order line we hold, so they "
          f"will not be raised") if out["rows_line_not_found"] else None,
-        (f"{out['rows_already_raised']:,} rows are on a line that already carries an order "
-         f"inquiry, and are left alone") if out["rows_already_raised"] else None,
-        (f"{out['rows_delivery_date_updated']:,} of those rows corrected a migrated row's "
-         f"delivery date to the sheet's own") if out["rows_delivery_date_updated"] else None,
+        (f"{left_alone:,} rows are on a line that already carries an order inquiry, and "
+         f"are left alone") if left_alone else None,
+        (f"{out['rows_delivery_date_updated']:,} rows are on a line that already carries "
+         f"an order inquiry; the migrated row's delivery date will be corrected to the "
+         f"sheet's own") if out["rows_delivery_date_updated"] else None,
         # Never fires since the remark stopped pairing anything (section 8):
         # `documents_not_linkable` comes back empty from every run, and `val.named(0, ...)`
         # is None. Kept beside the key it reads, which stays on the result because the
@@ -1660,7 +1777,10 @@ def apply(
     linked: List[Any] = []
     history: List[Any] = []
     raised = 0
-    delivery_dates_updated = 0
+    #: Mirrors touched by a repair this run, resynced once each (S5) after the loop -
+    #: never inline, since a line's second dated row can still repair a sibling migrated
+    #: row on the SAME mirror later in this same loop.
+    repaired_mirrors: set = set()
 
     for index, match in enumerate(plan.matches):
         row = match.row
@@ -1684,15 +1804,16 @@ def apply(
             continue
         if match.already_raised:
             # The line is not raised again (D2), but a re-upload of a corrected sheet is
-            # how a MIGRATED row's stale date gets fixed (18 Sep 2026 reversal of 7.4) -
-            # `_repair_migrated_date` finds nothing to do on any other shape and leaves the
-            # skip exactly as it read before.
-            mirror_id = _mirror_of(db, match.core_line.id)
-            migrated = (
-                _repair_migrated_date(db, mirror_id, row) if mirror_id is not None else None
-            )
-            if migrated is not None:
-                delivery_dates_updated += 1
+            # how a MIGRATED row's stale date gets fixed (18 Sep 2026 reversal of 7.4).
+            # `_resolve_delivery_date_repairs` already decided WHICH row, read-only, in
+            # `_plan` (S1) - this only writes it, so `preview`'s forecast and what `apply`
+            # actually does cannot drift apart.
+            if match.repair_row_id is not None:
+                from app.models.project_so import OrderInquiryRow
+
+                migrated = db.get(OrderInquiryRow, match.repair_row_id)
+                migrated.delivery_date = row.delivery_date
+                repaired_mirrors.add(str(migrated.so_line_id))
                 outcome.updated(row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
                                  identity=identity, value=row.so_number,
                                  entity_type="order_inquiry_row", entity_id=migrated.id)
@@ -1743,8 +1864,10 @@ def apply(
         # derivation for the whole inquiry on every row of a sheet that names it.
         service.refresh_link_state(linked)
 
+    for mirror_id in repaired_mirrors:
+        _resync_sibling_was_now(db, mirror_id)
+
     _close_history(history, actor, now)
     db.flush()
     return _result(plan, links, not_linkable, rows_raised=raised,
-                   orders_adopted=raiser.adopted, orders_stamped=stamped,
-                   rows_delivery_date_updated=delivery_dates_updated)
+                   orders_adopted=raiser.adopted, orders_stamped=stamped)
