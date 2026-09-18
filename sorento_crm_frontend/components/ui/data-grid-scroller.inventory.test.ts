@@ -225,6 +225,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     'app/(protected)/sla-management/sla-policies/components/SLAPolicyTiersTable.tsx',
     1, // TierUsersSheetContent's PanelDataGrid inside the tier users Sheet body
   ],
+  [
+    'app/(protected)/project-sales/_shared/components/LinkDocumentDialog.tsx',
+    1, // S8's DataGrid candidate table inside the dialog's own DialogBody
+  ],
 ]);
 
 const SCROLLER_MAX_HEIGHT_FALSE =

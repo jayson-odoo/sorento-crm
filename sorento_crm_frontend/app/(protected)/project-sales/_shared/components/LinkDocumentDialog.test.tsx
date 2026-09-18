@@ -95,7 +95,7 @@ describe('LinkDocumentDialog: loading, empty and error states', () => {
   });
 
   it('names an empty result rather than showing a blank table', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -121,7 +121,7 @@ describe('LinkDocumentDialog: loading, empty and error states', () => {
 
 describe('LinkDocumentDialog: the cascade preview', () => {
   it('opens with each line pre-filled at its own cascade take', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY, LATER], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -142,7 +142,7 @@ describe('LinkDocumentDialog: the cascade preview', () => {
   });
 
   it('names the cascade take on the candidate the pass would use', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY, LATER], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -153,7 +153,7 @@ describe('LinkDocumentDialog: the cascade preview', () => {
   });
 
   it('reports the leftover as still demand when the cascade only partly covers the row', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -169,7 +169,7 @@ describe('LinkDocumentDialog: the cascade preview', () => {
 
 describe('LinkDocumentDialog: editing the take', () => {
   it('refuses to confirm when a line is edited past its own remaining balance', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -183,7 +183,7 @@ describe('LinkDocumentDialog: editing the take', () => {
   });
 
   it('refuses to confirm when the total taken is more than the row needs', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY, LATER], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -197,7 +197,7 @@ describe('LinkDocumentDialog: editing the take', () => {
   });
 
   it('refuses to confirm with nothing taken at all', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -212,7 +212,7 @@ describe('LinkDocumentDialog: editing the take', () => {
 
 describe('LinkDocumentDialog: confirming', () => {
   it('posts the whole allocation in one call and closes on success', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY, LATER], still_to_link: "25" });
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
@@ -223,16 +223,27 @@ describe('LinkDocumentDialog: confirming', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '15' },
-        { po_line_id: 'po-line-later', qty: '10' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [
+          { po_line_id: 'po-line-early', qty: '15' },
+          { po_line_id: 'po-line-later', qty: '10' },
+        ],
+        // S8 review round (17 Sep): the third argument is `offeredLineIds` - every
+        // candidate this press RENDERED, exactly the rendered set, so the server never
+        // retires a line the dialog never showed.
+        ['po-line-early', 'po-line-later'],
+      ),
     );
+    expect(placeOrderInquiryRowOnPoAllocations.mock.calls[0][2]).toEqual([
+      'po-line-early',
+      'po-line-later',
+    ]);
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
   it('posts a hand-edited take rather than the cascade default', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
@@ -244,14 +255,16 @@ describe('LinkDocumentDialog: confirming', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '12' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [{ po_line_id: 'po-line-early', qty: '12' }],
+        ['po-line-early'],
+      ),
     );
   });
 
   it('drops a line cleared to zero from the posted allocation', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY, LATER]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY, LATER], still_to_link: "25" });
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
@@ -263,14 +276,19 @@ describe('LinkDocumentDialog: confirming', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '15' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [{ po_line_id: 'po-line-early', qty: '15' }],
+        // The zeroed line is still RENDERED (still in `offeredLineIds`) even though its
+        // own take dropped it from `allocations` - the server needs to see it was
+        // offered, or a genuinely-zeroed line reads as never shown and survives.
+        ['po-line-early', 'po-line-later'],
+      ),
     );
   });
 
   it('closes without placing anything on Cancel', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -286,7 +304,7 @@ describe('LinkDocumentDialog: confirming', () => {
 
 describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)', () => {
   it('the chevron toggles the nested line/claims panel, collapsed by default', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -303,7 +321,7 @@ describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)'
   });
 
   it('names an empty result rather than showing a blank claims table', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -327,7 +345,7 @@ describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)'
         { so_number: 'SO2026002', item_code: 'BASIN-001', qty: '15', placed_date: '2026-08-05' },
       ],
     };
-    getOrderInquiryPoCandidates.mockResolvedValue([priced]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [priced], still_to_link: "10" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="10" onDone={onDone} />,
@@ -345,7 +363,7 @@ describe('LinkDocumentDialog: the candidate expand (section G, unchanged by G2)'
   });
 
   it('names no price on file when the line carries none', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -371,7 +389,7 @@ describe('LinkDocumentDialog: G7 / G12 dedication (AC-6.5)', () => {
       dedicated_to: 'SO2026009',
       default_take: '0',
     };
-    getOrderInquiryPoCandidates.mockResolvedValue([dedicated]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [dedicated], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -391,7 +409,7 @@ describe('LinkDocumentDialog: G7 / G12 dedication (AC-6.5)', () => {
       unattributed: true,
       default_take: '0',
     };
-    getOrderInquiryPoCandidates.mockResolvedValue([unattributed]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [unattributed], still_to_link: "25" });
     placeOrderInquiryRowOnPoAllocations.mockResolvedValue({ id: 'row-1', state: 'placed' });
 
     renderDialog(
@@ -411,14 +429,16 @@ describe('LinkDocumentDialog: G7 / G12 dedication (AC-6.5)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Link' }));
 
     await waitFor(() =>
-      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith('row-1', [
-        { po_line_id: 'po-line-early', qty: '10' },
-      ]),
+      expect(placeOrderInquiryRowOnPoAllocations).toHaveBeenCalledWith(
+        'row-1',
+        [{ po_line_id: 'po-line-early', qty: '10' }],
+        ['po-line-early'],
+      ),
     );
   });
 
   it('shows neither badge and no grey background on an ordinary candidate', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "25" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
@@ -441,7 +461,7 @@ describe('LinkDocumentDialog: G7 / G12 dedication (AC-6.5)', () => {
  */
 describe('LinkDocumentDialog: the link horizon', () => {
   it('AC-LH3: shows the horizon, and flags a row due after it while still allowing the take', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "15" });
 
     renderDialog(
       <LinkDocumentDialog
@@ -467,7 +487,7 @@ describe('LinkDocumentDialog: the link horizon', () => {
   });
 
   it('AC-LH4: a row with no delivery date is inside the horizon, so no notice', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "15" });
 
     renderDialog(
       <LinkDocumentDialog
@@ -486,7 +506,7 @@ describe('LinkDocumentDialog: the link horizon', () => {
   });
 
   it('says nothing about a horizon when none is in force', async () => {
-    getOrderInquiryPoCandidates.mockResolvedValue([EARLY]);
+    getOrderInquiryPoCandidates.mockResolvedValue({ candidates: [EARLY], still_to_link: "15" });
 
     renderDialog(
       <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="15" onDone={onDone} />,
@@ -494,5 +514,42 @@ describe('LinkDocumentDialog: the link horizon', () => {
 
     await screen.findByTestId('po-candidates-table');
     expect(screen.queryByTestId('link-dialog-horizon')).toBeNull();
+  });
+});
+
+describe("S8 review round (17 Sep): a bundled row's capacity is the server's linkable_qty, never the bare qty prop", () => {
+  it("the footer total reads against linkable_qty, not the row's whole qty", async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue({
+      candidates: [EARLY],
+      still_to_link: '10',
+      linkable_qty: '10',
+    });
+
+    renderDialog(
+      // `qty="25"` is the row's WHOLE quantity; a bundled row's own ala-carte
+      // remainder (`linkable_qty`) is smaller - `10` here.
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(screen.getByText(/of 10(?!\d)/)).toBeInTheDocument();
+  });
+
+  it("refuses a take the bundle's own remainder cannot hold, even though the bare qty would allow it", async () => {
+    getOrderInquiryPoCandidates.mockResolvedValue({
+      candidates: [EARLY],
+      still_to_link: '10',
+      linkable_qty: '10',
+    });
+
+    renderDialog(
+      // EARLY's default_take is 15 - inside a bare qty of 25, but 5 over a bundled
+      // row's real 10-unit capacity.
+      <LinkDocumentDialog rowId="row-1" itemCode="BASIN-001" qty="25" onDone={onDone} />,
+    );
+
+    await screen.findByTestId('po-candidates-table');
+    expect(screen.getByText('5 more than this row needs')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Link' })).toBeDisabled();
   });
 });

@@ -207,17 +207,16 @@ def test_the_undecided_lines_of_a_partly_confirmed_order_are_still_demand():
         assert aside["lines"] == 1
 
 
-def test_the_reorder_engine_plans_a_born_acknowledged_row_but_excludes_a_rejected_one():
-    """S1 (review of PR #471, `PLAN-scm-reorder-oi-feedback-1sep.md`) retired this
-    test's own premise: a confirm's row used to be born `awaiting` and the plan gated on
-    a manual acknowledge (`PLAN-scm-oi-handshake.md`). A row is born acknowledged now
-    (G4) - there is no manual step left for the engine to gate on, so "the plan must not
-    buy against an awaiting row" no longer occurs naturally (the migration backfilled
-    every pre-existing one, and nothing writes a fresh `awaiting` row any more).
+def test_the_reorder_engine_plans_a_confirmed_row_but_excludes_awaiting_and_rejected():
+    """`PLAN-oi-confirm-per-so.md` S1 RESTORES this test's own original premise, which
+    G4 (`PLAN-scm-reorder-oi-feedback-1sep.md` S1) had retired: a confirm's row is born
+    `awaiting` again and the plan gates on purchasing's own Confirm press
+    (`PLAN-scm-oi-handshake.md`) - "the plan must not buy against an awaiting row" is
+    real again, not backfilled away.
 
-    `PLANNED_ACK_STATES` (`acknowledged`, `changed`) still excludes `rejected`, which is
-    the invariant that survives: a row purchasing refused is not demand, while a row born
-    acknowledged is demand from the moment CS raises it - no confirm step in between.
+    `PLANNED_ACK_STATES` (`acknowledged`, `changed`) excludes both `awaiting` and
+    `rejected`: a row purchasing has not yet read is not demand any more than a row they
+    refused is, and only an explicit Confirm press makes it so.
     """
     from app.models.base import company_scope
     from app.models.project_so import OrderInquiryRow
@@ -243,17 +242,6 @@ def test_the_reorder_engine_plans_a_born_acknowledged_row_but_excludes_a_rejecte
             ],
         )
 
-        acknowledged = _planning_row(db, world)
-        assert Decimal(str(acknowledged["project_committed"])) == Decimal("50"), (
-            "born acknowledged (G4) - the plan buys against it from the moment CS raises "
-            "it, no confirm step in between"
-        )
-        assert Decimal(str(acknowledged["project_confirmed_committed"])) == Decimal("50")
-        assert Decimal(str(acknowledged["committed"])) == Decimal("50")
-        assert _committed(db, world)["project_committed"] == Decimal("50"), (
-            "the VIEW agrees - it is owed to the customer either way"
-        )
-
         row_ids = [
             str(row_id)
             for (row_id,) in db.query(OrderInquiryRow.id)
@@ -261,6 +249,27 @@ def test_the_reorder_engine_plans_a_born_acknowledged_row_but_excludes_a_rejecte
             .all()
         ]
         assert row_ids, "the confirmation must have raised the Buy as an inquiry row"
+
+        awaiting = _planning_row(db, world)
+        assert Decimal(str(awaiting["project_committed"])) == Decimal("0"), (
+            "born awaiting again (S1) - nothing to buy against until purchasing confirms it"
+        )
+        assert _committed(db, world)["project_committed"] == Decimal("50"), (
+            "the VIEW still counts it - it is owed to the customer either way"
+        )
+
+        with company_scope(db, frozenset({world.company_id})):
+            ProjectOrderInquiryService(db).acknowledge_rows(
+                row_ids, actor_user_id=world.user_id
+            )
+        db.commit()
+
+        acknowledged = _planning_row(db, world)
+        assert Decimal(str(acknowledged["project_committed"])) == Decimal("50"), (
+            "purchasing's own Confirm press is what makes it demand"
+        )
+        assert Decimal(str(acknowledged["project_confirmed_committed"])) == Decimal("50")
+        assert Decimal(str(acknowledged["committed"])) == Decimal("50")
 
         with company_scope(db, frozenset({world.company_id})):
             ProjectOrderInquiryService(db).reject_row(

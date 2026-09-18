@@ -37,16 +37,20 @@ export const ACK_LABELS: Record<OrderInquiryAckState, string> = {
 export const ACK_ANY = 'all';
 
 /**
- * What the Confirmed filter offers, in the order purchasing reads them (S3, review of
- * PR #471). No "To confirm" any more: a row is born acknowledged and a settle
- * auto-acknowledges again (G4), so nothing sits in `awaiting` (bar a pre-migration or
- * otherwise legacy row) for that option to mean anything about - the filter still
- * selects a genuinely rejected or changed row, which is what purchasing still looks up.
+ * What the Confirmed filter offers, in the order purchasing reads them (PLAN-oi-confirm-
+ * per-so, R3: G4/G5 reversed). A row is born `awaiting` again - the handshake is back on -
+ * so "To confirm" is purchasing's own work queue and the page's own default (`ack`
+ * absent), with an explicit "All" beside it for "show me everything regardless of where
+ * it stands". `to_confirm` is not a stored `ack_state` (it is `awaiting` OR `changed`
+ * together) - the backend has read it since the handshake plan and this is the first
+ * time the FE offers it again.
  */
 export const ACK_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'to_confirm', label: 'To confirm' },
   { value: 'acknowledged', label: ACK_LABELS.acknowledged },
   { value: 'changed', label: ACK_LABELS.changed },
   { value: 'rejected', label: ACK_LABELS.rejected },
+  { value: ACK_ANY, label: 'All' },
 ];
 
 export function ackStateOf(row: OrderInquiryAckFields): OrderInquiryAckState {

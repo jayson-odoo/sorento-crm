@@ -34,14 +34,14 @@ Not seeded (deliberately): `对冲` `高压` `上线` `薄边` `新` `飞机` `�
 `2078盆` `iB` `BRAVAT` and the BRAVAT basin kinds.
 
 Revision ID: ifa_supplier_word_col
-Revises: oioh_0001_one_header_per_so
+Revises: oicf_0001_board_rows_to_confirm
 """
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "ifa_supplier_word_col"
-down_revision = "oioh_0001_one_header_per_so"
+down_revision = "oicf_0001_board_rows_to_confirm"
 branch_labels = None
 depends_on = None
 
