@@ -320,8 +320,8 @@ that writes nothing.
   Was/Now of the row raised beside it, on any later sheet, not only the one that first
   migrated it - including when a planning change already amended the row itself, in which
   case it is the row's own Was date that is corrected, never its current one, and including
-  a row the board restated before any Was was recorded for it, where the sheet's own row
-  becomes that Was.
+  the row that replaced a migrated row a later reconfirm superseded, where the sheet's own
+  row becomes the Was it never got.
 * Each raised row carries the note **Migrated from order inquiry sheet** followed by the file
   name, so you can tell it from a row the board raised. Read it from the info icon in the
   **Instruction** column.

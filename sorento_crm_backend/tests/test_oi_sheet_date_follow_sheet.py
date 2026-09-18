@@ -180,18 +180,37 @@ def _settled_row(
     return row
 
 
-def _restated_row(
-    w: World, mirror, *, qty: str, delivery_date: date, changed_at: datetime
+def _cancelled_sibling(
+    w: World,
+    mirror,
+    *,
+    qty: str,
+    previous_qty: str | None = None,
+    previous_delivery_date: date | None = None,
+    revision: int = 2,
 ) -> OrderInquiryRow:
-    """Shape C, round 6 (19 Sep 2026, owner go): the MIGRATED row itself, restated IN
-    PLACE by a board Confirm BEFORE a Was was ever recorded for it - `changed_at` is set
-    (the only marker "the board restated this row" leaves, verified against
-    `_settle_row_in_place`) but `previous_qty`/`previous_delivery_date` are still `NULL`.
-    SO314593's own CB2806A-DIY / SRTWB245 shape."""
+    """Shape C's own sibling, round 7 (19 Sep 2026, revised after the real prod SELECT): a
+    migrated row a reconfirm CANCELLED, its note overwritten to "Superseded by revision N"
+    (`_settle_row_in_place`'s cancel path REPLACES the note, never appends - the migration
+    stamp is gone, so this row can never be found by it, only by quantity).
+    `previous_qty`/`previous_delivery_date` are set only when it was settled once before
+    being superseded (SO314593's own shape); left `None` is the "never settled" shape."""
+    row = w.board_row(mirror, qty=qty)
+    row.state = INQUIRY_CANCELLED
+    row.note = f"Superseded by revision {revision}"
+    if previous_qty is not None:
+        row.previous_qty = Decimal(previous_qty)
+    if previous_delivery_date is not None:
+        row.previous_delivery_date = previous_delivery_date
+    w.db.flush()
+    return row
+
+
+def _live_row(w: World, mirror, *, qty: str, delivery_date: date) -> OrderInquiryRow:
+    """Shape C's own live row, round 7 (19 Sep 2026): the fresh row a reconfirm RAISED in
+    place of a cancelled migrated one - board-raised, no migration stamp, no Was at all."""
     row = w.board_row(mirror, qty=qty)
     row.delivery_date = delivery_date
-    row.note = importer._MIGRATION_STAMP
-    row.changed_at = changed_at
     w.db.flush()
     return row
 
@@ -607,7 +626,15 @@ def test_ac_10_an_undated_row_never_writes_null_over_a_migrated_row():
 def test_ac_11_a_cancelled_migrated_row_is_never_repaired():
     """AC-11 (S2, 19 Sep 2026). The line's live row is a different quantity, so the sheet's
     182 matches only a CANCELLED migrated row - which must never be repaired, even though
-    it is the only quantity match on the line."""
+    it is the only quantity match on the line.
+
+    The live row's own `delivery_date` deliberately differs from the line's own
+    `required_date` (round 7 review): a live row ON the line's date with no Was of its own
+    is EXACTLY shape C's own live-row shape, and this cancelled sibling's quantity (182)
+    matches the sheet's - so with the live row ON the line's date this test would exercise
+    a genuine shape-C adoption instead of the isolated "a cancelled row is never touched"
+    case it means to pin. Off the line's date, neither shape reaches it.
+    """
     old_date = date(2027, 3, 1)
     with world() as w:
         order = w.order()
@@ -621,9 +648,10 @@ def test_ac_11_a_cancelled_migrated_row_is_never_repaired():
         cancelled.state = INQUIRY_CANCELLED
         mirror = w.mirror_of(line)
         w.db.flush()
-        # The live counterpart that makes the LINE already-raised, a different quantity.
+        # The live counterpart that makes the LINE already-raised, a different quantity
+        # AND a different date - see the docstring above for why the date matters now.
         live = w.board_row(mirror, qty="50")
-        live.delivery_date = old_date
+        live.delivery_date = date(2026, 1, 1)
         w.db.flush()
 
         data = sheet([
@@ -1250,12 +1278,14 @@ def test_ac_24_a_settled_row_already_on_the_sheets_date_is_a_no_op_not_a_phantom
         assert preview_again["rows_delivery_date_updated"] == 0, preview_again
 
 
-def test_ac_25_a_restated_row_adopts_the_sheets_was():
-    """AC-25 (Shape C, round 6, 19 Sep 2026 - SO314593's CB2806A-DIY (220) / SRTWB245 (280)
-    shape, restated by a board Confirm 17 Sep 2026 10:11/11:25 MYT, before #992 deployed
-    and before a Was was ever recorded). The MIGRATED row carries qty 220, delivery_date
-    the line's required_date, `changed_at` set (something restated it), and no Was at
-    all. The sheet says 182 @ 1.6.2026 - adopted as the row's Was."""
+def test_ac_25_a_live_row_adopts_the_sheets_was_through_its_cancelled_sibling():
+    """AC-25 (Shape C, round 7, 19 Sep 2026 - the REAL SO314593 CB2806A-DIY / SRTWB245
+    shape, confirmed by a prod `SELECT`). A reconfirm CANCELLED a migrated row that had
+    been settled once before being superseded (qty 220, previous_qty 182,
+    previous_delivery_date the line's required_date - its own Was, from that earlier
+    settle) and RAISED A FRESH LIVE ROW in its place (qty 220, delivery_date the line's
+    required_date, no Was at all, no migration stamp). The sheet says 182 @ 1.6.2026 -
+    adopted as the LIVE row's Was through its cancelled sibling's own 182."""
     required = date(2027, 3, 1)
     sheet_date = date(2026, 6, 1)
     with world() as w:
@@ -1265,10 +1295,10 @@ def test_ac_25_a_restated_row_adopts_the_sheets_was():
 
         ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
         mirror = w.mirror_of(line)
-        restated = _restated_row(
-            w, mirror, qty="220", delivery_date=required,
-            changed_at=datetime(2026, 9, 17, 10, 11, 0),
+        cancelled = _cancelled_sibling(
+            w, mirror, qty="220", previous_qty="182", previous_delivery_date=required,
         )
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
 
         data = sheet([
             (order.so_number, w.product.product_code, 182, sheet_date,
@@ -1284,54 +1314,27 @@ def test_ac_25_a_restated_row_adopts_the_sheets_was():
         assert result["rows_raised"] == 0, result
         assert result["rows_already_raised"] == 1, result
         assert result["rows_delivery_date_updated"] == 1, result
-        w.db.refresh(restated)
-        assert Decimal(str(restated.previous_qty)) == Decimal("182")
-        assert restated.previous_delivery_date == sheet_date
-        assert restated.delivery_date == required, "the Now date must stay untouched"
-        assert Decimal(str(restated.qty)) == Decimal("220"), "the Now quantity moved"
-        assert restated.note == (
-            f"{importer._MIGRATION_STAMP}; Was 182 on {sheet_date.isoformat()}"
-        )
+
+        w.db.refresh(live)
+        assert Decimal(str(live.previous_qty)) == Decimal("182")
+        assert live.previous_delivery_date == sheet_date
+        assert live.delivery_date == required, "the live row's Now date must stay untouched"
+        assert Decimal(str(live.qty)) == Decimal("220"), "the live row's Now quantity moved"
+        assert live.note == f"Was 182 on {sheet_date.isoformat()}"
+
+        w.db.refresh(cancelled)
+        assert cancelled.previous_qty == Decimal("182"), "the cancelled sibling was touched"
+        assert cancelled.note == "Superseded by revision 2", "the cancelled sibling was touched"
+
         seen_codes = {entry["code"] for entry in outcome_recorder.breakdown()["successful"]}
         assert seen_codes == {oc.DELIVERY_DATE_UPDATED}, seen_codes
 
 
-def test_ac_26_a_never_restated_row_with_a_different_quantity_is_left_alone():
-    """AC-26 (Shape C). A migrated row with `changed_at IS NULL` (never restated) is shape
-    A's own territory, not shape C's - a quantity that does not match the sheet leaves it
-    alone, whatever the sheet says."""
+def test_ac_26_a_live_row_with_no_cancelled_sibling_is_left_alone():
+    """AC-26 (Shape C). A live row with the exact shape C shape (no Was, on the line's
+    own date) but NO cancelled sibling anywhere on the mirror - a plain board row - is
+    left alone, whatever the sheet says."""
     required = date(2027, 3, 1)
-    with world() as w:
-        order = w.order()
-        line = w.line(order, qty_ordered="400", required_date=required)
-        migration_sheet = sheet([
-            (order.so_number, w.product.product_code, 182, required,
-             w.warehouse.warehouse_code, ""),
-        ])
-        _apply(w, migration_sheet, file_name="2026-08 order inquiry.xlsx")
-        migrated = w.one_row()
-        assert migrated.changed_at is None
-
-        data = sheet([
-            (order.so_number, w.product.product_code, 100, date(2026, 6, 1),
-             w.warehouse.warehouse_code, ""),
-        ])
-
-        result = _apply(w, data)
-
-        assert result["rows_raised"] == 0, result
-        assert result["rows_already_raised"] == 1, result
-        assert result["rows_delivery_date_updated"] == 0, result
-        w.db.refresh(migrated)
-        assert migrated.previous_qty is None
-        assert migrated.delivery_date == required
-
-
-def test_ac_27_a_restated_row_not_on_the_lines_date_is_never_adopted():
-    """AC-27 (Shape C). A restated row whose `delivery_date` already differs from the
-    line's `required_date` is not this shape's business - left alone."""
-    required = date(2027, 3, 1)
-    other_date = date(2026, 1, 1)
     with world() as w:
         order = w.order()
         line = w.line(order, qty_ordered="400", required_date=required)
@@ -1339,10 +1342,7 @@ def test_ac_27_a_restated_row_not_on_the_lines_date_is_never_adopted():
 
         ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
         mirror = w.mirror_of(line)
-        restated = _restated_row(
-            w, mirror, qty="220", delivery_date=other_date,
-            changed_at=datetime(2026, 9, 17, 10, 11, 0),
-        )
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
 
         data = sheet([
             (order.so_number, w.product.product_code, 182, date(2026, 6, 1),
@@ -1354,15 +1354,47 @@ def test_ac_27_a_restated_row_not_on_the_lines_date_is_never_adopted():
         assert result["rows_raised"] == 0, result
         assert result["rows_already_raised"] == 1, result
         assert result["rows_delivery_date_updated"] == 0, result
-        w.db.refresh(restated)
-        assert restated.previous_qty is None
-        assert restated.delivery_date == other_date
+        w.db.refresh(live)
+        assert live.previous_qty is None
+        assert live.delivery_date == required
+
+
+def test_ac_27_a_cancelled_siblings_mismatched_quantity_leaves_the_live_row_alone():
+    """AC-27 (Shape C). A cancelled migrated sibling whose OWN `qty` AND `previous_qty`
+    both differ from the sheet's quantity carries no identity match - the live row is
+    left alone."""
+    required = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        _cancelled_sibling(
+            w, mirror, qty="220", previous_qty="200", previous_delivery_date=required,
+        )
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_delivery_date_updated"] == 0, result
+        w.db.refresh(live)
+        assert live.previous_qty is None
+        assert live.delivery_date == required
 
 
 def test_ac_28_shape_c_reupload_is_idempotent():
     """AC-28 (Shape C). Running AC-25's upload a second time changes nothing - once
-    adopted, the row's `previous_qty` is no longer NULL, so the second run finds no
-    candidate at all."""
+    adopted, the live row's `previous_qty` is no longer `NULL`, so the second run finds
+    no candidate at all."""
     required = date(2027, 3, 1)
     sheet_date = date(2026, 6, 1)
     with world() as w:
@@ -1372,10 +1404,10 @@ def test_ac_28_shape_c_reupload_is_idempotent():
 
         ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
         mirror = w.mirror_of(line)
-        restated = _restated_row(
-            w, mirror, qty="220", delivery_date=required,
-            changed_at=datetime(2026, 9, 17, 10, 11, 0),
+        _cancelled_sibling(
+            w, mirror, qty="220", previous_qty="182", previous_delivery_date=required,
         )
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
 
         data = sheet([
             (order.so_number, w.product.product_code, 182, sheet_date,
@@ -1390,15 +1422,16 @@ def test_ac_28_shape_c_reupload_is_idempotent():
         assert second["rows_raised"] == 0, second
         assert second["rows_delivery_date_updated"] == 0, second
         assert second["rows_already_raised"] == 1, second
-        w.db.refresh(restated)
-        assert Decimal(str(restated.previous_qty)) == Decimal("182")
-        assert restated.previous_delivery_date == sheet_date
+        w.db.refresh(live)
+        assert Decimal(str(live.previous_qty)) == Decimal("182")
+        assert live.previous_delivery_date == sheet_date
 
 
 def test_ac_29_all_three_shapes_on_one_mirror_are_each_claimed_once():
-    """AC-29 (round 6). A mirror carrying a shape A row, a shape B row AND a shape C row,
-    with three sheet rows each matching exactly one - each is claimed once,
-    deterministically, in priority order (exact match, shape A, shape B, shape C)."""
+    """AC-29 (round 7). A mirror carrying a shape A row, a shape B row, AND a shape C pair
+    (a live row + its cancelled sibling), with three sheet rows each matching exactly one -
+    each is claimed once, deterministically, in priority order (exact match, shape A,
+    shape B, shape C)."""
     required = date(2027, 3, 1)
     new_date_a = date(2026, 6, 1)
     new_date_b = date(2026, 7, 1)
@@ -1417,17 +1450,15 @@ def test_ac_29_all_three_shapes_on_one_mirror_are_each_claimed_once():
             previous_qty="150", previous_delivery_date=required,
             note=f"Migrated from order inquiry sheet x.xlsx; Was 150 on {required.isoformat()}",
         )
-        row_c = _restated_row(
-            w, mirror, qty="200", delivery_date=required,
-            changed_at=datetime(2026, 9, 17, 11, 25, 0),
-        )
+        _cancelled_sibling(w, mirror, qty="200")
+        live_c = _live_row(w, mirror, qty="200", delivery_date=required)
 
         data = sheet([
             (order.so_number, w.product.product_code, 100, new_date_a,
              w.warehouse.warehouse_code, ""),
             (order.so_number, w.product.product_code, 150, new_date_b,
              w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 170, new_date_c,
+            (order.so_number, w.product.product_code, 200, new_date_c,
              w.warehouse.warehouse_code, ""),
         ])
 
@@ -1438,16 +1469,125 @@ def test_ac_29_all_three_shapes_on_one_mirror_are_each_claimed_once():
 
         w.db.refresh(row_a)
         w.db.refresh(row_b)
-        w.db.refresh(row_c)
+        w.db.refresh(live_c)
 
         assert row_a.delivery_date == new_date_a, "shape A row was not repaired"
         assert Decimal(str(row_a.qty)) == Decimal("100")
 
         assert row_b.previous_delivery_date == new_date_b, "shape B row was not repaired"
         assert Decimal(str(row_b.previous_qty)) == Decimal("150")
-        assert Decimal(str(row_b.qty)) == Decimal("90"), "shape B's Now moved"
+        assert Decimal(str(row_b.qty)) == Decimal("90")
 
-        assert Decimal(str(row_c.previous_qty)) == Decimal("170"), "shape C row was not adopted"
-        assert row_c.previous_delivery_date == new_date_c
-        assert Decimal(str(row_c.qty)) == Decimal("200"), "shape C's Now moved"
-        assert row_c.delivery_date == required, "shape C's Now date moved"
+        assert Decimal(str(live_c.previous_qty)) == Decimal("200"), "shape C row was not adopted"
+        assert live_c.previous_delivery_date == new_date_c
+        assert Decimal(str(live_c.qty)) == Decimal("200")
+        assert live_c.delivery_date == required
+
+
+def test_shape_c_pairs_by_sibling_identity_not_file_position():
+    """Round 7 review (item 2). Two live rows and two cancelled siblings of the SAME item
+    on one mirror: sheet rows 100 and 182 (in that FILE order) against siblings whose own
+    ORIGINAL quantities were 182 (created first) and 100 (created second) - the reverse
+    order. Pairing must follow the sibling's own quantity, not file/creation position:
+    both sheet rows still resolve, each through the sibling that actually carries its own
+    quantity."""
+    required = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="900", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+
+        # Created in THIS order: 182 first, 100 second.
+        _cancelled_sibling(w, mirror, qty="182")
+        _cancelled_sibling(w, mirror, qty="100")
+        _live_row(w, mirror, qty="300", delivery_date=required)
+        _live_row(w, mirror, qty="400", delivery_date=required)
+
+        # Sheet states 100 FIRST, then 182 - the reverse of the siblings' own creation
+        # order.
+        data = sheet([
+            (order.so_number, w.product.product_code, 100, date(2026, 6, 1),
+             w.warehouse.warehouse_code, ""),
+            (order.so_number, w.product.product_code, 182, date(2026, 7, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        # Both sheet rows have a genuine sibling match (100 and 182 both exist among the
+        # siblings) and must both resolve, regardless of file/creation order.
+        assert result["rows_delivery_date_updated"] == 2, result
+
+
+def test_shape_c_note_edit_is_anchored_replacing_not_appending():
+    """Round 7 review (item 3). If the live row's note already carries a "Was ... on ..."
+    fragment (an unusual prior state), the shape C write REPLACES it rather than
+    appending a second one."""
+    required = date(2027, 3, 1)
+    sheet_date = date(2026, 6, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        _cancelled_sibling(
+            w, mirror, qty="220", previous_qty="182", previous_delivery_date=required,
+        )
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
+        live.note = "A stray note; Was 999 on 2020-01-01"
+        w.db.flush()
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        _apply(w, data)
+
+        w.db.refresh(live)
+        assert live.note == "A stray note; Was 182 on 2026-06-01", (
+            "the existing Was fragment must be replaced, not appended to a second one"
+        )
+
+
+def test_shape_c_adoption_at_the_required_date_is_still_idempotent():
+    """Round 7 review (item 5). When the sheet's own date happens to equal the line's
+    `required_date`, a second run must still be a no-op - the adopted live row is never a
+    stamped (migrated) row, so it never re-enters shape A's or shape B's own pool either,
+    on top of shape C's own precondition (`previous_qty IS NULL`) no longer holding."""
+    required = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        _cancelled_sibling(
+            w, mirror, qty="220", previous_qty="182", previous_delivery_date=required,
+        )
+        live = _live_row(w, mirror, qty="220", delivery_date=required)
+
+        # The sheet's own date happens to equal the line's required_date.
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, required,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        first = _apply(w, data)
+        assert first["rows_delivery_date_updated"] == 1, first
+        w.db.refresh(live)
+        assert live.previous_delivery_date == required
+
+        second = _apply(w, data)
+
+        assert second["rows_delivery_date_updated"] == 0, second
+        w.db.refresh(live)
+        assert live.previous_delivery_date == required
+        assert Decimal(str(live.previous_qty)) == Decimal("182")
