@@ -1,7 +1,7 @@
 """Local-supplier Buy routing behind a system setting, off by default
 
 Revision ID: lbrt_0001_local_buy_toggle
-Revises: oicf_0001_board_rows_to_confirm
+Revises: oihr_0002_undone_headline
 Create Date: 2026-09-18 00:00:00.000000
 
 `PLAN-local-buy-routing-toggle.md` S1 (owner ruling 18 Sep 2026). #814 hard-wired a Buy on
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "lbrt_0001_local_buy_toggle"
-down_revision = "oicf_0001_board_rows_to_confirm"
+down_revision = "oihr_0002_undone_headline"
 branch_labels = None
 depends_on = None
 
