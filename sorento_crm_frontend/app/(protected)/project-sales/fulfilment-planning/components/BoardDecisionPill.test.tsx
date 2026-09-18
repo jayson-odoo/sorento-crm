@@ -86,25 +86,11 @@ describe('BoardDecisionPill: the five labels (C3, R6)', () => {
   });
 });
 
-describe('BoardDecisionPill: With purchasing vs Confirmed (AC-R2-19, PLAN-scm-oi-handover-r2-undo)', () => {
-  it('reads With purchasing, never Confirmed, for a line covered only by a live sheet-migrated inquiry row (no decision)', () => {
+describe('BoardDecisionPill: a sheet-covered line reads Confirmed (AC-R2-19, owner ruling 18 Sep)', () => {
+  it('reads Confirmed for a line covered only by a live sheet-migrated inquiry row (no decision) - "With purchasing" was ruled confusing and dropped', () => {
     render(
       <BoardDecisionPill
         contribution={contributionOf({ covered: true, decision: null })}
-        decision={null}
-      />,
-    );
-    expect(screen.getByTestId(`decision-pill-${KEY}`)).toHaveTextContent('With purchasing');
-    expect(screen.getByTestId(`decision-pill-${KEY}`).textContent).not.toBe('Confirmed');
-  });
-
-  it('still reads Confirmed for a line an active decision covers', () => {
-    render(
-      <BoardDecisionPill
-        contribution={contributionOf({
-          covered: true,
-          decision: { revision_no: 1, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
-        })}
         decision={null}
       />,
     );
@@ -240,10 +226,9 @@ describe('BoardDecisionPill: a saved line the engine has re-suggested (S4, AC-4.
       <BoardDecisionPill
         contribution={contributionOf({
           covered: true,
-          // A revision actually confirmed this line (AC-R2-19: `covered` alone is not
-          // enough to read Confirmed - a live, decision-less inquiry row sets it too,
-          // and reads "With purchasing" instead; this fixture's own intent is the
-          // decision-covered case).
+          // A revision actually confirmed this line - this fixture's own intent is the
+          // decision-covered case (a decision-less, sheet-covered line also reads
+          // Confirmed since the 18 Sep ruling, see the describe block above).
           decision: { revision_no: 3, timely_spo_qty: '0', reserve: [], borrow: [], buy_qty: '10' },
           draft: {
             decision: { verdict: 'amended' },

@@ -119,10 +119,10 @@ reconstructed undo (the countdown is the confirmation). Everything else is deriv
   prints, then the `QTY CHANGE TO` column is absent from header and rows (HTML and text); the
   same rule for `DELIVERY DATE CHANGE TO` on `was.delivery_date`. Either column appears as
   soon as one line in that email carries the matching change. (Owner ruling Q5, 18 Sep.)
-- **AC-R2-19 [BE+FE]** Given a line whose only cover is a live sheet-migrated inquiry row (no
-  active decision names it), when the board renders it, then the pill reads `With purchasing`
-  (not `Confirmed`), `decision` is null and `undo` for the order is None. Owner hand test 18 Sep:
-  nine lines read `Confirmed` with zero decisions in the DB.
+- **AC-R2-19 [FE]** Given a line whose only cover is a live sheet-migrated inquiry row (no
+  active decision names it), when the board renders it, then the pill reads `Confirmed`, the same
+  as a line a revision confirmed (owner ruling 18 Sep, reversing the earlier `With purchasing`
+  wording as confusing); `decision` stays null and the order's `undo` is None.
 - **AC-R2-19a [BE]** Given a revision minted by a planning-change apply (its batch row is
   `applied`, the batch names this order's lines), when that revision is reconstructed-undone,
   then the batch's rows for this order return to `pending` and the batch's `applied_at` is
