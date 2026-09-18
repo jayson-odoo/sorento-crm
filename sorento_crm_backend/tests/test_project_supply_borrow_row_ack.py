@@ -6,7 +6,15 @@ The asker-side ORDER_BACK row this method writes was left at the column's own
 `server_default='awaiting'`, so a step-3 supply borrow's own row was born invisible to
 purchasing (never in `ACK_LINKABLE`, so never cascaded, never counted by the plan) and
 unactionable (the tolerant `acknowledge_rows` guard has nothing to do for a row nobody can
-reach through the UI, which no longer offers Confirm at all).
+reach through the UI, which no longer offers Confirm at all). That gap is what the
+`ACK_ACKNOWLEDGED` birth below used to close.
+
+`PLAN-oi-confirm-per-so.md` S1 reverses that rule: this row carries a
+`supply_decision_id`, so it is board-origin the same as any other decision-linked row, and
+it is now born `ACK_AWAITING` like every other one -
+`tests/scm/test_oi_confirm_per_so.py::test_ac_cf_1b_borrow_asker_row_is_born_awaiting` is
+the AC-CF-1b pin for that. This file's own assertion is updated to match rather than left
+to lie, the same way `test_order_inquiry_handshake.py` was updated for S1.
 
 Exercises `_place_supply_borrows` directly rather than through the full ladder v7.1 step-3
 HTTP confirm (real supply-key validation needs a real inbound document with a live
@@ -20,7 +28,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.models.project_so import (
-    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryRow,
@@ -34,7 +42,7 @@ from .test_planning_changes import _core_line, _core_so, _project_line, _project
 __all__ = ["api", "world"]  # re-exported fixtures; keeps linters from calling them unused
 
 
-def test_a_supply_borrow_row_is_born_acknowledged(api):
+def test_a_supply_borrow_row_is_born_awaiting(api):
     _client, world = api
     fixture = _raise_one_row(api, qty="10")
     order = fixture["order"]
@@ -77,9 +85,9 @@ def test_a_supply_borrow_row_is_born_acknowledged(api):
         .first()
     )
     assert row is not None, "the borrow-asker row was not written at all"
-    assert row.ack_state == ACK_ACKNOWLEDGED
-    assert str(row.acknowledged_by) == str(world.buyer)
-    assert row.acknowledged_at is not None
+    assert row.ack_state == ACK_AWAITING
+    assert row.acknowledged_by is None
+    assert row.acknowledged_at is None
 
 
 def test_a_supply_borrow_with_no_inquiry_passed_mints_the_header(api):

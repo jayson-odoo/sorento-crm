@@ -30,6 +30,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryDetail,
     OrderInquiryMatrixResponse,
     OrderInquiryPoCandidate,
+    OrderInquiryPoCandidatesResponse,
     OrderInquiryPoDetail,
     OrderInquiryRowOut,
     OrderInquirySpoDetail,
@@ -45,6 +46,8 @@ from app.schemas.project_order_inquiry import (
     UnplaceAllRequest,
     UnplaceAllResult,
     UploadJobScope,
+    WORKLIST_FILTER_MAX_LENGTH,
+    WORKLIST_QUERY_MAX_LENGTH,
 )
 from app.services import project_service as projects
 from app.services.error_handler import AppException, handle_internal_error
@@ -95,6 +98,28 @@ MatrixAxis = Literal["product", "sales_order", "customer", "agent"]
 MatrixGranularity = Literal["day", "week", "month", "year"]
 
 
+def _validate_worklist_filter_uuids(filters: dict) -> None:
+    """The UUID guard every worklist filter caller must run before a value reaches SQL
+    (AC-CF-8d): `project_id`, `supplier_id` and `agent` are UUID columns, and a
+    malformed one otherwise reaches Postgres as `invalid input syntax for type uuid` -
+    a 500 carrying the statement. Shared between `_worklist_filters` (the list,
+    summary and matrix routes) and the acknowledge route's `filter` branch
+    (`AcknowledgeFilter`), so a bad id is refused the same way through either door
+    rather than only the one that happens to call `validate_uuid_path` directly.
+    """
+    project_id = filters.get("project_id")
+    if project_id:
+        validate_uuid_path(project_id, resource="Project")
+    supplier_id = filters.get("supplier_id")
+    if supplier_id:
+        validate_uuid_path(supplier_id, resource="Supplier")
+    # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
+    # caller error, not a filter that silently matches nothing.
+    agent = filters.get("agent")
+    if agent:
+        validate_uuid_path(agent, resource="Sales agent")
+
+
 def _worklist_filters(
     query: Optional[str],
     delivery_month: Optional[str],
@@ -119,19 +144,6 @@ def _worklist_filters(
     axis: Optional[str] = None,
     axis_key: Optional[str] = None,
 ) -> dict:
-    if project_id:
-        validate_uuid_path(project_id, resource="Project")
-    if supplier_id:
-        validate_uuid_path(supplier_id, resource="Supplier")
-    # `agent` is `sales_agents.id`, validated the same way - a malformed value is a
-    # caller error, not a filter that silently matches nothing.
-    if agent:
-        validate_uuid_path(agent, resource="Sales agent")
-    # `axis_key` is NOT validated here: it is compared against a UUID column on every
-    # axis, so it needs the same guard, but a QUERY param has no "missing row" reading
-    # and `validate_uuid_path` answers 404 ("Schedule cell not found") - the lie
-    # `uuid_path_param`'s own note warns about. It carries `pattern=UUID_PATTERN` on the
-    # list route below instead, which FastAPI refuses with a 422 before this runs.
     filters = {
         "query": query,
         "delivery_month": delivery_month,
@@ -152,6 +164,12 @@ def _worklist_filters(
         "delivery_from": delivery_from,
         "delivery_to": delivery_to,
     }
+    _validate_worklist_filter_uuids(filters)
+    # `axis_key` is NOT validated here: it is compared against a UUID column on every
+    # axis, so it needs the same guard, but a QUERY param has no "missing row" reading
+    # and `validate_uuid_path` answers 404 ("Schedule cell not found") - the lie
+    # `uuid_path_param`'s own note warns about. It carries `pattern=UUID_PATTERN` on the
+    # list route below instead, which FastAPI refuses with a 422 before this runs.
     # Absent unless a cell asked for them: the matrix route takes `axis` as its own
     # argument, and a key of the same name in this dict would collide with it.
     if axis and axis_key:
@@ -161,12 +179,14 @@ def _worklist_filters(
 
 
 #: The longest search string the worklist routes accept. The service caps the number of
-#: WORDS it applies; this caps the string itself, before any of them are read.
-_MAX_QUERY_LENGTH = 200
+#: WORDS it applies; this caps the string itself, before any of them are read. Shared
+#: with `AcknowledgeFilter` (`app/schemas/project_order_inquiry.py`) rather than
+#: retyped, so the list route and the `filter` branch of Confirm enforce the same cap.
+_MAX_QUERY_LENGTH = WORKLIST_QUERY_MAX_LENGTH
 #: The same cap on every other free-text filter (location, PO number, SPO number, a
 #: matrix cell's key). They reach an `ilike` or an equality over a joined query, and a
 #: megabyte of "x" is not a search anybody typed.
-_MAX_FILTER_LENGTH = 200
+_MAX_FILTER_LENGTH = WORKLIST_FILTER_MAX_LENGTH
 
 
 @router.get("/order-inquiries", response_model=ListResponse[OrderInquiryWorklistRow])
@@ -524,26 +544,51 @@ async def acknowledge_order_inquiry_rows(
     current_user: dict = Depends(require_permission(ACKNOWLEDGE)),
     db: Session = Depends(get_db),
 ):
-    """Purchasing takes these instructions on, one row or a batch (AC-H2).
+    """Purchasing's own Confirm press (AC-H2, AC-CF-5 to AC-CF-8 `PLAN-oi-confirm-per-so.md`
+    S1/S2) - one row, a batch by id, or every row a `filter` matches ("Select all N
+    matching").
 
     One press does two things because they are one decision: the rows become purchasing's
     work, stamped with who and when, and the cascade runs for EXACTLY these rows, so the
-    open documents that can cover them are linked at that moment. Nothing linked before
-    this - a row CS raised is one they are still free to change.
+    open documents that can cover them are linked at that moment - though most of them are
+    linked already, since linking never waits for this press (AC-CF-4).
 
     `link_up_to` is how far out the linking half reaches (AC-LH1): every named row is taken
     on, and one due after that date is left Not linked and counted on `after_horizon`.
     Omitted, it is the reorder plan's own horizon; `link_horizon: "none"` is how a caller
-    asks for no horizon at all (S1)."""
+    asks for no horizon at all (S1).
+
+    `row_ids` and `filter` are mutually exclusive (AC-CF-8c, refused at the schema when
+    both or neither is named). A `filter` press resolves through the SAME predicate the
+    list route reads (`OrderInquiryWorklistService._base` via `acknowledge_scope`), then
+    confirms only what it matched that is actually eligible (`awaiting`/`changed`, not
+    cancelled) - everything else it matched is reported on `skipped`, never silently
+    taken on and never silently dropped (AC-CF-8b)."""
     try:
-        for row_id in payload.row_ids:
-            validate_uuid_path(row_id, resource="Order inquiry row")
-        body = ProjectOrderInquiryService(db).acknowledge_rows(
-            payload.row_ids,
-            actor_user_id=current_user["id"],
-            link_up_to=payload.link_up_to,
-            link_horizon=payload.link_horizon,
-        )
+        if payload.row_ids:
+            for row_id in payload.row_ids:
+                validate_uuid_path(row_id, resource="Order inquiry row")
+            body = ProjectOrderInquiryService(db).acknowledge_rows(
+                payload.row_ids,
+                actor_user_id=current_user["id"],
+                link_up_to=payload.link_up_to,
+                link_horizon=payload.link_horizon,
+            )
+        else:
+            filter_kwargs = (
+                payload.filter.model_dump(exclude_none=True) if payload.filter else {}
+            )
+            _validate_worklist_filter_uuids(filter_kwargs)
+            eligible_ids, skipped = OrderInquiryWorklistService(db).acknowledge_scope(
+                **filter_kwargs
+            )
+            body = ProjectOrderInquiryService(db).acknowledge_eligible_rows(
+                eligible_ids,
+                actor_user_id=current_user["id"],
+                link_up_to=payload.link_up_to,
+                link_horizon=payload.link_horizon,
+            )
+            body["skipped"] = skipped
         db.commit()
         return body
     except Exception as exc:
@@ -840,17 +885,26 @@ async def mark_order_inquiry_rows(
 
 @router.get(
     "/order-inquiry-rows/{row_id}/po-candidates",
-    response_model=List[OrderInquiryPoCandidate],
+    response_model=OrderInquiryPoCandidatesResponse,
 )
 async def order_inquiry_po_candidates(
     row_id: str,
     _user: dict = Depends(require_permission_with_api_key(ACTION)),
     db: Session = Depends(get_db),
 ):
-    """Open PO lines this row could be tagged to (section G), soonest first."""
+    """Open PO lines this row could be tagged to (section G), soonest first, plus the
+    dialog's own header line (S8, AC-CF-24): how much of the row is still unlinked."""
     try:
         validate_uuid_path(row_id, resource="Order inquiry row")
-        return ProjectOrderInquiryService(db).po_candidates_for_row(row_id)
+        service = ProjectOrderInquiryService(db)
+        candidates = service.po_candidates_for_row(row_id)
+        still_to_link = service.still_to_link_for_row(row_id)
+        linkable_qty = service.linkable_qty_for_row(row_id)
+        return {
+            "candidates": candidates,
+            "still_to_link": still_to_link,
+            "linkable_qty": linkable_qty,
+        }
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -896,6 +950,14 @@ async def place_order_inquiry_row_on_po(
                     for allocation in payload.allocations
                 ],
                 actor_user_id=current_user["id"],
+                # S8 (AC-CF-25): the dialog's `allocations` submission is the row's whole
+                # link set - SET semantics, not an add-on-top. The single `po_line_id`
+                # form below keeps its old ADD meaning.
+                full_set=True,
+                # S8 review round (17 Sep): the candidate ids the caller actually
+                # rendered - scopes the retire step to what it saw. `None` when the
+                # caller omits it, unchanged.
+                offered_line_ids=payload.offered_line_ids,
             )
             body = written[0]
         else:

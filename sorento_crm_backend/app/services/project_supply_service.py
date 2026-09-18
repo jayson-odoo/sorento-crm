@@ -86,7 +86,7 @@ from app.models.procurement import (
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.models.project_so import (
-    ACK_ACKNOWLEDGED,
+    ACK_AWAITING,
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
     ALLOC_SOURCE_ORDER,
@@ -5986,12 +5986,14 @@ class ProjectSupplyService:
                 note=(item.reason or "").strip() or None,
                 supply_decision_id=decision.id,
                 state=INQUIRY_RAISED,
-                # Born acknowledged (G4, `PLAN-scm-reorder-oi-feedback-1sep.md` S1): the
-                # sixth creation site - a borrow's asker-side row is purchasing's work the
-                # moment the borrow is confirmed, not something somebody has to say yes to.
-                ack_state=ACK_ACKNOWLEDGED,
-                acknowledged_by=actor_user_id,
-                acknowledged_at=datetime.utcnow(),
+                # Born awaiting (`PLAN-oi-confirm-per-so.md` S1): this row carries a
+                # `supply_decision_id`, so it is board-origin like every other decision-
+                # linked row and R1's flip applies to it too - the cascade may already have
+                # auto-linked it to the document, but purchasing still has to say yes
+                # before it feeds reorder planning.
+                ack_state=ACK_AWAITING,
+                acknowledged_by=None,
+                acknowledged_at=None,
             )
             self.db.add(row)
             self.db.flush()

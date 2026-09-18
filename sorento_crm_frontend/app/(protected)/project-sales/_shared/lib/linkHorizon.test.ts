@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   LINK_HORIZON_STORAGE_KEY,
   NO_LINK_HORIZON,
+  acknowledgeOutcomeText,
   formatHorizon,
   horizonLabel,
   horizonSentence,
@@ -173,6 +174,55 @@ describe('the precedence: the URL, then this browser, then the plan', () => {
 
   it('is blank when none of the three has one', () => {
     expect(initialLinkHorizon(null, null, null)).toBe('');
+  });
+});
+
+describe('acknowledgeOutcomeText', () => {
+  it('says just the row count with nothing else to report', () => {
+    expect(
+      acknowledgeOutcomeText({
+        acknowledged: 1,
+        linked_rows: 0,
+        links: 0,
+        after_horizon: 0,
+      }),
+    ).toBe('Confirmed 1 row');
+  });
+
+  it('AC-CF-8 (review round): appends the skipped count when the filter matched a rejected or cancelled row too', () => {
+    expect(
+      acknowledgeOutcomeText({
+        acknowledged: 74,
+        linked_rows: 0,
+        links: 0,
+        after_horizon: 0,
+        skipped: 3,
+      }),
+    ).toBe('Confirmed 74 rows, 3 skipped');
+  });
+
+  it('says nothing extra when skipped is absent or zero', () => {
+    expect(
+      acknowledgeOutcomeText({
+        acknowledged: 2,
+        linked_rows: 0,
+        links: 0,
+        after_horizon: 0,
+        skipped: 0,
+      }),
+    ).toBe('Confirmed 2 rows');
+  });
+
+  it('the skipped count survives alongside the linked clause too', () => {
+    expect(
+      acknowledgeOutcomeText({
+        acknowledged: 2,
+        linked_rows: 1,
+        links: 1,
+        after_horizon: 0,
+        skipped: 1,
+      }),
+    ).toBe('Confirmed 2 rows, 1 linked across 1 document line, 1 skipped');
   });
 });
 

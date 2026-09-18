@@ -187,10 +187,11 @@ def _link_documents(world, row) -> list:
 
 
 def test_a_board_confirm_raises_a_row_that_already_holds_its_document(api):
-    """SUPERSEDED by `PLAN-scm-reorder-oi-feedback-1sep.md` S1 (G4): the whole point of
-    the plan stands - purchasing opens the page and the answer is on the row - but there
-    is no manual confirm left to wait on. The row is born ACKNOWLEDGED and the link the
-    raise-time cascade found is firm from the moment it is written.
+    """AC-D1, still true after `PLAN-oi-confirm-per-so.md` S1 reverses G4's own change:
+    purchasing opens the page and the answer is on the row - the raise-time cascade never
+    waited on the handshake either side of that lane, so the document it finds is firm
+    from the moment it is written, DRAFT or not. The row itself is born AWAITING again
+    (S1): what makes the link firm is `OrderInquiryLink.auto`, never `ack_state`.
     """
     _client, world = api
     po, _line = _open_po_line(world, qty=50)
@@ -198,7 +199,7 @@ def test_a_board_confirm_raises_a_row_that_already_holds_its_document(api):
     fixture = _raise_one_row(api)
     row = fixture["row"]
 
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
     assert _link_documents(world, row) == [po.po_number]
 
 
@@ -208,13 +209,14 @@ def test_a_row_nothing_can_cover_still_comes_out_unlinked(api):
 
     row = _raise_one_row(api)["row"]
 
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
     assert _links_of(world, row) == []
 
 
 def test_the_row_carries_its_own_link_and_no_column_on_the_link(api):
-    """R1, restated for the born-ack world: the link table gains no state column; a reader
-    asks the row, and the row is acknowledged the instant it exists."""
+    """R1: the link table gains no state column; a reader asks the row's OWN link's
+    `auto` flag, never `ack_state` - which reads `awaiting` the instant the row exists
+    again (`PLAN-oi-confirm-per-so.md` S1), same as it always could."""
     _client, world = api
     _open_po_line(world, qty=50)
     row = _raise_one_row(api)["row"]
@@ -222,7 +224,7 @@ def test_the_row_carries_its_own_link_and_no_column_on_the_link(api):
     link = _links_of(world, row)[0]
 
     assert not hasattr(link, "status"), "a link state column is exactly what R1 refused"
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +461,7 @@ def test_the_batch_reject_refuses_the_whole_batch_when_one_row_cannot_be_refused
     assert response.status_code == 422, response.text
     world.db.rollback()
     world.db.refresh(good)
-    assert good.ack_state == ACK_ACKNOWLEDGED, "nothing was written for the batch"
+    assert good.ack_state == ACK_AWAITING, "nothing was written for the batch"
 
 
 def test_the_batch_reject_refuses_the_whole_batch_when_one_row_is_cancelled(api):
@@ -481,7 +483,7 @@ def test_the_batch_reject_refuses_the_whole_batch_when_one_row_is_cancelled(api)
     assert response.status_code == 422, response.text
     world.db.rollback()
     world.db.refresh(good)
-    assert good.ack_state == ACK_ACKNOWLEDGED, "nothing was written for the batch"
+    assert good.ack_state == ACK_AWAITING, "nothing was written for the batch"
 
 
 def test_a_cs_user_may_not_reject_a_batch(api):
@@ -502,15 +504,15 @@ def test_a_cs_user_may_not_reject_a_batch(api):
 
 
 def test_auto_link_all_moves_a_draft_onto_a_nearer_document(api):
-    """R2, restated for the born-ack world (`PLAN-scm-reorder-oi-feedback-1sep.md` S1,
-    G4): `ack_state` cannot tell a draft from a promise any more - a row is acknowledged
-    the instant it exists - so the fact that survives is `_only_cascade_links`. A row
+    """R2: `ack_state` cannot tell a draft from a promise, whether a row is born
+    `awaiting` (`PLAN-oi-confirm-per-so.md` S1) or born acknowledged (the world G4 made
+    and this lane retires) - so the fact that survives is `_only_cascade_links`. A row
     nobody has MANUALLY linked is still the cascade's own guess, whatever its ack_state
     says, and a better document arriving is still reason enough to move it."""
     _client, world = api
     far, _far_line = _open_po_line(world, qty=50, expected_date=date(2026, 12, 1))
     row = _raise_one_row(api)["row"]
-    assert row.ack_state == ACK_ACKNOWLEDGED, "born acknowledged - not the signal any more"
+    assert row.ack_state == ACK_AWAITING, "not the signal `_only_cascade_links` reads either"
     assert _link_documents(world, row) == [far.po_number]
 
     near, _near_line = _open_po_line(world, qty=50, expected_date=date(2026, 7, 1))
@@ -553,10 +555,10 @@ def test_auto_link_all_never_moves_a_manually_linked_rows_link(api):
 # ---------------------------------------------------------------------------
 
 
-def test_a_purchase_order_confirm_links_an_acknowledged_row(api):
+def test_a_purchase_order_confirm_links_an_awaiting_row(api):
     """A plan-generated purchase order is confirmed and the rows that sized it read it -
-    firmly, since a row is born acknowledged (S1) and there is no draft state left for
-    this cascade to write instead."""
+    firmly, even though the row itself is born `awaiting` (`PLAN-oi-confirm-per-so.md`
+    S1) and never pressed: this cascade never waited on the handshake, R6."""
     from app.services.scm.purchase_order_service import PurchaseOrderService
 
     _client, world = api
@@ -592,7 +594,7 @@ def test_a_purchase_order_confirm_links_an_acknowledged_row(api):
 
     world.db.expire_all()
     row = world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).one()
-    assert row.ack_state == ACK_ACKNOWLEDGED
+    assert row.ack_state == ACK_AWAITING
     assert len(_links_of(world, row)) == 1
 
 
@@ -602,23 +604,22 @@ def test_a_purchase_order_confirm_links_an_acknowledged_row(api):
 
 
 def test_the_to_confirm_filter_is_awaiting_and_changed(api):
-    """`awaiting` and `changed` are no longer reachable through the API once a row is born
-    acknowledged and a settle auto-acknowledges again (G4, `PLAN-scm-reorder-oi-feedback-
-    1sep.md` S1) - the filter still has to narrow to a row that somehow sits in either (a
-    pre-migration row, a direct write), so the two are written straight onto the ORM
-    object rather than through a route that cannot produce them any more."""
+    """A row is born `awaiting` again (`PLAN-oi-confirm-per-so.md` S1), so `awaiting`
+    needs no forcing here; `changed` still needs a direct write to seed without a whole
+    settle chain, and `confirmed` needs a genuine Confirm press to leave `to_confirm`."""
     client, world = api
     awaiting = _raise_one_row(api, qty="4")["row"]
     changed = _raise_one_row(api, qty="6")["row"]
     confirmed = _raise_one_row(api, qty="8")["row"]
 
-    awaiting.ack_state = ACK_AWAITING
-    awaiting.acknowledged_by = None
-    awaiting.acknowledged_at = None
     changed.ack_state = ACK_CHANGED
-    # `changed_at IS NOT NULL` is what "changed" actually reads now (S3, review of
-    # PR #471) - the literal ack_state alone is not enough to be found by the filter.
     changed.changed_at = datetime.utcnow()
+    world.db.commit()
+
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(ACK_URL, json={"row_ids": [str(confirmed.id)]}).status_code == 200
+        )
     world.db.commit()
 
     body = client.get(LIST, params={"ack": "to_confirm", "limit": 200}).json()
@@ -629,15 +630,13 @@ def test_the_to_confirm_filter_is_awaiting_and_changed(api):
     assert str(confirmed.id) not in ids
 
 
-def test_the_summary_facet_to_confirm_stays_the_sum_and_moves_only_on_a_real_settle(api):
-    """S3 (review of PR #471): `to_confirm` is still `awaiting + changed` structurally -
-    that identity never breaks - but a row is born acknowledged now (G4) and a settle
-    auto-acknowledges again (S1), so a fresh raise contributes to NEITHER state any more.
-    Asserted as a DELTA, not an absolute count: this suite runs against a real Postgres
-    database that already carries genuinely-settled historical rows (`changed_at` set
-    before this test ever ran), so `facet["changed"]` is not zero to start with - the
-    contract is that two fresh raises move it by exactly zero, and one real settle moves
-    it by exactly one."""
+def test_the_summary_facet_to_confirm_stays_the_sum_and_moves_on_confirm_and_change(api):
+    """S3: `to_confirm` is `awaiting + changed`, always - that identity never breaks. A
+    fresh raise is born `awaiting` again (`PLAN-oi-confirm-per-so.md` S1), so it moves the
+    facet UP by one; purchasing's own Confirm press moves it back DOWN by one (into
+    `acknowledged`, off `to_confirm`); a later settle on that confirmed row moves it back
+    UP again (into `changed`). Asserted as a DELTA, not an absolute count: this suite runs
+    against a real Postgres database that already carries historical rows."""
     client, world = api
     _open_po_line(world, qty=50)
     before = client.get(f"{LIST}/summary").json()["ack"]
@@ -648,30 +647,46 @@ def test_the_summary_facet_to_confirm_stays_the_sum_and_moves_only_on_a_real_set
 
     after_raise = client.get(f"{LIST}/summary").json()["ack"]
     assert after_raise["to_confirm"] == after_raise["awaiting"] + after_raise["changed"]
-    assert after_raise["to_confirm"] == before["to_confirm"], (
-        "two freshly-raised rows are born acknowledged - neither moves the facet"
+    assert after_raise["to_confirm"] == before["to_confirm"] + 2, (
+        "two freshly-raised rows are born awaiting - both move the facet"
     )
 
-    # A genuine settle: `changed_at` moves, and the facet has to move with it.
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(ACK_URL, json={"row_ids": [str(fresh["row"].id)]}).status_code
+            == 200
+        )
+    world.db.commit()
+
+    after_confirm = client.get(f"{LIST}/summary").json()["ack"]
+    assert after_confirm["to_confirm"] == before["to_confirm"] + 1, (
+        "the confirmed row leaves to_confirm; the other fresh raise stays on it"
+    )
+
+    # A genuine settle on the now-confirmed row: it goes BACK to To confirm as `changed`.
     _settle(world, fresh, qty="9")
     world.db.commit()
 
     settled = client.get(f"{LIST}/summary").json()["ack"]
-    assert settled["changed"] == after_raise["changed"] + 1
+    assert settled["changed"] == after_confirm["changed"] + 1
     assert settled["to_confirm"] == settled["awaiting"] + settled["changed"]
-    assert settled["to_confirm"] == before["to_confirm"] + 1
+    assert settled["to_confirm"] == before["to_confirm"] + 2
 
 
 def test_the_export_accepts_to_confirm(api):
     """Not a status check alone: `to_confirm` FILTERS the sheet the same way it filters the
-    list - a row still `awaiting` (S1: a pre-migration or otherwise legacy row, since a
-    fresh one is born acknowledged) is on it, and one already acknowledged is off it."""
+    list - a freshly-raised row (`PLAN-oi-confirm-per-so.md` S1) is on it with no forcing
+    needed, and one a genuine Confirm press has taken on is off it."""
     client, world = api
     to_confirm = _raise_one_row(api, qty="4")
-    to_confirm["row"].ack_state = ACK_AWAITING
-    to_confirm["row"].acknowledged_by = None
-    to_confirm["row"].acknowledged_at = None
     confirmed = _raise_one_row(api, qty="6")
+    with _as_purchasing(world) as buyer:
+        assert (
+            buyer.post(
+                ACK_URL, json={"row_ids": [str(confirmed["row"].id)]}
+            ).status_code
+            == 200
+        )
     world.db.commit()
 
     export = client.get(f"{LIST}/export", params={"ack": "to_confirm"})
@@ -785,8 +800,9 @@ def test_the_sales_order_detail_carries_the_day_count_too(api):
 
 
 def test_the_purchase_order_lightbox_names_who_is_holding_the_quantity(api):
-    """Born acknowledged (S1): no manual press ever happens here, and the panel already
-    reads the allocation as confirmed."""
+    """No manual press ever happens here, so the row is born `awaiting`
+    (`PLAN-oi-confirm-per-so.md` S1) - the panel reads the link off it either way, since
+    the raise-time cascade never waited on the handshake."""
     client, world = api
     po, _line = _open_po_line(world, qty=50)
     row = _raise_one_row(api, qty="10")["row"]
@@ -796,7 +812,7 @@ def test_the_purchase_order_lightbox_names_who_is_holding_the_quantity(api):
     assert body["allocations"], "the Allocated to panel reads off the links"
     allocation = body["allocations"][0]
     assert allocation["qty"] == "10"
-    assert allocation["ack_state"] == ACK_ACKNOWLEDGED
+    assert allocation["ack_state"] == ACK_AWAITING
     assert allocation["item_code"] == row.item_code
     assert allocation["inquiry_no"]
 
@@ -846,8 +862,9 @@ def test_the_shipping_order_lightbox_answers_its_lines(api):
 
 
 def test_the_shipping_order_lightbox_names_who_is_holding_it(api):
-    """Born acknowledged (S1): no manual press ever happens here, and the panel already
-    reads the allocation as confirmed."""
+    """No manual press ever happens here, so the row is born `awaiting`
+    (`PLAN-oi-confirm-per-so.md` S1) - the panel reads the link off it either way, since
+    the raise-time cascade never waited on the handshake."""
     client, world = api
     pool = _pooled(world)
     allocation = _spo_line(world, qty=50, warehouse=pool)
@@ -856,7 +873,7 @@ def test_the_shipping_order_lightbox_names_who_is_holding_it(api):
     body = client.get(f"{LIST}/spo/{quote(allocation.spo_number, safe='')}").json()
 
     assert body["allocations"][0]["qty"] == "10"
-    assert body["allocations"][0]["ack_state"] == ACK_ACKNOWLEDGED
+    assert body["allocations"][0]["ack_state"] == ACK_AWAITING
     assert body["allocations"][0]["item_code"] == row.item_code
 
 
@@ -1427,10 +1444,11 @@ def test_a_plan_purchase_order_confirm_never_moves_a_manually_linked_rows_link(a
 # ---------------------------------------------------------------------------
 
 
-def test_a_drafted_placed_row_no_longer_moves_the_to_confirm_count(api):
-    """S6's count is untouched by a fresh raise now: a row is born acknowledged whether or
-    not the raise-time cascade already made it `placed` (`PLAN-scm-reorder-oi-feedback-
-    1sep.md` S1, AC-1.8 - the chip that read this count is gone from the plan page)."""
+def test_a_drafted_placed_row_still_moves_the_to_confirm_count(api):
+    """S6's count moves on a fresh raise again (`PLAN-oi-confirm-per-so.md` S1, the plan
+    page's own chip restored): a row is born `awaiting` whether or not the raise-time
+    cascade already made it `placed` - a DRAFT link is not a decision, and the row is
+    still purchasing's to confirm."""
     from app.services.scm import reorder_run_service
 
     _client, world = api
@@ -1440,9 +1458,7 @@ def test_a_drafted_placed_row_no_longer_moves_the_to_confirm_count(api):
     row = _raise_one_row(api, qty="10")["row"]
     assert row.state == INQUIRY_PLACED, "the row has to be drafted for this to mean anything"
 
-    assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before
-
-    assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before
+    assert reorder_run_service.awaiting_acknowledgement_rows(world.db) == before + 1
 
 
 # ---------------------------------------------------------------------------
