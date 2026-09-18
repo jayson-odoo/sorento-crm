@@ -318,7 +318,8 @@ that writes nothing.
   re-uploading the same sheet writes nothing new: every row comes back under **Already
   raised**, except that a corrected delivery date still fixes a migrated row's date and the
   Was/Now of the row raised beside it, on any later sheet, not only the one that first
-  migrated it.
+  migrated it - including when a planning change already amended the row itself, in which
+  case it is the row's own Was date that is corrected, never its current one.
 * Each raised row carries the note **Migrated from order inquiry sheet** followed by the file
   name, so you can tell it from a row the board raised. Read it from the info icon in the
   **Instruction** column.
