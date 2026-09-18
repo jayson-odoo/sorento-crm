@@ -598,11 +598,12 @@ def _resolve_line_repairs(
 
 
 def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
-    """B1/S1/S3, 19 Sep 2026: decide, ONCE and read-only, which already-raised sheet rows
-    would repair which migrated row - so `preview` can forecast `rows_delivery_date_updated`
-    and `apply` writes exactly what was forecast, never recomputing the decision.
+    """B1/S1/S3/S8/S10, 19 Sep 2026: decide, ONCE and read-only, which already-raised sheet
+    rows would repair which migrated row - so `preview` can forecast
+    `rows_delivery_date_updated` and `apply` writes exactly what was forecast, never
+    recomputing the decision.
 
-    **B2, purchasing's own work is never touched.** Eligible migrated rows are filtered to
+    **B2, purchasing's own work is never touched.** Eligible migrated rows carry
     `previous_qty IS NULL AND previous_delivery_date IS NULL AND changed_at IS NULL` - no
     planning change has restated this row since the sheet raised it. A row a change HAS
     settled (5,793 of 11,810 migrated rows on the 15 Sep prod copy carry a link; SO314593's
@@ -611,44 +612,68 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
     purchasing has since made, and it writes no handshake stamp of its own (no `changed_at`,
     no ack flip) for the same reason - purchasing already works to the sheet's date.
 
-    Repairs are resolved per LINE (`_resolve_line_repairs`), never per row, and grouped
-    by MIRROR so every already-raised line's migrated siblings are loaded in one query
-    (S3) rather than one `SELECT` per row.
+    **S8, confined to 7.4's own artefacts.** Eligible only when the migrated row's
+    `delivery_date` still equals its CORE LINE's `required_date` - that is exactly what 7.4
+    wrote and nothing else does. A row that already carries a date the line does not (a
+    sheet date raised under this fix, or one a person edited) is never rewritten by a later
+    sheet: the sheet is a migration, not a second opinion. One `OR`-of-per-line equality
+    clause, not a Python filter, so it stays in the same query (S10).
+
+    Repairs are resolved per LINE (`_resolve_line_repairs`), never per row, and grouped by
+    MIRROR so every already-raised line's migrated siblings are loaded in ONE query (S3),
+    selecting only the columns the resolver reads (S10) rather than hydrating full rows -
+    233 migrated rows shared a `(mirror, item, qty)` group on the 15 Sep prod copy alone,
+    and a book re-upload can touch all of `scm.order_inquiry_row`'s ~11.8k migrated rows.
     """
+    from sqlalchemy import and_, or_
+
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
 
-    already_raised_lines = {
-        str(match.core_line.id)
-        for match in plan.matches
-        if match.already_raised and match.core_line is not None
-    }
-    mirror_ids = sorted({
-        plan.mirror_by_core_line[core_id]
-        for core_id in already_raised_lines
-        if core_id in plan.mirror_by_core_line
-    })
-    if not mirror_ids:
+    # Every already-raised line's mirror id and its own required_date (S8), keyed by
+    # mirror since that is what the migrated rows themselves are addressed by.
+    required_date_by_mirror: Dict[str, Optional[date]] = {}
+    for match in plan.matches:
+        if not match.already_raised or match.core_line is None:
+            continue
+        core_id = str(match.core_line.id)
+        mirror_id = plan.mirror_by_core_line.get(core_id)
+        if mirror_id is None:
+            continue
+        required_date_by_mirror.setdefault(mirror_id, match.core_line.required_date)
+
+    per_line = [
+        and_(OrderInquiryRow.so_line_id == mirror_id, OrderInquiryRow.delivery_date == required)
+        for mirror_id, required in required_date_by_mirror.items()
+        if required is not None
+    ]
+    if not per_line:
         return
 
-    eligible = (
+    rows = (
         db.query(OrderInquiryRow)
+        .with_entities(
+            OrderInquiryRow.id,
+            OrderInquiryRow.so_line_id,
+            OrderInquiryRow.item_code,
+            OrderInquiryRow.qty,
+            OrderInquiryRow.delivery_date,
+        )
         .filter(
-            OrderInquiryRow.so_line_id.in_(mirror_ids),
+            or_(*per_line),
             OrderInquiryRow.state != INQUIRY_CANCELLED,
             OrderInquiryRow.previous_qty.is_(None),
             OrderInquiryRow.previous_delivery_date.is_(None),
             OrderInquiryRow.changed_at.is_(None),
+            OrderInquiryRow.note.like(f"{_MIGRATION_STAMP}%"),
         )
         .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
         .all()
     )
     migrated_by_mirror: Dict[str, List[Any]] = {}
-    for candidate in eligible:
-        if not (candidate.note or "").startswith(_MIGRATION_STAMP):
-            continue
+    for candidate in rows:
         migrated_by_mirror.setdefault(str(candidate.so_line_id), []).append(candidate)
 
-    dated_rows_by_line: Dict[str, List[Tuple[int, Any]]] = {}
+    dated_rows_by_mirror: Dict[str, List[Tuple[int, Any]]] = {}
     for index, match in enumerate(plan.matches):
         if not match.already_raised or match.core_line is None:
             continue
@@ -657,57 +682,90 @@ def _resolve_delivery_date_repairs(db: Session, plan: _Plan) -> None:
         # one either - it is simply left out of the resolution entirely.
         if match.row.delivery_date is None:
             continue
-        dated_rows_by_line.setdefault(str(match.core_line.id), []).append((index, match.row))
-
-    for core_id, dated_rows in dated_rows_by_line.items():
-        mirror_id = plan.mirror_by_core_line.get(core_id)
+        mirror_id = plan.mirror_by_core_line.get(str(match.core_line.id))
         if mirror_id is None:
             continue
+        dated_rows_by_mirror.setdefault(mirror_id, []).append((index, match.row))
+
+    for mirror_id, dated_rows in dated_rows_by_mirror.items():
         repairs = _resolve_line_repairs(dated_rows, migrated_by_mirror.get(mirror_id, []))
         for index, migrated_id in repairs.items():
             plan.matches[index].repair_row_id = migrated_id
 
 
-def _resync_sibling_was_now(db: Session, mirror_id: str) -> None:
-    """S5, 19 Sep 2026: bring every sibling row's Was/Now back into agreement once a repair
-    has moved a migrated row's date on this mirror.
-
-    `ProjectOrderInquiryService`'s own writer (~1093-1098, AC-OH-40..42) stamps a fresh
-    row's `previous_qty` as the SUM of the rows a redirect released and
-    `previous_delivery_date` as the EARLIEST of their dates. A repair never changes what a
-    row replaced - `previous_qty` is left exactly as it was - only recomputes the EARLIEST
-    date over the mirror's migrated rows that are currently `redirected_to_pool`, using
-    their (possibly just-repaired) dates, and writes it onto every non-cancelled sibling
-    that already carries a `previous_delivery_date`. The note's own prose ("Was 182 on
-    2027-03-01") is corrected the same way, so the Instruction icon and the Was/Now table
-    never disagree.
+def _redirected_earliest_and_qty(
+    db: Session, mirror_id: str
+) -> Tuple[Optional[date], Optional[Decimal]]:
+    """The EARLIEST date and total quantity over the mirror's currently `redirected_to_pool`
+    MIGRATED rows - the exact pairing `ProjectOrderInquiryService`'s own writer
+    (~1093-1098, AC-OH-40..42) stamps onto a fresh row's `previous_delivery_date` /
+    `previous_qty`. `(None, None)` when the mirror carries none.
     """
     from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+
+    redirected = (
+        db.query(OrderInquiryRow)
+        .filter(
+            OrderInquiryRow.so_line_id == mirror_id,
+            OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.redirected_to_pool.is_(True),
+            OrderInquiryRow.note.like(f"{_MIGRATION_STAMP}%"),
+        )
+        .all()
+    )
+    dated = [r.delivery_date for r in redirected if r.delivery_date is not None]
+    if not dated:
+        return None, None
+    return min(dated), sum((_dec(r.qty) for r in redirected), _ZERO)
+
+
+def _resync_sibling_was_now(
+    db: Session, mirror_id: str, old_earliest: Optional[date], old_total_qty: Optional[Decimal]
+) -> None:
+    """B3/S5, 19 Sep 2026: bring a sibling row's Was/Now back into agreement, once a repair
+    has moved the mirror's redirected rows' EARLIEST date - and touch NOTHING else.
+
+    `old_earliest` / `old_total_qty` are the mirror's `redirected_to_pool` earliest date
+    and total quantity CAPTURED BEFORE this run wrote any repair to this mirror (the
+    caller's job): a sibling is touched only when its OWN `previous_delivery_date` /
+    `previous_qty` are EXACTLY that pairing, so a row whose Was/Now came from something
+    else entirely - its own planning change, a different redirect - is never touched, byte
+    for byte (review finding B3, 19 Sep 2026: an unrelated placed sibling carrying
+    "AutoCount moved PO-1 to SO-9 on 2026-05-01; Was 25 on 2026-05-01" was rewritten by an
+    unrelated repair on the same mirror because the old code matched on the mirror alone).
+
+    The note is corrected by replacing the ANCHORED fragment `f"Was {qty} on {old}"` with
+    `f"Was {qty} on {new}"` - never a bare date substring, which also matched (and
+    falsified) an "AutoCount moved PO-1 to SO-9 on <date>" provenance line
+    `orderInquiryAck.ts` reads by prefix.
+    """
+    if old_earliest is None:
+        return
+    new_earliest, _ = _redirected_earliest_and_qty(db, mirror_id)
+    if new_earliest is None or new_earliest == old_earliest:
+        return
+
+    from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryRow
+    from app.services.project_order_inquiry_service import _qty_str
 
     siblings = (
         db.query(OrderInquiryRow)
         .filter(
             OrderInquiryRow.so_line_id == mirror_id,
             OrderInquiryRow.state != INQUIRY_CANCELLED,
+            OrderInquiryRow.previous_delivery_date == old_earliest,
         )
         .all()
     )
-    redirected_dates = [
-        sibling.delivery_date
-        for sibling in siblings
-        if sibling.redirected_to_pool and (sibling.note or "").startswith(_MIGRATION_STAMP)
-        and sibling.delivery_date is not None
-    ]
-    if not redirected_dates:
-        return
-    earliest = min(redirected_dates)
     for sibling in siblings:
-        old = sibling.previous_delivery_date
-        if old is None or old == earliest:
+        if sibling.previous_qty is None or _dec(sibling.previous_qty) != old_total_qty:
             continue
-        sibling.previous_delivery_date = earliest
-        if sibling.note:
-            sibling.note = sibling.note.replace(f"on {old.isoformat()}", f"on {earliest.isoformat()}")
+        qty_str = _qty_str(_dec(sibling.previous_qty))
+        old_fragment = f"Was {qty_str} on {old_earliest.isoformat()}"
+        new_fragment = f"Was {qty_str} on {new_earliest.isoformat()}"
+        if sibling.note and old_fragment in sibling.note:
+            sibling.note = sibling.note.replace(old_fragment, new_fragment, 1)
+        sibling.previous_delivery_date = new_earliest
 
 
 def _plan(db: Session, parsed: OrderInquiryResult) -> _Plan:
@@ -1781,6 +1839,11 @@ def apply(
     #: never inline, since a line's second dated row can still repair a sibling migrated
     #: row on the SAME mirror later in this same loop.
     repaired_mirrors: set = set()
+    #: Mirror id -> (earliest date, total qty) over its `redirected_to_pool` migrated rows,
+    #: captured BEFORE the first repair this run writes to that mirror (B3, 19 Sep 2026):
+    #: `_resync_sibling_was_now` must compare a sibling's Was/Now against what the mirror
+    #: looked like before this run touched it, never against its own already-mutated state.
+    before_repair: Dict[str, Tuple[Optional[date], Optional[Decimal]]] = {}
 
     for index, match in enumerate(plan.matches):
         row = match.row
@@ -1812,8 +1875,13 @@ def apply(
                 from app.models.project_so import OrderInquiryRow
 
                 migrated = db.get(OrderInquiryRow, match.repair_row_id)
+                mirror_id = str(migrated.so_line_id)
+                if mirror_id not in repaired_mirrors:
+                    # The FIRST repair on this mirror this run - snapshot before anything
+                    # on it is mutated (B3).
+                    before_repair[mirror_id] = _redirected_earliest_and_qty(db, mirror_id)
                 migrated.delivery_date = row.delivery_date
-                repaired_mirrors.add(str(migrated.so_line_id))
+                repaired_mirrors.add(mirror_id)
                 outcome.updated(row=row.source_row, code=oc.DELIVERY_DATE_UPDATED,
                                  identity=identity, value=row.so_number,
                                  entity_type="order_inquiry_row", entity_id=migrated.id)
@@ -1865,7 +1933,8 @@ def apply(
         service.refresh_link_state(linked)
 
     for mirror_id in repaired_mirrors:
-        _resync_sibling_was_now(db, mirror_id)
+        old_earliest, old_total_qty = before_repair.get(mirror_id, (None, None))
+        _resync_sibling_was_now(db, mirror_id, old_earliest, old_total_qty)
 
     _close_history(history, actor, now)
     db.flush()

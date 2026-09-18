@@ -131,11 +131,11 @@ neither claim nor blank a migrated row's date. A CANCELLED migrated row is exclu
 same `state != INQUIRY_CANCELLED` filter `_already_raised` itself already applies, so it is
 never a repair candidate even when it is the only quantity match on the line.
 
-**N4 - the repair is not scoped to the uploading file.** Any sheet may correct a row
-migrated from an EARLIER, differently named upload - there is nothing in the resolution
-that reads `file_name`, only the mirror's current rows. AC-4 (below) uploads the migration
-under one file name and the correction under a different one, to keep this visible rather
-than assumed.
+**N4 - the repair is confined to 7.4's own artefacts, from whichever upload wrote them.**
+Superseded by S8 below (fix round 2): a later sheet may still correct a row 7.4 wrote under
+an EARLIER, differently named upload, but ONLY while that row still carries 7.4's own
+fingerprint. AC-4 (below) uploads the migration under one file name and the correction
+under a different one, to keep the cross-file point visible rather than assumed.
 
 **Environment note.** Round 1 created and bootstrapped `sorento_oisd_ci` for its own DB
 after discovering the `.env`'s original `sorento_oibf_ci` did not exist locally and
@@ -145,23 +145,79 @@ schema-empty before this lane's bootstrap ran against it. Fix round 1 moved this
 its own `sorento_oisd_ci` and left `sorento_oibf_ci` alone from then on; the #1003 lane
 should confirm its own database is still what it expects.
 
+## Fix round 2, 19 Sep 2026 (Opus review round 2, NOT READY - one blocker)
+
+**B3 - `_resync_sibling_was_now` matched on the mirror alone, so it rewrote EVERY
+non-cancelled sibling whose `previous_delivery_date` differed from the newly-computed
+earliest, including a sibling whose Was/Now came from an UNRELATED event on the same
+mirror, and its note edit was an unanchored `note.replace("on <old>", ...)` that also
+falsified an `"AutoCount moved <doc> to <SO> on <date>"` provenance line
+`orderInquiryAck.ts` reads by prefix.** Fixed by capturing `old_earliest` and
+`old_total_qty` - the mirror's `redirected_to_pool` migrated rows' earliest date and total
+quantity - BEFORE the run writes any repair to that mirror (`apply`'s `before_repair`
+dict, one snapshot per mirror, taken at the FIRST repair touching it). After the repair,
+only a sibling whose OWN `(previous_delivery_date, previous_qty)` is EXACTLY
+`(old_earliest, old_total_qty)` - the precise pairing
+`ProjectOrderInquiryService`'s writer (~1093-1098) produced - is touched, and the note
+edit is anchored to the fragment `f"Was {qty} on {old_earliest}"` -> `f"Was {qty} on
+{new_earliest}"`, replaced once, never a bare date substring.
+
+**S7 - the three B2 markers are each tested alone.** `test_ac_9b_each_b2_marker_alone_blocks_the_repair`
+parametrizes over `previous_qty` / `previous_delivery_date` / `changed_at`, setting exactly
+ONE per case (the migrated row's own `delivery_date` is left AT the line's `required_date`,
+so S8's own gate cannot be why the repair is blocked) - catching a mutant that keeps two of
+the three filter conditions and drops one.
+
+**S8 - the repair is confined to 7.4's own artefacts.** *Eligible only when the migrated
+row's `delivery_date` still equals its core sales order line's `required_date` - that is
+exactly what section 7.4 wrote, and nothing else does. A row that already carries a date
+the line does not (a sheet date raised under this fix, or one a person edited) is never
+rewritten by a later sheet: the sheet is a migration, not a second opinion.* One `OR`-of-
+per-line-equality clause in `_resolve_delivery_date_repairs`'s own query (S10), not a Python
+filter. `test_ac_15_a_row_not_on_the_lines_required_date_is_never_repaired` is the red: a
+migrated row raised under THIS fix's own rule (so its date already differs from the line's
+required date) is never touched by any later sheet, however it moves the date.
+
+**S9 - `_resolve_line_repairs`'s own pure-function contract is pinned DB-free**, and the
+resolver's own `ORDER BY` is pinned separately with a DB red. `_resolve_line_repairs` takes
+no database and does not re-derive `created_at`/`id` - it trusts the sequence it is handed,
+proven by feeding it the SAME two candidates in opposite order and getting opposite
+resolutions (`test_resolve_line_repairs_trusts_the_callers_own_order`), and that pass 1
+settles exact matches before pass 2 ever runs regardless of that order
+(`test_resolve_line_repairs_pass_one_settles_exact_matches_first`). Separately,
+`test_ac_16_the_eligible_query_orders_by_created_at_then_id` inserts two migrated rows
+with their `created_at` deliberately set OPPOSITE to insertion order and asserts the
+resolution still repairs the one with the EARLIER `created_at` - pinning
+`_resolve_delivery_date_repairs`'s own `ORDER BY created_at, id`, which `_resolve_line_repairs`
+itself has no opinion about.
+
+**S10 - pushed into SQL.** `_resolve_delivery_date_repairs`'s query now carries the S8
+equality clause (one `and_(so_line_id ==, delivery_date ==)` per already-raised line,
+`OR`'d together), the migration-stamp filter (`note.like(f"{_MIGRATION_STAMP}%")`) and all
+three B2 `IS NULL` markers in ONE `WHERE`, and selects only the five columns the resolver
+reads (`with_entities`) instead of hydrating full ORM rows - a book re-upload can touch all
+of `scm.order_inquiry_row`'s roughly 11.8k migrated rows.
+
+**N6 - no frontend change this round** (the 8-tile grid from fix round 1 stands).
+
 ## Files touched
 
 * `app/services/project_order_inquiry_import_service.py` - the delivery-date assignment;
   `_already_raised` (now also returns the mirror map), `_resolve_line_repairs`,
-  `_resolve_delivery_date_repairs`, `_resync_sibling_was_now`; the apply-loop branch; the
-  `_result` / `validate` summary line. `_mirror_of` and the first round's
+  `_resolve_delivery_date_repairs` (S8/S10 query), `_redirected_earliest_and_qty`,
+  `_resync_sibling_was_now` (B3 rewrite); the apply-loop branch (`before_repair` snapshot);
+  the `_result` / `validate` summary line. `_mirror_of` and the first round's
   `_repair_migrated_date` are gone, superseded by the above.
 * `app/services/import_outcome_codes.py` - `DELIVERY_DATE_UPDATED` code + label.
 * `tests/test_oi_sheet_date_follow_sheet.py` (new, round 1; extended round 2) - AC-1 to
-  AC-13.
+  AC-16, plus two DB-free unit tests for `_resolve_line_repairs`.
 * `tests/test_oi_sheet_pairing_repair.py` - `test_ac_r_37_...` rewritten for the reversed
   rule.
 * `tests/test_project_order_inquiry_import_migration.py` - `RESULT_KEYS` gains
   `rows_delivery_date_updated`.
 * `sorento_crm_frontend/app/(protected)/scm/reorder/services/orderInquiryService.ts` -
-  `OrderInquiryPreview.rows_delivery_date_updated`.
+  `OrderInquiryPreview.rows_delivery_date_updated` (fix round 1).
 * `sorento_crm_frontend/app/(protected)/scm/reorder/components/OrderInquiryUploadDialog.tsx`
-  - the "Dates corrected" tile.
+  - the "Dates corrected" tile (fix round 1, untouched round 2 per N6).
 * `sorento_crm_frontend/app/(protected)/scm/reorder/components/OrderInquiryUploadDialog.test.tsx`
-  - fixture + tile-count assertions updated for the eighth tile.
+  - fixture + tile-count assertions updated for the eighth tile (fix round 1).

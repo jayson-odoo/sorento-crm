@@ -1,7 +1,7 @@
 """The order inquiry sheet's raised row takes the SHEET's own delivery date.
 
 Contract: `documentation/plans/scm/oi-sheet-date-follow-sheet-acceptance-criteria.md`,
-AC-1 to AC-13. `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
+AC-1 to AC-16. `PLAN-oi-sheet-date-follow-sheet.md` (18 Sep 2026 owner ruling: "we should
 have followed the sheet's date") REVERSES section 7.4 of
 `PLAN-scm-oi-sheet-pairing-repair.md`. Measured on prod: SO314593's open AutoCount lines
 are 220 @ 01/03/2027 while the sheet said 182 @ 1.9.2026 - 7.4 wrote the LINE's date onto
@@ -22,6 +22,18 @@ with the repair). AC-4/AC-5 were adjusted so their sibling carries a real
 `redirected_to_pool` migrated row to recompute FROM, matching S5's own rule instead of the
 superseded ad-hoc qty/date match the first round shipped.
 
+Fix round 2 (19 Sep 2026, Opus review round 2) added AC-14 to AC-16 and the two DB-free
+`_resolve_line_repairs` unit tests: B3 (a sibling's Was/Now is only ever touched when its
+OWN `(previous_delivery_date, previous_qty)` is EXACTLY the redirected rows' pairing,
+captured BEFORE this run's own repairs - never "any sibling on the mirror" - and the note
+edit is anchored to the `"Was {qty} on {date}"` fragment, never a bare date substring), S7
+(each of B2's three markers blocks the repair alone), S8 (the repair is confined to rows
+still on their core line's own `required_date` - 7.4's own fingerprint, and nothing else)
+and S9 (the resolver's ordering contract, pinned once DB-free on the pure function and once
+against the database). AC-8 was rewritten to the 7.4-legacy shape (two migrated rows
+sharing the LINE's date, not two sheet-dated rows) since S8 confines a repair to exactly
+that fingerprint.
+
 Postgres only (`tests/_pg_fixture.py`, via `world()`). The world, sheet and apply builders
 are IMPORTED from `tests/test_project_order_inquiry_import_migration.py` and
 `tests/test_oi_sheet_pairing_repair.py` rather than copied, so the three files cannot
@@ -29,8 +41,11 @@ drift about what a seeded world is.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
+
+import pytest
 
 from app.models.project_so import INQUIRY_CANCELLED, INQUIRY_PLACED, IV_ORDER_BACK, OrderInquiryRow
 from app.services import import_outcome_codes as oc
@@ -294,63 +309,85 @@ def test_ac_7_migrated_row_with_a_different_quantity_is_left_alone():
 
 
 def test_ac_8_repairs_are_resolved_per_line_not_per_row():
-    """AC-8 (B1, 19 Sep 2026). A sheet that splits one line's quantity into two equal-qty,
-    differently dated rows has no per-row identity a bare item/qty match can tell apart -
-    resolved per LINE instead: pass 1 settles a row that already carries its own exact
-    date as a no-op, pass 2 lets only the row that does NOT already match claim the
-    remaining candidate. An unchanged re-upload must therefore write nothing, and a sheet
-    that moves only ONE of the two rows must move only its own migrated counterpart -
-    deterministically, on a second identical re-upload too.
+    """AC-8 (B1, 19 Sep 2026). The 7.4-era shape: TWO migrated rows on one line, raised
+    with no sheet date of their own, so BOTH carry the line's own `required_date` - the
+    exact fingerprint 7.4's bug leaves, and the only shape S8 lets a repair touch. A sheet
+    that splits them into two DIFFERENT real dates has no per-row identity a bare item/qty
+    match can tell the two migrated rows apart by - resolved per LINE instead: pass 2 gives
+    each dated sheet row a DIFFERENT one of the two candidates, never both fighting over
+    the same first match. An unchanged re-upload of that corrected sheet then writes
+    nothing further, since pass 1 now finds an exact match for each.
     """
-    sept, oct_, nov = date(2026, 9, 1), date(2026, 10, 1), date(2026, 11, 1)
+    from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+    line_date = date(2027, 3, 1)
+    sept, oct_ = date(2026, 9, 1), date(2026, 10, 1)
     with world() as w:
         order = w.order()
-        line = w.line(order, qty_ordered="500", required_date=date(2030, 1, 1))
-        raise_sheet = sheet([
+        line = w.line(order, qty_ordered="500", required_date=line_date)
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+        row_a = _migrated_row(w, mirror, qty="100", delivery_date=line_date)
+        row_b = _migrated_row(w, mirror, qty="100", delivery_date=line_date)
+
+        data = sheet([
             (order.so_number, w.product.product_code, 100, sept,
              w.warehouse.warehouse_code, ""),
             (order.so_number, w.product.product_code, 100, oct_,
              w.warehouse.warehouse_code, ""),
         ])
 
-        raised = _apply(w, raise_sheet, file_name="2026-08 order inquiry.xlsx")
-        assert raised["rows_raised"] == 2, raised
-        rows = w.rows()
-        assert len(rows) == 2
-        sept_row = next(r for r in rows if r.delivery_date == sept)
-        oct_row = next(r for r in rows if r.delivery_date == oct_)
+        result = _apply(w, data, file_name="2026-09 corrected.xlsx")
 
-        # Re-upload of the SAME, unchanged sheet: nothing to repair.
-        unchanged = _apply(w, raise_sheet, file_name="2026-08 order inquiry.xlsx")
-        assert unchanged["rows_raised"] == 0, unchanged
-        assert unchanged["rows_delivery_date_updated"] == 0, unchanged
-        w.db.refresh(sept_row)
-        w.db.refresh(oct_row)
-        assert sept_row.delivery_date == sept
-        assert oct_row.delivery_date == oct_
+        assert result["rows_raised"] == 0, result
+        assert result["rows_delivery_date_updated"] == 2, result
+        w.db.refresh(row_a)
+        w.db.refresh(row_b)
+        dates = sorted([row_a.delivery_date, row_b.delivery_date])
+        assert dates == [sept, oct_], (
+            "both migrated rows should be split across the two dates, one each"
+        )
 
-        # Only the October row moves, to November.
-        moved_sheet = sheet([
-            (order.so_number, w.product.product_code, 100, sept,
-             w.warehouse.warehouse_code, ""),
-            (order.so_number, w.product.product_code, 100, nov,
+        # Deterministic: the SAME corrected sheet re-applied writes nothing further -
+        # pass 1 now finds an exact item/qty/date match for each row.
+        again = _apply(w, data, file_name="2026-09 corrected.xlsx")
+        assert again["rows_delivery_date_updated"] == 0, again
+        w.db.refresh(row_a)
+        w.db.refresh(row_b)
+        assert sorted([row_a.delivery_date, row_b.delivery_date]) == [sept, oct_]
+
+
+def test_ac_15_a_row_not_on_the_lines_required_date_is_never_repaired():
+    """AC-15 (S8, 19 Sep 2026). The migrated row was raised with a date of the SHEET's own
+    (this fix's rule, not 7.4's), so it already differs from the line's `required_date` -
+    not 7.4's own mistake, and a later sheet is never a second opinion about it, whatever
+    it says."""
+    required = date(2027, 3, 1)
+    edited_date = date(2026, 12, 25)
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="400", required_date=required)
+        migration_sheet = sheet([
+            (order.so_number, w.product.product_code, 182, edited_date,
              w.warehouse.warehouse_code, ""),
         ])
-        moved = _apply(w, moved_sheet, file_name="2026-09 corrected.xlsx")
-        assert moved["rows_raised"] == 0, moved
-        assert moved["rows_delivery_date_updated"] == 1, moved
-        w.db.refresh(sept_row)
-        w.db.refresh(oct_row)
-        assert sept_row.delivery_date == sept, "the untouched row moved"
-        assert oct_row.delivery_date == nov, "the row the sheet actually moved did not"
+        _apply(w, migration_sheet, file_name="2026-08 order inquiry.xlsx")
+        migrated = w.one_row()
+        assert migrated.delivery_date == edited_date
+        assert migrated.delivery_date != required
 
-        # Deterministic: the SAME move re-applied writes nothing further.
-        again = _apply(w, moved_sheet, file_name="2026-09 corrected.xlsx")
-        assert again["rows_delivery_date_updated"] == 0, again
-        w.db.refresh(sept_row)
-        w.db.refresh(oct_row)
-        assert sept_row.delivery_date == sept
-        assert oct_row.delivery_date == nov
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 9, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_raised"] == 0, result
+        assert result["rows_already_raised"] == 1, result
+        assert result["rows_delivery_date_updated"] == 0, result
+        w.db.refresh(migrated)
+        assert migrated.delivery_date == edited_date
 
 
 def test_ac_9_a_row_a_planning_change_settled_keeps_the_changes_date():
@@ -397,6 +434,44 @@ def test_ac_9_a_row_a_planning_change_settled_keeps_the_changes_date():
         assert settled.previous_delivery_date == old_date, (
             "the change's own Was/Now was overwritten"
         )
+
+
+@pytest.mark.parametrize("marker", ["previous_qty", "previous_delivery_date", "changed_at"])
+def test_ac_9b_each_b2_marker_alone_blocks_the_repair(marker: str):
+    """AC-9 (S7, 19 Sep 2026). Each of the three B2 markers must block the repair ALONE - a
+    mutant that drops one of the three filter conditions and keeps the other two would
+    otherwise stay green. The migrated row's own `delivery_date` is left AT the line's
+    `required_date` here (unlike AC-9's own richer probe), so S8's gate is not what is
+    blocking it - only the ONE marker under test is."""
+    old_date = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        w.line(order, qty_ordered="400", required_date=old_date)
+        migration_sheet = sheet([
+            (order.so_number, w.product.product_code, 182, old_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+        _apply(w, migration_sheet, file_name="2026-08 order inquiry.xlsx")
+        marked = w.one_row()
+        if marker == "previous_qty":
+            marked.previous_qty = Decimal("150")
+        elif marker == "previous_delivery_date":
+            marked.previous_delivery_date = old_date
+        else:
+            marked.changed_at = datetime(2026, 9, 10, 8, 0, 0)
+        w.db.flush()
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, date(2026, 9, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_delivery_date_updated"] == 0, (marker, result)
+        assert result["rows_already_raised"] == 1, (marker, result)
+        w.db.refresh(marked)
+        assert marked.delivery_date == old_date, marker
 
 
 def test_ac_10_an_undated_row_never_writes_null_over_a_migrated_row():
@@ -535,3 +610,200 @@ def test_ac_13_two_released_rows_recompute_the_siblings_was_now():
         assert sibling.previous_delivery_date == sept, "not the EARLIEST of the two dates"
         assert Decimal(str(sibling.previous_qty)) == Decimal("182"), "previous_qty moved"
         assert sibling.note == f"Was 182 on {sept.isoformat()}"
+
+
+def test_ac_14a_an_unrelated_siblings_was_now_is_byte_for_byte_untouched():
+    """AC-14a (B3, 19 Sep 2026). An unrelated PLACED sibling on the SAME mirror, with its
+    own Was/Now from a different event entirely and an "AutoCount moved ... on <date>"
+    provenance line `orderInquiryAck.ts` reads by prefix, must be untouched byte for byte
+    by a repair on this mirror - the match is on the EXACT (`previous_delivery_date`,
+    `previous_qty`) pairing the redirected rows produced, not "any sibling on this mirror".
+    """
+    old_date = date(2027, 3, 1)
+    sheet_date = date(2026, 9, 1)
+    unrelated_date = date(2026, 5, 1)
+    unrelated_note = f"AutoCount moved PO-1 to SO-9 on {unrelated_date.isoformat()}; Was 25 on {unrelated_date.isoformat()}"
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=old_date)
+        migration_sheet = sheet([
+            (order.so_number, w.product.product_code, 182, old_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+        _apply(w, migration_sheet, file_name="2026-08 order inquiry.xlsx")
+        migrated = w.one_row()
+        migrated.redirected_to_pool = True
+        mirror = w.mirror_of(line)
+        w.db.flush()
+
+        unrelated = _fresh_row(
+            w, mirror, qty="25", delivery_date=date(2026, 6, 1),
+            previous_qty="25", previous_delivery_date=unrelated_date,
+            note=unrelated_note,
+        )
+        unrelated.state = INQUIRY_PLACED
+        w.db.flush()
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data, file_name="2026-09 corrected.xlsx")
+
+        assert result["rows_delivery_date_updated"] == 1, result
+        w.db.refresh(unrelated)
+        assert unrelated.previous_delivery_date == unrelated_date, (
+            "an unrelated sibling's Was/Now was rewritten by a repair on the same mirror"
+        )
+        assert unrelated.note == unrelated_note, (
+            "an unrelated sibling's note (including its AutoCount provenance line) was "
+            "falsified by an unanchored note edit"
+        )
+
+
+def test_ac_14b_the_redirected_to_pool_gate_is_not_ignored():
+    """AC-14b (B3, 19 Sep 2026). A non-redirected migrated row on the SAME mirror, dated
+    EARLIER than the redirected row's own date, must never enter the earliest-date
+    computation - only `redirected_to_pool` rows do."""
+    old_date = date(2027, 3, 1)
+    earlier_date = date(2026, 1, 1)
+    sheet_date = date(2026, 9, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=old_date)
+        migration_sheet = sheet([
+            (order.so_number, w.product.product_code, 182, old_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+        _apply(w, migration_sheet, file_name="2026-08 order inquiry.xlsx")
+        migrated = w.one_row()
+        migrated.redirected_to_pool = True
+        mirror = w.mirror_of(line)
+        w.db.flush()
+
+        # A non-redirected migrated row, EARLIER than the redirected one - must be ignored.
+        _migrated_row(w, mirror, qty="50", delivery_date=earlier_date, redirected_to_pool=False)
+
+        sibling = _fresh_row(
+            w, mirror, qty="220", delivery_date=date(2027, 8, 1),
+            previous_qty="182", previous_delivery_date=old_date,
+            note=f"Was 182 on {old_date.isoformat()}",
+        )
+
+        data = sheet([
+            (order.so_number, w.product.product_code, 182, sheet_date,
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data, file_name="2026-09 corrected.xlsx")
+
+        assert result["rows_delivery_date_updated"] == 1, result
+        w.db.refresh(sibling)
+        assert sibling.previous_delivery_date == sheet_date, (
+            "the non-redirected, earlier-dated row was counted into the earliest date"
+        )
+
+
+# ---------------------------------------------------------------------------------- #
+# S9: _resolve_line_repairs is DB-free and pins the caller's own ordering contract    #
+# ---------------------------------------------------------------------------------- #
+
+
+@dataclass
+class _FakeMigratedRow:
+    id: str
+    item_code: str
+    qty: Decimal
+    delivery_date: date
+
+
+@dataclass
+class _FakeSheetRow:
+    item_code: str
+    qty: Decimal
+    delivery_date: date
+
+
+def test_resolve_line_repairs_trusts_the_callers_own_order():
+    """S9. `_resolve_line_repairs` takes no database and does not re-derive
+    `created_at`/`id` itself - it trusts the ORDER it is handed. Passing the SAME two
+    candidates in the opposite order changes which one an ambiguous row claims, which pins
+    the contract `_resolve_delivery_date_repairs`'s own `ORDER BY created_at, id` relies on.
+    """
+    row_a = _FakeMigratedRow(
+        id="row-a", item_code="ITEM", qty=Decimal("100"), delivery_date=date(2027, 3, 1)
+    )
+    row_b = _FakeMigratedRow(
+        id="row-b", item_code="ITEM", qty=Decimal("100"), delivery_date=date(2027, 3, 1)
+    )
+    dated_row = _FakeSheetRow(
+        item_code="ITEM", qty=Decimal("100"), delivery_date=date(2026, 9, 1)
+    )
+
+    first = importer._resolve_line_repairs([(0, dated_row)], [row_a, row_b])
+    assert first == {0: "row-a"}
+
+    reversed_order = importer._resolve_line_repairs([(0, dated_row)], [row_b, row_a])
+    assert reversed_order == {0: "row-b"}
+
+
+def test_resolve_line_repairs_pass_one_settles_exact_matches_first():
+    """S9. Pass 1 claims exact item/quantity/date matches as no-ops BEFORE pass 2 ever
+    runs, whatever order the candidates were handed in - an unchanged, split-quantity
+    re-upload must resolve to NO repairs even when its own migrated rows are scrambled."""
+    sept, oct_ = date(2026, 9, 1), date(2026, 10, 1)
+    row_oct = _FakeMigratedRow(id="row-oct", item_code="ITEM", qty=Decimal("100"), delivery_date=oct_)
+    row_sept = _FakeMigratedRow(id="row-sept", item_code="ITEM", qty=Decimal("100"), delivery_date=sept)
+    dated_rows = [
+        (0, _FakeSheetRow(item_code="ITEM", qty=Decimal("100"), delivery_date=sept)),
+        (1, _FakeSheetRow(item_code="ITEM", qty=Decimal("100"), delivery_date=oct_)),
+    ]
+
+    # Scrambled: row_oct listed BEFORE row_sept.
+    repairs = importer._resolve_line_repairs(dated_rows, [row_oct, row_sept])
+
+    assert repairs == {}, "both rows exactly matched their own migrated row; nothing to repair"
+
+
+def test_ac_16_the_eligible_query_orders_by_created_at_then_id():
+    """AC-16 (S9, DB). Two migrated rows on one line, same item/qty, whose INSERTION order
+    disagrees with their `created_at` - the resolution must still pick the one with the
+    EARLIER `created_at` first, proving `_resolve_delivery_date_repairs`'s own `ORDER BY`
+    (not `_resolve_line_repairs`, which trusts what it is handed) decides the order.
+    """
+    from app.services.project_so_adoption_service import ProjectSOAdoptionService
+
+    required = date(2027, 3, 1)
+    with world() as w:
+        order = w.order()
+        line = w.line(order, qty_ordered="400", required_date=required)
+        ProjectSOAdoptionService(w.db).adopt(str(order.id), w.actor)
+        mirror = w.mirror_of(line)
+
+        inserted_first = _migrated_row(w, mirror, qty="100", delivery_date=required)
+        inserted_second = _migrated_row(w, mirror, qty="100", delivery_date=required)
+        # Force the SECOND-inserted row to carry the EARLIER `created_at`, so insertion
+        # order and `created_at` order disagree.
+        inserted_first.created_at = datetime(2026, 8, 20, 10, 0, 0)
+        inserted_second.created_at = datetime(2026, 8, 10, 9, 0, 0)
+        w.db.flush()
+
+        # A single dated sheet row whose date matches NEITHER candidate: pass 2 must pick
+        # whichever the ORDER BY hands it first.
+        data = sheet([
+            (order.so_number, w.product.product_code, 100, date(2026, 9, 1),
+             w.warehouse.warehouse_code, ""),
+        ])
+
+        result = _apply(w, data)
+
+        assert result["rows_delivery_date_updated"] == 1, result
+        w.db.refresh(inserted_first)
+        w.db.refresh(inserted_second)
+        assert inserted_second.delivery_date == date(2026, 9, 1), (
+            "the row with the EARLIER created_at should be repaired first"
+        )
+        assert inserted_first.delivery_date == required, (
+            "the row with the LATER created_at must stay untouched"
+        )
