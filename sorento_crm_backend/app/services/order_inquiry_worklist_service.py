@@ -145,6 +145,13 @@ SORTABLE_FIELDS = frozenset(
         "raised_by_name",
         "location",
         "agent",
+        # The three columns the worklist grid draws a sort arrow on under a DIFFERENT
+        # id than an existing key, or under no key at all (18 Sep 2026 bug report): the
+        # FE sends its own column id verbatim as `sort`, so the id is what has to be
+        # accepted, not a renaming of it.
+        "spo_number",
+        "agent_code",
+        "verb",
     }
 )
 
@@ -250,6 +257,34 @@ _SPO_REF_PLACED_PO_ID = (
 _PLACED_PO_ID = func.coalesce(
     _LINKED_PO_ID, _SPO_LINKED_PO_ID, _SPO_REF_PLACED_PO_ID
 )
+
+# The row's OWN first linked SPO number - a REAL link only
+# (`OrderInquiryLink.spo_allocation_id`), ordered the same way every other "first link"
+# reader here is: earliest `linked_at` then `id`. The sort key for `spo_number` (18 Sep
+# 2026 bug report).
+#
+# This does NOT match what the SPO cell itself prints (measured against a prod copy, 18
+# Sep 2026: 33 rows differ one way, 10 the other). The cell also shows a SYNTHETIC
+# `derived: true` entry - a PO link whose PO carries its own open SPO allocation for the
+# same product, marked "via PO" (`OrderInquiryLinkOut.derived`, S5/R-E) - which this key
+# ignores, and the cell never reads a bare `spo_ref` at all, which this key falls back to
+# when the row has no own link. Both are ACCEPTED, KNOWN differences, not a bug to fix
+# here: folding the derived leg in would sort the row by a placement never actually made
+# ON it (`_SPO_LINKED_PO_ID`'s sibling reasoning), and dropping the `spo_ref` fallback
+# would sort a row raised before links existed as blank. The rule is "own SPO link
+# first, then `spo_ref`, blanks last" - stated on its own terms, not as a match to the
+# cell.
+_OWN_LINKED_SPO_NUMBER = (
+    select(SPOAllocation.spo_number)
+    .select_from(OrderInquiryLink)
+    .join(SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id)
+    .where(OrderInquiryLink.row_id == OrderInquiryRow.id)
+    .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
+    .limit(1)
+    .correlate(OrderInquiryRow)
+    .scalar_subquery()
+)
+_SPO_SORT_KEY = func.coalesce(_OWN_LINKED_SPO_NUMBER, OrderInquiryRow.spo_ref)
 
 #: Does this row hold a link of each kind? The "Linked" filter's own predicates (AC-I5),
 #: stated once so the filter and the column cannot disagree about what "linked to a PO"
@@ -492,6 +527,11 @@ _SORT_EXPRESSIONS = {
     "raised_by_name": _RAISED_BY_NAME,
     "location": _LOCATION,
     "agent": SalesAgent.sales_agent,
+    # The FE column ids these three sort as - `agent_code` reads the same column
+    # `agent` already does, `verb` and `spo_number` are new (18 Sep 2026 bug report).
+    "agent_code": SalesAgent.sales_agent,
+    "verb": OrderInquiryRow.verb,
+    "spo_number": _SPO_SORT_KEY,
 }
 
 _COLUMNS = (
