@@ -26,6 +26,10 @@ the host rows at display time - nothing is written to the companion row.**
 * **AC-5** `response_model` (`OrderInquiryWorklistRow`) declares
   `bundled_host_changes` - asserted directly against the route's own JSON, not the
   service function, since an undeclared field is silently dropped on the wire.
+* **AC-12** (review round 1 BLOCKER) A host carries its own live ORDER row (280 @
+  2027-03-01, Was 182 @ 2026-06-01) AND a DELAY exception row on the same item code (7
+  @ 2028-01-01, no Was): the DELAY row never answers for the host's own change, and the
+  answer is IDENTICAL under the default sort and under `sort=item_code&dir=desc`.
 
 ## Frontend
 
@@ -43,6 +47,9 @@ the host rows at display time - nothing is written to the companion row.**
   carries one of them too.
 * **AC-11** A row with neither its own mark nor `bundled_host_changes` renders no icon
   at all, exactly as today.
+* **AC-13** (review round 1 SHOULD) A row that is ALSO rejected or changed keeps that
+  dialog, never the bundled tooltip - the tooltip's own lines never render at all on
+  such a row.
 
 ## Not covered here
 

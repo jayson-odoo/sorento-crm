@@ -2256,3 +2256,82 @@ def test_a_hosts_cancelled_and_redirected_rows_are_excluded(api):
         "previous_qty": None,
         "previous_delivery_date": None,
     }, row["bundled_host_changes"]
+
+
+def test_a_hosts_delay_row_never_answers_for_its_own_live_order_row_regardless_of_sort(api):
+    """BLOCKER (review round 1, 19 Sep 2026). A host carries its own live ORDER row
+    (280 @ 2027-03-01, Was 182 @ 2026-06-01) AND a DELAY exception row on the SAME
+    item code (7 @ 2028-01-01, no Was) - the DELAY row must never answer for the
+    host's own change, and the answer must be IDENTICAL under the default sort and
+    under a sort that ties the two rows on their own sort column (`item_code`, same
+    on both) and so falls through to the id tie-break - deliberately id-ordered here
+    (the DELAY row's own id sorts FIRST) so a page-position bug fails this test on
+    every run rather than by an id coin flip.
+    """
+    client, db, company_id, seeded = api
+    inquiry = db.get(OrderInquiry, seeded["authored_row"].order_inquiry_id)
+    host_x = _product(db, f"ZZT-HOSTX-{_uid()[:6]}", f"{MARKER} host X")
+    companion = _product(db, f"ZZT-SC-{_uid()[:6]}", f"{MARKER} seat cover")
+    _companion_rule(db, company_id, companion, [host_x])
+
+    # Explicit ids, deliberately in the WRONG order for a page-position bug to read
+    # correctly by luck: the DELAY row's id sorts before the ORDER row's under the
+    # `id.asc()` tie-break `list_rows` always appends, whatever column is sorted by.
+    delay_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000001",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("7"),
+        delivery_date=date(2028, 1, 1),
+        verb=IV_DELAY,
+        state=INQUIRY_RAISED,
+    )
+    host_order_row = OrderInquiryRow(
+        id="00000000-0000-0000-0000-000000000002",
+        company_id=company_id,
+        order_inquiry_id=inquiry.id,
+        item_code=host_x.product_code,
+        qty=Decimal("280"),
+        delivery_date=date(2027, 3, 1),
+        previous_qty=Decimal("182"),
+        previous_delivery_date=date(2026, 6, 1),
+        verb=IV_ORDER,
+        state=INQUIRY_RAISED,
+    )
+    db.add_all([delay_row, host_order_row])
+    db.flush()
+    companion_row = _row(
+        db,
+        company_id,
+        inquiry,
+        item_code=companion.product_code,
+        qty="1",
+        bundled_qty=Decimal("1"),
+        bundled_with_row_id=host_order_row.id,
+    )
+    db.commit()
+
+    expected = [
+        {
+            "item_code": host_x.product_code,
+            "qty": "280",
+            "delivery_date": "2027-03-01",
+            "previous_qty": "182",
+            "previous_delivery_date": "2026-06-01",
+        }
+    ]
+
+    default_body = client.get(LIST, params={"limit": 100}).json()
+    default_row = next(r for r in default_body["data"] if r["id"] == companion_row.id)
+    assert default_row["bundled_host_changes"] == expected, default_row["bundled_host_changes"]
+
+    # Ties the two host rows on the sort column itself (both carry `item_code ==
+    # host_x.product_code`), so the page's own order for THIS pair falls straight
+    # through to the id tie-break - exactly the shape the live report showed
+    # (`sort=item_code&dir=desc`).
+    sorted_body = client.get(
+        LIST, params={"limit": 100, "sort": "item_code", "dir": "desc"}
+    ).json()
+    sorted_row = next(r for r in sorted_body["data"] if r["id"] == companion_row.id)
+    assert sorted_row["bundled_host_changes"] == expected, sorted_row["bundled_host_changes"]

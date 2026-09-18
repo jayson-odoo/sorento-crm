@@ -1709,11 +1709,22 @@ class OrderInquiryWorklistService:
     ) -> Dict[str, List[Dict[str, Any]]]:
         """`bundled_host_changes` (`PLAN-oi-bundled-row-host-change.md`): for a bundled
         row, one entry per host item code, IN RULE ORDER, read from that HOST's own
-        LIVE row (state not cancelled, `redirected_to_pool` false) on the SAME order
-        inquiry header - never written onto the companion row itself (owner ruling,
-        19 Sep 2026: "it comes with the X and Y, so it should follow them, to have the
-        same delay"). A host with no live row still gets an entry, with every row field
-        null, so the (i) always names every host the rule requires.
+        LIVE row on the SAME order inquiry header - never written onto the companion
+        row itself (owner ruling, 19 Sep 2026: "it comes with the X and Y, so it should
+        follow them, to have the same delay"). A host with no live row still gets an
+        entry, with every row field null, so the (i) always names every host the rule
+        requires.
+
+        A host's own LIVE row (review round 1 BLOCKER, 19 Sep 2026): state not
+        cancelled, `redirected_to_pool` false, AND `verb` in `(IV_ORDER, IV_ORDER_BACK)`
+        - the SAME set `_settle_row_in_place` treats as a line's real instruction,
+        never an ADVANCE/DELAY exception row that happens to share the host's item
+        code and would otherwise read as the host's own change. When a host carries
+        MORE than one live ORDER row, the OLDEST wins (`created_at`, then `id`) - and
+        that choice is made the SAME WAY whichever page the row happened to load on:
+        the in-page pass collects every page candidate for a key and picks the oldest
+        exactly as the fallback query's own `ORDER BY` does, so `sort=item_code&dir=
+        desc` (or any other sort) can never answer differently from the default.
 
         Built from rows already on THIS page where possible; the rest costs ONE extra
         query for the whole page (never per row), keyed by `(order_inquiry_id,
@@ -1737,16 +1748,29 @@ class OrderInquiryWorklistService:
         if not hosts_by_row:
             return {}
 
-        values_by_key: Dict[Tuple[str, str], Any] = {}
+        def _live_host_row(candidate) -> bool:
+            return (
+                candidate.state != INQUIRY_CANCELLED
+                and not candidate.redirected_to_pool
+                and candidate.verb in (IV_ORDER, IV_ORDER_BACK)
+            )
+
+        def _created_key(candidate) -> Tuple[Any, str]:
+            return (candidate.raised_at, candidate.id)
+
+        # Every page candidate per key, not just the first ENCOUNTERED - `rows` is in
+        # the page's own sort order (whatever column the caller sorted by), so "first
+        # in the list" used to answer a different host row depending on the sort.
+        page_candidates: Dict[Tuple[str, str], List[Any]] = {}
         for row in rows:
             key = (row.order_inquiry_id, row.item_code)
-            if (
-                key in wanted
-                and key not in values_by_key
-                and row.state != INQUIRY_CANCELLED
-                and not row.redirected_to_pool
-            ):
-                values_by_key[key] = row
+            if key in wanted and _live_host_row(row):
+                page_candidates.setdefault(key, []).append(row)
+
+        values_by_key: Dict[Tuple[str, str], Any] = {
+            key: min(candidates, key=_created_key)
+            for key, candidates in page_candidates.items()
+        }
 
         missing = wanted - set(values_by_key)
         if missing:
@@ -1754,6 +1778,7 @@ class OrderInquiryWorklistService:
             item_codes = {key[1] for key in missing}
             extra_rows = (
                 self.db.query(
+                    OrderInquiryRow.id,
                     OrderInquiryRow.order_inquiry_id,
                     OrderInquiryRow.item_code,
                     OrderInquiryRow.qty,
@@ -1767,8 +1792,9 @@ class OrderInquiryWorklistService:
                     OrderInquiryRow.item_code.in_(item_codes),
                     OrderInquiryRow.state != INQUIRY_CANCELLED,
                     OrderInquiryRow.redirected_to_pool.is_(False),
+                    OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
                 )
-                .order_by(OrderInquiryRow.created_at.asc())
+                .order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc())
                 .all()
             )
             for candidate in extra_rows:

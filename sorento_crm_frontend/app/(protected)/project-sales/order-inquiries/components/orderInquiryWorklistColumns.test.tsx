@@ -669,6 +669,43 @@ describe('a bundled row with no Was of its own reads each hosts change (PLAN-oi-
       screen.queryByTestId('qty-annotation-trigger-row-plain-not-bundled'),
     ).not.toBeInTheDocument();
   });
+
+  it('SHOULD (review round 1, 19 Sep 2026): a row that is ALSO rejected keeps the rejection dialog, never the bundled tooltip', () => {
+    // Precedence: `hostLines` must be computed only when nothing else already claims
+    // the icon - a mutant that computes it unconditionally would render the tooltip's
+    // own lines even on a rejected row, which the negative assertion below catches.
+    renderQtyCell([
+      worklistRow({
+        id: 'row-rejected-and-bundled',
+        qty: '2',
+        ack_state: 'rejected',
+        rejected_by_name: 'Joey Ang',
+        rejected_reason: 'No supplier until November',
+        bundled_host_changes: [
+          {
+            item_code: 'SRTWCX8605-S-RL-PJ',
+            qty: '280',
+            delivery_date: '2027-03-01',
+            previous_qty: '182',
+            previous_delivery_date: '2026-06-01',
+          },
+        ],
+      }),
+    ]);
+    const row = screen.getByTestId('row-row-rejected-and-bundled');
+    const trigger = within(row).getByTestId(
+      'qty-annotation-trigger-row-rejected-and-bundled',
+    );
+    // The rejection's own warning colour - the bundled branch's icon is always muted.
+    expect(trigger.className).toContain('color-warning-accent');
+    expect(within(row).queryByText(/with SRTWCX8605-S-RL-PJ/)).not.toBeInTheDocument();
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-and-bundled');
+    expect(
+      within(dialog).getByText('Joey Ang: No supplier until November'),
+    ).toBeInTheDocument();
+  });
 });
 
 describe('a bundled row (PLAN-scm-supplied-with-companions.md S5, UAC D1-D3/D10)', () => {

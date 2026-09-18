@@ -79,6 +79,26 @@ stamped onto the companion row itself, which would drift the moment a host chang
 * `OrderInquiryBundledHostChange` (new type) and `OrderInquiryWorklistRow.
   bundled_host_changes` (new field) in `orderInquiry.types.ts`.
 
+## Review round 1 (19 Sep 2026, Opus reviewer)
+
+**BLOCKER, which host row answered depended on the user's own sort.** `_host_changes_
+for_rows`'s in-page pass took the FIRST candidate in `rows` (the page's own order,
+whatever column the caller sorted by) and neither pass excluded `IV_DELAY`/`IV_ADVANCE`
+exception rows, so a host carrying both a live ORDER row and an exception row on the
+same item code could read the exception row's own figures instead, and could read
+differently under `sort=item_code&dir=desc` than under the default sort. Fixed: a
+host's own LIVE row is now `state != cancelled AND redirected_to_pool = false AND verb
+IN (IV_ORDER, IV_ORDER_BACK)` - the SAME set `_settle_row_in_place` treats as a line's
+real instruction - and the in-page pass collects EVERY page candidate for a key and
+picks the OLDEST one (`created_at`, then `id`) exactly as the fallback query's own
+`ORDER BY` already did, so the two paths can never answer differently. When a host
+genuinely carries more than one live ORDER row, the OLDEST one wins.
+
+**SHOULD, precedence untested.** A row that is ALSO rejected or changed must keep that
+dialog, never the bundled tooltip - already correct in code (`hostLines` is computed
+only when none of the row's own three marks apply), but nothing pinned it. A new
+vitest closes the gap.
+
 ## Not in scope
 
 * The per-project order inquiry route/schema (`OrderInquiryRowOut`).
@@ -93,7 +113,9 @@ stamped onto the companion row itself, which would drift the moment a host chang
 * `app/schemas/project_order_inquiry.py` - `OrderInquiryBundledHostChangeOut` (new),
   `OrderInquiryWorklistRow.bundled_host_changes`.
 * `tests/test_order_inquiry_worklist.py` - four new tests (two hosts one with a Was,
-  non-bundled row, host with no row at all, cancelled/redirected host rows excluded).
+  non-bundled row, host with no row at all, cancelled/redirected host rows excluded);
+  review round 1: a fifth (a host's own DELAY row never answers in place of its live
+  ORDER row, identical under the default sort and under `sort=item_code&dir=desc`).
 * `app/(protected)/project-sales/_shared/lib/orderInquiryAck.ts` -
   `bundledHostChangeLines` (new).
 * `app/(protected)/project-sales/_shared/lib/orderInquiryAck.test.ts` - new tests for
@@ -101,7 +123,8 @@ stamped onto the companion row itself, which would drift the moment a host chang
 * `app/(protected)/project-sales/order-inquiries/components/orderInquiryWorklistColumns.tsx`
   - `QtyAnnotationButton`'s new tooltip branch.
 * `app/(protected)/project-sales/order-inquiries/components/orderInquiryWorklistColumns.test.tsx`
-  - new tests for the (i) tooltip.
+  - new tests for the (i) tooltip; review round 1: a rejected row with
+  `bundled_host_changes` keeps the rejection dialog, never the tooltip.
 * `app/(protected)/project-sales/_shared/types/orderInquiry.types.ts` -
   `OrderInquiryBundledHostChange` (new), `OrderInquiryWorklistRow.bundled_host_changes`.
 * `documentation/user-guides/supply-chain/` - one sentence on the order inquiries guide.
